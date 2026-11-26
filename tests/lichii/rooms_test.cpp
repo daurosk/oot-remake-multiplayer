@@ -93,3 +93,20 @@ TEST_CASE("rooms: a tracked player changes room only once clearly in the new one
     t.ForgetUnless([](std::uint32_t key) { return key == 1; });
     CHECK(t.Update(2, "D", {6.5f, 0, 0}) == 1);
 }
+
+TEST_CASE("cutscene-bleed: ClearlyIn keeps the Tracker's slack in a doorway (review-0116-c item 2)") {
+    using CoopRooms::ClearlyIn;
+    using CoopRooms::Where;
+    const Table d = Two();
+    CHECK(ClearlyIn(d, "D", {4, 0, 0}, 1) == Where::in_room);
+    // In the door: room 2 is the raw nearest (2.5 against 3.5) but not by kMargin: still in room 1.
+    CHECK(d.Nearest("D", {7.5f, 0, 0})->room == 2);
+    CHECK(ClearlyIn(d, "D", {7.5f, 0, 0}, 1) == Where::in_room);
+    CHECK(ClearlyIn(d, "D", {8.5f, 0, 0}, 1) == Where::other_room);  // 1.5 against 4.5
+    CHECK(ClearlyIn(d, "D", {6.5f, 0, 0}, 2) == Where::in_room);     // the door from the other side
+    // Far from every placement, or a scene with no rooms: not known.
+    CHECK(ClearlyIn(d, "D", {60, 0, 0}, 1) == Where::unknown);
+    CHECK(ClearlyIn(d, "X", {0, 0, 0}, 1) == Where::unknown);
+    // A room with no placement in the scene: any known room is another one.
+    CHECK(ClearlyIn(d, "D", {0, 0, 0}, 9) == Where::other_room);
+}

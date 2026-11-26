@@ -1,0 +1,7 @@
+# hs-heart-137, B while the host loads from its System menu: B stays where the refight left it.
+wait 1200
+mark b-sys-before
+wait 1500
+mark b-sys-loaded
+wait 900
+mark b-sys-late

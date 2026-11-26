@@ -80,6 +80,12 @@ class FlagStore {
   // Writes the value as it is, with no merging (the host's save load,
   // docs/flags.md "Saves"). Default: write().
   virtual bool write_exact(const protocol::FlagEntry& entry) { return write(entry); }
+
+  // A guest's own save load, the group's value written back (FlagWatcher's load reverts): as write_exact, except
+  // that a dungeon's floors (ItemRule::bits) are ORed, never lowered (rows 63/76: the floors a player entered are
+  // not taken off its map by its own load). The host's FLAG_RESET and the join snapshot stay exact: the host's save
+  // decides (docs/flags.md, "Saves"). Default: write_exact().
+  virtual bool write_load_back(const protocol::FlagEntry& entry) { return write_exact(entry); }
 };
 
 // A FlagStore that refuses the flags `hold` names for now and passes all
@@ -106,16 +112,34 @@ class HoldFlagStore final : public FlagStore {
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
   bool busy(FlagKey key) override { return inner_.busy(key); }
   // The host's save load (docs/flags.md, "Saves"): a held 1 still waits, a
-  // 0 (the save has not played it) goes through.
+  // 0 (the save has not played it) goes through, and so does a max-rule Int
+  // no higher than our game's (row 159: a quest step a guest holds while in a
+  // dungeon, which the host's save lowers; held, the reset never lowered it).
   bool write_exact(const protocol::FlagEntry& entry) override {
-    if (entry.value != 0 && holds(key_of(entry))) {
+    if (entry.value != 0 && holds(key_of(entry)) && !lowers(entry)) {
       ++held_;
       if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
       return false;
     }
     return inner_.write_exact(entry);
   }
+  bool write_load_back(const protocol::FlagEntry& entry) override {
+    if (entry.value != 0 && holds(key_of(entry))) {
+      ++held_;
+      if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
+      return false;
+    }
+    return inner_.write_load_back(entry);
+  }
 
+  // A max-rule Int at or below our game's value (unread: not lowering).
+  bool lowers(const protocol::FlagEntry& entry) {
+    const FlagKey key = key_of(entry);
+    if (entry.kind != protocol::FlagKind::int32 || !inner_.is_max(key)) return false;
+    const std::optional<protocol::FlagEntry> now = inner_.read(key);
+    return now && now->kind == protocol::FlagKind::int32 &&
+           static_cast<std::int32_t>(entry.value) <= static_cast<std::int32_t>(now->value);
+  }
   // Writes refused so far, and their flags (at most 64).
   std::uint64_t held() const { return held_; }
   const std::vector<FlagKey>& held_keys() const { return held_keys_; }
@@ -164,6 +188,8 @@ class SharedFlags {
   // Adds one key at run time (a one-time pickup seen in the game). False when
   // it was there already or the list is full.
   bool add(FlagKey key);
+  // Takes one key off at run time (FlagWatcher::keep_local). False when it was not there.
+  bool remove(FlagKey key);
   const std::vector<FlagKey>& keys() const { return keys_; }
   std::size_t size() const { return keys_.size(); }
   bool empty() const { return keys_.empty(); }

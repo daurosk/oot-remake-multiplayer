@@ -1,0 +1,120 @@
+# hs-timed-switch, B (room-objects, SWITCH_STATE; reports/room-objects-a.md): a timed switch pressed in one game runs the
+# other game's own timer and mover. Dodongo's Cavern room 1: the moving-ground plate Obj_StepSwitch_A_01
+# (17.2 112.3 -23.0) feeds, through the room graph's own HoldGeneralTimerSwitch, GroundControlActor_SimpleMoveTo
+# (10.5 101.0 -19.0) MoveToPosX and the shortcut floor Obj_DodongoCave_MoveFloor_A_01 (10.5 96.5 -23.0) IsShortCutMove
+# (input plug key 739cfe82 = Murmur3("IsShortCutMove")). B steps on the plate at mark "press" and off at "release";
+# A stands on the lift 765ad7b13c763297 (0.0 96.5 -12.6), about 15 m from the plate. Marks t01..t40 every second
+# after "press" time both games' plug lines (the logs have no clock).
+# Expect (graded by coord-multiplayer/offline/room-objects-a-timed-switch.ps1):
+#  B: "switch share: Obj_StepSwitch_A_01 OnState at 17.2 112.3 -23.0: our player's press: sent", then
+#     "...: our player's press ended after N s: sent".
+#  A: "...: another player's is on: ours held on, its own logic runs", then "...: let go after N s held".
+#  Both: "logic probe: Obj_DodongoCave_MoveFloor_A_01 plug 739cfe82 (type 0) 0 -> 1" (the timer's output reached the
+#  floor) and later "1 -> 0" (the timer ran out), at about the same mark in A and B.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LOGIC_PROBE=1,LICHII_COOP_SWITCH_SHARE=1
+#! timeout 420
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 0.0 97.6 -12.6      # first with A (the room loads for both)
+wait 240
+mark placed
+wait 600
+place 17.2 113.4 -23.0    # on the plate
+mark press
+wait 60
+mark t01
+wait 60
+mark t02
+wait 60
+mark t03
+wait 60
+mark t04
+wait 60
+mark t05
+place 0.0 97.6 -12.6      # off the plate, back on the lift
+mark release
+wait 60
+mark t06
+wait 60
+mark t07
+wait 60
+mark t08
+wait 60
+mark t09
+wait 60
+mark t10
+wait 60
+mark t11
+wait 60
+mark t12
+wait 60
+mark t13
+wait 60
+mark t14
+wait 60
+mark t15
+wait 60
+mark t16
+wait 60
+mark t17
+wait 60
+mark t18
+wait 60
+mark t19
+wait 60
+mark t20
+wait 60
+mark t21
+wait 60
+mark t22
+wait 60
+mark t23
+wait 60
+mark t24
+wait 60
+mark t25
+wait 60
+mark t26
+wait 60
+mark t27
+wait 60
+mark t28
+wait 60
+mark t29
+wait 60
+mark t30
+wait 60
+mark t31
+wait 60
+mark t32
+wait 60
+mark t33
+wait 60
+mark t34
+wait 60
+mark t35
+wait 60
+mark t36
+wait 60
+mark t37
+wait 60
+mark t38
+wait 60
+mark t39
+wait 60
+mark t40
+wait 120
+mark end

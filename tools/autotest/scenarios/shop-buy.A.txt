@@ -32,7 +32,7 @@ mark loaded
 setflag PouchData.Weapon_Shield_Deku.StockNum 0
 setflag PlayerStatus.CurrentRupee 99
 wait 300
-place -2.10 110.30 -22.60
+place -2.10 110.30 -24.20          # 1 m from the keeper (was 2.65 m: no talk prompt, harness-0116)
 wait 300
 toward -2.10 -25.25 12
 wait 60

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_time_sync.h"
 
+#include <algorithm>
+
 #include <utility>
 
 #include <cstdlib>
@@ -64,10 +66,20 @@ void Sync::Reset() {
     nudge_at_ = 0;
     nudge_tries_ = 0;
     nudges_off_ = false;
+    paused_ = false;
+    pause_from_moving_ = false;
+    moving_ = false;
+    catch_up_us_ = 0;
     load_at_.reset();
     rejoin_ = false;
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
+}
+
+void Sync::SetPaused(bool paused, [[maybe_unused]] std::uint64_t now_us) {
+    // Only a pause that stopped a running clock is made up: indoors (or in a time change) the clock stood anyway.
+    if (paused && !paused_) pause_from_moving_ = moving_;
+    paused_ = paused;
 }
 
 std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool host,
@@ -126,6 +138,25 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         running_since_.reset();
     }
     const bool running = running_since_ && now_us - *running_since_ >= kRunningForUs;
+    // How fast our clock runs (for a host's catch-up after its pause): a plain step, no jump, no pause.
+    if (last_ && last_at_ != 0 && now_us > last_at_ && !paused_) {
+        const std::int32_t step = Ahead(*last_, *now);
+        const double seconds = static_cast<double>(now_us - last_at_) / 1e6;
+        const double inst = static_cast<double>(step) / seconds;
+        if (step > 0 && inst >= 10.0 && inst <= 1'000.0) rate_ = rate_ > 0 ? 0.8 * rate_ + 0.2 * inst : inst;
+    }
+    // The time our clock stood in a pause that stopped it (pause_from_moving_): only the reads that did not move,
+    // so a menu that leaves the clock running, or the part of a pause it ran, makes nothing up.
+    if (last_ && last_at_ != 0 && now_us > last_at_) {
+        const std::int32_t step = Ahead(*last_, *now);
+        if (paused_) {
+            if (pause_from_moving_ && step == 0) catch_up_us_ += now_us - last_at_;
+        } else {
+            moving_ = step > 0;
+        }
+    } else if (!paused_) {
+        moving_ = false;
+    }
     last_ = now;
     last_at_ = now_us;
 
@@ -187,6 +218,24 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
                     last_ = nudge_;  // our own move is no jump and does not stop "running"
                 }
             }
+        }
+    }
+
+    // Row 164 follow-up: a host back from its pause makes up what it missed (the guests' clocks ran on), once, with
+    // a nudge of its own (no time change, so no world remake), at most kResyncSeconds and never across midnight.
+    if (!host) catch_up_us_ = 0;
+    if (host && catch_up_us_ != 0 && !paused_ && !in_event_) {
+        const double rate = rate_ > 0 ? rate_ : kDefaultRate;
+        const double missed_s = std::min(static_cast<double>(catch_up_us_) / 1e6 * rate,
+                                         static_cast<double>(kResyncSeconds));
+        catch_up_us_ = 0;
+        const auto missed = static_cast<std::uint32_t>(missed_s);
+        const std::uint64_t to = static_cast<std::uint64_t>(*now) + missed;
+        if (missed > kNudgeSeconds && to < proto::kSecondsPerDay) {
+            nudge_ = static_cast<std::uint32_t>(to);
+            nudge_at_ = now_us;
+            last_ = nudge_;  // our own move is no jump
+            catch_ups_ += 1;
         }
     }
 

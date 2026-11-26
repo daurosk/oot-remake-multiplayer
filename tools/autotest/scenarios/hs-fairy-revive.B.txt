@@ -1,0 +1,39 @@
+# hs-fairy-revive, B: lands in Hyrule Field in front of Kakariko, puts a fairy in bottle A, then takes the game's own
+# hits on its Link, a heart each (`hurt 4`), until the life is gone: the game's death uses the fairy
+# (see hs-fairy-revive.A.txt). Stays where it lands (no walking).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+setflag PouchData.BottleA.StockNum 1
+wait 30
+setflag PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid 1
+wait 30
+setenum PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem Fairy
+wait 300                # A has turned down but not out off by now (its chat at its own "field" mark)
+mark hurt-start
+# A heart a second. The kit save has 12 quarter hearts (run 1: "life 12 of 16"), so the third hit is lethal and the
+# game's death uses the fairy. Nothing more for 20 s (no hit lands during the revive), then two more hearts in case
+# this save had more life (the revive measured is the first 0 -> above 0).
+hurt 4
+wait 60
+hurt 4
+wait 60
+hurt 4
+mark lethal
+wait 1200
+mark late-hurts
+hurt 4
+wait 60
+hurt 4
+wait 1200
+mark end

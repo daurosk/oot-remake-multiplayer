@@ -1,4 +1,4 @@
-From 47071154b380820ebbd22a6083c4f45bbca5d376 Mon Sep 17 00:00:00 2001
+From dde63da946a836e9b40be7aae0db3906aabd76dc Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:38:47 -0900
 Subject: [PATCH] Co-op texture overrides: a module may have a texture drawn
@@ -10,35 +10,27 @@ nvn_native.c) and a co-op module's overrides on their storage. Two
 exports, found by name: hos_coop_textures (the textures of a storage
 size, with a generation number) and hos_coop_texture_override (bytes
 read in place of a texture's guest memory; NULL takes them away). The
-renderers read a texture's storage through hos_coop_texture_overlay:
-the Vulkan one in guest_bytes (every CPU and ASTC upload path; a
-texture with an override skips the GPU unswizzle and the all-zero
-clear); the WebGPU one in decode is patch 0021 (Windows only). Guest memory is never written: an
+renderer reads a texture's storage through hos_coop_texture_overlay
+in guest_bytes (every CPU and ASTC upload path; a texture with an
+override skips the GPU unswizzle and the all-zero clear; Longshot
+rc.5 has no WebGPU renderer). Guest memory is never written: an
 override set or taken away marks its pages written, so the texture is
 uploaded again. A texture finalized takes its overrides with it.
 The Link customizer paints Link's gear with it.
 ---
- gpu/vk/vk_texture.cpp     |  55 ++++++++++-
- host/coop_texture.c       | 190 ++++++++++++++++++++++++++++++++++++++
- host/hos_coop_texture.h   |  43 +++++++++
- host/nvn_native.c         |   9 ++
- 4 files changed, 293 insertions(+), 4 deletions(-)
+ gpu/vk/vk_texture.cpp   |  56 +++++++++++-
+ host/coop_texture.c     | 196 ++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_texture.h |  43 +++++++++
+ host/nvn_native.c       |   9 ++
+ 4 files changed, 299 insertions(+), 5 deletions(-)
  create mode 100644 host/coop_texture.c
  create mode 100644 host/hos_coop_texture.h
 
 diff --git a/gpu/vk/vk_texture.cpp b/gpu/vk/vk_texture.cpp
-index b687ee21..1b897e59 100644
+index 427fbf77..48a608af 100644
 --- a/gpu/vk/vk_texture.cpp
 +++ b/gpu/vk/vk_texture.cpp
-@@ -18,6 +18,7 @@
- #include <psapi.h>
- #if defined(__linux__)
- #include <malloc.h>
-+#include <dlfcn.h>   // (patch 0020: dlsym)
- #endif
- #include <atomic>
- #include <chrono>
-@@ -934,8 +935,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
+@@ -1322,8 +1322,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
      return g;
  }
  
@@ -80,7 +72,7 @@ index b687ee21..1b897e59 100644
      uint64_t avail = 0;
      const uint8_t* p = host->gpu_ptr(gpu, &avail);
      // (below 1 TB the GPU address is the guest's: the storage as it was at the submit being replayed, where the game has
-@@ -963,6 +996,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
+@@ -1348,6 +1380,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
      }
      return scratch.data();
  }
@@ -94,9 +86,9 @@ index b687ee21..1b897e59 100644
 +    return scratch.data();
 +}
  
- void widen_rows(uint8_t* dst, const uint8_t* src, size_t texels, int from, int to) {
-     const int comp = from / 3;
-@@ -1553,12 +1595,15 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+ /// The alpha an RGB format widened to RGBA gets: one in the format's own encoding (by component size alone, SNORM8 read
+ /// -0.008, UNORM16 0.23 and the integer formats 255, 15360 or 0x3F800000)
+@@ -2321,14 +2362,17 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
      up_route = UP_CPU;
      if (tex.bc) return false;   // (no CPU path into BC3)
      // (the GPU's unswizzle reads guest memory as it is: not where the capture kept the storage as it was at its submit)
@@ -108,13 +100,24 @@ index b687ee21..1b897e59 100644
          return up_route = UP_GPU, true;
      const bool linear = nvn_tex_is_linear(&tex.d);
      int widen_from = 0;
-     widened(tex.d.format ? vk_format(tex.nvn_format).format : tex.format, &widen_from);
--    if (upload_all_zero(tex, total, dirty, widen_from != 0)) return true;
-+    if (!coop_over && upload_all_zero(tex, total, dirty, widen_from != 0)) return true;
-     const int src_bpb = tex.bpb;
-     const int out_bpb = tex.astc ? 4 : widen_from ? (widen_from == 3 ? 4 : widen_from == 6 ? 8 : 16) : src_bpb;
-     const uint32_t copy_layers = tex.type == VK_IMAGE_TYPE_3D ? 1 : tex.layers;
-@@ -1633,7 +1678,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+     const VkFormat src_vf = tex.d.format ? vk_format(tex.nvn_format).format : tex.format;
+     widened(src_vf, &widen_from);
+     bool large_zero_checked = false;
+-    if (upload_all_zero(tex, total, dirty, widen_from != 0, large_zero_checked)) return true;
++    if (!coop_over && upload_all_zero(tex, total, dirty, widen_from != 0, large_zero_checked)) return true;
+     {   // (RX_VK_DEPTH_ZERO) a depth buffer read before the GPU drew it, its storage all zero: cleared on the GPU, not
+         // unswizzled on the CPU (upload_all_zero takes only storage 32 MB and more; these are 1-9 MB in a virtual pool).
+         // In Kokiri 15 of 25 such reads were of zero storage: the shadow maps the game draws at one size (816 x 816) and
+@@ -2336,7 +2380,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+         // them; a depth image cleared to 0 is what unswizzling zero storage makes. RX_VK_DEPTH_ZERO=0: off
+         static const bool dz_on = [] { const char* e = getenv("RX_VK_DEPTH_ZERO"); return !(e && env_value_off(e)); }();
+         static std::atomic<int64_t> dz_n{0}, dz_bytes{0}, dz_not{0};
+-        if (dz_on && !large_zero_checked && !dirty && (tex.aspect & VK_IMAGE_ASPECT_DEPTH_BIT) && tex.image && !tex.sparse && tex.type != VK_IMAGE_TYPE_3D) {
++        if (dz_on && !coop_over && !large_zero_checked && !dirty && (tex.aspect & VK_IMAGE_ASPECT_DEPTH_BIT) && tex.image && !tex.sparse && tex.type != VK_IMAGE_TYPE_3D) {
+             static thread_local std::vector<uint8_t> zs;
+             bool zero = true;
+             for (uint64_t at = 0; at < total && zero; at += 16ull << 20) {
+@@ -2446,7 +2490,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                                                    ? std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u) : 1u;
                      uint64_t avail = 0;
                      const uint8_t* direct = host->gpu_ptr(tex.gpu + from, &avail);
@@ -123,7 +126,7 @@ index b687ee21..1b897e59 100644
                      const uint8_t* src = nullptr;
                      if (gather_parts) {
                      } else if (from < total && total - from >= need) {
-@@ -1641,6 +1686,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -2454,6 +2498,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                      } else {
                          scratch.assign(need, 0);
                          if (from < total) host->gpu_read(tex.gpu + from, scratch.data(), total - from);
@@ -336,7 +339,7 @@ index 00000000..118294a5
 +}
 diff --git a/host/hos_coop_texture.h b/host/hos_coop_texture.h
 new file mode 100644
-index 00000000..182391d8
+index 00000000..d3be7a17
 --- /dev/null
 +++ b/host/hos_coop_texture.h
 @@ -0,0 +1,43 @@
@@ -362,7 +365,7 @@ index 00000000..182391d8
 +     another texture over the same storage (an alias) shows it too while it lasts, and loses it with that texture.
 +   For the renderers (host/coop_texture.c): hos_coop_texture_overridden(address, n), whether any override overlaps that
 +   range, and hos_coop_texture_overlay(address, data, n), the overrides laid over `data` (guest memory of that range).
-+   Generic: any module, any texture, with no further Longshot build. Both renderers take them (Vulkan, WebGPU).
++   Generic: any module, any texture, with no further Longshot build. The Vulkan renderer takes them.
 +   The same file is in Longshot's host/ through our patch and in our repository (hookshot/src): keep them equal
 +   (tests/hookshot/module_test.cpp checks it). Plain C. */
 +#ifndef HOS_COOP_TEXTURE_H
@@ -384,10 +387,10 @@ index 00000000..182391d8
 +
 +#endif
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index bf6991d4..8ab9b74e 100644
+index e7b8a751..40c22aba 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
-@@ -709,6 +709,8 @@ NV(nvnTextureInitialize) {
+@@ -766,6 +766,8 @@ NV(nvnTextureInitialize) {
      const nvn_tex_builder *b = CTB(P(1));
      nvn_tex *o = TX(P(0));
      if (o->magic == NVN_MAGIC('T', 'E', 'X', 0) && o->serial) {   /* initialised again without Finalize */
@@ -396,8 +399,8 @@ index bf6991d4..8ab9b74e 100644
          live_del(o);
          rx_nvn_texture_released(o);
      }
-@@ -727,6 +729,11 @@ NV(nvnTextureInitialize) {
-     o->serial = new_serial();
+@@ -785,6 +787,11 @@ NV(nvnTextureInitialize) {
+     if (u_ == &detached_descriptor_only) { RET(1); return; }
      live_put(o);
      rx_nvn_texture_created(o);
 +    if (o->gpu && o->gpu < VBASE) {   /* (oot-remake-multiplayer, patch 0020: the textures a module may override) */
@@ -408,7 +411,7 @@ index bf6991d4..8ab9b74e 100644
      {   /* RX_NVN_WATCH_TEX=<w>x<h> (debugging): who writes the storage of textures that size (a page watch, with call
             stacks: hos_watch_guest_writes), for writes the dirty tracking misses */
          static int on = -1;
-@@ -742,6 +749,8 @@ NV(nvnTextureInitialize) {
+@@ -800,6 +807,8 @@ NV(nvnTextureInitialize) {
  }
  NV(nvnTextureFinalize) {
      nvn_tex *o = TX(P(0));
@@ -417,6 +420,3 @@ index bf6991d4..8ab9b74e 100644
      live_del(o);
      rx_nvn_texture_released(o);
      o->magic = 0;
--- 
-2.56.0.windows.4
-

@@ -150,6 +150,13 @@ bool SharedFlags::add(FlagKey key) {
   return true;
 }
 
+bool SharedFlags::remove(FlagKey key) {
+  const auto at = std::lower_bound(keys_.begin(), keys_.end(), key);
+  if (at == keys_.end() || *at != key) return false;
+  keys_.erase(at);
+  return true;
+}
+
 bool SharedFlags::contains(FlagKey key) const {
   return std::binary_search(keys_.begin(), keys_.end(), key);
 }

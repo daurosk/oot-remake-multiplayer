@@ -60,6 +60,50 @@ class Hook(unittest.TestCase):
                 self.assertIn(line.strip(), t)
 
 
+def without_no_activate(text):
+    """The repo's play.ps1 as a kit of 0.11.1 has it: the hook, but the title-mode start is the plain Start-Process."""
+    t = text.replace("\r\n", "\n").replace(kit_pair.start_function(), "")
+    a = t.index("    if ($testKit) {   # (the autotest's kit mode")
+    b = t.index("    }\n", t.index("    } else {\n", a)) + len("    }\n")
+    return t[:a] + "    $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru\n" + t[b:]
+
+
+class NoActivate(unittest.TestCase):
+    """kit_pair puts the no-activation test-mode start into EVERY kit, not only those without the hook."""
+
+    def test_a_kit_with_the_hook_gets_the_start_and_equals_the_repo_play(self):
+        repo = read(PLAY).replace("\r\n", "\n")
+        old = without_no_activate(repo)
+        self.assertNotIn("Start-KitTestGame", old)
+        self.assertIn("OOT_COOP_TEST_KIT", old)      # (a released 0.11.1+ kit: the hook is there)
+        self.assertEqual(kit_pair.add_hook(old), old)
+        fn = kit_pair.start_function()
+        patched = kit_pair.add_no_activate(old)
+        self.assertEqual(patched.count(fn), 1)
+        # (the same start as the kit's own since this change: only the function's place differs, here in the block)
+        self.assertEqual(patched.replace(fn, ""), repo.replace(fn, ""))
+
+    def test_once_and_crlf_kept(self):
+        old = without_no_activate(read(PLAY)).replace("\n", "\r\n")
+        t = kit_pair.add_no_activate(old)
+        self.assertIn("Start-KitTestGame $exe", t)
+        self.assertNotIn("\n", t.replace("\r\n", ""))
+        self.assertEqual(kit_pair.add_no_activate(t), t)
+        self.assertEqual(t.count("function Start-KitTestGame"), 1)
+
+    def test_a_kit_without_the_hook_gets_both(self):
+        t = kit_pair.add_no_activate(kit_pair.add_hook(OLD_PLAY))
+        self.assertIn("OOT_COOP_TEST_KIT", t)
+        self.assertIn("function Start-KitTestGame", t)
+        self.assertIn("Get-Process -Id (Start-KitTestGame $exe", t)
+        self.assertIn("} else {\r\n        $game = Start-Process", t)   # the player's start stays
+        self.assertIn("WriteAllText($testKit", t)                         # the pid file is still written
+
+    def test_unknown_start_is_refused(self):
+        with self.assertRaises(kit_pair.Fail):
+            kit_pair.add_no_activate("$testKit = 1\nWrite-Host 'some other start'\n")
+
+
 class Pair(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -95,6 +139,7 @@ class Pair(unittest.TestCase):
             self.assertEqual(read(os.path.join(k, "hookshot", "game-files.txt")).strip(), self.nup)
             self.assertTrue(hs.same_path(hs.kit_game_folder(k), p[x]))
             self.assertIn("OOT_COOP_TEST_KIT", read(os.path.join(k, "scripts", "play.ps1")))
+            self.assertIn("Start-KitTestGame $exe", read(os.path.join(k, "scripts", "play.ps1")))   # no window activation
             self.assertEqual(read(os.path.join(p["backup"], x, "hookshot_coop.dll")), "lane module " + x)
 
     def test_restore_puts_back_what_the_kit_start_changed(self):

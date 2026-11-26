@@ -20,6 +20,8 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "coop/host/bounded_queue.hpp"
@@ -30,10 +32,14 @@ namespace coop::host {
 
 // The flag types co-op reads and writes. The values are the game's save type
 // ids (docs/flags.md); key64 is the Bool64bitKey table, which has none.
-enum class GameFlagType : std::uint8_t { boolean = 0, int32 = 2, float32 = 4, enum32 = 6, uint32 = 20, key64 = 0xff };
+enum class GameFlagType : std::uint8_t {
+  boolean = 0, int32 = 2, float32 = 4, enum32 = 6, string64 = 16, uint32 = 20, key64 = 0xff
+};
 
 // One write: `id` is the name hash, or the 64-bit key; `value` as the game's
 // setter takes it (0 or 1 for a Bool and a key, the value's bits otherwise).
+// A String64's text is not in the write: GameFlagCalls keeps it (text()),
+// and `value` is only that text's serial, so a newer text is a new value.
 struct GameFlagWrite {
   GameFlagType type = GameFlagType::boolean;
   std::uint64_t id = 0;
@@ -56,6 +62,9 @@ constexpr std::uint64_t setter_offset(GameFlagType type) {
     // (manager, value in s0, hash w1): f_7100ba6f80 in the recomp's main (docs/flags.md, "Float").
     case GameFlagType::float32: return 0xba6f80;
     case GameFlagType::enum32: return 0x3e0980;
+    // (manager + 0x608, &{char* text, u32 hash}): f_710376b9b0 in the recomp's main, the String64 queue's own push,
+    // which f_7103759370 calls for a String64 (docs/flags.md, "String64").
+    case GameFlagType::string64: return 0x376b9b0;
     case GameFlagType::uint32: return 0x57af30;
     case GameFlagType::key64: return 0x3761720;
   }
@@ -105,6 +114,12 @@ class GameFlagCalls {
   // Takes a write. One already waiting for the same flag gets the new value
   // and keeps its place. False when full.
   bool put(const GameFlagWrite& write);
+  // Takes a String64 write (the text, at most 63 bytes, checked by the caller). As put().
+  bool put_string(std::uint32_t hash, std::string_view text);
+  // The text waiting for this String64, if any (as pending()).
+  std::optional<std::string> pending_string(std::uint32_t hash) const;
+  // The text of a String64 write run() hands over, while it is the one handed (call() may read it).
+  std::optional<std::string> text(const GameFlagWrite& write) const;
   // The value waiting for this flag, if any: what a read must see until the
   // setter has run (after that it is in the game's queue).
   std::optional<std::uint32_t> pending(GameFlagType type, std::uint64_t id) const;
@@ -122,6 +137,8 @@ class GameFlagCalls {
   using Id = std::pair<GameFlagType, std::uint64_t>;
   mutable std::mutex mutex_;
   std::map<Id, std::uint32_t> values_;
+  std::map<std::uint32_t, std::string> texts_;  // String64 writes' texts, by hash
+  std::uint32_t text_serial_ = 0;
   std::deque<Id> order_;
   std::atomic<std::uint64_t> handed_{0};
 };

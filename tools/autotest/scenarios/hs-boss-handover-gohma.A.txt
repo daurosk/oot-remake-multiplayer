@@ -1,0 +1,96 @@
+# hs-boss-handover-gohma (fable-g2-bosses, rows 104/118, #150): every player's hits count across Gohma's hand-overs.
+# B walks in first and owns Gohma; A walks in ~25 s later with a copy. Then ten turns, 600 frames each, the same
+# on both sides: turn 1 B (the owner) hits 3; turns 2-10 the player whose turn it is tells its copy's owner it is
+# stunned (`stun`: the stun hand-over of issue 150, a DAMAGE of 0) and hits 2 (`hit`: through the game's own Life
+# step; on a copy the fall goes to the owner as DAMAGE). 3 + 9 x 2 = 21 = her whole life: she dies on turn 10.
+# Turns 2-5 hit 20 frames after the stun (inside the hand-over: H3 our unsent hit, H4 our DAMAGE on the wire);
+# turns 6-10 hit 180 frames after it (the hand-over done: the hitter owns her, its "life L" must be 21 minus every
+# hit before). Either game may own her at the start (the chase hand-over, hs-gohma-death): a `stun` from the owner
+# logs "not a copy" and changes nothing; the sum is the same.
+# SAVE: both lane baselines at quest Get_StoneOfForest = GoToBossRoom (as hs-gohma-death); the offline job
+# boss-handover-probe.ps1 sets it on slots 00-02 and puts the saves back. The scenario clears the boss room flags.
+# PASS (the job's verdict): every settled turn's (6-10) "coop: test hit Enemy_DungeonBoss_Gohma N 0x.. (.. m, life L)"
+# has L = 21 - the sum of every hit logged before it (L higher = a hit given back to her across a hand-over, the
+# bug; lower = a hit taken twice), and she dies in both games after turn 10 and not before. Notes counted:
+# "ours now with a hit of ours not sent yet", "our own hit crossed the hand-over", the server's "given back across
+# a hand-over N". A death that never comes while every L is right is INCONCLUSIVE (a life stop held her), not FAIL.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-handover-gohma
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+wait 1500               # B walks in first and owns her
+place -12.0 48.5 66.5   # the corridor
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: A's own intro, with a copy Gohma
+mark a-in
+wait 2400               # A's intro
+mark a-after-intro
+goto 12.0 67.5 1.5 600  # inside the room by the door
+mark a-moved
+wait 3000               # as hs-gohma-death: the turns start with B's (B 6850 frames + 4 gotos, A 7140 + 3)
+mark t1
+wait 600
+mark t2
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 20
+hit Enemy_DungeonBoss_Gohma 2   # inside the hand-over
+wait 580
+mark t3
+wait 600
+mark t4
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 20
+hit Enemy_DungeonBoss_Gohma 2   # inside the hand-over
+wait 580
+mark t5
+wait 600
+mark t6
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 180
+hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+wait 420
+mark t7
+wait 600
+mark t8
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 180
+hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+wait 420
+mark t9
+wait 600
+mark t10
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 180
+hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+wait 420
+mark after-turns
+wait 1200               # her death cutscene, if she died
+mark d1
+wait 1800
+mark end

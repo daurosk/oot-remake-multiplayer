@@ -1,0 +1,41 @@
+# hs-customize-tunic (Longshot, row 246 / #314): the Kokiri Tunic changed in the game's Customize screen,
+# mid-session (no LICHII_COOP_COLOR: the colour the settings give, then the screen's). Needs Character Select ON:
+# the path is ui-snail-customize's, proven to reach the screen and change the tunic (lane 20261121-040125):
+# - menu -> L x3 to his Characters page -> X Customize (co-op's rows: Eye Colour, Kokiri Tunic,
+# Cap Trim | Goron Tunic, Zora Tunic; CoopSnailCustom reads the pad: D-pad moves, ZR / ZL change the value).
+# A child, in the graveyard as the save loads; B (hs-customize-tunic.B.txt) watches A's spot.
+# (lane 091623: 'menu customize' opened co-op's page with no pause menu up: the presses went to the game)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-customize-tunic
+# Pass: a-before-A: A's Link in its start colour; a-page-A: the Customize screen, Kokiri Tunic on a new colour;
+# a-after-A: A's own Link in the new colour in the field; B's b-after-B: A's puppet in it. A's log: "Customize
+# screen left", "coop: look: your Link's tunic is tunic-<new> now", "part colour(s) sent (PLAYER_LOOK)".
+mark start
+wait 300                # the save loaded, Link standing
+mark a-before
+press MINUS
+wait 150
+press L
+wait 120
+press L
+wait 120
+press L
+wait 120
+mark a-characters
+# (lane 091943, v0.2.1 ui: A then B here left the whole menu: Customize straight from the page)
+press X                 # his Customize screen, co-op's rows (Eye Colour focused)
+wait 180
+press DDOWN             # Kokiri Tunic
+wait 60
+press ZR                # the next colour
+wait 60
+press ZR                # and the next
+wait 120
+mark a-page
+press B                 # back to the Characters page
+wait 150
+mark a-back
+press MINUS             # out of the menu
+wait 300                # worn on the next frame, the textures found
+mark a-after
+wait 300                # while B looks
+mark a-end

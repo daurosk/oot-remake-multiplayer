@@ -1,0 +1,15 @@
+# live-leave-solo A (boot for live.py start, tools/playtest/scripts/leave-solo-273.jsonl): A loads its save to play.
+#! noload
+#! timeout 900
+mark start
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark a-in

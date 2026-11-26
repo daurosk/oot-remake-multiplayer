@@ -12,8 +12,13 @@
 //   downed player's own game counts the hold (Machine) and tells everyone
 //   (DBNO_STATE), so both see the same ring. A full hold: up again with the
 //   rules' hearts.
-// - Bled out, or nobody left standing: out. The game's own death runs then,
-//   as without co-op (a fairy in a bottle still saves Link there).
+// - Bled out: spectating. The camera watches a player still up (A: the next
+//   one); once no enemy is near the players still up (beaten, or left behind),
+//   back up beside the one watched, with the game's continue hearts.
+// - Nobody left standing (everyone down, spectating or out): out, in every
+//   game at once. The game's own death and Game Over run, as without co-op (a
+//   fairy in a bottle still saves Link there); Try Again follows the host's
+//   save (patch 0024, docs/flags.md).
 #pragma once
 
 #include <array>
@@ -41,7 +46,7 @@ struct Rules {
     bool on = false;
     std::uint8_t set_by = 0;          // 0: the server's start; else the host
     std::uint8_t bleed_s = 45;        // bleed-out time
-    std::uint8_t revive_tenths = 30;  // how long a revive is held
+    std::uint8_t revive_tenths = 50;  // how long a revive is held (5 s, row 174)
     std::uint8_t revive_life = 12;    // quarter hearts a revived player gets
 
     std::uint64_t BleedUs() const { return std::uint64_t{bleed_s} * 1'000'000; }
@@ -87,7 +92,7 @@ proto::DbnoMode Applied(const Rules& now, const Command& change);
 inline constexpr std::int32_t kDownedLife = 1;
 
 enum class Guard : std::uint8_t {
-    off,         // the game's own rules (mode off, nobody to revive us, or out)
+    off,         // the game's own rules (mode off, nobody to revive us, a bottled fairy, or out)
     last_stand,  // up: a hit that would take the last life leaves kDownedLife
     shielded,    // downed, or just revived: nothing is taken
 };
@@ -208,14 +213,40 @@ inline constexpr std::uint64_t kOutAgainUs = 500'000;   // out and still alive: 
 inline constexpr std::uint64_t kGoneUs = 20'000'000;
 inline constexpr std::uint64_t kStateSendUs = 500'000;  // DBNO_STATE while downed, with nobody reviving
 inline constexpr std::uint64_t kStateSendRevivingUs = 100'000;  // and while the ring fills
+// Spectating: back up once no enemy has been near the players watched for
+// kQuietUs, and never before kSpectateMinUs (the camera shows where they are).
+inline constexpr std::uint64_t kQuietUs = 3'000'000;
+inline constexpr std::uint64_t kSpectateMinUs = 3'000'000;
+// Life a spectating player comes back with: 3 hearts, as the game's own
+// continue after a Game Over (capped at the player's hearts).
+inline constexpr std::int32_t kRespawnLife = 12;
+// Our own Link at no life while up: the game's death may still be saved (a
+// fairy in a bottle reads 0 while it revives him). Out only once the Link is
+// gone (the Game Over screen, a reload) or the life stays 0 this long: a
+// fallback only (the Game Over screen is the game's own sign); the bottle
+// fairy's revive is to be measured in the research run (must be shorter).
+inline constexpr std::uint64_t kDyingUs = 8'000'000;
+// The respawn's move (the /teleport trip, then the entrance) that has not
+// answered in this long counts as failed.
+inline constexpr std::uint64_t kRespawnWaitUs = 20'000'000;
+
+// How the respawn's move went (coop_teleport_game.h Beside / ToEntrance).
+enum class Moved : std::uint8_t { none, done, failed };
+
+// What a player's last DBNO_THREAT said (unknown: none heard lately, which
+// never holds a spectating player back: a build without it, a lost message).
+enum class Threat : std::uint8_t { unknown, clear, enemy };
 
 // Another player as presence and their DBNO_STATE show them.
 struct Teammate {
     std::uint8_t number = 0;
     State state = State::up;
     bool in_game = false;             // has a Link now (not on the title, not loading)
+    bool loading = false;             // a scene load (a door, a loading zone, a teleport, a Try Again)
+    std::uint8_t status = 0;          // their PLAYER_STATUS flags (proto::status)
     std::optional<std::string> scene;
     std::optional<Vec3> position;     // at the feet, as our game shows them
+    Threat threat = Threat::unknown;  // their DBNO_THREAT
 };
 
 // Whether `them` at `at` is near enough to `self` to revive, `slack` times
@@ -233,6 +264,13 @@ struct Input {
     std::optional<std::string> scene;
     Vec3 position{};
     std::span<const Teammate> team;
+    bool next = false;                    // spectating: the switch button went down this frame
+    Moved moved = Moved::none;            // spectating: how the respawn's move asked earlier went
+    bool enemy_near_us = false;           // an enemy of our game within kThreatReachM of our own Link
+    // A fairy in one of our bottles (tracker row 162): the game's own death at no
+    // life lets it revive us, as in the solo game, so a lethal hit is not held
+    // back (the guard is off while we hold one) and we are not downed.
+    bool bottled_fairy = false;
 };
 
 enum class Event : std::uint8_t {
@@ -243,6 +281,7 @@ enum class Event : std::uint8_t {
     died,        // the game took the life anyway (a pit, a script)
     got_up,      // the host turned the mode off
     back,        // alive again after out (a fairy, a continue)
+    respawned,   // spectating over: up again beside `Output::watching`
 };
 
 struct Output {
@@ -251,11 +290,19 @@ struct Output {
     std::optional<std::int32_t> write_life;      // set our Link's life to this now
     std::optional<proto::DbnoStatus> send;       // to everyone (player field 0)
     std::vector<Event> events;
-    std::uint8_t by = 0;                         // revived: who did it
+    std::uint8_t by = 0;                         // revived: who did it; bled out, respawned: whom we watch
     // For the screen, while downed.
     std::uint64_t left_us = 0;
     std::uint8_t reviver = 0;
     float progress = 0.0f;                       // 0 to 1
+    // Spectating: whom the camera watches (0 nobody). Bled out and respawned
+    // name that player in `by`.
+    std::uint8_t watching = 0;
+    // Spectating, ready to come back: move our Link beside this player first
+    // (the /teleport trip); or, that failed, to the entrance (the game's own
+    // scene start). The respawn follows once Input::moved says done.
+    std::uint8_t move_beside = 0;
+    bool move_entrance = false;
 };
 
 class Machine {
@@ -270,6 +317,8 @@ public:
 
 private:
     std::uint8_t PickReviver(const Input& in) const;
+    std::uint8_t PickWatch(const Input& in) const;
+    bool Quiet(const Input& in) const;
     proto::DbnoStatus Status() const;
     void Enter(State state, std::uint64_t now_us);
 
@@ -283,6 +332,14 @@ private:
     std::uint64_t mercy_until_us_ = 0;
     std::uint64_t out_written_us_ = 0;
     bool out_seen_dead_ = false;
+    std::uint8_t watch_ = 0;          // spectating: whom we watch
+    std::uint64_t spectate_since_us_ = 0;
+    std::uint64_t quiet_us_ = 0;      // spectating: how long no enemy has been near them
+    // Spectating: the respawn's move under way (beside, then entrance) and since when.
+    enum class Move : std::uint8_t { none, beside, entrance } move_ = Move::none;
+    std::uint8_t move_to_ = 0;
+    std::uint64_t move_since_us_ = 0;
+    std::uint64_t dying_since_us_ = 0;  // up at no life: since when; 0 not
     std::array<std::uint64_t, proto::kMaxPlayers + 1> hold_us_{};  // last hold per player; 0 none
     std::optional<proto::DbnoStatus> sent_;
     std::uint64_t sent_us_ = 0;
@@ -309,6 +366,29 @@ public:
 
 private:
     std::array<std::optional<Entry>, proto::kMaxPlayers + 1> entries_{};
+};
+
+// --- Enemies near our Link (DBNO_THREAT), told while we are up ---
+
+inline constexpr float kThreatReachM = 15.0f;            // an enemy this near (level) counts
+inline constexpr std::uint64_t kThreatSendUs = 2'000'000;  // told again this often
+// A DBNO_THREAT older than this is unknown (it is sent every kThreatSendUs).
+inline constexpr std::uint64_t kThreatStaleUs = 3 * kThreatSendUs;
+
+// Whether any of `foes` stands within kThreatReachM of `self` (level
+// distance; at most kReviveHighM * 4 apart in height, so an enemy on another
+// floor of a dungeon does not count).
+bool AnyNear(const Vec3& self, std::span<const Vec3> foes);
+
+class ThreatTeller {
+public:
+    // Each frame. `able`: connected, the mode on, we are up and have a Link;
+    // else nothing is sent (and the next able frame tells at once).
+    std::optional<proto::DbnoThreat> Frame(std::uint64_t now_us, bool able, bool enemy_near);
+
+private:
+    std::optional<bool> sent_;
+    std::uint64_t sent_us_ = 0;
 };
 
 // --- The reviver's side ---
@@ -364,6 +444,9 @@ inline constexpr std::int32_t kCrawlStickPercent = 30;
 // What the game gets from a downed player: the pause buttons, the camera,
 // and the left stick held to a slow walk. No items, no sword, no roll.
 Pad DownedPad(const Pad& in);
+// What it gets from a spectating player: the pause buttons and the camera
+// stick; Link does not move (A, the switch button, is ours).
+Pad SpectatorPad(const Pad& in);
 // What it gets from a player beside a downed one: everything but A.
 Pad ReviverPad(const Pad& in);
 

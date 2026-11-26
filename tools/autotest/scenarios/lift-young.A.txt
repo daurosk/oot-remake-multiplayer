@@ -1,0 +1,50 @@
+# lift-young (proof-0116, native puppets phase 3, reports/native-puppets-d.md FINAL steps 2-3): A and B young,
+# side by side on the field (pvp's spot). Packs built --puppet-body --puppet-liftable, LICHII_COOP_LIFT_PLAYER=1 on both.
+# PASS (shots both): lifted/lifted2 = B's copy in A's hands in Ruto's sitting carry, looping (not Like Like hold, not T-pose);
+# walked = B follows on B's own screen; thrown = B lands where A's screen shows it (within 1 m), copy back on own poses.
+# Logs: A 'our Link lifted P2.s copy: asking', B 'P1 lifts our Link: yes', B 'carried: our own Link plays' (UNKNOWN 7).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_LIFT_PLAYER=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+place 198.13 163.4 309.87
+wait 30
+toward 196.93 309.87 10
+wait 60
+mark ready
+press A
+wait 90
+mark lifted
+wait 60
+mark lifted2
+goto 203.0 309.87 1.0 600
+wait 30
+mark walked
+press A
+wait 120
+mark put-down
+toward 203.0 309.87 1
+wait 30
+press A
+wait 90
+mark lifted-again
+stick 1.0 0.0 20
+press A
+wait 180
+mark thrown
+wait 120
+mark end

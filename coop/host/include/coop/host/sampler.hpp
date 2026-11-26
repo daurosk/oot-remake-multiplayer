@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "coop/host/outgoing.hpp"
@@ -52,15 +54,62 @@ inline std::uint64_t frame_aligned_us(std::uint64_t server_now_us, std::uint64_t
   return server_now_us - age_us;
 }
 
+// PLAYER_STATUS's bits for this frame (docs/protocol.md, docs/puppet.md "Away"), from the bits sent last:
+// - loading: no Link to read (the game loads a scene or a save, or shows its title), or the title's menu is up;
+//   menus count for nothing then, and in_cutscene and dead keep what they were (a load inside an event, a Game Over's
+//   reload);
+// - in_cutscene: our Link in an event (G1: our_link_in_event); an unknown event state keeps the bit;
+// - in_menu: a game menu is in front (PlayerReading::in_menu);
+// - paused: a game menu is in front and our Link is in no event: the pause menu or the panel, which stop the game's
+//   world (a talk's choices are a menu inside an event: the world runs on);
+// - dead: our Link's life at 0 (PlayerReading::dead); unknown keeps the bit.
+std::uint8_t status_bits(std::uint8_t previous, const std::optional<PlayerReading>& reading, bool title_up);
+
+// Our world stands still with no game menu in front (row 164 follow-up): the quick-switch item menu stops the world
+// as the pause menu does, but patch 0018's menu state does not name it (it is no screen with a focused button), so a
+// player there was "playing" to every away rule: a lift they led held the others, a boss they owned stood still on
+// every screen. Read from the game itself: our Link's main animation (its AS slot 0) at a rate other than 0 whose frame
+// and place do not move for kStillUs while no event runs. Any change, or an animation at rate 0 (a pose held on
+// purpose), is a running world. One per game, fed every reading.
+// LICHII_COOP_STILL's value: WorldStill feeds `paused` only when it is "1" (pr-navi-01112: opt-in, off by default;
+// a held animation frame is no paused world: aiming, a ledge, a ladder, ice, a Like-Like's hold, a shock).
+inline bool world_still_on(const char* value) { return value != nullptr && std::string_view(value) == "1"; }
+
+class WorldStill {
+ public:
+  static constexpr std::uint64_t kStillUs = 300'000;  // 0.3 s: a held animation frame for that long is no game frame
+  static constexpr float kFrameEpsilon = 1e-3f;      // AS frames
+  static constexpr float kPlaceEpsilon = 1e-3f;      // metres
+
+  // This reading at `now_us`; true while our world stands still.
+  bool step(const PlayerReading& reading, std::uint64_t now_us) {
+    return step(reading.animation ? &*reading.animation : nullptr, reading.position,
+                reading.event_running.value_or(false), now_us);
+  }
+  // The same from its parts: `animation` null is not judged (none read, or not the game's own: a carried Link's
+  // reading plays the carried pose, CoopLiftPlayerGame::CarriedPose, held at one frame while its carrier stands).
+  bool step(const protocol::Animation* animation, const Vec3& position, bool event, std::uint64_t now_us);
+  bool still() const { return still_; }
+
+ private:
+  bool seen_ = false;
+  bool still_ = false;
+  std::string name_;
+  float frame_ = 0.0f;
+  Vec3 place_{};
+  std::uint64_t changed_us_ = 0;
+};
+
 class Sampler {
  public:
   explicit Sampler(SamplerSettings settings = {}) : settings_(settings) {}
 
   // One emulated frame. `server_now_us` is coop::net::Client::server_now_us();
   // call only once the client is welcomed (it has a clock offset). The
-  // status, if any, comes first in the result.
+  // status, if any, comes first in the result. No reading (no Link) sends no
+  // sample, only the status `loading`; so does `title_up` (status_bits).
   std::vector<Outgoing> frame(const std::optional<PlayerReading>& reading,
-                              std::uint64_t server_now_us);
+                              std::uint64_t server_now_us, bool title_up = false);
   std::vector<Outgoing> frame(PlayerReader& reader, std::uint64_t server_now_us) {
     return frame(reader.read(), server_now_us);
   }
@@ -68,6 +117,22 @@ class Sampler {
   // After a reconnect: send the status and equipment again and start
   // velocity afresh. The sequence keeps counting.
   void reset();
+
+  // The game is held and runs no frame() (the play-test bridge's hold,
+  // docs/playtest.md "Frame control"): the last sample sent again with this
+  // time and no velocity, once the keep-alive time has passed since it. The
+  // others then see a player standing still, not one whose samples stopped:
+  // presence fades those out after extrapolate_us + fade_us, and a faded
+  // player has no puppet (docs/puppet.md). Nothing while not in play (the
+  // last frame() had no reading) or before any sample.
+  // frame() after a hold stamps no sample at or before the last held one: its
+  // time is the game frame's (now less the frame's age), which can be older
+  // than the held sample's, and presence would drop it as too old.
+  std::optional<Outgoing> hold(std::uint64_t server_now_us);
+  // A reconnect while held (no frame() comes to send them): the status, the
+  // equipment and the last sample, as the first frame after a WELCOME sends
+  // them. Empty while not in play or before any sample.
+  std::vector<Outgoing> hold_reconnected(std::uint64_t server_now_us);
 
   // The player changed their colour while the game runs (docs/puppet.md,
   // "Changing your colour in the game"): the next frame() sends it in
@@ -104,6 +169,7 @@ class Sampler {
   std::uint64_t previous_time_us_ = 0;
   std::optional<protocol::PlayerSample> last_sent_;
   std::optional<protocol::Equipment> equipment_sent_;
+  std::uint64_t hold_floor_us_ = 0;  // the last held sample's time: frame() stamps after it
 };
 
 }  // namespace coop::host

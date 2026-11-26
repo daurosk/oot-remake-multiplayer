@@ -1,0 +1,123 @@
+# hs-boss-fix-reload B, refight after the host's load: in again through the door (see hs-boss-fix-reload.steps.txt).
+wait 1200               # A walks in first
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor before Gohma's door
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+wait 2400               # the door's event and the intro
+mark b-re-in
+goto 15.0 67.5 1.5 600
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round1
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round2
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round3
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round4
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round5
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round6
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round7
+wait 300
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+wait 90
+hold ZL+LSTICK_UP 90    # locked on: up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark round8
+wait 1800               # her death and its event
+goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls
+wait 600
+goto 9.0 67.2 1.5 300
+wait 900
+mark pickup

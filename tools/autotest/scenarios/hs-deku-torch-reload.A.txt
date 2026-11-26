@@ -1,0 +1,49 @@
+# hs-deku-torch-reload (Hookshot, issue #177 / row 91, case 3 of torch-flame-a): the torch's flame after a reload.
+# Not run before. Both games load a save from AFTER room E's event (as a player who reloads after it), and A walks
+# into room E: the torch must be lit and the web gone, with no event played again. Same native path as the live
+# case (hs-deku-torch): the plate's autogen bool 0x0f8f3fa3 boots the plate when room E loads and the torch's own
+# OneShotChemicalRequestIgnite lights it. If the flame is missing here but shown in hs-deku-torch-away, the save's
+# load is the place to look (reports/fable-g3-objects.md, objects-next-a-5).
+# SAVE: profile torch-reload (big-run-0115.ps1): the pre-deku save (owner's checkpoint '1. Deku Tree') in both pairs'
+#   autotest-save, then every slot:
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x0f8f3fa3=1 bool:0x46e8fcf9=1 bool:0x429126ef=1
+#   (the plate's bool, RoomE_KillSpiderWave and HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: what the
+#   event leaves in a save; the burned web's 64-bit key is not set, KillSpiderWave burns the web at load).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-deku-torch-reload (groups: hookshot-rc-checks.txt)
+# Pass (shots, no expect: PLAYED): A's "lit"/"web"/"late": the torch burning, no web; B's "b-in" the same in B's game.
+#   No "started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb" in either log (the event is played already).
+#   FAIL: a dark torch in either game. Keep both logs' "gimmick probe: 0c29e0a5d05f4426" lines for the triage.
+#   "The web" is the big web over the chest alcove behind the torch (Obj_InsideTheDekuTree_SpiderWeb_A_02 at
+#   -11.35 79.39 -10.98, key 0x181f8a8ef2fd1d3: "objects: - ..." and "key64 0x181f8a8ef2fd1d3 ... 0 -> 1" in the
+#   log). The barred alcove on the LEFT wall keeps its cobwebs and its Gold Skulltula (Land_SkulltulaGold_SpiderWeb_A_01
+#   at -18.08 78.78 -13.27) before and after the burn, solo too: not the web (row 146 was that misread, big-run-0115
+#   A-late shots vs hs-deku-torch A-placed).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -14.5 79.6 -6.5     # hs-deku-torch's watcher spot in room E
+wait 240
+mark placed
+toward -12.9 -10.5 6
+press ZL 10
+wait 300
+mark lit
+wait 600
+mark web
+wait 900
+mark late

@@ -1,0 +1,76 @@
+# hs-heart-181 A (tracker row 181, heart-181-0118 74ceed22): after a boss, player 2 stuck in the Heart Container's
+# item get with the heart-increase sound repeating fast. Cause: the boss heart cap put MaxLife back while Link's Life
+# component kept the higher max and wrote it back every frame. A and B fight Gohma together (entry as
+# hs-boss-together-gohma), both games test-kill her AFTER her pre-battle phase (82df7272; the owner's kill passes her ceiling clamp), A walks onto the container FIRST,
+# B onto its own copy 20 s later.
+# SAVE: as hs-boss-together-gohma (a pre-Gohma save in both lanes' baselines; the setflags clear the boss flags).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-heart-181 [-Lane 1]
+# PASS (shots + logs):
+#  1. A's a-pickup: A in the item get / holding the container; A's hearts +1 in a-late.
+#  2. B: either its container is gone live (b-pickup: nothing at the centre; then 181 cannot happen, note it) or B's
+#     item get ENDS: b-late shows B free (no item pose, no text box), its hearts = A's (one container for the group).
+#  3. B's log: at most a few 'our Link's max life .* (MaxLife is held lower' lines (one per pickup), NOT hundreds;
+#     no MaxLife up/down alternation (LICHII_COOP_DEBUG_FLAGS: 'MaxLife' lines stop within 2 s of b-pickup).
+#  FAIL: B frozen in the item pose in b-late (the report), or B's hearts above A's.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 1200
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door together: both games' own boss trigger
+mark a-in
+wait 600
+mark a-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark a-trigger
+mark a-fight
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
+wait 120
+mark a-kill
+wait 2400               # her death and its event
+goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls: A first
+wait 300
+goto 9.0 67.2 1.5 300
+wait 600
+mark a-pickup
+wait 2400
+mark a-late
+wait 1200
+mark end

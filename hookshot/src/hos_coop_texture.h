@@ -20,7 +20,7 @@
      another texture over the same storage (an alias) shows it too while it lasts, and loses it with that texture.
    For the renderers (host/coop_texture.c): hos_coop_texture_overridden(address, n), whether any override overlaps that
    range, and hos_coop_texture_overlay(address, data, n), the overrides laid over `data` (guest memory of that range).
-   Generic: any module, any texture, with no further Longshot build. Both renderers take them (Vulkan, WebGPU).
+   Generic: any module, any texture, with no further Longshot build. The Vulkan renderer takes them.
    The same file is in Longshot's host/ through our patch and in our repository (hookshot/src): keep them equal
    (tests/hookshot/module_test.cpp checks it). Plain C. */
 #ifndef HOS_COOP_TEXTURE_H

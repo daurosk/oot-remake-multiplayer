@@ -1,0 +1,64 @@
+# geno-pickup emotes: B says /wave /yes /no /look /here /wow /emote, A's screen shows B's puppet mid-emote (shot a-NAME); then A says them, B shoots. PASS: both lists of shots show the emote on the other game's puppet; no 'unknown command' notice; after a /here the other game's shot -here-navi shows the caller's Navi high over their head (the call marker).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+mark a-wave
+wait 240
+mark a-yes
+wait 240
+mark a-no
+wait 240
+mark a-look
+wait 240
+mark a-here
+wait 240
+mark a-wow
+wait 240
+mark a-emote-list
+wait 600
+chat /wave
+wait 30
+mark a-own-wave
+wait 200
+chat /yes
+wait 30
+mark a-own-yes
+wait 200
+chat /no
+wait 30
+mark a-own-no
+wait 200
+chat /look
+wait 30
+mark a-own-look
+wait 200
+chat /here
+wait 30
+mark a-own-here
+wait 60
+mark a-own-here-navi
+wait 140
+chat /wow
+wait 30
+mark a-own-wow
+wait 200
+chat /emote
+wait 60
+mark a-own-emote-list
+wait 300
+mark end

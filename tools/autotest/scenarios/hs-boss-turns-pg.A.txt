@@ -1,0 +1,103 @@
+# hs-boss-turns-pg (boss-target-0118, 0.11.8 boss turns; owner: "Phantom Ganon ... alternate between targeting
+# players"). A is the host and owns him first, B the guest; both warp into PhantomGanonStage. A hits him into
+# phase 2 (t1..t5, 6 a turn: life 42 -> 12, the light balls; run 141109 stopped at 18 with four). Then both stand and watch 80 s (w1..w16, a mark every
+# 5 s); nobody else hits, so his turns go round by number (A -> B -> A ...).
+# PASS (both logs + server, screenshots both games):
+#  1. Hand-overs between moves: A's log "share owner <PG id> is player 2" and B's "Enemy_DungeonBoss_PhantomGanon:
+#     now ours" then "made ours between moves (verb V, no attack): its own AI goes on, nothing started over (boss
+#     turns)", at least once each way; no "fell N m below its fight start".
+#  2. While B owns him: B's log "enemy shot DungeonBossGanondrof_Bullet_LightBall ...: sent (our enemy's)" (or the
+#     PhantomGanon light ball name) and B's Link's life falls (a hit taken in B's own game).
+#  3. Screenshots on BOTH games at a w-mark in B's turn: PG throwing at / the ball flying to B (B's Link in B's
+#     game, B's puppet in A's).
+#  5. Then the Forest Temple Octorok (west courtyard) with both players near: it shoots (screenshots o1..o4), its
+#     samples carry attack_read, any turn hand-over between its spits, no crash (plain shooters' turns, C #48 (4)).
+#  4. No crash, no stall ("stuck in one move") in either game.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-turns-pg -Server <boss-target coop_server>
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+nofairy                  # every bottle emptied: no fairy revive in the proof
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t4
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t5
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark w1
+wait 300
+mark w2
+wait 300
+mark w3
+wait 300
+mark w4
+wait 300
+mark w5
+wait 300
+mark w6
+wait 300
+mark w7
+wait 300
+mark w8
+wait 300
+mark w9
+wait 300
+mark w10
+wait 300
+mark w11
+wait 300
+mark w12
+wait 300
+mark w13
+wait 300
+mark w14
+wait 300
+mark w15
+wait 300
+mark w16
+wait 300
+mark after
+kill Enemy_DungeonBoss_PhantomGanon   # his death (the turns part is over)
+wait 2400               # his death
+mark d1
+setflag Sequence_IsChildhood 0
+warp ForestTemple       # plain shooter check (C #48 (4)): Octorok within 15 m of both
+wait 1200
+mark ft-in
+place -41.7 99.0 -38.3   # 6 m south of the west courtyard Octorok
+wait 600
+mark o1
+wait 600
+mark o2
+wait 600
+mark o3
+wait 600
+mark o4
+wait 600
+mark end

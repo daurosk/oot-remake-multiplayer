@@ -1,0 +1,50 @@
+# hs-heart-137 refight (A, after the host's title load of its pre-boss save): as hs-heart-181.A from its warp, without the title.
+mark a-refight
+warp InsideTheDekuTree Entrance
+wait 2400
+mark a-r-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door together: both games' own boss trigger
+mark a-r-in
+wait 600
+mark a-r-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark a-r-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark a-r-trigger
+mark a-r-fight
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
+wait 120
+mark a-r-kill
+wait 2400               # her death and its event
+goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls: A first
+wait 300
+goto 17.3 67.6 1.0 600   # onto the container (Banc 0xf914fa367471a3e3 17.31 47.0 67.63)
+wait 600
+mark a-r-pickup
+wait 2400
+mark a-r-late
+wait 1200
+mark a-r-end

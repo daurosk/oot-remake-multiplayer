@@ -11,33 +11,55 @@ run.ps1 -Runtime hookshot calls `run` when the scenario is a steps file. The ver
   load A [B]            title to the save in each (hookshot.py to_play); the `#! start` regex checked after it
   play A f [B f]        play scenarios/<f> in A (and B), both at once, and wait for both
   close B / kill B      B quits through its control bridge (it leaves the server) / B ends at once (a crash)
+  freeze B / thaw B     B's process is suspended / goes on (Windows): a frozen game sends and retries nothing, so
+                        after `server start` the other game gets back in (and hosts) first; every game is thawed
+                        before it is ended
   server stop|start     the server goes away / comes back on the same port (server-out[-n].txt)
   sleep S               seconds
   password B TEXT       the join password game B sends from its next start (LICHII_COOP_PASSWORD; - for none);
                         without a password line a game sends the server's (OOT_COOP_TEST_PASSWORD)
   try B welcomed|refused|none   start B without waiting and see within 40 s: welcomed (its log), refused (a new
                         "refused a connection" in the server log) or none; then end B
-  expect NAME A=1 B=0   wait up to --expect-wait s until each game named has that many puppets (CoopPuppet_*) and
-                        as many fairies (Dm_Npc_Navi) alive, from the objects debug lines; then shot NAME
+  expect NAME A=1 B=0 [see=CHECK...]   wait up to --expect-wait s until each game named has that many puppets
+                        (CoopPuppet_*) and as many fairies (Dm_Npc_Navi) alive, from the objects debug lines; then shot
+                        NAME (s<step>-NAME-A/-B.png) and grade its see= checks (tools/autotest/proofs.txt, proof.py)
+  see CHECK [CHECK...]  grade screenshot checks on the shots taken so far (after a `shot`)
   shot NAME             a screenshot of every running game
   lines NAME B max=N|min=N REGEX   game B's log has at most / at least N lines matching REGEX
-Results go to counts.txt (PASS/FAIL lines as run.ps1 writes them); a step that cannot run is a FAIL there too.
+Results go to counts.txt (PASS/FAIL/UNPROVEN lines as run.ps1 writes them); a step that cannot run is a FAIL there too.
+Owner rule (2026-11-18), no PASS from log lines alone: puppets and fairies are visible, so an expect step whose
+counts match is PASS only when its see= checks are all OK (FAIL when a shot shows the wrong result), else UNPROVEN.
+Log-only steps by nature: `try` (a join's outcome: a connection result) and `lines` (counts log lines); a run made of
+them alone still needs its group line's see= or logonly= (groups.py).
 The server's join password comes from the environment variable OOT_COOP_TEST_PASSWORD (run.ps1 -ServerPassword).
+Unset, `run` makes a random one for the run (ensure_server_password) and gives it to the server and to every game: every
+session has a join password (coop_server does not start without one; a game without the server's is refused).
 """
 import argparse
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import threading
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lanes  # noqa: E402  (brings hs.py: run_quiet and popen_quiet start a console child with no window)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WINDOWS = os.name == "nt"
 WANT_TRY = ("welcomed", "refused", "none")
 JOINED = "coop: welcomed as player"
+# hookshot.py TEST_GAME_DEFAULTS (the same pairs; tests/test_hs_steps.py checks): each game its own save, and no
+# "The game crashed last time" page on the title to take the load's A presses.
+TEST_GAME_DEFAULTS = (("LICHII_COOP_TEST_OWN_SAVE", "1"), ("LICHII_COOP_PROBLEM_ASK", "0"))
 LIVE = re.compile(r"coop: objects: ([+-]) (CoopPuppet_\w+|Dm_Npc_Navi) (0x[0-9a-f]+)")
+# Lines the module says once per game process, checked in every game's log after the steps (row 267: the list
+# head was said at every object scan, 43% of a tester's 190 MB log). A game process starts with "coop: build".
+ONCE_PER_PROCESS = (("objects list head (row 267)", re.compile(r"(?m)^.*coop: objects: list head ")),)
+PROCESS_START = re.compile(r"(?m)^.*coop: build ")
 
 
 class StepsError(Exception):
@@ -50,6 +72,17 @@ class Step:
 
     def __repr__(self):
         return "Step(%d, %r, %r)" % (self.n, self.verb, self.args)
+
+
+def ensure_server_password(environ):
+    """The run's join password in environ["OOT_COOP_TEST_PASSWORD"]: kept when set (run.ps1 -ServerPassword, a
+    wrapper's own), else a random one made here, so the server (--password-env) and the games (Runner's default
+    password, LICHII_COOP_PASSWORD) always get the same one. A wrapper that called `run` without it started a server
+    with no password, which coop_server refuses (rejoin-host-273's harness gaps). True when one was made."""
+    if environ.get("OOT_COOP_TEST_PASSWORD"):
+        return False
+    environ["OOT_COOP_TEST_PASSWORD"] = "autotest-" + secrets.token_hex(8)
+    return True
 
 
 def _game(n, x):
@@ -67,7 +100,7 @@ def parse_steps(text):
             continue
         w = line.split()
         verb, rest = w[0], w[1:]
-        if verb in ("start", "load"):
+        if verb in ("start", "launch", "load"):
             if not rest:
                 raise StepsError("line %d: %s A [B]" % (n, verb))
             steps.append(Step(n, verb, [_game(n, x) for x in rest], line))
@@ -76,7 +109,7 @@ def parse_steps(text):
                 raise StepsError("line %d: play A file [B file]" % n)
             pairs = [(_game(n, rest[i]), rest[i + 1]) for i in range(0, len(rest), 2)]
             steps.append(Step(n, verb, pairs, line))
-        elif verb in ("close", "kill"):
+        elif verb in ("close", "kill", "freeze", "thaw"):
             if len(rest) != 1:
                 raise StepsError("line %d: %s B" % (n, verb))
             steps.append(Step(n, verb, [_game(n, rest[0])], line))
@@ -102,14 +135,23 @@ def parse_steps(text):
             steps.append(Step(n, verb, [_game(n, rest[0]), rest[1]], line))
         elif verb == "expect":
             if len(rest) < 2:
-                raise StepsError("line %d: expect NAME A=1 [B=0]" % n)
-            want = {}
+                raise StepsError("line %d: expect NAME A=1 [B=0] [see=CHECK...]" % n)
+            want, see = {}, []
             for kv in rest[1:]:
                 m = re.match(r"^([AB])=(\d+)$", kv)
-                if not m:
-                    raise StepsError("line %d: expect wants A=N / B=N, not %r" % (n, kv))
-                want[m.group(1)] = int(m.group(2))
-            steps.append(Step(n, verb, [rest[0], want], line))
+                if m:
+                    want[m.group(1)] = int(m.group(2))
+                elif re.match(r"^see=[A-Za-z0-9_.-]+$", kv):
+                    see.append(kv[4:])
+                else:
+                    raise StepsError("line %d: expect wants A=N / B=N / see=CHECK, not %r" % (n, kv))
+            if not want:
+                raise StepsError("line %d: expect NAME A=1 [B=0] [see=CHECK...]" % n)
+            steps.append(Step(n, verb, [rest[0], want, see], line))
+        elif verb == "see":
+            if not rest or not all(re.match(r"^[A-Za-z0-9_.-]+$", c) for c in rest):
+                raise StepsError("line %d: see CHECK [CHECK...]" % n)
+            steps.append(Step(n, verb, list(rest), line))
         elif verb == "shot":
             if len(rest) != 1:
                 raise StepsError("line %d: shot NAME" % n)
@@ -156,11 +198,22 @@ def count_lines(text, pattern):
     script = ("$t = [Console]::In.ReadToEnd(); "
               "[regex]::Matches($t, '(?m)^.*' + $env:HS_STEPS_PATTERN).Count")
     try:
-        r = subprocess.run(["powershell", "-NoProfile", "-Command", script], input=text, capture_output=True,
+        r = lanes.hs.run_quiet(["powershell", "-NoProfile", "-Command", script], input=text, capture_output=True,
                            text=True, encoding="utf-8", env=dict(os.environ, HS_STEPS_PATTERN=pattern), timeout=120)
         return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+
+
+def once_floods(text):
+    """(name, lines, processes) of each once-per-process line said more often than the log has game processes."""
+    processes = max(1, len(PROCESS_START.findall(text)))
+    out = []
+    for name, pattern in ONCE_PER_PROCESS:
+        got = len(pattern.findall(text))
+        if got > processes:
+            out.append((name, got, processes))
+    return out
 
 
 def live_actors(text):
@@ -187,7 +240,7 @@ class Runner:
     """Plays parsed steps through a backend (HookshotGames, or a fake in the tests)."""
 
     def __init__(self, games, out, say=print, expect_wait=60.0, try_wait=40.0, clock=time.monotonic,
-                 sleep=time.sleep, default_password=None):
+                 sleep=time.sleep, default_password=None, kit_root=None, checks=None):
         self.g, self.out, self.say = games, out, say
         # A game with no `password` line sends the server's own (run.ps1's Start-Game does the same): every
         # session may have one. `password X -` is none.
@@ -197,17 +250,30 @@ class Runner:
         self.clock, self.sleep = clock, sleep
         self.passwords = {}
         self.fails = 0
+        self.unproven = 0
+        self.kit_root, self.checks = kit_root, checks   # proof.py's (None: the coop-kit above the repo, proofs.txt)
 
     def password(self, x):
         return self.passwords[x] if x in self.passwords else self.default_password
 
     def result(self, ok, text):
-        line = "%s %s" % ("PASS" if ok else "FAIL", text)
+        """ok: True (PASS), False (FAIL) or a state: "PASS", "FAIL", "UNPROVEN"."""
+        state = ok if isinstance(ok, str) else ("PASS" if ok else "FAIL")
+        line = "%s %s" % (state, text)
         self.say(line)
         with open(os.path.join(self.out, "counts.txt"), "a", encoding="utf-8") as f:
             f.write(line + "\n")
-        if not ok:
+        if state == "FAIL":
             self.fails += 1
+        elif state == "UNPROVEN":
+            self.unproven += 1
+
+    def prove(self, names):
+        """(state, text) of screenshot checks on this run's shots so far (proof.check_all)."""
+        sys.path.insert(0, HERE)
+        import proof
+        kit = self.kit_root if self.kit_root is not None else proof.find_kit_root()
+        return proof.check_all(self.out, names, kit, self.checks)
 
     def run(self, steps):
         for s in steps:
@@ -219,13 +285,32 @@ class Runner:
             ended = self.g.ended_by_itself()
             for x in ended:
                 self.result(False, "game %s ended by itself during step %d" % (x, s.n))
+        self.check_floods()
         return self.fails
+
+    def check_floods(self):
+        """A FAIL line for each once-per-process line a game's log says more often (silent when none)."""
+        for x in ("A", "B"):
+            try:
+                text = self.g.log(x)
+            except Exception:  # a game this backend does not have
+                continue
+            for name, got, processes in once_floods(text or ""):
+                self.result(False, "%s: %s said %d times in %d game process(es), want at most once each" % (
+                    x, name, got, processes))
 
     def do_start(self, s):
         for x in s.args:
             self.g.start(x, self.password(x), wait=False)
         for x in s.args:
             self.g.wait_joined(x)
+
+    def do_launch(self, s):
+        # like start, but only until each game draws: for a game that starts before the server (no welcome yet)
+        for x in s.args:
+            self.g.start(x, self.password(x), wait=False)
+        for x in s.args:
+            self.g.wait_joined(x, join=False)
 
     def do_load(self, s):
         for x, ok, why in self.g.load(s.args):
@@ -240,6 +325,12 @@ class Runner:
 
     def do_kill(self, s):
         self.g.kill(s.args[0])
+
+    def do_freeze(self, s):
+        self.g.freeze(s.args[0])
+
+    def do_thaw(self, s):
+        self.g.thaw(s.args[0])
 
     def do_server(self, s):
         (self.g.server_stop if s.args[0] == "stop" else self.g.server_start)()
@@ -270,7 +361,7 @@ class Runner:
         self.g.kill(x, keep_log="try%d" % s.n)
 
     def do_expect(self, s):
-        name, want = s.args
+        name, want = s.args[:2]
         t0 = self.clock()
         while True:
             ok, texts = True, []
@@ -282,9 +373,24 @@ class Runner:
             if ok or self.clock() - t0 >= self.expect_wait:
                 break
             self.sleep(0.5)
-        self.result(ok, "%s (want %s, after %d s): %s" % (name, " ".join("%s=%d" % kv for kv in want.items()),
-                                                          int(self.clock() - t0), "; ".join(texts)))
+        text = "%s (want %s, after %d s): %s" % (name, " ".join("%s=%d" % kv for kv in want.items()),
+                                                 int(self.clock() - t0), "; ".join(texts))
         self.g.shot("s%d-%s" % (s.n, name))
+        if not ok:
+            self.result(False, text)
+            return
+        # The counts come from log lines; the puppets are visible: the shot proves them (owner rule).
+        see = s.args[2] if len(s.args) > 2 else []
+        if not see:
+            self.result("UNPROVEN", text + " [counts from the log only: no see= check on shot s%d-%s]" % (s.n, name))
+            return
+        state, proof_text = self.prove(see)
+        self.result(state, text + (" [seen: %s]" if state == "PASS" else " [screenshot check: %s]") % proof_text)
+
+    def do_see(self, s):
+        state, text = self.prove(s.args)
+        self.result(state, "see %s%s" % (" ".join(s.args), " [seen: %s]" % text if state == "PASS"
+                                          else " [screenshot check: %s]" % text))
 
     def do_shot(self, s):
         self.g.shot("s%d-%s" % (s.n, s.args[0]))
@@ -309,8 +415,8 @@ class DryGames:
     def start(self, x, password, wait=True):
         self.say("  would start %s (save baseline back, fresh log%s)" % (x, ", join password set" if password else ""))
 
-    def wait_joined(self, x):
-        self.say("  would wait for %s: '%s'" % (x, JOINED))
+    def wait_joined(self, x, join=True):
+        self.say("  would wait for %s: %s" % (x, "'%s'" % JOINED if join else "its renderer only"))
 
     def load(self, xs):
         self.say("  would load %s (title to the save)" % " ".join(xs))
@@ -324,6 +430,12 @@ class DryGames:
 
     def kill(self, x, keep_log=None):
         self.say("  would end %s at once" % x)
+
+    def freeze(self, x):
+        self.say("  would suspend %s's process" % x)
+
+    def thaw(self, x):
+        self.say("  would let %s's process go on" % x)
 
     def server_stop(self):
         self.say("  would stop the server")
@@ -354,11 +466,17 @@ class HookshotGames:
         self.hk, self.games, self.out, self.server_exe, self.port = hk, games, out, server, port
         self.pipe, self.env, self.timeout, self.head, self.restore, self.say = pipe, env, timeout, head, restore, say
         self.procs, self.bridges, self.runs, self.expected_exit = {}, {}, {"A": 0, "B": 0}, set()
+        self.frozen = set()  # games whose process is suspended (freeze)
         self.server, self.server_runs = None, 0
+        self.server_delay = []   # hookshot.py test_delay_args: the TEST-ONLY delay (needs OOT_COOP_TEST=1)
+        self.renderer = None     # (wait, stall, limit) for hookshot.wait_renderer; None: (timeout, its defaults)
         self.commands = {x: os.path.join(out, "commands-%s.txt" % x) for x in games}
+        self.display = None      # the monitor for the game windows (placement.py); None: $OOT_TEST_DISPLAY, else DISPLAY2
 
     def _log_path(self, x):
-        return os.path.join(self.hk.exe_dir(self.games[x]), "longshot_log.txt")
+        # Longshot rc.3 wrote longshot_log.txt beside the exe, rc.4 in logs\ there: the newest one, else rc.3's place.
+        find = getattr(self.hk, "find_log", None)
+        return (find and find(self.games[x])) or os.path.join(self.hk.exe_dir(self.games[x]), "longshot_log.txt")
 
     def _run_log(self, x):
         """This run's log: the game's longshot_log.txt (start() removes an older one), else game-out-<x>-<n>.txt.
@@ -379,10 +497,47 @@ class HookshotGames:
         p = self.procs.get(x)
         return p is not None and p.poll() is None
 
+    def _suspend(self, x, on):
+        """NtSuspendProcess / NtResumeProcess on game x (Windows only; a game that is not running: nothing)."""
+        p = self.procs.get(x)
+        if p is None or p.poll() is not None:
+            return False
+        import ctypes
+        k32, nt = ctypes.WinDLL("kernel32", use_last_error=True), ctypes.WinDLL("ntdll")
+        k32.OpenProcess.restype = ctypes.c_void_p
+        h = k32.OpenProcess(0x0800, False, p.pid)  # PROCESS_SUSPEND_RESUME
+        if not h:
+            raise OSError("cannot open game %s's process (error %d)" % (x, ctypes.get_last_error()))
+        try:
+            fn = nt.NtSuspendProcess if on else nt.NtResumeProcess
+            fn.argtypes = [ctypes.c_void_p]
+            status = fn(h) & 0xFFFFFFFF
+        finally:
+            k32.CloseHandle(ctypes.c_void_p(h))
+        if status != 0:
+            raise OSError("%s game %s: NTSTATUS %#x" % ("suspending" if on else "resuming", x, status))
+        return True
+
+    def freeze(self, x):
+        if self._suspend(x, True):
+            self.frozen.add(x)
+            self.say("%s: process suspended" % x)
+
+    def thaw(self, x):
+        if x in self.frozen:
+            self.frozen.discard(x)
+            self._suspend(x, False)
+            self.say("%s: process goes on" % x)
+
     def _end(self, x, how):
         p = self.procs.get(x)
         if p is None:
             return
+        if x in self.frozen:
+            try:
+                self.thaw(x)  # a frozen game cannot quit through its bridge
+            except OSError as e:
+                self.say("%s" % e)
         self.expected_exit.add(x)
         if p.poll() is None:
             if how == "quit" and x in self.bridges:
@@ -422,8 +577,9 @@ class HookshotGames:
         env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=self.commands[x],
                    LICHII_COOP_SERVER="127.0.0.1:%d" % self.port, LICHII_COOP_NAME=x)   # "A", "B": /teleport B
         env.pop("LICHII_COOP_PASSWORD", None)
-        # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
-        env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
+        # Its own save, no crash ask on the title (TEST_GAME_DEFAULTS, as hookshot.py's): a switch can undo it.
+        for k, v in TEST_GAME_DEFAULTS:
+            env.setdefault(k, v)
         if password:
             env["LICHII_COOP_PASSWORD"] = password
         for kv in self.head["switches"] + self.env:
@@ -433,28 +589,41 @@ class HookshotGames:
                     continue
                 k = k[2:]
             env[k] = v
+        hk.pack_start(g, env, lambda line: self.say("%s: %s" % (x, line)))   # (as the kit's start: row 265)
         exe = os.path.join(hk.exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
         go = open(os.path.join(self.out, "game-out-%s-%d.txt" % (x, self.runs[x])), "wb")
-        kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
+        flags = getattr(hk, "popen_flags", None)   # (no window activation, see hookshot.popen_flags)
+        kw = flags() if flags else ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS
+                                    else {"start_new_session": True})
         self.procs[x] = subprocess.Popen([exe], cwd=hk.exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,
                                          stderr=subprocess.STDOUT, **kw)
         go.close()
         self.say("%s: started pid %d, bridge %s" % (x, self.procs[x].pid, sock))
+        if getattr(hk, "place_games", None):   # (its window on the chosen monitor as soon as it is there)
+            hk.place_games({x: self.procs[x].pid}, self.display, self.say, wait=30.0)
         self.bridges[x] = (sock, hk.Bridge.connect(sock, timeout=120))
         if wait:
             self.wait_joined(x)
 
-    def wait_joined(self, x):
+    def wait_joined(self, x, join=True):
+        # Drawing first: a game whose shaders still compile reads no controller and joins only after (a cold driver
+        # cache: minutes, its length not fixed), so this wait follows the compile's progress (hookshot.wait_renderer)
+        # and the join's own timeout counts from there.
+        wait, stall, limit = self.renderer or (self.timeout, self.hk.RENDERER_STALL, self.hk.RENDERER_LIMIT)
+        waited = self.hk.wait_renderer(lambda: self.log(x), lambda: self.alive(x), wait, stall, limit)
+        self.say("%s: renderer ready (%.0f s waited)" % (x, waited))
+        if getattr(self.hk, "place_games", None):   # (the game can move its window when its renderer comes up)
+            self.hk.place_games({x: self.procs[x].pid}, self.display, self.say)
+        if not join:
+            return
         t0 = time.monotonic()
         while JOINED not in self.log(x):
             if not self.alive(x):
                 raise RuntimeError("game %s closed while starting" % x)
             if time.monotonic() - t0 > self.timeout:
-                raise TimeoutError("game %s did not reach '%s' in %d s" % (x, JOINED, self.timeout))
+                raise TimeoutError("game %s did not reach '%s' in %d s after its renderer started"
+                                   % (x, JOINED, self.timeout))
             time.sleep(0.5)
-        # and drawing: a game whose shaders still compile reads no controller (a cold cache: minutes)
-        waited = self.hk.wait_renderer(lambda: self.log(x), lambda: self.alive(x), self.timeout)
-        self.say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
     def load(self, xs):
         hk, res, errs = self.hk, [], {}
@@ -496,8 +665,7 @@ class HookshotGames:
         hk, errs = self.hk, {}
         parsed = {}
         for x, f in files.items():
-            with open(os.path.join(HERE, "scenarios", f), encoding="utf-8") as fh:
-                parsed[x] = hk.parse(fh.read())
+            parsed[x] = hk.parse(hk.read_script(os.path.join(HERE, "scenarios", f)))
 
         def one(x):
             try:
@@ -548,12 +716,15 @@ class HookshotGames:
             return
         self.server_runs += 1
         sfx = "-%d" % self.server_runs if self.server_runs > 1 else ""
-        args = [self.server_exe, "--port", str(self.port)]
-        if os.environ.get("OOT_COOP_TEST_PASSWORD"):
-            args += ["--password-env", "OOT_COOP_TEST_PASSWORD"]
+        # (always set by main: ensure_server_password; the games send the same one)
+        args = [self.server_exe, "--port", str(self.port), "--password-env", "OOT_COOP_TEST_PASSWORD"]
         args += self.head.get("server", [])   # the steps file's `#! server` arguments
+        env = None
+        if self.server_delay:
+            args += self.server_delay
+            env = dict(os.environ, OOT_COOP_TEST="1")
         with open(os.path.join(self.out, "server-out%s.txt" % sfx), "w") as so:
-            self.server = subprocess.Popen(args, stdout=so, stderr=subprocess.STDOUT)
+            self.server = lanes.hs.popen_quiet(args, stdout=so, stderr=subprocess.STDOUT, env=env)
         time.sleep(1)
 
     def server_stop(self):
@@ -605,11 +776,21 @@ def main(argv=None):
     r.add_argument("--expect-wait", type=float, default=60.0)
     r.add_argument("--no-restore", action="store_true")
     r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--display", help="the monitor the game windows go to, by device name (default "
+                                     "$OOT_TEST_DISPLAY, else DISPLAY2): tools/autotest/placement.py")
+    r.add_argument("--test-delay-ms", type=int, default=0,
+                   help="TEST ONLY: the server holds every packet, this round trip in ms (half each way)")
+    r.add_argument("--test-jitter-ms", type=int, default=0, help="TEST ONLY: +- up to this many ms each way")
+    r.add_argument("--renderer-wait", type=int, help="seconds a game may take to start its renderer with no compile "
+                                                     "progress logged (default: --timeout)")
+    r.add_argument("--renderer-stall", type=int, help="while the compile logs progress: seconds without a rise "
+                                                      "before it fails (default: hookshot.py's)")
+    r.add_argument("--renderer-limit", type=int, help="seconds in all for one renderer start (default: hookshot.py's)")
     a = ap.parse_args(argv)
     if a.cmd == "check":
         bad = 0
         for path in a.files:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8-sig") as f:
                 text = f.read()
             try:
                 steps = parse_steps(text)
@@ -626,7 +807,7 @@ def main(argv=None):
     for kv in a.env:
         if "=" not in kv:
             ap.error("--env NAME=VALUE")
-    with open(a.steps, encoding="utf-8") as f:
+    with open(a.steps, encoding="utf-8-sig") as f:
         text = f.read()
     try:
         steps = parse_steps(text)
@@ -634,26 +815,45 @@ def main(argv=None):
         print("hs_steps.py: %s: %s" % (a.steps, e))
         return 1
     head = parse_header(text)
-    if a.dry_run:
-        print("steps %s: %d steps; games %s / %s; server %s port %d%s; pipes %s-A/-B; out %s" % (
+    if a.dry_run:   # (nothing set: a dry run starts nothing)
+        print("steps %s: %d steps; games %s / %s; server %s port %d, %s; pipes %s-A/-B; out %s" % (
             a.steps, len(steps), a.game_a, a.game_b, a.server, a.port,
-            ", join password from OOT_COOP_TEST_PASSWORD" if os.environ.get("OOT_COOP_TEST_PASSWORD") else "",
-            a.pipe, a.out))
+            "join password from OOT_COOP_TEST_PASSWORD" if os.environ.get("OOT_COOP_TEST_PASSWORD")
+            else "a random join password would be made for the run (OOT_COOP_TEST_PASSWORD is unset)", a.pipe, a.out))
         _dry(steps)
         return 0
+    made = ensure_server_password(os.environ)   # (before the server and the Runner read it)
+    password_note = ("a random join password made for this run (OOT_COOP_TEST_PASSWORD was unset)" if made
+                     else "join password from OOT_COOP_TEST_PASSWORD")
     os.makedirs(a.out, exist_ok=True)
     sys.path.insert(0, HERE)
     import hookshot as hk  # noqa: E402 (tools/autotest/hookshot.py: the bridge, the player, the load)
     say = hk.Log(os.path.join(a.out, "steps.txt"), echo=print)
     games = HookshotGames(hk, {"A": os.path.abspath(a.game_a), "B": os.path.abspath(a.game_b)}, a.out, a.server,
                           a.port, a.pipe, a.env, head["timeout"] or a.timeout, head, restore=not a.no_restore, say=say)
-    fails = 1
+    games.display = a.display
+    try:
+        mon = hk.placement.check_display(a.display) if WINDOWS else None
+    except hk.placement.PlacementError as e:   # (before any game window can open anywhere else)
+        say("window placement: %s" % e)
+        return 2
+    if mon:
+        if mon.get("note"):
+            say("window placement: %s" % mon["note"])
+        say("windows go to %s (work area %s)" % (mon["name"], mon["work"]))
+    say("server and games: %s" % password_note)
+    games.server_delay = hk.test_delay_args(a.test_delay_ms, a.test_jitter_ms)
+    games.renderer = (a.renderer_wait or games.timeout, a.renderer_stall or hk.RENDERER_STALL,
+                      a.renderer_limit or hk.RENDERER_LIMIT)
+    fails, runner = 1, None
     try:
         games.server_start()
-        fails = Runner(games, a.out, say=say, expect_wait=a.expect_wait).run(steps)
+        runner = Runner(games, a.out, say=say, expect_wait=a.expect_wait)
+        fails = runner.run(steps)
     finally:
         games.finish()
-    say("steps done: %d FAIL" % fails)
+    say("steps done: %d FAIL" % fails + (", %d UNPROVEN (no screenshot proof: not a pass)" % runner.unproven
+                                         if runner and runner.unproven else ""))
     return 1 if fails else 0
 
 
@@ -663,22 +863,25 @@ def _dry(steps):
     games = DryGames(say)
     for s in steps:
         say("step %d: %s" % (s.n, s.line))
-        if s.verb == "start":
+        if s.verb in ("start", "launch"):
             for x in s.args:
                 games.start(x, "")
         elif s.verb == "load":
             games.load(s.args)
         elif s.verb == "play":
             games.play(dict(s.args), "")
-        elif s.verb in ("close", "kill"):
+        elif s.verb in ("close", "kill", "freeze", "thaw"):
             getattr(games, s.verb)(s.args[0])
         elif s.verb == "server":
             (games.server_stop if s.args[0] == "stop" else games.server_start)()
         elif s.verb == "try":
             say("  would start %s and check for '%s' within 40 s, then end it" % (s.args[0], s.args[1]))
         elif s.verb == "expect":
-            say("  would wait until %s puppets and fairies, then shoot %s" % (
-                " ".join("%s=%d" % kv for kv in s.args[1].items()), s.args[0]))
+            say("  would wait until %s puppets and fairies, then shoot %s and grade %s" % (
+                " ".join("%s=%d" % kv for kv in s.args[1].items()), s.args[0],
+                " ".join(s.args[2]) if s.args[2] else "no see= check (UNPROVEN)"))
+        elif s.verb == "see":
+            say("  would grade %s on the shots so far" % " ".join(s.args))
         elif s.verb == "lines":
             say("  would count %s's log lines matching '%s' (%s=%d)" % (s.args[1], s.pattern, s.args[2], s.args[3]))
         elif s.verb == "password":

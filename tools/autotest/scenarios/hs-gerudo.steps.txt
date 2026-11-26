@@ -1,0 +1,46 @@
+# hs-gerudo (branch gerudo-rescue, player report 99, issue #252): the Gerudo Fortress carpenter rescue
+# is shared progress. Adult Link in Gerudo Fortress (setflag Sequence_IsChildhood 0 + warp, as hs-adult;
+# the baseline save is the child in the Graveyard). No scripted fight can beat a jail guard, so a
+# finished rescue is written with setflag (test only), exactly the five flags the game's own rescue
+# leaves: DestroyGerudoThief_*, IsGet_SmallKey_GerudoFortress.SmallKey0N, Saved_*,
+# IsAfterHelpCarpenter_*, WarpPoint0N_ClearEvent. Cell N holds Npc_Hylia_01(2+N)_Adult.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-gerudo -Timeout 900
+# PASS (each also a `lines` check below):
+#  1. host-done: A writes cell 1's rescue; B's flags debug has all five 0 -> 1 (0x2b24842a, 0xdc0010f6,
+#     0x0db0556f, 0xf1eb5977, 0x89c70062). Before this branch only 0x2b24842a reached B.
+#     Shot cell1-B: no guard and no key lying at cell 1 in B (B stands at the guard's spot). The
+#     carpenter may stay drawn until the area reloads (logic reads the flags at create): note, not a fail.
+#  2. guest-first: B is put at cell 2 (nothing written for it): B's own game makes its guard
+#     (shot cell2-B shows the guard or its appear event; B's log has bool 0x8a430074 Found_Npc_Hylia_014
+#     and/or 0x4dbbede5 AppearGerudoThief_014 0 -> 1, and A's log NEVER has them: each game's own). Then B writes cell 2's rescue and A's flags debug
+#     has 0x88bb5813, 0x1ee8e249, 0x8f360c8c, 0x06d7f245, 0x231f663a 0 -> 1.
+#  3. not shared: the guard's spawn flags above stay in B (check A's log by hand), and both
+#     logs "coop: story: sharing N story flags" (N = main's + 16).
+# INCONCLUSIVE (say so, not FAIL): a patrol guard throws Link into the prison (no card in the save)
+# before a shot; the warp never logs "coop: test warp done".
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+start A
+start B
+sleep 40
+load A B
+lines story-A A min=1 coop: story: sharing [0-9]+ story flags
+lines story-B B min=1 coop: story: sharing [0-9]+ story flags
+play A hs-gerudo-1.A.txt B hs-gerudo-1.B.txt
+shot arrived
+play A hs-gerudo-2.A.txt B hs-gerudo-2.B.txt
+lines destroy1-B B min=1 bool 0x2b24842a.*0 -> 1
+lines key1-B B min=1 bool 0xdc0010f6.*0 -> 1
+lines saved1-B B min=1 bool 0x0?db0556f.*0 -> 1
+lines afterhelp1-B B min=1 bool 0xf1eb5977.*0 -> 1
+lines warp1-B B min=1 bool 0x89c70062.*0 -> 1
+shot cell1
+play A hs-gerudo-3.A.txt B hs-gerudo-3.B.txt
+shot cell2
+play A hs-gerudo-4.A.txt B hs-gerudo-4.B.txt
+lines destroy2-A A min=1 bool 0x88bb5813.*0 -> 1
+lines key2-A A min=1 bool 0x1ee8e249.*0 -> 1
+lines saved2-A A min=1 bool 0x8f360c8c.*0 -> 1
+lines afterhelp2-A A min=1 bool 0x0?6d7f245.*0 -> 1
+lines warp2-A A min=1 bool 0x231f663a.*0 -> 1
+shot end

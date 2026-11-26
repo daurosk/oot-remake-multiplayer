@@ -1,0 +1,142 @@
+# scrub-near2 (#144, scrubs-b, v2 for 0.11.4): the real #144 race. Both players beat the
+# same Scrub Brother One; B finishes its talk while A's talk is still open.
+# Why v2: in scrub-near (run 20261115-182202) B got A's hits given and never landed its own
+# hit on One, so B never talked and nothing reached A mid-talk (INCONCLUSIVE). Here
+# LICHII_COOP_SCRUBS=0 (both games, as #! switches go to both) turns the brothers' hit
+# sharing off: each game solves its own puzzle with its own shots (A's solve moves, proven
+# in that run), and only the talk-end flags InsideTheDekuTree_RoomK_Cleared (0xd2f46f66) and
+# ..._EnemyScrubDekuDestroy_003 (0x60c22ed7) are shared, which is the #144 case. A keeps only
+# the near guard (LICHII_COOP_SCRUB_TALK_HOLD=near); for the both-guards check run it again
+# with that switch removed from this line.
+# B:LICHII_COOP_OBJECTS=0 (lane1-a, run 20261116-001834 INCONCLUSIVE): with enemy sharing on,
+# B's brothers were copies of A's (A owns them, "(ours)" only in A), so B's shots never beat
+# its own One and B never talked. Sharing stays on in A: A's near guard comes from its objects walk.
+# Saves: clear 0xd2f46f66 and 0x60c22ed7 in both lane baselines first
+# (tools/autotest/save_flags.py set ...=0), put them back after (or restore a backup).
+# Timeline: both scripts start together (hookshot.py waits for both renderers). Same moves
+# up to "talk"; A then leaves One's text up 60 s (wait 3600), B waits 5 s and presses
+# through its talk (~30 s), so B's flags reach A while A's text is up.
+# Expect:
+#  - A: "scrubs: brother One ... took the last hit" and B: the same line (each its own solve).
+#  - A: "scrub near (the Scrub Brothers): within talking distance of our Link or in our event, its destroy flags from
+#    others wait" before B's talk ends.
+#  - B: "flags debug: bool 0xd2f46f66 ... 0 -> 1" (its own talk) BEFORE A's mark talk-end;
+#    A: no "flags debug" line for 0xd2f46f66 / 0x60c22ed7 between A's marks "talk" and "hold".
+#  - A's talk ends: after mark talk-end A walks to the room centre (mark end position near
+#    -27.8 20.3; end-A.png with no text box), then "no longer near ... go through", both flags
+#    1 in A, One gone in both.
+# FAIL (the old softlock): A stuck in One's talk at mark end (Link still near -23.2 34.7, text
+# on end-A.png). Before/after: LICHII_COOP_SCRUB_TALK_HOLD=0 should show that.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_SCRUBS=0,B:LICHII_COOP_OBJECTS=0,LICHII_COOP_SCRUB_TALK_HOLD=near,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 240
+mark aim-two
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark two
+toward -34.0 39.6 10     # face Three
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark three
+goto -24.0 29.5 0.6 240
+toward -23.7 40.0 10     # face One
+wait 60
+mark aim-one
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One: the talk comes when Link is near
+mark at-one
+mark talk
+press A
+wait 120
+press A
+wait 3600                # the text stays up: B's talk ends and its flags come in meanwhile
+mark hold
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark talk-end
+goto -27.8 20.3 1.0 600  # back to the room centre: A can move, the talk is over
+mark end

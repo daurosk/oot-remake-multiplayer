@@ -1,0 +1,50 @@
+# pvp-probe (proof-0116, native-puppets-e-3 'U2/U7 probe', young kinds): A hits B's copy one kind at a time, 3 s apart:
+# Kokiri slash, spin (hold Y, let go), jump attack (ZL+A), Deku Stick. Collect A 'U2 record of our hit' (38 words) +
+# 'strike N ... U7: our main AS <name>', B 'outcome' + Life fall; shots both at each hit (k-*).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PVP_NATIVE=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+give dekustick
+wait 30
+place 198.63 163.4 309.87
+wait 30
+toward 196.93 309.87 10
+chat /pvp on
+wait 240
+hold ZL+Y 8
+wait 15
+mark k-slash
+wait 180
+toward 196.93 309.87 4
+hold ZL+Y 70
+wait 15
+mark k-spin
+wait 180
+toward 196.93 309.87 4
+hold ZL+A 20
+wait 15
+mark k-jump
+wait 180
+assign DekuStick
+wait 60
+toward 196.93 309.87 4
+hold ZL+ZR 8
+wait 15
+mark k-stick
+wait 180
+mark end

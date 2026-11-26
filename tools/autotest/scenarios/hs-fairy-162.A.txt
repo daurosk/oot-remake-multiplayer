@@ -1,0 +1,35 @@
+# hs-fairy-162 (tracker rows 162/163, down-fairy-0118 5671f77e, in 0.11.8): down but not out stays ON (unlike
+# hs-fairy-revive). B carries a fairy in bottle A, is hurt to one heart (the low-health beep), then takes a lethal
+# hit: the fairy revives B, B is never downed (row 162), and B's beep stays in B's game (row 163).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-fairy-162 (switches below on both games)
+# PASS (logs + shots, both games):
+#  1. B's log: "coop: dbno: a fairy in our bottle: a lethal hit is the game's own death, its fairy revives us (not
+#     downed)" before b-lethal; after the lethal hit B's life goes to 0 and back above 0 (LICHII_COOP_DEBUG_OBJECTS
+#     "our Link's life" lines); no "downed" / "spectating" state for B in either log; A's Lobby/log never shows B down.
+#  2. Shots b-revived-B: B standing, hearts refilled by the fairy (not the downed pose); a-revived-A: B's puppet standing.
+#  3. Row 163: B's log names HeartAlert as emitted (LICHII_COOP_DEBUG_SOUND=1, the beep happened) and has NO
+#     "coop: link sound 'HeartAlert' sent" line; A's log never names HeartAlert for B's user.
+#  VOID: no fairy line in B's log (the bottle was not filled), or B never reached one heart.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_SOUND=1
+#! timeout 900
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 900                # B fills its bottle, is hurt to one heart, then hurt once more
+mark a-low
+wait 900
+mark a-revived
+wait 300
+mark end

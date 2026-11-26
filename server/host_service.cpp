@@ -2,12 +2,17 @@
 // The lines it says are the ones coop_server always printed.
 #include "host_service.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "join_helper.hpp"
+#include "options.hpp"
 #include "nat_net.hpp"
 #include "pcp.hpp"
 #include "punch.hpp"
@@ -60,6 +65,92 @@ std::uint16_t HostService::port() const { return server_ ? server_->port() : 0; 
 
 const Session* HostService::session() const { return server_ ? &server_->session() : nullptr; }
 
+std::string HostService::admin(const std::string& line) {
+  if (!server_ || stopped_) return "not hosting";
+  return server_->admin(line);
+}
+
+std::string host_memory_line(const Session::Sizes& s, const EnetServer::Queues& q) {
+  const auto n = [](std::uint64_t v) { return std::to_string(v); };
+  return "server: " + n(s.connections) + " connections, deferred " + n(s.deferred) + " (" + n(s.deferred_bytes) +
+         " B), objects " + n(s.objects) + " (listed " + n(s.present) + "), flags " + n(s.flags) + ", dead " +
+         n(s.dead) + ", grass " + n(s.grass) + ", world " + n(s.world_entries) + " in " + n(s.world_scenes) +
+         " scenes, actions " + n(s.actions) + "; enet: " + n(q.peers) + " peers, out " + n(q.outgoing_bytes) +
+         " B (largest " + n(q.largest_outgoing) + "), in " + n(q.waiting_bytes) + " B, unreliable not queued " +
+         n(q.unreliable_skipped) + ", dropped for backlog " + n(q.backlog_drops);
+}
+
+std::string HostService::memory_line() const {
+  if (!server_ || stopped_) return {};
+  return host_memory_line(server_->session().sizes(), server_->queues());
+}
+
+std::vector<std::string> read_ban_file(const std::string& path) {
+  std::vector<std::string> out;
+  if (path.empty()) return out;
+  std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
+  std::string line;
+  while (std::getline(in, line) && out.size() < 4096) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    const bool ok = line.size() > 2 && line.size() <= 2 + 64 && line.rfind("k:", 0) == 0 &&
+                    line.find_first_not_of("0123456789abcdef", 2) == std::string::npos;
+    if (ok) out.push_back(line);
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+void write_ban_file(const std::string& path, const std::vector<std::string>& bans) {
+  std::ofstream out(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary | std::ios::trunc);
+  out << "# Players this host banned (their player key). They stay banned in every game you host.\n"
+         "# Delete a line (or this file) to let that player in again.\n";
+  for (const std::string& id : bans) out << id << "\n";
+}
+
+void HostService::set_ngplus(std::uint8_t level) {
+  if (server_) server_->session().set_ngplus(level);
+}
+
+bool HostService::set_join_password(const std::string& password, std::string& error) {
+  if (!server_ || stopped_) {
+    error = "not hosting";
+    return false;
+  }
+  if (config_.public_game) {
+    error = "a public game has no password to change; host a private game to use one";
+    return false;
+  }
+  if (password.empty()) {
+    error = "a join password is needed: every session has one";
+    return false;
+  }
+  if (protocol::is_public_join_password(password)) {
+    error = "that join password is kept for public games; choose another one";
+    return false;
+  }
+  if (const char* why = password_problem(password)) {
+    error = std::string("the join password is ") + why;
+    return false;
+  }
+  if (password.find(' ') != std::string::npos) {   // (the invite code cannot hold one, as at the start)
+    error = "the join password has a space; use one without";
+    return false;
+  }
+  config_.session.join_password = password;
+  server_->session().set_join_password(password);
+  if (rendezvous_) rendezvous_->set_password(password);
+  std::optional<std::string> code;
+  if (invite_where_) code = nat::make_invite(nat::Invite{*invite_where_, password});
+  if (code) {
+    std::lock_guard lock(status_mutex_);
+    status_.invite = *code;
+  }
+  say(std::string("the join password changed: players who join from now on need the new one; players already in stay "
+                  "in") + (code ? " (the invite code is a new one too)" : ""));
+  return true;
+}
+
 bool HostService::start(std::string& error) {
   auto fail = [&](const std::string& why, HostProblem problem) {
     error = why;
@@ -70,6 +161,20 @@ bool HostService::start(std::string& error) {
     return false;
   };
   if (server_) return fail("the session is already running", HostProblem::kNone);
+  if (config_.public_game) {
+    if (config_.relay_via.empty() || config_.relay_room.empty()) {
+      return fail("a public game needs the game list's server (Relay) and a room name", HostProblem::kRelay);
+    }
+    config_.session.join_password = protocol::public_join_password(config_.relay_room);
+    if (config_.relay_list.empty()) config_.relay_list = config_.relay_room;
+    // Relay only (HostServiceConfig::public_game): nothing that shows or opens the host's address.
+    config_.upnp = false;
+    config_.invite = false;
+    config_.session.same_network_open = false;
+    config_.bind = 0x7F000001u;
+  } else if (protocol::is_public_join_password(config_.session.join_password)) {
+    return fail("that join password is kept for public games; choose another one", HostProblem::kNoPassword);
+  }
   if (config_.session.join_password.empty()) {
     return fail("a join password is needed: every session has one, and it also encrypts the traffic",
                 HostProblem::kNoPassword);
@@ -84,6 +189,7 @@ bool HostService::start(std::string& error) {
     options.max_connections = config_.max_connections;
     options.bind = config_.bind;
     options.session = config_.session;
+    options.test_delay = config_.test_delay;
     auto server = std::make_unique<EnetServer>(std::move(options));
     if (server->start()) server_ = std::move(server);
     if (config_.port == 0) break;
@@ -107,8 +213,23 @@ bool HostService::start(std::string& error) {
   const std::string where = config_.bind ? "only " + show_ipv4(*config_.bind) : "all network adapters";
   say("listening on port " + std::to_string(server_->port()) + " (" + where + ", datagrams of " +
       std::to_string(coop::protocol::kDatagramBytes) + " bytes)");
-  say("players must give the join password to join; the traffic is encrypted");
+  if (config_.public_game) {
+    say("public game: anyone with the room name can join without a password, only through the relay; the traffic "
+        "is encrypted");
+  } else {
+    say("players must give the join password to join; the traffic is encrypted");
+  }
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
+  if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
+  if (config_.session.same_network_open) {
+    say("players from a private address (this network) join without the join password");
+    // Open online too: a port forward, a tunnel or a VPN on this network brings
+    // players from the internet in from a private address, without the password.
+    if (config_.upnp || config_.invite || !config_.relay_via.empty()) {
+      say("this game is also open online: a tunnel, a VPN or a forwarded port on this network can let others in "
+          "without the password; choose Password on this network: Needed unless you trust this network");
+    }
+  }
   if (!config_.session.allowed.empty()) {
     say("only the " + std::to_string(config_.session.allowed.size()) +
         " address range(s) given with --allow may connect");
@@ -118,6 +239,7 @@ bool HostService::start(std::string& error) {
     upnp::Config c;
     c.internal_port = server_->port();
     c.external_port = server_->port();
+    c.bind = config_.helper_bind;
     c.log = config_.log;
     mapping_ = std::make_unique<upnp::Mapping>(c);
     if (mapping_->open()) {
@@ -128,6 +250,7 @@ bool HostService::start(std::string& error) {
       pcp::Config p;
       p.internal_port = server_->port();
       p.external_port = server_->port();
+      p.bind = config_.helper_bind;
       for (const nat::Addr& at : config_.pcp_routers) p.routers.push_back({at, 0x7F000001u});
       p.log = [this](const std::string& text) { say("router forward: " + text); };
       say("router forward: UPnP did not open the port; asking the router with PCP / NAT-PMP");
@@ -150,14 +273,46 @@ bool HostService::start(std::string& error) {
 
   if (!config_.relay_via.empty()) {
     relay::RelayLinkConfig c;
+    c.bind = config_.helper_bind;
     if (!relay::parse_relay_address(config_.relay_via, c.relay_host, c.relay_port)) {
       say("relay: '" + config_.relay_via + "' is not a relay address (name or IPv4, optional :port)");
       set_message("'" + config_.relay_via + "' is not a relay address", HostProblem::kRelay);
     } else {
       c.server_port = server_->port();
       c.key = config_.relay_key;
+      c.room = config_.relay_room;
+      if (!config_.relay_list.empty() && !config_.relay_room.empty()) {
+        const std::string host = relay::listing_name(config_.relay_list);
+        c.listing = [this, host]() -> std::optional<relay::RoomEntry> {
+          relay::RoomEntry e;
+          e.host = host;
+          const Session& session = server_->session();
+          e.players = static_cast<std::uint8_t>(std::min<std::size_t>(session.player_count(), 255));
+          e.max_players = config_.session.max_players;
+          e.version = config_.public_game ? protocol::public_listing_version() : protocol::kProtocolVersion;
+          return e;
+        };
+        if (config_.public_game && config_.official_key) {
+          const protocol::OfficialSeed key = *config_.official_key;
+          const std::string signed_relay = config_.official_relay;
+          c.proof = [key, signed_relay](const std::string& room,
+                                        const relay::RoomEntry& listed) -> std::optional<relay::RoomProof> {
+            const protocol::OfficialProof p =
+                protocol::official_sign(key, signed_relay, room, listed.version, protocol::official_now_s());
+            relay::RoomProof out;
+            out.time_s = p.time_s;
+            out.signature = p.signature;
+            return out;
+          };
+        }
+      }
       c.log = [this](const std::string& text) { say("relay: " + text); };
       const std::string relay_text = config_.relay_via;
+      c.on_room = [this, relay_text](const std::string& room) {
+        say("relay: room \"" + room + "\" is yours. Friends join with " + room + "@" + relay_text);
+        std::lock_guard lock(status_mutex_);
+        status_.relay_room = room + "@" + relay_text;
+      };
       c.on_code = [this, relay_text](const std::string& code) {
         const std::string shown = relay::show_code(code);
         say("relay: join code " + shown + ". Give your friends " + shown + "@" + relay_text +
@@ -172,7 +327,9 @@ bool HostService::start(std::string& error) {
         set_message("relay: " + why, HostProblem::kRelay);
         link_.reset();
       } else {
-        say("relay: asking " + config_.relay_via + " for a join code");
+        say("relay: asking " + config_.relay_via + " for a join code" +
+            (config_.relay_room.empty() ? std::string() : " and room \"" + config_.relay_room + "\"") +
+            (c.listing ? std::string(", listed on its room list") : std::string()));
       }
     }
   }
@@ -237,6 +394,7 @@ void HostService::finish_invite() {
     say("invite: note: your router gives every address its own port (symmetric NAT), so friends may not get "
         "through; upnp = yes or a VPN helps (docs/play-online.md)");
   }
+  invite_where_ = where;
   std::lock_guard lock(status_mutex_);
   status_.invite = *code;
   status_.invite_done = true;
@@ -269,13 +427,17 @@ void HostService::say_counts() {
   shown_limited_ = now.rate_limited;
   // Enemy counts (issues 105, 133), at most every 5 s while they change.
   const std::uint64_t enemies =
-      now.group_links + now.group_refused + now.damage_relayed + now.damage_dropped + now.dead_told;
+      now.group_links + now.group_refused + now.damage_relayed + now.damage_dropped + now.damage_returned +
+      now.damage_held + now.dead_told + now.boss_turns + now.enemy_turns + now.keyed_dropped;
   if (config_.counts && enemies != shown_enemies_ && now_ms() - enemies_at_ >= 5000) {
     shown_enemies_ = enemies;
     enemies_at_ = now_ms();
     say("enemies: group entries taken " + count(now.group_links) + ", refused " + count(now.group_refused) +
         "; damage relayed " + count(now.damage_relayed) + ", dropped " + count(now.damage_dropped) +
-        "; kills told late " + count(now.dead_told));
+        ", given back across a hand-over " + count(now.damage_returned) + ", kept through the owner hold " +
+        count(now.damage_held) + "; kills told late " + count(now.dead_told) +
+        "; boss turns " + count(now.boss_turns) + ", enemy turns " + count(now.enemy_turns) +
+        "; keyed values not kept (list full) " + count(now.keyed_dropped));
   }
 }
 
@@ -314,10 +476,15 @@ void HostService::stop() {
   const Stats& stats = server_->session().stats();
   say("stopping; relayed " + count(stats.relayed) + ", dropped " + count(stats.dropped()) + ", half-open refused " +
       count(stats.half_open_limited) + ", not allowed " + count(stats.not_allowed));
-  say("host save loads " + count(stats.host_resets) + ", over the rate " + count(stats.rate_limited));
+  say("host save loads " + count(stats.host_resets) + ", over the rate " + count(stats.rate_limited) + " dropped, " + count(stats.rate_deferred) + " waited");
   say("flags relayed " + count(stats.flag_relayed) + ", refused " + count(stats.flag_refused) + ", clashes " +
       count(stats.flag_clashes) + "; join relayed " + count(stats.join_relayed) + ", not there " +
       count(stats.join_not_there) + ", dropped " + count(stats.join_dropped));
+  if (config_.session.approve_joins) {
+    say("host approval: asked " + count(stats.joins_held) + ", let in " + count(stats.joins_allowed) +
+        ", turned away " + count(stats.joins_denied) + ", no answer " + count(stats.joins_unanswered) +
+        ", in without asking " + count(stats.joins_remembered));
+  }
   std::lock_guard lock(status_mutex_);
   status_.state = HostState::kStopped;
   status_.players = 0;

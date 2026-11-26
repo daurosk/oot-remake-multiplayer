@@ -1,0 +1,76 @@
+From 50f6eef7eede4d45ae95a738ddbfcd6f0055c72a Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 16 Nov 2026 11:37:15 -0900
+Subject: [PATCH] Co-op save slot opens: the slot folder the game opened last,
+ for the module
+
+oot-remake-multiplayer's patch 0025 (player report 120). host/nn_fs.c
+records the slot folder (<save root>\slot_NN) whose progress.sav the game
+opened last on the account save's mount, whether for reading or writing,
+and counts those opens. hookshot_coop.dll reads it through
+hos_coop_fs_save_slot_opened (found by name in the exe, like patch 0008's
+exports; patch 0001's nx2/build.py list exports it on Linux): the host
+sends its guests the slot the game loaded and plays, not the newest file
+on disk. Nothing else changes: the open itself is as before.
+---
+ host/nn_fs.c | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/host/nn_fs.c b/host/nn_fs.c
+index fa745c1b..149f2590 100644
+--- a/host/nn_fs.c
++++ b/host/nn_fs.c
+@@ -1121,6 +1121,45 @@ HOS_COOP_FS_EXPORT int hos_coop_fs_save_remount(const char *root) {
+     ReleaseSRWLockExclusive(&save_lock);
+     return 0;
+ }
++/* (oot-remake-multiplayer's patch 0025, player report 120) The slot folder (<save root>\slot_NN) whose progress.sav
++   the game opened last on the account save's mount, read or write (which), and a count of those opens. The host's
++   module sends the guests the slot the game loaded and plays, not the newest file on disk (another slot saved
++   earlier). With patch 0024's load window, the open inside a save load is the loaded slot. */
++static char save_slot_open[HOS_FS_PATH];
++static unsigned save_slot_opens;
++static int save_slot_write;   /* the last open was for writing (the game saves into the slot it plays) */
++static void note_save_slot_open(const char *guest, const char *host, int write, const Save *save) {
++    static const char kProgress[] = "progress.sav";
++    char committed[HOS_FS_PATH];
++    /* (Longshot 3.1 opens a staged save's files in its work copy: the slot is named in the committed folder, where the
++       module reads the save root and its slots, published at each Commit) */
++    const size_t w = save ? strlen(save->work) : 0;
++    if (w && !_strnicmp(host, save->work, w) && (host[w] == '\\' || host[w] == '/') &&
++        snprintf(committed, sizeof committed, "%s%s", save->committed, host + w) < (int)sizeof committed)
++        host = committed;
++    const size_t k = sizeof kProgress - 1, n = strlen(host);
++    const char *colon = strstr(guest, ":/");
++    if (!colon || n <= k + 1 || _stricmp(host + n - k, kProgress) || (host[n - k - 1] != '\\' && host[n - k - 1] != '/'))
++        return;
++    AcquireSRWLockExclusive(&mount_lock);
++    const size_t m = strlen(coop_save_name);
++    if (m && m == (size_t)(colon - guest) && !strncmp(coop_save_name, guest, m)) {
++        snprintf(save_slot_open, sizeof save_slot_open, "%.*s", (int)(n - k - 1), host);
++        save_slot_write = write;
++        ++save_slot_opens;
++    }
++    ReleaseSRWLockExclusive(&mount_lock);
++}
++/* The count of the account save's progress.sav opens (0: none yet), the last one's slot folder in out, and in
++   *write whether it was opened for writing. */
++HOS_COOP_FS_EXPORT unsigned hos_coop_fs_save_slot_opened(char *out, size_t cap, int *write) {
++    AcquireSRWLockShared(&mount_lock);
++    const unsigned opens = save_slot_opens;
++    if (out && cap) snprintf(out, cap, "%s", save_slot_open);
++    if (write) *write = save_slot_write;
++    ReleaseSRWLockShared(&mount_lock);
++    return opens;
++}
+ 
+ /* nn::fs::IsSaveDataExisting(ApplicationId, account::Uid const&) -> bool */
+ HLE(_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE) {
+@@ -1353,6 +1392,7 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
+     }
+     snprintf(fh->path, sizeof fh->path, "%s", g);
+     G64(ARG(0)) = new_handle(fh);
++    note_save_slot_open(g, path, want_write, save);   /* (patch 0025) */
+     if (save) { ReleaseSRWLockExclusive(&save_lock); if (away) hos_vcore_back(); }
+     if (hos_trace || fs_trace()) hos_log("fs: OpenFile(%s)", g);
+     RET(0);

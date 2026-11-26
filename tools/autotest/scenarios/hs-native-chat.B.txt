@@ -1,0 +1,29 @@
+# hs-native-chat, B: says hi, says a line of exactly 200 characters (the protocol's most: a longer one is refused,
+# "NOT sent", proof-01112-c run 3), sees A's line, then takes a lethal hit with no fairy in a bottle: downed, the
+# held line "You are down  0:4x" on B's banner (native-hud-01112's DBNO banner, the same Banner path).
+# Checks (log, B): "test chat 'hi': sent", the 200-character line "sent" (not "NOT sent"), "dbno: no fairy in our
+# bottles: a lethal hit downs us", B downed.
+# Shots: b-hi: B's own "you: hi" on B's banner; b-a-line: "A: hello from A" in A's colour; b-down, b-down-2: the
+# banner, framed, "You are down  0:4x" (the clock going down between the two), in the game's own colour, no chat
+# over it.
+#! timeout 420
+mark start
+nofairy                         # every bottle emptied: a bottled fairy revives instead of downing (VOID 2026-11-23)
+wait 620
+chat hi
+wait 30
+mark b-hi
+wait 500
+chat Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut 200 !
+wait 30
+mark b-long
+wait 1810
+mark b-a-line                   # A's line (A says it at 2950)
+wait 210
+hurt 80
+wait 60
+mark b-down
+wait 300
+mark b-down-2
+wait 900
+mark b-end

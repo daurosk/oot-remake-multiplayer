@@ -1,0 +1,25 @@
+# hs-items-share (Hookshot, issues 57 and 58): the shared ocarina still comes out after a scene load, and the
+# two letters. A has the ocarina (from Saria); B never had it.
+# BEFORE the run: take the ocarinas out of B's baseline save, as for hs-ocarina-given:
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py no-ocarina <B pair>\autotest-save\slot_0*\progress.sav
+# and put it back from autotest-save-backup afterwards.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-items-share
+# Pass, B's log:
+#  1. "coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina" exactly ONCE in the whole run. Up to 0.11.1
+#     it came again after the Kakariko load (the equip went back to "" at each load: issue 57). Shots out-1 (Graveyard)
+#     and out-2 (Kakariko, after the load): the ocarina in B's hands.
+#  2. "coop: items: Zelda's Letter 1 -> 0: the Kakariko gate is open (issue 58)" after A's mark gate.
+#  3. "coop: items: Ruto's Letter into bottle 0x7d48df76: King Zora has not moved here (issue 58)" after A's mark ruto
+#     (B's bottle A is given empty at B's mark bottle; the test save's King Zora has not moved).
+# Fail: a second "ocarina '' ->" line, or nothing out at out-2; no letter line.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+#! timeout 300
+mark start
+wait 900                # B takes Zelda's Letter and an empty bottle first
+mark gate
+setflag Npc_Hylia_Soldier_003_GateOpen 1     # as if A showed Zelda's Letter to the Kakariko guard
+wait 300
+mark ruto
+setflag IsGet.Item_Bottle_Letter 1           # as if A got Ruto's Letter
+wait 2400
+mark end

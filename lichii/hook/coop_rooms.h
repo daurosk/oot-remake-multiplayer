@@ -77,6 +77,12 @@ private:
     std::size_t count_ = 0;
 };
 
+// cutscene-bleed (#251): is a position in `room` of `scene`, with the Tracker's kMargin slack (no flicker in a
+// door: the raw nearest room changes in doorways and through walls)? other_room only when another room's nearest
+// placement is at least kMargin nearer than `room`'s; unknown when no room of the scene is within kFar.
+enum class Where { unknown, in_room, other_room };
+Where ClearlyIn(const Table& table, std::string_view scene, const Vec3& at, int room);
+
 // Keeps a room for each key (a player number) with the kMargin slack. A key
 // whose guess is not known is forgotten, so its next known guess has no
 // slack against the room it had before.

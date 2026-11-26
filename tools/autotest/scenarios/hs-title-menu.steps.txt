@@ -1,27 +1,45 @@
-# hs-title-menu (Hookshot only): the title screen's own co-op rows (patch 0004 + the puppet pack's
-# title_menu step, docs/hookshot.md "The title menu"). A starts as the harness starts it (co-op on, coop.ini
-# names the test server) and stays at the title: Continue, New Game, Options, then Host, Join, Co-op
-# Settings in the same list. A moves down four rows, presses A, then B twice.
-# Needs the puppet pack built again with this branch WITH --title-rows (Build-Hookshot-Coop passes it; its log says
-# "title menu: Host, Join and Co-op Settings on the title"), installed in A's game.
+# hs-title-menu (Hookshot only): the title screen's own co-op rows Host, Join and Co-op Settings (patch 0004 + the
+# puppet pack's title_menu step; docs/hookshot.md "The title screen"), in BOTH games, with screenshot proof.
+# Needs the kit's pack made with --title-rows (hookshot-build.ps1 since 0.11.5; the pack's coop_puppet.json says
+# "title_rows": true). Both games start as the harness starts them (co-op on from the start) and stay at the title.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-title-menu
-# Pass: the lines below, and the shots (player-A.txt names them):
-#   rows          six rows in the game's own look: Continue, New Game, Options, Host, Join, Co-op Settings
-#                 (only three: the new parts do not show; three more but empty: the texts were not set)
-#   third-down / fourth-down   the game's own highlight bar and ornaments on the row reached (the log's
-#                 "focus is on button N" lines give the order)
-#   pressed       if the row was one of ours: the game's own press look, then the co-op page (Host's status,
-#                 Join's field or the settings) over the title; else whatever the game's row does
-#   closed        the title again, its rows all there, the cursor usable (the game is not stuck)
-# Sounds (heard only): the game's own move and press sounds.
+# Shots (s<step>-<name>-A/-B.png) and checks (proofs.txt, title-*):
+#   top       the title, the cursor on Continue: the game's own rows then ours, in the game's own look (Longshot
+#             v3.0.0: Continue, New Game, Options, Host, Join, Co-op Settings; no focusable button 3)
+#   on-host   the game's own highlight on Host (the list changed from top)
+#   on-join   the highlight one row lower, on Join (Join reachable; then back up to Host for the press)
+#   pressed   Hookshot's menu on the Multiplayer tab's Host page over the title (co-op came with the start: the page
+#             says "Co-op is on" and how it started; a press never does nothing)
+#   closed    the title again, the menu gone
+# The change checks' thresholds are a first guess: the first run calibrates them (proof.py dist), then refs.
 #! switches LICHII_COOP_PUPPET=1
-#! timeout 240
+#! timeout 300
 start A
-sleep 15
-play A hs-title-menu.A.txt
-lines menu-on A min=1 coop: title menu: on \(Minus at the title\)
-lines title-seen A min=1 coop: title menu: the title screen 0x[0-9a-f]+, \d+ buttons
-lines rows-set A min=1 coop: title menu: the title's own rows Host, Join, Co-op Settings \(buttons 4 to 6\)$
-lines rows-no-text A max=0 their texts could not be set
-lines focus-moves A min=3 coop: title menu: the title's focus is on button \d
-lines no-sound-trouble A max=0 coop: title menu: the game's sound name
+start B
+sleep 30
+lines rows-A A min=1 coop: title: the title's own rows Host, Join, Co-op Settings \(buttons 4 to 6\)$
+lines rows-B B min=1 coop: title: the title's own rows Host, Join, Co-op Settings \(buttons 4 to 6\)$
+lines no-rows-A A max=0 coop: title: the title has \d+ buttons, not the puppet pack's
+lines no-rows-B B max=0 coop: title: the title has \d+ buttons, not the puppet pack's
+lines no-text-A A max=0 their texts could not be set
+lines no-text-B B max=0 their texts could not be set
+shot top
+play A hs-title-menu.down.txt B hs-title-menu.down.txt
+shot on-host
+see title-on-host-A title-on-host-B
+lines focus-A A min=1 coop: title: the title's focus is on button 4$
+lines focus-B B min=1 coop: title: the title's focus is on button 4$
+play A hs-title-menu.join.txt B hs-title-menu.join.txt
+shot on-join
+see title-on-join-A title-on-join-B
+lines join-A A min=1 coop: title: the title's focus is on button 5$
+lines join-B B min=1 coop: title: the title's focus is on button 5$
+play A hs-title-menu.up.txt B hs-title-menu.up.txt
+play A hs-title-menu.press.txt B hs-title-menu.press.txt
+shot pressed
+see title-pressed-A title-pressed-B
+lines pressed-A A min=1 coop: title: the title's row 0100 pressed
+lines pressed-B B min=1 coop: title: the title's row 0100 pressed
+play A hs-title-menu.close.txt B hs-title-menu.close.txt
+shot closed
+see title-closed-A title-closed-B

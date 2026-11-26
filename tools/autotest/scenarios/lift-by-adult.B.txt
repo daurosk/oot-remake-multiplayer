@@ -1,0 +1,28 @@
+# lift-young B (proof-0116): stands still on the field 1.2 m west of A, facing A; is lifted, carried, put down, lifted, thrown.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_LIFT_PLAYER=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+place 196.93 163.4 309.87
+wait 30
+toward 198.13 309.87 6
+mark standing
+wait 900
+mark carried
+wait 600
+mark landed
+wait 900
+mark end

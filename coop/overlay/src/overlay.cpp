@@ -101,7 +101,7 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
       continue;
     }
     const std::optional<std::string_view> theirs =
-        p.scene ? std::optional<std::string_view>(*p.scene) : std::nullopt;
+        coop::host::view_of(p.scene);
     if (!coop::host::same_place(theirs, local_scene)) {  // either era
       skip(Why::other_scene);
       continue;

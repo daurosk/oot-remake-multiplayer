@@ -1,0 +1,134 @@
+# kd-roll-hold-325 B: see the A file. B stuns in rounds 1 and 3, A in round 2.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 1200
+mark start
+warp DodongoStage DodongoStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-in
+event Get_StoneOfFire_AppearBoss   # his appear (the rematch's boot event): in DodongoStage he stays in 'Wait' without it
+wait 1800               # the intro, then the fight
+mark b-fight
+wait 300
+mark b-f1
+wait 300
+mark b-f2
+await 3600 anim Enemy_DungeonBoss_Dodongo \S+ 'Rolling_Loop'$   # our COPY of KD starts his roll (at most 60 s)
+stun Enemy_DungeonBoss_Dodongo   # made ours mid-roll: issue 150's hand-over
+mark b-r1-stun
+wait 300
+mark b-r1-01
+wait 300
+mark b-r1-02
+wait 300
+mark b-r1-03
+wait 300
+mark b-r1-04
+wait 300
+mark b-r1-05
+wait 300
+mark b-r1-06
+wait 300
+mark b-r1-07
+wait 300
+mark b-r1-08
+wait 300
+mark b-r1-09
+wait 300
+mark b-r1-10
+wait 300
+mark b-r1-11
+wait 300
+mark b-r1-12
+wait 300
+mark b-r1-13
+wait 300
+mark b-r1-14
+wait 300
+mark b-r1-15
+wait 300
+mark b-r1-16
+wait 300
+mark b-r1-17
+wait 300
+mark b-r1-18
+wait 300
+mark b-r1-19
+wait 300
+mark b-r1-20
+wait 300
+mark b-r1-21
+wait 300
+mark b-r1-22
+wait 300
+mark b-r1-23
+wait 300
+mark b-r1-24
+wait 300
+mark b-r1-25
+wait 15300               # round 2 is A's: A starts it at most 3600 after our round 1 ends, then 3600 + 7500 (+ 600 marks)
+await 3600 anim Enemy_DungeonBoss_Dodongo \S+ 'Rolling_Loop'$   # our COPY of KD starts his roll (at most 60 s)
+stun Enemy_DungeonBoss_Dodongo   # made ours mid-roll: issue 150's hand-over
+mark b-r3-stun
+wait 300
+mark b-r3-01
+wait 300
+mark b-r3-02
+wait 300
+mark b-r3-03
+wait 300
+mark b-r3-04
+wait 300
+mark b-r3-05
+wait 300
+mark b-r3-06
+wait 300
+mark b-r3-07
+wait 300
+mark b-r3-08
+wait 300
+mark b-r3-09
+wait 300
+mark b-r3-10
+wait 300
+mark b-r3-11
+wait 300
+mark b-r3-12
+wait 300
+mark b-r3-13
+wait 300
+mark b-r3-14
+wait 300
+mark b-r3-15
+wait 300
+mark b-r3-16
+wait 300
+mark b-r3-17
+wait 300
+mark b-r3-18
+wait 300
+mark b-r3-19
+wait 300
+mark b-r3-20
+wait 300
+mark b-r3-21
+wait 300
+mark b-r3-22
+wait 300
+mark b-r3-23
+wait 300
+mark b-r3-24
+wait 300
+mark b-r3-25
+wait 600
+mark end

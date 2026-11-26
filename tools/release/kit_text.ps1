@@ -1,5 +1,5 @@
-# How make_kit.ps1 copies a text file into a kit: Windows line ends (the repo stores LF) and
-# @PORT@ filled in with the kit's default port. Dot-sourced by make_kit.ps1 and by
+# How make_kit_hookshot.ps1 copies a text file into a kit: Windows line ends (the repo stores LF) and
+# @PORT@ filled in with the kit's default port. Dot-sourced by make_kit_hookshot.ps1 and by
 # tests/launch_test.ps1, so the test kits are copied the same way as a built kit.
 #
 # coop.ini.template keeps @PORT@ (and its other @TOKEN@s) for play.ps1 and hookshot-build.ps1,

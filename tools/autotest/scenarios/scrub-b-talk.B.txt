@@ -1,0 +1,80 @@
+# scrub-b-talk, B (see the A file): B beats room B's shared Deku Scrub while A's talk with it is open,
+# then talks through its own talk.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -16.0 109.3 13.0
+wait 240
+mark placed
+toward -22.67 9.68 10     # face the scrub (x z)
+wait 2400                # A beats it and opens its talk meanwhile
+mark aim
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark hit
+wait 300
+goto -20.6 12.2 1.0 600  # to the scrub (beside the other Link)
+mark at-scrub
+mark talk
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark talk-end
+goto -16.0 13.0 1.0 600
+mark end

@@ -21,6 +21,7 @@
 //   reaction; a life that is not taken within 400 ms is written directly.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <deque>
@@ -39,8 +40,10 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_digest.h"
 #include "coop_npc_anim.h"
 #include "coop_guard.h"
+#include "coop_show_delay.h"
 
 namespace CoopObjects {
 
@@ -79,9 +82,38 @@ struct Seen {
     // our game last set them (sent in its samples).
     std::uint64_t bsa_component = 0;
     std::optional<coop::protocol::BossBsa> bsa;
+    std::optional<coop::protocol::BossVariants> variants;  // row 222 part 2: with bsa, its action variations (component 24)
+    // Row 222 (coop_boss_orders.h): for one of ours, the battle manager's orders our game gave it (sent in its
+    // samples, component 23).
+    std::optional<coop::protocol::BossOrders> orders;
+    // Boss turns (0.11.8): an enemy's attack as its own game says (CoopBossNative::AttackFlagsAt: its BSA's current
+    // action verb attribute Attack). nullopt: not read (no BSA, not an enemy).
+    std::optional<bool> attacking;
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // Since the last walk its Life component's last hit id (+0x1b18) moved: own_hit when it moved to an id we did
+    // not replay (our game's own hit: our Link's sword, arrow, bomb), replay_hit when our last replayed id was
+    // reached in that move. A fall while a replay waits is the replay landing only without own_hit (g2-bosses
+    // probe 20261117-114108: two of A's hits on Gohma's copy were booked as B's refused replay and never sent).
+    bool own_hit = false;
+    bool replay_hit = false;
+    // Protocol 14: with a moved hit id, the hit record its damage step took (CoopObjects' ReadHitRecord).
+    std::optional<coop::protocol::HitRecord> hit_record{};
+    // Its last hit id was read in this walk and in the one before (so "did not move" is known; PvP's FollowLife).
+    bool hit_id_read = false;
+    // Issue 133 (whose hit): a new hit in its game's own hit record (not our replay of the owner's), and whether
+    // its attacker was our Link or one of our own projectiles (CoopProjectiles::HitIsOurs). Not set: no new hit.
+    std::optional<bool> hit_ours{};
+    // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
+    // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
+    std::uint64_t life_component = 0;
+    // Row 97 (coop_event_member.h): whether it is an event member in our Link's event
+    // (InSameEvent, the game's own test); nullopt when it has no event member component.
+    std::optional<bool> event_member;
+    // Row 138(8) (coop_sensor_claim.h): whether our Link is in its area by its own logic input (the game's own
+    // sensor of our Link: Jabu-Jabu's IsInOpenMouthArea ...); nullopt when it has none of them.
+    std::optional<bool> sensor_in_area;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -116,6 +148,12 @@ struct PlayWish {
     bool alias = false;
     float loop = 0.0f;
     float run = -1.0f;
+    // Row 175: never played over the copy's own death (`keep_own_death`) or a copy's own stun
+    // (`keep_own_stun`; ai-stuns: a plain enemy's too, `stun_plain`: only IsPlainStunAnimation) in slot 0. We read those from its own animation (PictureDeathHere, LifelessKillHere,
+    // row 169's own stun), and a play put over it at once erased it before any walk saw it (CoversOwnReaction).
+    bool keep_own_death = false;
+    bool keep_own_stun = false;
+    bool stun_plain = false;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -137,6 +175,14 @@ bool IsWeb(std::string_view actor);
 // PlayWish::only_over: true when `only_over` is empty or one of its
 // '|'-separated parts is in `slot_name`.
 bool PlaysOver(std::string_view slot_name, std::string_view only_over);
+
+// Row 175: this play would put the owner's animation over the copy's own death or stun that its own AI put in
+// slot 0 (PlayWish keep_own_death / keep_own_stun). Not played; the Mover tells Sync of a death (NoteOwnDeath).
+bool CoversOwnReaction(const PlayWish& wish, std::string_view slot_name);
+
+// Row 175: a copy whose death here we read from its own animation, not from a life: a Poe sister's painting
+// (PictureDeathHere) and a lifeless enemy that reacts (LifelessKillHere, issue 133).
+bool DeathReadFromAnimation(std::string_view name, bool reacts, bool life_read);
 
 using Mat3 = std::array<float, 9>;
 
@@ -167,17 +213,31 @@ struct LifeWrite {
     // With a hurt: where the player who hit stands, when known (the enemy is
     // knocked away from there).
     std::optional<coop::protocol::Vec3> from;
+    // With a hurt: the player who hit (0: not known). Row 177: the replay names their puppet as the attacker.
+    std::uint8_t hitter = 0;
     // With a hurt: where the hitter's hit landed (DAMAGE's hit_at): the replay lands there (Gohma's eye).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // With a hurt (protocol 14): the hit that happened (DAMAGE's hit_record, or the owner's sample hit): the
+    // replay gives the game that hit (its weapon, element, place) instead of the stand-in sword hit.
+    std::optional<coop::protocol::HitRecord> record{};
     // Past the hit replay (a hit record the game's damage rules judge): the amount goes straight into the game's
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
     // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
     bool direct = false;
+    // Raise its life to `life` through the game's own Life step (a negative sum: the game's heal), never a write:
+    // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
+    // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
+    bool heal = false;
+    // The test script's kill (`kill <name>`): a kill, as the game's own killing blow would be. In the game that owns
+    // the enemy it goes past its life stops (CoopActorEvents::PassStops; Gohma's stop at 1 outside her chance time
+    // held a test kill at 1 in LANE1 run 4). A copy's own Life step still holds a copy boss (HeldLifeStep); its hit
+    // goes to the owner as DAMAGE, judged there as any hit.
+    bool test_kill = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
 // not Navi, held equipment or invisible helpers) and the breakable world
-// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
+// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle) or the followers (IsOwnFollower).
 bool IsShared(std::string_view name);
 
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
@@ -186,6 +246,12 @@ bool IsShared(std::string_view name);
 // solve or the prize is shared (docs/dungeon.md, docs/items.md). The pond's
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
+
+// Row 214: an actor whose own AI goes with the local Link (waits for it, runs ahead of it, comes to it, is
+// carried by it): the Ganon's Castle escape's Zelda (Npc_Hylia_Zelda_Adult*), child Ruto, the dogs, Epona
+// and the ranch horses. Each game runs its own, never shared, so no owner's escort is put over a game whose
+// own Link and story flags are elsewhere, and a leave, a join or an owner change mid-escort moves nothing.
+bool IsOwnFollower(std::string_view name);
 
 // Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
 // one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
@@ -225,6 +291,45 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
+// Row 114: a boss off the walk is not dead. Phantom Ganon left the walk at life 15, and "none there" read as his
+// death: his host's Game Over was sent as the boss beaten. A boss's death is the game's own life 0, read while its
+// death runs (its event deletes it later), so a body off the walk reads by what was last known of it, with no time:
+// - last read at life 0: dead (its death ran; deleted after it);
+// - last read with life left, no delete request for it since (the game took it off its list, as it does with live
+//   actors, churn-b): away, alive;
+// - last read with life left, then deleted (the game's delete request, patch 0007; or our own remove of a copy):
+//   removed alive. Never a death; it no longer keeps a boss of several bodies alive (Twinrova's sisters), but a
+//   boss whose bodies are all removed alive is not dead either.
+// A body never read this scene (a save that beat it): none there, dead as before. Without delete requests (the
+// emulator) a body off the walk with life left is away. `last` keeps the last reading per body name; it is
+// forgotten with the scene and on a new session (CoopObjects' NoteBosses and ForgetBosses).
+struct BossLifeSeen {
+    std::uint64_t address = 0;
+    std::int32_t life = 0;
+    bool removed = false;  // a delete request for `address` came after that reading
+};
+// One reading per body: a name may have several bodies at once (Gohma's eggs, a boss's two hands), each read by
+// its own address. (Row 191: kept by name alone, two eggs took turns in the one reading, and the dead one logged
+// "read at life 0 here (from 1): its death" on every walk until it was deleted, as if it had been revived.)
+using BossLives = std::map<std::string, std::vector<BossLifeSeen>, std::less<>>;
+void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+// The last reading of the body `name` at `address`; nullptr: never read.
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address);
+void NoteBossRemoved(std::uint64_t address, BossLives& last);
+std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
+                                  const BossLives& last);
+// Whether that "dead" (BossAliveKept false) is a reading of its death: a body read at life 0, on this walk or as its
+// last reading this scene. False for a boss none of whose bodies was read here (a save that beat it, or the walk
+// never saw it): dead for the pull, never proof of a death (G2 review: a beaten set must never come from it).
+bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_view> bodies, const BossLives& last);
+
+// boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
+// from its body actors' own animation (AS slot 0): Gohma's `Sleep` and
+// `Pre_Battle_*` (on the ceiling, before her drop). True when a body there
+// plays one; false when the bodies there play others (the fight, or her
+// intro under way); nothing when no body there has its animation read.
+bool IsPreBattleAnimation(std::string_view name);
+std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
 
 // Whether our game owns the dungeon's boss (boss-intro): from this walk when the boss is in it (`ours`: the
 // addresses of the bosses we own), else the last walk that had it, for kBossOursKeepUs: the owner's Gohma is
@@ -271,6 +376,22 @@ bool IsRolled(std::string_view name);
 bool IsHatchingEgg(std::string_view name);
 bool IsHatchling(std::string_view name);
 
+// Row 172 (Forest Temple, after a player died): an enemy whose life 0 is its split, not its death. The Floormaster
+// (and its Lens of Truth one) holds three Enemy_Floormaster_Little in its own ActorHolder (Pack/Actor
+// ActorHolderParam "Little", MaxActors 3, IsAutoRecreate); at life 0 it hides (Floormaster.brain.Hiding, no Die
+// animation in its AS), the Littles jump out, and a Little that is not killed in time grows it back
+// (FloormasterGrow). Its life 0 is read as a death only once every Little linked to it (its group) died too.
+bool SplitsAtZero(std::string_view name);
+// Row 172 (dungeon-sweep-0118-2): what such an enemy splits into (Enemy_Floormaster_Little, _Little_Truth). Only
+// a game whose own Floormaster's life read 0 splits (a copy is held at life 1 or more and runs none of it), and
+// the Littles have no placement hash, so nothing shared them: every other game had none, saw only the regrow, and
+// the Floormaster could be finished only in that one game. Now the game that split shares its Littles (OBJECT_SPAWN
+// of a made id, whoever owns the root; the group link then gives them the root's owner), and the others make
+// copies. A game that splits while another player's Littles are near deletes its own; two splits at once keep the
+// lower player number's (its spawn reaches the other, which removes its own: OBJECT_REMOVE gone).
+bool IsSplitPart(std::string_view name);
+inline constexpr float kSplitReachM = 30.0f;  // a brood's reach (its GroupPart's)
+
 // Boss minions (native boss sync, docs/dungeons-boss.md): an enemy a boss makes
 // in the fight (King Dodongo's babies, Big Octo's children). With native boss
 // sync every game's boss runs the same spawn action, so each would make its
@@ -281,6 +402,67 @@ bool IsHatchling(std::string_view name);
 // Empty when the name is no boss minion; else the maker's actor name.
 std::string_view MinionMaker(std::string_view name);
 inline constexpr float kMinionReachM = 40.0f;
+// Row 231: more than this many of one minion made by a copy's boss within kMinionLoopUs (each deleted here) is a
+// loop (logged once, still deleted): Meg makes 3 decoys a cycle, King Dodongo a few babies, Gohma an egg at a time.
+inline constexpr std::size_t kMinionLoopMax = 12;
+inline constexpr std::uint64_t kMinionLoopUs = 3'000'000;
+
+// Row 230 (Geno's survey): a Redead's or Gibdo's scream freezes only its owner's Link. The scream is the game's own
+// sensor attack (Redead.action.sleepparalysis: ExecuteSensorHitSetupAttack) on the AI's target, and an AI targets
+// only its own game's Link, never a puppet. So the owner's game shares the hit its Link took (ObjectStrike, its
+// kind words) and every other game whose own Link stands in the scream's reach takes that hit (HurtOurLinkNative):
+// the player's own SleepParalysis reaction (Player ConditionParam, 210 frames), as in a game of one.
+// The actors with RedeadParam (Enemy_ReDead*, Enemy_Gibdo*, never their _Dictionary entries).
+bool IsScreamer(std::string_view name);
+// Row 222 (Twinrova, option C): a boss's battle manager (Enemy_KotakeKoumeBattleManager: it chooses its sisters'
+// battle state from its own game's Link; no BSA of its own). Flagged object_presence::battle_manager by a game that
+// does not share its orders (option A, SetSharesOrders): one game without them keeps the group with its owner.
+// PresenceFlagsBattleManager: whether a manager's presence carries the bit.
+constexpr bool PresenceFlagsBattleManager(bool is_manager, bool shares_orders) { return is_manager && !shares_orders; }
+bool IsBattleManager(std::string_view name);
+// Row 232: the boss a summoned piece grabs for (Enemy_DeadHand_Hand -> Enemy_DeadHand), else empty. While a piece we
+// own is in its attack (its grab: it holds our own Link), our presence entry of that boss carries
+// object_presence::grabbed_here, and the server hands the boss to us (Session::grab_owner): his AI rises only for a
+// grab in his own game (OneShotDeadHandHandSendMessage MessageAppear).
+std::string_view GrabbingSummoner(std::string_view name);
+// enemies-dying-01111: a boss or part some boss room names (CoopBoss::Rooms parts): the director handles its death.
+bool InBossRoomTable(std::string_view name);
+// A hit our Link took from a screamer is its scream (not its bite) when it plays the scream's AS node (Shout,
+// CryStanding), or took no life while it plays none of the bite's (Attack_*).
+bool IsScream(std::string_view animation, std::int32_t took);
+// RedeadParam ParalysisEnableDistMax 5.5 m and ParalysisEnableAngleDiff 45 degrees (the same in town; the Gibdo's
+// are the Redead's): our Link within that reach of the enemy's place and front (no rotation: the distance only).
+inline constexpr float kScreamReachM = 5.5f;
+inline constexpr float kScreamHighM = 2.5f;  // (its DisableLookIKHeight: one floor)
+inline constexpr float kScreamAngleDeg = 45.0f;
+bool InScreamReach(const coop::protocol::Vec3& enemy, const std::optional<coop::protocol::Quat>& facing,
+                   const coop::protocol::Vec3& link);
+// Row 230: a hit on our Link names its attacker only by place (the hit record's +0x2a0: the Redead's own place, live
+// 2026-11-23 0.2 m off it; its +0x240 word is the hit's sensor from a pool, not an actor). The screamer (IsScreamer)
+// of `objects` (address -> anything with .name and .position) nearest to `from` within kScreamerAtM, else 0. An
+// unknown place (not finite, or all zero) names none.
+inline constexpr float kScreamerAtM = 1.5f;
+template <typename Objects>
+std::uint64_t ScreamerAt(const Objects& objects, const coop::protocol::Vec3& from) {
+    if (!std::isfinite(from[0]) || !std::isfinite(from[1]) || !std::isfinite(from[2]) ||
+        (from[0] == 0.0f && from[1] == 0.0f && from[2] == 0.0f)) {
+        return 0;
+    }
+    std::uint64_t best = 0;
+    float best_m = kScreamerAtM;
+    for (const auto& [address, o] : objects) {
+        if (!IsScreamer(o.name)) {
+            continue;
+        }
+        const float dx = o.position[0] - from[0], dy = o.position[1] - from[1], dz = o.position[2] - from[2];
+        const float m = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (m <= best_m) {
+            best = address;
+            best_m = m;
+        }
+    }
+    return best;
+}
 
 // A placed actor that may come into being in one game only, after the scene
 // loaded: the Gold Skulltula a player shakes out of a tree. Its owner names
@@ -288,17 +470,124 @@ inline constexpr float kMinionReachM = 40.0f;
 // a copy, and deletes the copy if its own one turns up.
 bool IsAnnounced(std::string_view name);
 
+// Player report 99 (issue 252): an enemy placed in the scene that a game
+// makes from its own logic or event, so the games need not all have it:
+// the Gerudo Fortress jail guards (Enemy_MiddleBoss_GerudoThief*, made by
+// GerudoFortress_Common_Level_CarpenterSet_0N when that player walks into
+// the cell), and every other placed enemy a Logic_Create, ambush, room or
+// gimmick makes (mini-boss rooms, Gimmick_*_Appearance, ...). Only the game
+// whose player set it off has it; the others never did. A game's logic may
+// also make it at the scene's load (its own per-game flags say the guard is
+// out), so its owner names it whenever it is first seen, at load or later
+// (IsAnnounced only later); a game without that placement makes a copy once its
+// Link is within kEncounterNearM of it and its own did not come in
+// kEncounterWaitUs (one that only streams in by distance comes by then), and
+// deletes the copy if its own one turns up. If the copy was killed here
+// (OBJECT_REMOVE dead), our own one that turns up later in this visit is that
+// same enemy, already dead: it dies at once and is never listed, so the
+// server keeps the kill (issue 133, no respawn). A held one whose owner's
+// samples stop for kEncounterStaleUs is dropped (its owner left or unloaded
+// it). Not the bosses and their parts
+// (the boss sync) and not the enemies the sync makes or keeps its own way.
+bool IsLateEncounter(std::string_view name);
+inline constexpr float kEncounterNearM = 40.0f;
+inline constexpr std::uint64_t kEncounterWaitUs = 1'500'000;
+// Player report 200 (Gerudo Fortress): an encounter is the game's whose logic made it. A copy of it in another game
+// stands for the owner's enemy; its death there runs that game's own consequences of an encounter that game never
+// began. The jail guard (Enemy_MiddleBoss_GerudoThief*) is the case: the cell's logic
+// (GerudoFortress_Common_Level_CarpenterSet_0N, its Dead and Logic_Alive plugs) answers the guard's death with the
+// defeat event (SageOfSpirit_RescueCarpenter GerudoFortress_DestroyGerudoThief0N: Player_Event
+// EventPlayerWarpToTargetActor, GerudoThiefDropKey, the cell's camera), with the Player of that game as its
+// performer. The owner's killing blow was replayed on every copy (row 177: with that game's Link as the attacker), so
+// a player in the outdoor prison had their Link warped into the cell's room below (under the map), and a player
+// standing in the room was warped to the defeat spot too. So outside a dungeon such a copy never dies by its own
+// death (CopyGoesWithoutDeath): when its owner says it died it is deleted, as a copy its owner deleted, and the
+// encounter's result comes by the shared flags (DestroyGerudoThief_*, the cell key, the rescue: report 99); its look
+// follows the owner's own death animation until then. Of every event flow in the romfs, the defeat and rescue
+// entries that warp the Player are the Gerudo rescue's (above, its appear, lose and prison entries) and the boss
+// fights' (Get_Stone*_DefeatBoss, SageOf*_DefeatBoss, Defeat_Ganon: the boss sync's). In a dungeon nothing changes:
+// its rooms keep their own kill counters and shutters, which may count a copy's death (not checked).
+bool CopyGoesWithoutDeath(std::string_view name, bool dungeon);
+// Row 212 (the owner's 0.11.8 playtest, gerudo-212): the same root through an owner change. The server's rules (an
+// owner busy or paused, a boss turn, the hitter, the near rule) handed player 2's cell guard to player 1, whose game
+// only had a copy: "now ours", so report 200's rule (a copy goes without a death) no longer held, the copy died as
+// player 1's own and player 1's cell logic ran the defeat event, the key drop and the carpenter's rescue for a fight
+// player 2 made. An encounter whose death our level logic answers with its own defeat event, and that our logic made
+// (not a copy), is listed with object_presence::own_logic: the server never gives it to a game that only has a copy.
+// Of the romfs's defeat and rescue entries that warp the Player (above), outside the boss fights only the Gerudo
+// Fortress cells' are such an encounter: Enemy_MiddleBoss_GerudoThief_0N in GerudoFortress_* (CarpenterSet_01..04;
+// DreamWorld's GerudoThiefStage is a boss stage: the boss sync's, unchanged).
+bool OwnLogicEncounter(std::string_view name, std::string_view scene);
+// Row 212: an actor each game runs on its own in this scene. Gerudo Fortress's four carpenters
+// (Npc_Hylia_013.._016_Adult, cell N holds Npc_Hylia_01(2+N)_Adult): each cell's logic
+// (GerudoFortress_Common_Level_CarpenterSet_0N) drives its carpenter from that game's own Found_*,
+// AppearGerudoThief_*, CloseShutter_* and the rescue (Dm_Gerudo_0020 with its settings, per game since report
+// 200), so a shared one put one game's carpenter (its pose, its owner's event: 'bound by the event' in the
+// rescuer's game) over another game's carpenter at another step. The rescue's results are shared flags
+// (report 99: DestroyGerudoThief_*, the keys, Saved_*, IsAfterHelpCarpenter_*, WarpPoint0N_ClearEvent), so each
+// game's own carpenter follows them natively. Elsewhere (Gerudo Valley's tent, Kakariko) they stay shared.
+bool IsOwnInScene(std::string_view name, std::string_view scene);
+inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
+
 // An enemy animation that plays as it dies ("Die", "Dead_Fall",
 // "Damage_Death"): a word Die, Dead or Death at the start or after '_'. An
 // owned enemy that leaves the walk while playing one died, even when its life
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
 
+// Issue 133 (an enemy whose life cannot be read: Deku Scrubs, Tailpasaran, ...): our copy of it left our walk
+// after playing its own death animation here (`own_death_recent`) while its owner's samples show no death and the
+// owner has not said it dead: our game killed it. Its life never fell, so no hit was summed; the kill itself goes
+// to the owner (DAMAGE cause killed). Never a boss or a boss's part (the boss sync has their deaths).
+bool LifelessKillHere(std::string_view name, bool reacts, bool life_read, bool own_death_recent,
+                      std::string_view owner_animation, bool owner_said_dead);
+
+// Row 175 (run 20261119-230405): a Poe sister in her painting (Enemy_GhostPicturePerformer_Poe_*, no life, it never
+// leaves the walk as it dies) that our arrow hit while ours is a copy: its own 'Pct_Die' was put back to the owner's
+// 'Pct_Wait' at once, so the room logic never went on (no scramble, no sister). True when our copy (owned by another
+// player) now plays its own death and the owner's newest animation is no death: the kill goes to the owner at once
+// (DAMAGE cause killed, as issue 133's lifeless kill), the owner's animation no longer goes on ours, and the owner's
+// "dead" leaves ours to its own game (its death runs the room logic here). Phantom Ganon's performers are his fight's
+// (the boss sync): never.
+bool PictureDeathHere(std::string_view name, bool life_read, bool owned_by_other, std::string_view own_animation,
+                      std::string_view owner_animation);
+
+// Issue 35 (4): an animation that hides the model (the withered Deku Baba's
+// "Upside_Visible_Off_Spine4", the stem's "DownSide_Visible_Off_Withered_Spine6"):
+// "Visible_Off" at the start or after '_'. A plain enemy's copy never
+// plays its owner's one: its own game hides it in its own step (its death),
+// the same step that takes it off Navi's and the Z-target's list. Replayed
+// alone, it hid a copy that stayed alive and targetable.
+bool IsHideAnimation(std::string_view name);
+
+// Issue 35 (3): an enemy waiting on the ceiling to drop on a Link (the
+// Skulltula's "CeilingWait", any LOD variant).
+bool IsCeilingWait(std::string_view name);
+// Our Link at `link` stands under a ceiling enemy at `enemy`: within
+// kCeilingUnderM across (x, z) and below it by at most kCeilingDropM (y up).
+inline constexpr float kCeilingUnderM = 4.0f;
+inline constexpr float kCeilingDropM = 30.0f;
+bool UnderCeilingEnemy(const coop::protocol::Vec3& enemy, const coop::protocol::Vec3& link);
+
 // Issue 150: a boss animation that plays while it is stunned or knocked down
 // ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
-// first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's
-// eye stuns it and takes no life, so a stun is the only sign of that hit.
+// first word, LOD suffix off, is Stun, Down, Fall, Faint or Chance, or starts
+// with ChanceTime or DownTimeReaction (row 169: Morpha, Volvagia, the Poe
+// sisters, Phantom Ganon, Ganondorf). A seed in Gohma's eye stuns it and takes
+// no life, so a stun is the only sign of that hit. Row 211: also the stuns with
+// another first word: Ganondorf's LightBallDamage (his ball sent back into him),
+// Ganon's LightArrowDown / LightArrowDamage / Lightarrow, StunA.. (Lizalfos,
+// Gerudo Thief), ShortStun (Big Octo), Dark Link's Dark_Chance / DarkChance,
+// Paralysis and Freeze, and Ganon's Tail_Chance.
 bool IsStunAnimation(std::string_view name);
+
+// ai-stuns: a plain (not boss) enemy's stun of a hit that takes no life (a Deku Nut, the boomerang, the hookshot):
+// the first word starts with Stun ('Stun_Lp', the Lizalfos' 'StunA_St'), or is ShortStun, Paralysis or Faint.
+// Not 'Down', 'Fall', 'Chance' or 'Freeze': a plain enemy's own moves or a hit's reaction that takes life.
+bool IsPlainStunAnimation(std::string_view name);
+
+// The stun rule for an enemy of this name: IsStunAnimation for a boss or its part, else IsPlainStunAnimation.
+bool IsStunFor(std::string_view actor, std::string_view animation);
 
 // An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
 // is "Wait"), so a far copy's LOD variant is not another animation.
@@ -316,9 +605,73 @@ struct GroupPart {
 };
 // The rule for a part, or null when `name` is no part.
 const GroupPart* PartOf(std::string_view name);
-// A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
-// and the roots of boss groups); never a picture book _Dictionary actor.
+// A real boss or mini-boss: its root actor (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*, and the roots of boss
+// groups); never a picture book _Dictionary actor, and never one of a boss's parts (IsBossPart) unless it is
+// itself a group's root (Twinrova: Kotake's and Koume's root when no battle manager is loaded). Row 149: the
+// old name test took every Enemy_DungeonBoss_* name for a boss of its own, so King Dodongo's roll centre
+// (Enemy_DungeonBoss_Dodongo_Attention_RollingCenter, made anew for each roll) sent its own boss group lock
+// when it was not linked to King Dodongo, and the native boss sync took its owner, not King Dodongo's: in the
+// boss owner's game the roll centre could be another player's copy.
 bool IsBoss(std::string_view name);
+// A part of a boss (PartRules' boss parts: the Attention actors, King Dodongo's roll centre, Barinade's arms
+// and jellyfish, Morpha's tentacle, Bongo Bongo's hands, Gohma's eggs, Twinrova's witches, ...) that is no
+// group's root. It follows its root: the native boss sync gives it its root's owner from the first frame
+// (BossPartRoot), the server's group link its root's owner and fight.
+bool IsBossPart(std::string_view name);
+// A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
+// (its life, its hits, its slots and animations, its own native boss sync entry).
+bool IsBossOrPart(std::string_view name);
+// ai-turns: a plain enemy kind that takes turns between players like a boss (Session::next_turn, listed in its
+// presence with object_presence::takes_turns): the big one-on-one melee fighters whose attacks come one at a time
+// (Moblin, Lizalfos, Dinolfos, Stalfos, Like Like, Iron Knuckle). Exact actor names; never a boss, a part, a pack
+// helper (Haribote decoys), a shot (Moblin club shock wave) or a Wolfos (a pack that circles: known-issues.md).
+bool TurnsAsEnemy(std::string_view name);
+// Pair/pack survey: the family of enemies that fight together by messages between their AIs ("lizalfos" for
+// Lizalfos and Dinolfos, "stalfos", "wolfos"; empty: none). GroupsOf puts one family within kPackReach in one group
+// (root: the lowest id), so the pack has one owner and its teamwork runs in one game; never the boss bit (plain enemies).
+std::string_view PackFamily(std::string_view name);
+inline constexpr float kPackReach = 25.0f;
+// An enemy that keeps its target (no attack read sent, so no turns): Anubis, which mirrors its target.
+bool KeepsTarget(std::string_view name);
+// Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):
+// attack_read whenever it was read, attacking with it while the attack runs; 0 when not read.
+std::uint8_t AttackBits(std::optional<bool> attacking);
+// Row 211 (shot-reflect-211-4): the makers (CoopEnemyShots::MakersOf) of every rally ball (IsRallyBall) among the
+// actor names of a walk. From the walk's whole actor list (Collect), not from Seen: a boss's shot is no shared object,
+// so it is never in Seen (proof run 20261123-045939: the hold never came on). Sync::SetRallyMakers before Tick.
+std::vector<std::string_view> RallyMakers(const std::vector<std::string>& actor_names);
+// Row 211: an enemy's attack as sent (Seen::attacking), kept on while a rally ball of its own flies in our game. His
+// light ball's shooting move (Ganondorf's BasicAttack, verb 112) ends as the ball leaves, and a boss turn passed
+// there (proof run 20261123-031042: three turns, each with his ball in the air) moved him to a game where no ball
+// flies, so the owner's volley ('Parry_Ready') and the stun of a rally won ran in a game that had just become a copy
+// and the new owner's verbs took them over. Not read stays not read.
+std::optional<bool> AttackWithRally(const Seen& s, const std::vector<std::string_view>& rally_makers);
+// Rows 177/211 (row-177-ball): the bosses in `seen` that made one of `makers` (RallyMakers of the rally balls our
+// own Link sent back in this walk), each once. Every boss ball is a split shot (each game fires its own), so a
+// player who does not own the boss rallies their own ball with their game's copy of him. The game's own answer
+// to a ball sent back is the maker's own AI (its sensor query, its Shooter's RequestChangeStateReflected, the
+// volley 'Parry*', the knockdown 'LightBallDamage_*'), and a copy's own AI changes are skipped for the owner's
+// verbs, so in proof run 20261123-083911 the copy's own 'Parry02_Ready' was played over by the owner's 'Parry'
+// and no return ever stunned him (0 own stuns, 0 hits by our shots). Each such copy then runs its own reaction
+// (CoopBossNative::Table::NoteOwnHit, by shot), as for our seed in Gohma's eye; its stun hands him to us.
+std::vector<std::uint64_t> RallyReturnedTo(const std::vector<Seen>& seen, const std::vector<std::string_view>& makers);
+// Row 149: the root a boss part follows in a walk (PartOf's roots in order, the nearest in reach; on a tie the
+// the first in the walk), as GroupsOf picks it; nothing for no boss part or no root in the walk. `names` and `places`
+// are the walk's, one per actor.
+std::optional<std::size_t> BossPartRoot(std::string_view part, const coop::protocol::Vec3& at,
+                                        const std::vector<std::string_view>& names,
+                                        const std::vector<coop::protocol::Vec3>& places);
+// A plain enemy whose copy takes its owner's brain and action verbs as a boss's does (CoopBossNative,
+// Boss::plain; fable-g4-enemies): every Enemy_ that is no boss, except the ones each game runs of its own
+// (IsOwnPuzzle: the scrub puzzles and shops), an enemy's shot (CoopEnemyShots: made by the shooter's game) and
+// the picture book's _Dictionary actors. Never an Npc_ (a guard is handed over on its own reaction, issue 191;
+// a townsperson has its own sync), a fish or a world object. Of these, only one with a BSA component is
+// published (a part with none follows its root as before).
+bool OnBrainPath(std::string_view name);
+// LICHII_COOP_ENEMY_BRAIN's text (empty when unset): the brain path is opt-in, on only for a value other than
+// "0". Unset or empty leaves every plain enemy on the old path (the first g4-enemies probe ran it on everywhere,
+// its switch read as on-unless-0).
+bool EnemyBrainSwitch(std::string_view value);
 
 // enemy-anim-b: an actor whose slot 0 is sent and set by its playing frame
 // (AS slot +0x10c, what the game's getter 0x37b5e70 reads): townspeople
@@ -327,6 +680,10 @@ bool IsBoss(std::string_view name);
 // their frame was never corrected (owner's Deku Tree run, 2026-11-14).
 // Bosses keep +0xe8 for all their slots (issue 150, tested that way).
 bool PlaysByFrame(std::string_view name);
+// jitter-b / issue 239: a copy whose place the Mover follows each game frame (coop_follow.h) by the
+// velocity it came with: townspeople (Npc_) and every enemy (Enemy_: plain, mid-boss, boss and their parts),
+// never a picture book _Dictionary actor. Everything else is written where it is, as before.
+bool FollowedEachFrame(std::string_view name);
 
 // An actor whose life is never written (the owner's native rule): an enemy or a boss, and any actor whose name
 // we do not know (fail safe).
@@ -335,7 +692,6 @@ bool NativeOnlyName(std::string_view name);
 // How WriteLife hands one life change to the game (pure; WriteLife reads the game for it, then acts).
 enum class LifeRoute {
     replay,       // a whole hit for the game's own damage step (Mover::Replay)
-    wait_replay,  // our replayed hit still waits for its damage step: nothing more now
     step,         // `amount` into the game's Life step (patch 0007)
     lost,         // nothing: the actor keeps its game's life (native-only)
     write,        // the old direct write (not native-only: a pot, a crate, an animal)
@@ -352,12 +708,37 @@ struct LifeAsk {
     bool has_component = false;
     bool replay_seen = true;   // its damage step saw our last replayed hit (or we never replayed one)
     std::int32_t stale = 0;    // given to the step earlier and never taken (taken back now)
+    bool heal = false;         // LifeWrite::heal: a raise to `life` through the Life step
+    bool out_of_reach = false; // row 178: our boss is in a move its own game takes no hit in
+                               // (CoopBossNative::Table::OutOfReach): another player's hit goes to its Life step
 };
 struct LifeRouted {
     LifeRoute route = LifeRoute::lost;
     std::int32_t amount = 0;  // for step
+    bool tied = false;        // step: the fall our replay was to deal, which its damage step has not taken yet:
+                              // given tied to the replay (LifeTable::Give's tied_to), dropped if the replay lands
 };
 LifeRouted RouteLife(const LifeAsk& a);
+
+// enemy-late-kill (lane NEXT5b): what becomes of a life change given to the game's Life step (patch 0007) that no
+// step took in its wait (CoopObjects' kGivenWaitUs). A Deku Baba runs neither its damage step nor its Life step
+// while it sleeps (no Link near in that game), so its copy took nothing while the other player's Link was away.
+enum class GivenFate {
+    wait,   // not due yet
+    gone,   // the actor is off the walk (removed, freed), or another one is there now: taken back, never written
+    taken,  // nothing waits any more: its step took it (or a newer give took it back)
+    keep,   // an enemy (its life is never written): left for its next Life step, however late (when it wakes)
+    write,  // anything else: taken back and its life written (as before)
+};
+struct GivenAsk {
+    bool due = false;             // its wait is over
+    bool on_walk = false;         // the actor it was given to is still on the walk (its address listed, its stamp
+                                  // the same): off it, the actor was removed and its memory may be another's now
+    bool same_component = false;  // the actor there still has the Life component it was given to
+    std::int32_t pending = 0;     // LifeTable::Pending for it
+    bool native = false;          // NativeOnlyName
+};
+GivenFate StaleGivenFate(const GivenAsk& a);
 
 // Issue 88: the hearts the game draws come from our Link's Life component,
 // not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
@@ -365,6 +746,16 @@ LifeRouted RouteLife(const LifeAsk& a);
 // ours (at most 20 hearts), else nothing. Never lowers it.
 inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
 std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
+// Rows 136/137: the host loaded an older save and its FLAG_RESET lowered MaxLife while our Link stood in a scene
+// (FlagWatcher::reset_lowered). The component keeps the replaced save's max and writes it back, which the max rule
+// would send to the whole group. The max (and life, held to it) to write into the component: `lower_to` when it is
+// below ours and a real maximum (at least one heart), else nothing. Only while that hold lasts; never otherwise.
+struct LoweredLife {
+    std::int32_t max = 0;
+    std::optional<std::int32_t> life;  // only when ours is above the new max
+};
+std::optional<LoweredLife> LoweredMaxLife(std::int32_t link_max, std::int32_t link_life,
+                                          std::optional<std::int32_t> lower_to);
 
 // One shared actor of a walk, for GroupsOf.
 struct GroupInput {
@@ -439,11 +830,37 @@ public:
     static constexpr std::uint64_t kStunEveryUs = 2'000'000;
     static constexpr std::uint64_t kPlaceStaleUs = 2'000'000;   // another player's place
     static constexpr std::uint64_t kFightUs = 12'000'000;
-    static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner this late
+    static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner at least this late
+    // Report 37: as late as that owner's puppet (coop_show_delay.h: from its samples' ages), never under kBehindUs.
+    static std::uint64_t BehindUs(std::uint8_t owner) { return std::max(kBehindUs, CoopShowDelay::Us(owner)); }
+    // A hold that waits for the owner's answer to our hit (kHitHoldUs, kReactHoldUs) is set for a LAN; over a
+    // slower line the answer is later by the extra delay both ways (report 37: at 300 ms ping it came after the
+    // hold, the copy played its old animation again and the hit was sent once more).
+    static std::uint64_t AnswerHoldUs(std::uint64_t lan_us, std::uint8_t owner) {
+        return lan_us + 2 * (BehindUs(owner) - kBehindUs);
+    }
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
+    // Row 178 (the Forest playtest): Phantom Ganon fell ~3 km in his owner's game, and our copy followed him
+    // there, so the next owner (the hand-over after a down, then 'left') had no boss in the room either. A boss
+    // copy (IsBoss: a group's root) is not put where its owner's samples say once that is this far below where
+    // we first saw it (CoopBossNative::Table::kFallBelowStart, the owner's fall guard): it keeps its last place
+    // in the room until the owner's are back up.
+    static constexpr float kBossFallBelowStartM = 40.0f;
+    mutable std::uint64_t boss_copies_kept_ = 0;  // (BossCopiesKept: counted where Poses skips one)
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
+    static constexpr std::uint64_t kHitShowUs = 500'000;
+    static constexpr std::uint64_t kHandedUs = 2'000'000;     // a DAMAGE of ours that crossed a hand-over is back by then
     static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
+    // Issue 133: our newest hit (its game's hit record) waits this long for its life drop (a walk or two), so a
+    // copy's blast beside it never takes it for the blast's.
+    static constexpr std::uint64_t kOurHitKeepUs = 500'000;
+    // Issue 133: a copy's own death animation counts for its leaving our walk this long (LifelessKillHere).
+    static constexpr std::uint64_t kOwnDeathKeepUs = 5'000'000;
+    // Row 175 (run 20261119-232719): the owner's play handed over before our painting's death was read cut it off
+    // ('Pct_Wait' at once, the room logic stalled). Its own death is played again over it this long after.
+    static constexpr std::uint64_t kPictureReplayUs = 3'000'000;
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
@@ -463,6 +880,14 @@ public:
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
+    // Test only (coop_testinput's "stun NAME"): our copy of the boss of that name nearest `near` (another
+    // player owns it) tells its owner at the next Tick it is stunned here, as our game's own stun does (a
+    // DAMAGE of 0, issue 150's hand-over). False: no such copy (none, or ours).
+    bool TestStun(std::string_view name, const std::optional<coop::protocol::Vec3>& near, std::uint8_t self);
+    // Test only (coop_testinput's "hit NAME N", given straight to the Life step, so no hit id moves): the next fall
+    // of the object at `address` within kTestOwnHitUs is our game's own hit (Seen::own_hit), as a sword's would be.
+    void TestOwnHit(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kTestOwnHitUs = 1'000'000;
 
     // Hookshot with patch 0007 (coop_actor_events.h): the game's own Life
     // step says every hit it deals, so a hit of this game's on a copy is
@@ -478,6 +903,10 @@ public:
     // Life another game's change takes through the Life step itself (not
     // the game's damage, so no GameHit comes for it): its fall is no hit.
     void Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us);
+    // enemy-late-kill: a fall given to a copy's Life step and kept for its next step (GivenFate::keep: the enemy
+    // sleeps). Called while it waits: the late window and the step's given part stay open for `amount`, so the
+    // fall is no hit of ours when it lands, however late (else it went to the owner as a second hit).
+    void KeepGiven(std::uint64_t address, std::int32_t amount, std::uint64_t now_us);
     static constexpr std::uint64_t kStepWaitUs = 300'000;
     static constexpr std::uint64_t kStepGivenUs = 1'000'000;
     std::size_t LooseDrops() const { return loose_drops_; }
@@ -486,8 +915,54 @@ public:
     // It is gone at the first walk that misses it, not the second: off the
     // list is no "lifted or changing hands" then. Kept kDeletedKeepUs (a
     // dying actor stays listed a while; the address may be used again later).
-    void GameDeleted(std::uint64_t address, std::uint64_t now_us);
+    // `by_coop`: asked inside one of the module's own calls (a copy, a remove; CoopActorEvents::kOwn).
+    void GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop = false);
     static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
+    // enemy-left-0116 (row 138(6)): an enemy of ours (placed, not a boss or
+    // its part, not an egg) that the game itself deleted while no death was
+    // read (life 0 or a death animation: a fall into lava or a pit, a burn,
+    // its own time running out) is gone from our game for good. Before, only
+    // a read death was told: the others' copies lived on and the server handed
+    // the enemy to one of them. Now it stays listed (as an egg does) and after
+    // kLeftWaitUs an OBJECT_REMOVE `gone` goes out, so the server keeps it
+    // nobody's and the copies end too (deleted, no kill counted: a Dead flag
+    // the game set comes through the flag sync). Not when the game deleted
+    // kDeleteBurst or more actors within kDeleteBurstUs of it: that is the
+    // scene going (a load, a warp, the title), not the enemy. Not when the
+    // delete may come from our own Link leaving it (review CHANGES r1): its
+    // kind's delete input reads our Link (coop_area_deleted.inc, generated
+    // from the romfs: Water Temple's Shell Blades and blue Tektites), or our
+    // Link was over kLeftNearM from it (an AI's own "far from Link" despawn
+    // the logic graphs do not show). Then the copy another player fights lives
+    // on and the server hands it over, as before.
+    static constexpr float kLeftNearM = 20.0f;
+    static constexpr std::uint64_t kLeftWaitUs = 1'000'000;  // (the whole kDeleteBurstUs after it seen)
+    static constexpr std::size_t kDeleteBurst = 12;
+    static constexpr std::uint64_t kDeleteBurstUs = 1'000'000;
+    std::size_t LeftCount() const { return left_.size(); }
+    // churn-b: the game's delete requests reach us (Hookshot, patch 0007).
+    // Then a placed object that leaves the walk alive with no delete request
+    // is not gone: the game takes live actors off its list for a moment and
+    // puts them back (townspeople, cuccos, pots, fairies, every ~0.5 s in a
+    // big run and in players' 0.11.0 logs, 11 m from Link). Its id stays
+    // listed in OBJECT_PRESENT and its owner kept for kAwayKeepUs, so the
+    // server does not hand it to another game each time (the owner
+    // ping-pong of hundreds of OBJECT_OWNER a minute). Back at the same
+    // place it goes on as before; a delete request or the time running out
+    // ends it. Without delete events (the emulator) two missed walks still end it.
+    void SetDeleteEvents(bool on) { delete_events_ = on; }
+    static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    static constexpr std::uint64_t kStillOursUs = 120'000'000;  // still_ours_
+    std::size_t StillOursCount() const { return still_ours_.size(); }
+    // enemy-left-0116 (row 138(3), Revirie's log at DC's second Lizalfos
+    // pair): an event playing here takes its performers off the list for
+    // longer (the Lizalfos' jump-in during FocusOnEnemy_02 went > 2 s, so
+    // ours were let go, handed to player 2, and our game then made copies of
+    // "player 2's encounter" beside its own). While an event plays here the
+    // time does not run out (kAwayKeepUs again from its end), up to
+    // kAwayEventMaxUs off the walk.
+    static constexpr std::uint64_t kAwayEventMaxUs = 30'000'000;
+    std::size_t AwayCount() const { return away_.size(); }
 
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
     // server time that a projectile copy's blast here may have made. A copy
@@ -499,6 +974,9 @@ public:
     // after it is written back up by that much.
     using BlastNear = std::function<bool(const coop::protocol::Vec3&, std::uint64_t)>;
     void SetBlastNear(BlastNear near) { blast_near_ = std::move(near); }
+    // ai-stuns: another player's shot copy hit near here (CoopProjectiles::TheShotHits). A copy stunned there shows
+    // the stun but asks nothing: the thrower's game asks for the enemy.
+    void SetShotHitNear(BlastNear near) { shot_hit_near_ = std::move(near); }
     static constexpr std::uint64_t kBlastCreditUs = 2'000'000;
     std::size_t BlastDrops() const { return blast_drops_; }  // drops kept back so far
 
@@ -520,29 +998,112 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
+    // Row 230. Present thread, before Tick: our own Link took a new hit (its Life step, CoopObjects::NoteOurLinkStepHit)
+    // whose attacker stood at `from` (the hit record's +0x2a0; its +0x240 word is a sensor, not an actor), with these
+    // kind words (+0x250..) and `took` quarters. The next Tick shares it when a screamer we own stands at `from`
+    // (ScreamerAt) and the hit is its scream (IsScream).
+    void NoteOurLinkHit(const coop::protocol::Vec3& from,
+                        const std::array<std::uint32_t, coop::protocol::kStrikeKindWords>& kind, std::int32_t took) {
+        if (link_hits_.size() < 8) {
+            link_hits_.push_back(LinkHit{from, kind, took});
+        }
+    }
+    // Row 230. Present thread, after Tick: the screams of other games' screamers that reach our Link (each once):
+    // the hook gives our Link that hit (CoopObjects::HurtOurLinkNative, no life).
+    struct LinkStrike {
+        std::uint64_t address = 0;  // our copy of the screamer
+        coop::protocol::Vec3 from{};  // its place
+        coop::protocol::Vec3 at{};    // our Link's
+        std::array<std::uint32_t, coop::protocol::kStrikeKindWords> kind{};
+    };
+    std::vector<LinkStrike> TakeLinkStrikes() { return std::exchange(strikes_, {}); }
+
     // Issue 200 (npc-anim). Present thread, before Tick: whether our Link is
     // in an event (a cutscene or a talk, PlayerReading::event_running). While
     // it is, every townsperson (Npc_, shared) within kEventNpcM of our Link
     // is flagged targeting in OBJECT_PRESENT, so the server gives it to us
     // (or, ours already, keeps it in a fight lock): every other game's copy
     // then plays our NPC's cutscene motion (place, rotation, AS command and
-    // frame, the usual copy) instead of its own routine. kEventNpcKeepUs
+    // frame, the usual copy) instead of its own routine. kEventKeepUs
     // after the event the flag drops and the normal owner rules come back;
     // the copies stay where our NPC was left. No new message.
-    void SetEvent(bool in_event) { in_event_ = in_event; }
-    // A copy our event claimed (within kEventNpcKeepUs of the last Tick that
+    //
+    // Row 97 (event-copy): not only townspeople. Every shared actor our event
+    // is with is claimed the same way, whatever its kind and however far from
+    // our Link: one the event binds (Seen::event_member, coop_event_member.h:
+    // a scrub whose entrance or talk it is, a shopkeeper, a story event's
+    // actor, a mini-game's), and one whose own AI asked for another animation
+    // than its owner's while our event runs (NoteTakeover; within kEventNpcM:
+    // the event moves it). Its own game runs it for the event: the owner's
+    // place, animation and remove are not put on it (EventPartner) and the
+    // server hands it to us. Before, only Npc_ within kEventNpcM were, and the
+    // 8 m rule (coop_guard.h) covered the rest: a Deku Scrub copy further away
+    // was made to sleep by its absent owner every frame and our Link's event
+    // that waited on it never ended (Mr. Shorty's 15 min softlock).
+    //
+    // G1 (coop/host/event_owner.hpp): `ours` false is another player's event that our game
+    // plays (a live dungeon event, a shared scene joined, an eye switch's event): its bound
+    // actors (member) still act for it here (EventPartner: no owner's motion, changes wait),
+    // but none is claimed (no targeting flag: it stays with the player whose event it is, so
+    // two games never pull one actor to and fro), and no actor is guessed in (own_ai,
+    // townsperson: our Link is not in it).
+    void SetEvent(bool in_event, std::uint64_t now_us = 0, bool ours = true) {
+        if (in_event && !in_event_) {
+            event_since_ = now_us;
+        }
+        if (!in_event && in_event_) {
+            event_end_ = now_us;  // (Away: kAwayKeepUs from here)
+        }
+        in_event_ = in_event;
+        event_ours_ = in_event && ours;
+    }
+    // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
-    // runs, as the 8 m event rule (coop_guard.h) does nearer.
-    bool EventNpc(std::uint64_t address, std::uint64_t now_us) const;
+    // runs, as the 8 m event rule (coop_guard.h) does nearer. Row 138(8):
+    // also a copy our Link is in the area of (AreaClaim).
+    bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
+    // S2 (event-owner-0116, issue 144): a copy whose owner's own event binds it
+    // (object_state::in_event in the owner's samples, within kEventKeepUs) and that has a game
+    // logic of its own (an Enemy_: room B's and room F's Deku Scrubs; the Scrub Brothers and
+    // the Business Scrubs are each game's own already, IsOwnPuzzle). Our copy
+    // keeps that logic (EventPartner: the owner's motion, animation and remove are not put on
+    // it) and is not claimed away from the owner (no wake on it); the event's result reaches us
+    // by its flags (coop_scrub_talk.h, coop_scrub_sale.h), as in the owner's game. Before, the
+    // owner's talk motion was put on our copy every frame: our own beaten scrub never hopped
+    // or talked, and a talk of ours on it waited forever. Townspeople still play the owner's
+    // cutscene motion (issue 200); bosses and fish keep their own rules.
+    bool OwnerEventHolds(std::uint64_t address, std::uint64_t now_us) const;
+    // Row 138(8) (coop_sensor_claim.h): a shared actor whose own sensor input
+    // says our Link is in its area (Seen::sensor_in_area; Jabu-Jabu's mouth)
+    // is claimed like an event's partner, without an event: flagged targeting
+    // (the server hands a copy to us after its chase hold; ours it holds as a
+    // fight, so with two players in the area the owner keeps it), and the
+    // owner's place, animation and remove are not put on our copy. The claim
+    // drops kSensorKeepUs after the input reads 0 (our Link left).
+    bool AreaClaim(std::uint64_t address, std::uint64_t now_us) const;
+    // How many actors our Link's area claims now (for the log).
+    std::size_t AreaClaims(std::uint64_t now_us) const;
+    static constexpr std::uint64_t kSensorKeepUs = 1'000'000;
     // Who owns the object at `address` (0: not known, or not on our list).
     std::uint8_t OwnerAt(std::uint64_t address) const;
-    // How many townspeople our event flags now (for the log).
-    std::size_t EventNpcs(std::uint64_t now_us) const;
+    // How many actors our event flags now (for the log).
+    std::size_t EventPartners(std::uint64_t now_us) const;
     // How many of them the server has handed to us already (for the log:
     // the claim is a wish, this is the hand-over).
-    std::size_t EventNpcsOurs(std::uint64_t now_us) const;
+    std::size_t EventPartnersOurs(std::uint64_t now_us) const;
+    // Why an actor is our event's partner (for the log).
+    enum class PartnerWhy : std::uint8_t { none, member, own_ai, townsperson };
+    struct Partner {
+        std::uint64_t address = 0;
+        std::string name;
+        std::uint8_t owner = 0;
+        PartnerWhy why = PartnerWhy::none;
+        float metres = -1.0f;  // from our Link; -1 when not known
+    };
+    // Every actor our event claims now, with why (the log names them).
+    std::vector<Partner> EventPartnerList(std::uint64_t now_us) const;
     static constexpr float kEventNpcM = 30.0f;
-    static constexpr std::uint64_t kEventNpcKeepUs = 2'000'000;
+    static constexpr std::uint64_t kEventKeepUs = 2'000'000;
 
     // Issue 151. Present thread, before Tick: where our own cast lures are
     // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
@@ -609,6 +1170,18 @@ public:
     // here): listed with object_presence::unready, so the server keeps them
     // with a game whose boss is fighting.
     void SetUnready(std::vector<std::string> names) { unready_ = std::move(names); }
+    // Boss turns: our game reads its bosses' attacks and takes turns (LICHII_COOP_BOSS_TURNS on): every boss
+    // or part is listed with object_presence::takes_turns.
+    void SetTakesTurns(bool on) { takes_turns_ = on; }
+    // Row 222 option A (coop_boss_orders.h): this game shares its battle managers' orders. Then it does not flag a
+    // manager object_presence::battle_manager (option C's server rule, for a game without the orders wrap).
+    void SetSharesOrders(bool on) { shares_orders_ = on; }
+    // The boss actors whose death has begun (the boss glue; player report #105). A hit such a boss's game did
+    // not take (its owner's killing hit, refused outside Gohma's weak point) is given to its Life step as its
+    // life after the wait, as for any other enemy: its death plays out here (CoopBossNative lets it die).
+    void SetDying(std::vector<std::string> names) { dying_ = std::move(names); }
+    // Dying copy bosses whose owner said dead, given their remaining life once (review-boss-0114).
+    unsigned DyingFinished() const { return dying_finished_; }
     static constexpr float kWakeM = 10.0f;
     // Issue 157: the Mover puts the owner's animation back on the very next
     // game frame, so a copy whose AI asks for its wake animation once (a
@@ -617,8 +1190,48 @@ public:
     // copy then counts as playing its own animation for kWakeLatchUs.
     // `name` is what the copy's own AI played (a guard is taken only for an
     // IsGuardReaction one).
+    // Row 167: an enemy copy's own play of the animation it rested in
+    // (rest_animation) is never a wake: its AI is dormant under an owner's
+    // enemy that moved on (an Armos 'Wait', a Deku Baba's buried 'Wait').
+    // Neither a put-back of it nor a walk that sees it starts a chase or an
+    // own wake (OwnWake held the owner's play back and gave 'Wait' back).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
+    // Row 175: the Mover did not put the owner's animation over this copy's own death in slot 0
+    // (CoversOwnReaction): the same marks as a walk that sees it (own_death_at, a painting's death here), at once.
+    void NoteOwnDeath(std::uint64_t address, std::uint64_t now_us, std::string_view name);
+    // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
+    // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
+    // animation nor a pull towards our Link shows it). Near our Link (kWakeM) it chases us as a put-back one
+    // does (kWakeLatchUs): OBJECT_PRESENT flags it targeting and the server hands it over, never while its
+    // owner's game fights it (in_fight, the owner's Link nearer). Present thread.
+    void NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us);
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
+    // Player report 109 (Deku Babas slow to come out, then stuck upright): a
+    // copy's own AI that wakes for our Link (it rises out of the ground) had
+    // the owner's resting animation put back over its rise on the next frame.
+    // Its AI then waited for the end of a play it no longer had (frozen in
+    // the rise's pose) and only the hand-over (kChaseHoldUs and the server)
+    // let it act. Now, as after our own hit (kReactHoldUs), the copy's own
+    // wake runs: the owner's animation of that moment is not put back for
+    // kOwnWakeUs, and a rise the Mover already took away is given back once
+    // (TakeOwnWakes). Only while the owner's enemy rests or idles (its rest
+    // animation, or no new animation for kOwnWakeIdleUs), never over the
+    // owner's own fight; at most once each kOwnWakeAgainUs. Its next
+    // animation is played as usual, and the wake hands it to us meanwhile.
+    static constexpr std::uint64_t kOwnWakeUs = 3'000'000;
+    static constexpr std::uint64_t kOwnWakeIdleUs = 3'000'000;
+    static constexpr std::uint64_t kOwnWakeAgainUs = 10'000'000;
+    // Present thread: copies whose own wake play the Mover put back, with
+    // that play, to give back once at the next game frame.
+    std::vector<std::pair<std::uint64_t, std::string>> TakeOwnWakes() { return std::exchange(own_wakes_, {}); }
+    // Present thread: the copies whose own wake began since the last call (every one, also those with no play
+    // to give back). With the enemies' brain path (CoopBossNative, Boss::plain) the copy's own brain is let
+    // run for the wake (NoteOwnWake): the rise is its brain's, not a play put back.
+    std::vector<std::uint64_t> TakeOwnWakeStarts() { return std::exchange(own_wake_starts_, {}); }
+    // Present thread (row 169): the boss copies read in a stun of their own this walk (their own game's stun
+    // animation, the owner's last one not a stun: the reading that asks the hand-over, issue 150), every walk while
+    // it plays. The glue gives each to CoopBossNative::Table::NoteOwnStun: the stun is the copy's own time.
+    std::vector<std::uint64_t> TakeOwnStuns() { return std::exchange(own_stuns_, {}); }
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -640,6 +1253,9 @@ public:
     // is still on our walk this long after is deleted with the game's delete
     // request (its own death, if the life we wrote started one, is done).
     static constexpr std::uint64_t kDeadGraceUs = 3'000'000;
+    // Rows 257/258: a boss part its boss still holds this long past kDeadGraceUs is said once (a leftover: its own
+    // death never ended it).
+    static constexpr std::uint64_t kHeldSayUs = 10'000'000;
     // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
@@ -686,12 +1302,24 @@ public:
     // game made them knowing the key (a chest shows open). Forgotten at a
     // scene change (docs/items.md, "Chests").
     void Take(std::uint64_t hash);
+    // Present thread (Tick): a Gold Skulltula placement whose token is taken
+    // (from Take, also for its key + 2). Its copies go and none is made again;
+    // our own one leaving is its death for everyone (skulltula-0118).
+    void GoldTaken(std::uint64_t placement);
+    bool IsGoldTaken(std::uint64_t placement) const { return gold_taken_.contains(placement); }
     // Present thread: a placement key taken in this scene. Collect asks this
     // for actors that are not shared, to report them too.
     bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
 
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
+    // Present thread, just before the Reset of a session's end (we left, the server dropped, the host's game
+    // crashed): no owner judges our boss copies any more, and their own Life step lets them die again
+    // (CoopBossNative Publish({})). A copy held at life 1 by HeldLifeStep (or lower by its own hits the owner
+    // refused) would die of the next hit: each live boss copy takes its owner's last life from the owner's samples,
+    // through its own Life step (the hand-over's rule, TakeOwnerLife), so the fight goes on in our game where it
+    // was. No new network data. A copy whose owner said it died, or with no owner's life heard, is left alone.
+    void KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes);
 
     // Network thread, on a reconnect: the server's epochs may start again
     // at 0, so the owners we know of placed objects are forgotten at the
@@ -711,22 +1339,73 @@ public:
     // What Flush decided for each shared object that left the walk, as log
     // lines; taken (and cleared) by the caller.
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
+    // Row 211: the makers of the rally balls in this walk (RallyMakers), for the next Tick's AttackWithRally.
+    void SetRallyMakers(std::vector<std::string_view> makers) { rally_makers_ = std::move(makers); }
+    // Row 63 (Gold Skulltulas Shared): placed Gold Skulltulas whose owner said they died, since the last
+    // call, with where our copy was: the world sync owes this game their tokens (WorldSync::OweToken).
+    struct GoldDeath {
+        std::uint64_t placement = 0;
+        coop::protocol::Vec3 at{};
+    };
+    std::vector<GoldDeath> TakeGoldDeaths() { return std::exchange(gold_deaths_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     // Difficulty's night horde (coop_difficulty.h Horde): how many players'
     // Links stand within kRollNearM of `at`, we among them: the others in our
     // scene whose last place (under kSceneStaleUs old) is that near.
     std::size_t PlayersNear(const coop::protocol::Vec3& at, std::uint64_t now_us) const;
+    // jabu-lifts (#65): where the other players of our scene are, from their fresh samples.
+    std::vector<coop::protocol::Vec3> OthersHere(std::uint64_t now_us) const;
     // Native boss sync: each copy's latest owner's boss verbs, by the
     // copy's address (coop_boss_native.h puts them into the game).
     std::vector<std::pair<std::uint64_t, coop::protocol::BossBsa>> BossVerbsIn() const;
+    // Row 222 part 2: the owner's action variations that came with a copy's BossVerbsIn state (component 24).
+    std::optional<coop::protocol::BossVariants> BossVariantsIn(std::uint64_t address) const;
+    // Row 222: the owner's battle manager orders for our copies (by address), as BossVerbsIn.
+    std::vector<std::pair<std::uint64_t, coop::protocol::BossOrders>> BossOrdersIn() const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
+    // Sync digest (coop_digest.h): every shared object we hold (owner known), once per id, by id: name, owner,
+    // epoch, life, max, dead; for a copy also local.owner_life, its owner's last life as its samples said.
+    std::vector<CoopDigest::Entry> DigestEntries() const;
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Row 178: boss copies' places not taken so far because the owner's was kBossFallBelowStartM below (Poses).
+    std::uint64_t BossCopiesKept() const { return boss_copies_kept_; }
+    // Our own player number (0: not known yet).
+    std::uint8_t Self() const { return self_; }
+    // review-dc-0118: the owner of the object at `address`, or, once its owner's dead ObjectRemove forgot that, the
+    // player whose game said it died (none: neither known).
+    std::optional<std::uint8_t> OwnerOrDeathOwnerOf(std::uint64_t address) const;
+    // review-dc-0118: `player`'s samples say it is in our scene, fresh within kSceneStaleUs of `now_us` (server
+    // time). False for 0 and for a player gone from the session (no samples) or in another scene.
+    bool InOurScene(std::uint8_t player, std::uint64_t now_us) const;
+    // The lowest player number in our scene by fresh samples, `self` included (DeciderOf).
+    std::uint8_t SceneDecider(std::uint8_t self, std::uint64_t now_us) const { return DeciderOf(self, now_us); }
+    // Row 160: the other players in our scene by fresh samples (InOurScene for each), `self` left out.
+    std::vector<std::uint8_t> PlayersInOurScene(std::uint8_t self, std::uint64_t now_us) const;
+    // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
+    // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
+    bool OwnerSaysDead(std::uint64_t address) const;
+    // Report 200: the copy at `address` (a director's copy of another player's late encounter) is to die now, and
+    // it is one that never dies by its own death here (CopyGoesWithoutDeath): it goes so from now on (deleted
+    // with the dead ones, never given its killing life, left out of the boss sync; its kill stays remembered for an
+    // own one of ours, report 99). True for one that goes so. Row 219: also a placed copy of a seed's one-time
+    // flying pot (CoopPickups::IsOneTimeHolder): its death here would drop its item a second time.
+    bool GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us);
+    bool GoneWithoutDeath(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
+    // Falls counted as our own hit while a replay waited (Seen::own_hit), not as the replay landing.
+    std::size_t OwnHitsKept() const { return own_hits_kept_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
+    // Another player's hits our boss refused as a replay, given to its own Life step (boss-hits).
+    std::size_t BossHitsStepped() const { return boss_hits_stepped_; }
+    // Rows 257/258: another game's kills of a boss part our copy's game refused, given to the part's own Life step.
+    std::size_t PartKillsStepped() const { return part_kills_stepped_; }
+    // boss-body-life: such kills that came while the owner's part still lived here (its Life step held the copy at
+    // 1): not given then; the owner's death replays the killing hit again.
+    std::size_t PartKillsHeld() const { return part_kills_held_; }
     // Copies dead here whose owner still showed life after every resend (a lost kill: the games stay split).
     std::size_t SplitKills() const { return split_kills_; }
     std::size_t HurtsLate() const { return hurt_late_; }
@@ -754,13 +1433,19 @@ private:
         std::optional<coop::protocol::Animation> animation;
         std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
         std::optional<coop::protocol::BossBsa> bsa;         // native boss sync: ours, as last read
+        std::optional<bool> attacking;                       // boss turns: its game's Attack attribute (Seen)
+        bool rally_held = false;                             // row 211: attacking only for its rally ball (said once)
         std::optional<coop::protocol::BossBsa> bsa_in;      // native boss sync: a copy's, the owner's latest
+        std::optional<coop::protocol::BossVariants> variants;     // row 222 part 2: ours, with bsa
+        std::optional<coop::protocol::BossVariants> variants_in;  // row 222 part 2: a copy's, with bsa_in
+        std::optional<coop::protocol::BossOrders> orders;     // row 222: ours, as last read
+        std::optional<coop::protocol::BossOrders> orders_in;  // row 222: a copy's, the owner's latest
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
         std::uint64_t fight_until = 0;
-        bool late = false;       // a placed IsAnnounced actor first seen after kLateUs
+        bool late = false;       // to announce: a placed IsAnnounced actor first seen after kLateUs, or any IsLateEncounter
         bool announced = false;  // its OBJECT_SPAWN went out
         // Owner side.
         std::uint64_t sent_at = 0;
@@ -771,14 +1456,44 @@ private:
         std::string sent_animation;
         std::string sent_slots;  // issue 150: the slot names last sent
         std::optional<std::uint32_t> sent_bsa_seq;  // native boss sync: the boss verbs' seq last sent
+        std::optional<std::uint32_t> sent_orders_seq;  // row 222: the battle orders' seq last sent
         std::uint32_t sequence = 0;
+        // Protocol 14: the newest hit our game took on our own enemy (Seen::hit_record), in its samples until
+        // hit_show_until (kHitShowUs; samples may be lost), seq counting from 1 (ObjectHit).
+        std::optional<coop::protocol::ObjectHit> hit_out;
+        std::uint64_t hit_show_until = 0;
+        std::uint32_t hit_seq = 0;
+        // Row 230: its scream froze our Link (ObjectStrike), in its samples until strike_show_until.
+        std::optional<coop::protocol::ObjectStrike> strike_out;
+        std::uint64_t strike_show_until = 0;
+        std::uint32_t strike_seq = 0;
+        std::uint32_t strike_seq_in = 0;  // copy side: the owner's newest scream taken here
         // Copy side.
         std::int32_t hit_sum = 0;
+        std::uint64_t test_own_hit_until = 0;  // TestOwnHit
         std::optional<coop::protocol::Vec3> place_seen;  // a new hit's place, waiting for its life drop
         std::uint64_t place_seen_at = 0;
+        std::optional<coop::protocol::HitRecord> record_seen;  // protocol 14: a new own hit's record, waiting for its drop
+        std::uint64_t record_seen_at = 0;
+        std::uint64_t ours_hit_at = 0;   // issue 133: our Link's or projectile's newest hit on it (Seen::hit_ours)
+        std::uint64_t own_death_at = 0;  // issue 133: its own death animation last read here (LifelessKillHere)
+        std::uint64_t picture_die_at = 0;  // row 175: our copy's own death here went to its owner (PictureDeathHere)
+        bool picture_kill_due = false;     // row 175: that kill is still to send
+        std::string picture_die;           // row 175: its own death animation then (played again if cut off)
+        bool picture_cut = false;          // row 175: something else showed after it (cut off, or finished)
+        bool picture_replayed = false;     // row 175: its death seen again after that: no more replays
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
+        std::optional<coop::protocol::HitRecord> hit_record;  // protocol 14: our newest own hit summed now (cleared with it)
+        std::uint32_t hit_seq_in = 0;  // protocol 14: the owner's newest sample hit seq replayed here
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
+        // A HANDOVER_STATE made it ours: until its owner news (any owner; cleared there) a fall here is our own
+        // enemy's, no DAMAGE. `handed_took`: its life became the old owner's there, so a DAMAGE of ours that
+        // crossed the hand-over (the server gives it back, player_number our own) is not in it yet; taken off
+        // until `returned_until` (kHandedUs), whoever owns it by then.
+        std::uint64_t handed_until = 0;
+        std::uint64_t returned_until = 0;
+        bool handed_took = false;
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
         std::string react_over;      // the owner's animation at that moment
         std::deque<Received> received;  // the owner's samples, oldest first
@@ -822,9 +1537,17 @@ private:
         bool play_frame = false;                // PlaysByFrame
         CoopNpcAnim::Loop frame_loop;           // its owner's animation loop, from the samples (play_frame)
         std::uint64_t event_until = 0;          // flagged by our event until then
+        std::uint64_t own_event_until = 0;      // ... by our own Link's event (S2: sent as object_state::in_event)
+        std::uint64_t owner_event_until = 0;    // a copy: its owner's samples say its owner's event binds it (S2)
+        PartnerWhy event_why = PartnerWhy::none; // ... and why (row 97)
+        std::optional<bool> event_member;       // Seen::event_member, the last walk (row 97)
+        std::optional<bool> sensor_in_area;     // Seen::sensor_in_area, the last walk (row 138(8))
+        std::uint64_t sensor_until = 0;         // claimed by our Link in its area until then (row 138(8))
+        std::uint64_t own_ai_at = 0;            // its own AI's play put back last (NoteTakeover, any kind)
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
+        bool game_deleted = false;              // ... and the game's own request, not one of ours (Left)
         // Chasing our Link (NoteDrift): the run of steps towards it.
         std::uint64_t chase_first = 0;
         std::uint64_t chase_last = 0;
@@ -834,13 +1557,31 @@ private:
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         std::string took_over_name;      // ... and what it was (a guard's, issue 191)
+        std::uint64_t brain_want_at = 0; // issue 101: its own brain asked for another phase (NoteOwnBrainWant)
+        // Report 109: its own wake (kOwnWakeUs) began then, over the owner's animation `own_wake_over`.
+        std::uint64_t own_wake_at = 0;
+        std::string own_wake_over;
+        bool own_wake_given = false;  // its rise was given back once in this own wake (TakeOwnWakes)
+        std::uint64_t owner_anim_since = 0;  // the owner's animation (base name) is this one since
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        // review-dc-0118: the player whose game said it died (its owner then; the remove's sender if no owner was
+        // named to us). The dead ObjectRemove forgets the owner, and a room event's kept last kill still needs it.
+        std::uint8_t death_owner = 0;
+        bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        std::int32_t boss_stand_in_life = 0;   // a boss copy: the owner's life its stand-in hit was replayed for (once each)
+        std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
+        bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
+        // boss-body-life: a boss part's killing hit its game refused while its owner's still lives here: its own
+        // Life step holds a copy at 1 until then (CoopBossNative::HeldLifeStep): not given (said once).
+        bool kill_held = false;
+        bool held_said = false;        // rows 257/258: said once, held by its boss kHeldSayUs past the grace
         bool dead_now = false;  // a kill from before we came: deleted at once
+        bool quiet_gone = false;  // report 200: its owner killed it away from our Link's fight: deleted, no death
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).
         bool dead_said = false;
@@ -857,23 +1598,49 @@ private:
         // due), and when that last went out.
         bool stun_due = false;
         std::uint64_t stun_at = 0;
+        // Row 169: the stun this copy plays began in its own game (read at its first stun walk, issue 150's
+        // reading), so it is told every walk while it plays (TakeOwnStuns). A stun begun as the owner's (the copy
+        // played the owner's) never is, even when the owner's next sample leaves it a walk before the copy does.
+        bool own_stun = false;
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
     static void ChaseStep(Object& o, std::uint64_t now_us);
+    // Report 109: a copy's own AI woke for our Link (`taken_away`: the Mover put its play back already).
+    void OwnWake(Object& o, bool taken_away, std::uint64_t now_us);
+    static bool RestPlay(const Object& o, std::string_view name);  // row 167: see NoteTakeover
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     // The hits the game's Life step dealt o that count now (SetLifeEvents);
     // o.step_rest gets the part of `fell` that no step explains.
     std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
+    // Rows 257/258: a boss's part (Barinade's jellyfish) whose boss is still alive here is never deleted from
+    // outside after kDeadGraceUs: its boss holds it (a jellyfish stuck to Barinade, unstuck in her next phase),
+    // and a part deleted under it is a null write in the boss's own code. Its own death ends it. Returns that boss
+    // (nullptr: not held).
+    const Object* HeldByItsBoss(const Object& o) const;
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter,
-               const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt);
+               const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt,
+               const std::optional<coop::protocol::HitRecord>& record = std::nullopt);
+
+    // A boss copy takes `owner_life` (its old owner's last life): raised (heal) or lowered (direct) through its
+    // own Life step, never a write. False when it is no boss, has no life read, or the lives agree.
+    bool TakeOwnerLife(Object& o, std::int32_t owner_life, std::vector<LifeWrite>& writes, std::string_view why);
 
     // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
     // (another game's hit our game did not take, or hurt off) may stand on
     // at life 0. Said dead to the others now, deleted here kDeadGraceUs
     // later if its own death has not taken it by then.
+    // An object's life 0 read as its death: always, but for a split enemy (SplitsAtZero) whose brood still lives.
+    bool ZeroIsDeath(const Object& o) const;
+    // Row 172: every member of the root's brood (this split) died (and it has one).
+    bool BroodDone(const coop::protocol::ObjectId& root) const;
+    // Row 172: the members of a split enemy's group that leave this walk dead, counted before any leave is judged.
+    void NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen);
+    // Row 175: `own` (its own animation, seen in a walk or by the Mover) is its own death here (o.own_death_at),
+    // and a painting's death here goes to its owner (PictureDeathHere).
+    void MarkOwnDeath(Object& o, std::string_view own, std::uint64_t now_us, std::uint8_t self);
     void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
                      std::vector<coop::protocol::Message>& send, const char* why);
 
@@ -889,6 +1656,13 @@ private:
                std::vector<coop::protocol::Message>& send);
     // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
     Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
+    // boss-larva-0116: an egg id whose hatch this game shares when it owns it
+    // (placed, or made: a boss laid it); its owner is checked by the caller.
+    static bool HatchIsOurs(const coop::protocol::ObjectId& id);
+    // boss-larva-0116: a made egg we own left the walk alive: its remove
+    // (unless already sent), then eggs_ or its matched sibling freed.
+    void EndMadeEgg(std::uint8_t self, const Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                    std::vector<coop::protocol::Message>& send, bool remove);
     // boss-sync-2 (issue 178): a fresh hatchling next to a copy of another
     // game's egg (still on the walk, or gone alive at most kHatchWindowUs
     // before, copy_eggs_): our game hatched it through its own AI.
@@ -923,8 +1697,42 @@ private:
         std::uint16_t epoch = 0;
         coop::protocol::Vec3 position{};
         std::uint64_t at = 0;
+        // boss-larva-0116: an egg our boss laid (made): its OBJECT_REMOVE went
+        // as it left, so no second one and no listing.
+        bool removed = false;
     };
     std::vector<Egg> eggs_;
+    // churn-b: placed objects off the walk without a delete request (SetDeleteEvents).
+    struct Away {
+        coop::protocol::ObjectId id;
+        std::uint64_t address = 0;
+        std::uint64_t until = 0;
+        std::string name;
+        coop::protocol::Vec3 position{};  // where it was last seen (Left)
+        std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
+        bool split = false;               // row 172: a split enemy that left at life 0 (dead when its brood is)
+    };
+    std::vector<Away> away_;
+    // Row 175/176 (run 20261119-233327): an away object still off the walk after kAwayKeepUs with no delete request
+    // is told gone (left), but our game still has it (a Poe sister vanishes for longer in her fight). Its id is kept
+    // here until it comes back, our game deletes it (GameDeleted), the scene changes or kStillOursUs: meanwhile
+    // its new owner's OBJECT_SPAWN makes no encounter copy here (HoldEncounters), which made a second Amy.
+    std::vector<Away> still_ours_;
+    bool delete_events_ = false;
+    // enemy-left-0116: enemies of ours the game deleted with no death read,
+    // listed until their OBJECT_REMOVE `gone` goes out (kLeftWaitUs).
+    struct Left {
+        coop::protocol::ObjectId id;
+        std::uint64_t address = 0;
+        std::uint64_t deleted_at = 0;
+        coop::protocol::Vec3 position{};
+        std::string name;
+    };
+    std::vector<Left> left_;
+    std::vector<std::uint64_t> game_deletes_;  // when the game's own delete requests came (kDeleteBurstUs)
+    // An enemy of ours that the game's own delete request ends for good (Left).
+    bool LeavesForGood(std::uint8_t self, const coop::protocol::ObjectId& id, std::string_view name,
+                       std::uint64_t address, const coop::protocol::Vec3& position) const;
     // boss-sync-2: copies of other games' eggs that left our walk alive (our
     // game hatched them), for CopyHatch.
     std::vector<Egg> copy_eggs_;
@@ -932,7 +1740,23 @@ private:
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
+    struct LinkHit {  // row 230 (NoteOurLinkHit)
+        coop::protocol::Vec3 from{};  // the attacker's place
+        std::array<std::uint32_t, coop::protocol::kStrikeKindWords> kind{};
+        std::int32_t took = 0;
+    };
+    std::vector<LinkHit> link_hits_;
+    std::vector<LinkStrike> strikes_;
     bool in_event_ = false;  // issue 200: SetEvent
+    std::uint64_t event_end_ = 0;  // when the last event here ended (SetEvent)
+    bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
+    // Row 97: why `o` is our running event's partner now (none: it is not):
+    // it is an event member in our Link's event (member); it has no event member component and its
+    // own AI asked for another animation since the event began, within
+    // kEventNpcM (own_ai); a townsperson within kEventNpcM (issue 200).
+    PartnerWhy EventPartnerWhy(const Object& o) const;
+    static bool OwnerEventKeeps(const Object& o, std::uint64_t now_us);  // S2: OwnerEventHolds
+    std::uint64_t event_since_ = 0;  // row 97: when our event began (SetEvent)
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
     std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
     std::uint64_t fish_at_ = 0;
@@ -943,16 +1767,48 @@ private:
                                             std::uint64_t now_us) const;
     // The nearest of our lures to `at` (metres), or nothing with none.
     std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
+    // chest-late-b: why a chest read the open idle when another's flag came (log only).
+    std::string ChestAlreadyOpenWhy(const Seen& s, std::uint64_t now_us) const;
     std::vector<std::string> notes_;
+    std::vector<std::string_view> rally_makers_;  // row 211 (SetRallyMakers)
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
+    std::vector<std::pair<std::uint64_t, std::string>> own_wakes_;  // report 109 (TakeOwnWakes)
+    std::vector<std::uint64_t> own_wake_starts_;                    // (TakeOwnWakeStarts)
+    std::vector<std::uint64_t> own_stuns_;                          // row 169 (TakeOwnStuns)
     std::map<std::uint64_t, Decided> decided_;  // by director key
+    // Report 99: late encounters other games announced that we lack, held
+    // until our Link is near (IsLateEncounter). By id; first heard at got_us,
+    // near since near_us (0: not near yet).
+    struct Held {
+        std::string name;
+        coop::protocol::Vec3 position{};
+        std::uint8_t owner = 0;
+        std::uint64_t near_us = 0;
+        std::uint64_t heard_us = 0;  // its OBJECT_SPAWN or last OBJECT_SAMPLE
+    };
+    std::map<coop::protocol::ObjectId, Held> held_;
+    // Report 99 review: placed ids whose copy (decided_) was killed here this
+    // visit. Our own one with that id is the same enemy, dead. Forgotten once
+    // used (our own one died), on a new OBJECT_SPAWN for it (a respawn) and
+    // on a scene change.
+    std::set<coop::protocol::ObjectId> copy_killed_;
+    // Gold Skulltula placements taken (GoldTaken), this scene.
+    std::set<std::uint64_t> gold_taken_;
+    std::vector<GoldDeath> gold_deaths_;
+    void HoldEncounters(std::uint64_t now_us);
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key
     std::uint64_t next_key_ = 1;
     std::uint64_t made_counter_ = 0;
     std::uint8_t decider_ = 0;
     std::set<std::uint64_t> refused_;  // our own rolls, to delete
     std::size_t refused_count_ = 0;
+    // Row 231: when each boss minion name was last refused here (new actors only), and the names refused in a loop
+    // (over kMinionLoopMax within kMinionLoopUs): logged once a scene, still refused.
+    std::map<std::string, std::deque<std::uint64_t>, std::less<>> minion_refusals_;
+    std::set<std::string, std::less<>> minion_loop_;
+    // Row 232: the bosses whose summoned piece we own holds our Link now (GrabbingSummoner), as last told.
+    std::set<std::string, std::less<>> grabbing_;
     // Each other player's scene and the server time of its latest sample
     // (guarded by inbox_mutex_: PLAYER_SAMPLE comes too often for the inbox).
     std::map<std::uint8_t, std::pair<std::string, std::uint64_t>> scenes_;
@@ -965,6 +1821,13 @@ private:
     bool present_once_ = false;
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
+    // Row 172: a split enemy's brood this split (SplitsAtZero): the members linked to it while its life read 0,
+    // and those that died. Its life 0 is a death only when every one died. Cleared when its life reads > 0.
+    struct Brood {
+        std::set<coop::protocol::ObjectId> members;
+        std::set<coop::protocol::ObjectId> dead;
+    };
+    std::map<coop::protocol::ObjectId, Brood> broods_;
     bool hurt_ = false;
     bool life_events_ = false;
     std::size_t loose_drops_ = 0;
@@ -1011,6 +1874,9 @@ private:
     struct ChestAnimation {
         std::string name;
         std::uint64_t changed_us = 0;
+        // chest-late-b (row #35 (2)): seen with its closed idle since it was
+        // first seen (an "already open" chest that was closed here before).
+        bool seen_closed = false;
     };
     std::map<std::uint64_t, ChestAnimation> chest_animations_;
     // Issue 195: a loaded closed chest that another player opened is shown
@@ -1060,11 +1926,26 @@ private:
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;
     std::vector<std::string> unready_;
+    bool takes_turns_ = false;  // SetTakesTurns
+    bool shares_orders_ = false;  // SetSharesOrders
+    std::vector<std::string> dying_;  // SetDying
+    // enemies-dying-01111: a copy boss whose death has begun here (SetDying: the director's outro in its area), or,
+    // for a boss or part no boss room names (InBossRoomTable: every mini-boss, Meg, Dead Hand, Dark Link, Big Octo,
+    // Stalfos...), whose owner says it is dead (its samples' life 0, or its dead remove): no director ever names
+    // those dying. A boss room's own (CoopBoss::Rooms parts) waits for the director, whose outro joins the owner's
+    // death first (review-boss-0114 order: the death setting then finds the copy dead).
+    bool CopyBossDying(const Object& o) const;
+    unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
+    std::size_t own_hits_kept_ = 0;  // OwnHitsKept
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)
+    std::size_t boss_hits_stepped_ = 0;  // of those, another player's hits on our boss given to its Life step
+    std::size_t part_kills_stepped_ = 0;  // of those, another game's kills of a boss part copy (rows 257/258)
+    std::size_t part_kills_held_ = 0;     // boss-body-life: rows 257/258 kills waiting for the owner's death
     std::size_t split_kills_ = 0;  // copies dead here, owner alive after the resends
     BlastNear blast_near_;
+    BlastNear shot_hit_near_;
     std::size_t blast_drops_ = 0;
 
     mutable std::mutex inbox_mutex_;

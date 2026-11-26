@@ -3,7 +3,8 @@
 
    Hookshot's host/coop_voice.c (our patch 0009) finds the co-op module once it is loaded and, when the module exports
    hos_coop_voice_attach, hands it this table: the game's microphone (the one chosen in the Insert menu, shared with the
-   game's own input streams in host/nn_audio_in.c) and Hookshot's libopus. While attach said 1, the game's mixer
+   game's own input streams in host/nn_audio_in.c, or one the co-op settings choose for the voice alone) and Hookshot's
+   libopus. While attach said 1, the game's mixer
    (host/nn_audio.c) calls the module's hos_coop_voice_render every 5 ms with the final mix's buffers, so the voices are
    mixed in under the game's own volume, effects and speaker layout. The same file is in Hookshot's host/ through our
    patch and in our repository (hookshot/src): keep them equal. Plain C. */
@@ -37,6 +38,14 @@ typedef struct HosCoopVoiceApi {
     void (*opus_decoder_free)(void *decoder);
     /* Microseconds on the mixer's clock (the one hos_coop_voice_render's frames follow), any thread. */
     uint64_t (*now_us)(void);
+    /* (added later: there when size reaches them; a module checks before it calls) The voice's own microphone, any one
+       thread, for the co-op settings' Microphone row. list: the microphones there now (none opened; one plugged in since
+       shows), up to max names of name_size bytes each into names, the number listed. choose: the one the voice records
+       from, by its name (a source of its own: the game's streams keep the Insert menu's); NULL or "": the Insert menu's
+       again. Opens nothing while the voice's stream is stopped; a started one moves to it at once. One not plugged in:
+       silence until it is back (no other microphone stands in for it). */
+    int (*mic_list)(char *names, int name_size, int max);
+    void (*mic_choose)(const char *name);
 } HosCoopVoiceApi;
 
 /* The module's optional exports (extern "C"). attach: any thread, once; 1 = render me. */

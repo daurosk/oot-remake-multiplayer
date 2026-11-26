@@ -1,0 +1,28 @@
+# gear-join-after-age B (proof-0116): presses through the title ~70 s after A, so it joins after A's age switch.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_ANIM=1
+#! timeout 480
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 5400
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 200
+stick 0 -0.6 30
+stick 0 0.3 8
+press ZL
+wait 60
+mark b-joined
+wait 600
+mark b-joined2
+wait 300
+mark end

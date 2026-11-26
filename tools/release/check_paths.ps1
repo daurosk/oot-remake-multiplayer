@@ -2,7 +2,7 @@
 #
 # A program compiled without trimmed paths carries its source folders (the emulator's
 # log prints them), and some tools write where they ran into what they make. A player
-# then reads the build machine's folders as if the file were someone else's. make_kit.ps1
+# then reads the build machine's folders as if the file were someone else's. make_kit_hookshot.ps1
 # dot-sources this and refuses a kit with any hit; tests/paths_test.ps1 tests it.
 #
 #   . tools\release\check_paths.ps1

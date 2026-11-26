@@ -1,17 +1,10 @@
 # wear-adult: B is adult in Kakariko by day too (as adult-day.B: the same scene as A, so A's adult puppet
 # is live), backs off, faces A and watches. B's log and shots are the check (wear-adult.A.txt).
 mark start
+setflag Sequence_IsChildhood 0  # set AFTER the save is loaded (run.ps1 loads it first): at the title the load put the save's age back
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
 warp KakarikoVillage_Adult Kakariko_WellSide
-wait 1200               # the title screen
-mark title
-press A
-wait 180
-press A
-wait 180
-press A
-wait 300
-press A                 # loads the save, then the warp
-wait 2400                # the save loads, then the warp lands (about 30 s)
+wait 1200               # the warp lands
 mark after
 wait 200
 stick 0 -0.6 30         # walk back toward the camera

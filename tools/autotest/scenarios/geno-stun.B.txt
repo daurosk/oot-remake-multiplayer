@@ -1,0 +1,54 @@
+# geno-stun (B side): beside A, Deku Nuts thrown at the Baba A owns (see geno-stun.A.txt).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Item_DekuNut.StockNum
+wait 120
+setflag PouchData.Item_DekuNut.Count 20
+wait 120
+assign DekuNut
+wait 300
+goto -66.5 5.0 1.0 900
+toward -71.33 3.5 10
+wait 120
+mark b-ready
+press ZR 4
+wait 15
+mark b-stun-01
+wait 15
+mark b-stun-02
+wait 15
+mark b-stun-03
+wait 15
+mark b-stun-04
+wait 15
+mark b-stun-05
+wait 15
+mark b-stun-06
+wait 300
+press ZR 4
+wait 15
+mark b-stun-07
+wait 15
+mark b-stun-08
+wait 15
+mark b-stun-09
+wait 15
+mark b-stun-10
+wait 600
+mark b-after
+mark end

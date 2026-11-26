@@ -1,0 +1,28 @@
+# hs-deku-bridge, B: stands on the slingshot room's bridge so it breaks in B's game (header in hs-deku-bridge.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600                   # A gets to the chest ledge first
+place -39.84 111.3 11.01   # 1.5 m over the bridge (FallingFloor_A_01): B lands on it
+wait 30
+mark b-on
+wait 30
+mark b-fall1
+wait 60
+mark b-fall2
+wait 120
+mark b-fall3
+wait 600
+mark b-late
+wait 300
+mark end

@@ -1,0 +1,39 @@
+# hs-native-tags (native-tags-01112, B3/B8 of reports/ui-audit-01112.md): the other player's name on the game's own
+# balloon over its Link (no drawn tag, no edge arrow), and the map icons probe for B8.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-native-tags -Lane 1 -Server <server>
+#      -Switches LICHII_COOP_PUPPET=1,LICHII_COOP_MAP_PROBE=1   (and once more with a narrow window)
+# Look at: "near" / "mid" / "far" (B's name in a game balloon over B's Link, in B's colour, following it; nothing
+# drawn), "behind" (B off screen: no tag, no arrow), "mini" and "panel" (B on the minimap / Map page: still the
+# drawn arrows until B8; the probe lines tell what the game holds).
+# The log: "coop: native tags: name tags on the game's balloons (1 shown, ...)" once; "coop: map icons probe:" lines
+# every 5 s (MapIcon layouts the HUD's map screen holds; each balloon part's place and alpha, ours shown).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+place 4.4 108.9 5.1
+wait 600                  # B stands 3 m in front (B's own file)
+mark near
+wait 600                  # B walks off to 8 m
+mark mid
+wait 600                  # B at 15 m
+mark far
+toward -10 5.1 20        # turn away: B behind the camera
+wait 300
+mark behind
+wait 300
+mark mini
+press MINUS
+wait 120
+mark panel
+press B
+wait 240
+mark end

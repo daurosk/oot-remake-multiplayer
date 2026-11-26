@@ -1,4 +1,4 @@
-From fa5c46fa672010b463bcd0afc03cb90800057b79 Mon Sep 17 00:00:00 2001
+From d497cb4a20b2632279d47a8e622531db44084c5c Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -11,42 +11,202 @@ the exe): the HUD screen (its layout holds the minimap and the Map page's
 map), the panel's frame, whether the Map page is shown and whether a game
 menu is in front. The module hides the minimap's player icons behind the
 game's menus and puts the players on the Map page's map.
+
+The HUD's own refresh, for the module (rows 63/76): hos_coop_hud_refresh
+asks it once, and it runs at the HUD screen's next update, in
+hos_oot_menu_tick on the game's thread (main+0x33e4200, x0 = that screen), so
+it only ever runs on a screen that is alive; no stored pointer is called.
+The state says how many have run (hud_refreshes; counted only when the
+function is found, else one log line). The HUD screen handed
+out is also forgotten when the slot that held it is reused, and the state
+says how long ago it last ran (hud_ran_ns_ago, -1 not since it was seen).
+Both new fields are filled when the module's struct is that long.
+
+The running screens, for the module (row 141): a module whose struct is
+long enough also gets the screens that ran in the last 100 ms
+(screen_count, screens[24], from the tracker's table under its lock), so
+it can find the player status screen (hearts, magic bar, d-pad) by its
+layout's panes and put the co-op player list below the game's own HUD
+as the game lays it out. An older module's shorter struct gets what it
+got before.
+
+The screens' tracker (hos_oot_menu_tick) and both exports build on Linux
+too (host/posix's windows.h): Linux knows the menu in front, the Map
+page and the HUD screen, and runs the HUD refresh, as Windows does. Only
+the mouse's parts stay Windows'. Linux's focus hook hands the tracker the
+pause menu's screen (hos_oot_menu_pause_focus), as Windows' focus_locked
+keeps it. (No hunk on tests/: the Linux kit patches the AppImage's
+source, which has no tests/ folder; our module_test checks the hook.)
 ---
- host/oot_menu.c | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ host/oot_menu.c | 113 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 109 insertions(+), 4 deletions(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 6e70423a..ad7b2fae 100644
+index a6f5bfb5..e58f73d7 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
-@@ -235,6 +235,8 @@ static int panel_page(uint64_t screen) { return panel_page_vt(peek64(screen)); }
+@@ -30,13 +30,18 @@ static void sprint_menu_tick(uint64_t screen) {
+ #ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
+ #include "../gpu/vk/compat/longshot_env.h"
+ #endif
+-#if defined(_WIN32)
++/* (oot-remake-multiplayer's patch 0018) The screens' tracker (hos_oot_menu_tick) and hos_coop_menu_state build on Linux
++   too, with host/posix's windows.h, so the module knows a game menu is in front there as well; the mouse and its
++   focus handling stay Windows' (the blocks marked "the mouse's") */
+ #include <windows.h>
+ #include <ctype.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <stddef.h>   /* (patch 0018: offsetof) */
++#if defined(_WIN32)
+ #include "../gpu/vk/vk_api.h"   /* (HOS_MOUSE_*) */
++#endif
+ #include "input_movie.h"         /* (MovieMenu: an input recording's menu choices, host/input_movie.c) */
+ void hos_input_movie_menu(int kind, uint64_t screen, uint64_t button, const char *key);
+ int hos_input_movie_menu_take(uint64_t screen, MovieMenu *out);
+@@ -70,6 +75,9 @@ static int trace = -1;
+    so read and written whole) */
+ static volatile LONG64 pause_screen;
+ static uint64_t pause_screen_now(void) { return (uint64_t)InterlockedCompareExchange64(&pause_screen, 0, 0); }
++/* (patch 0018) Linux's focus hook (no mouse) keeps the pause menu's screen too, for the tracker's Map page */
++void hos_oot_menu_pause_focus(uint64_t screen) { InterlockedExchange64(&pause_screen, (LONG64)screen); }
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
+ static uint64_t focus_page;     /* (the focused pane's page object: a change is a page switch) */
+ static volatile LONG ticks;     /* (the pause menu's updates since its focus came: for the trace only) */
+ static int tab_goal = -1, tab_pages, tab_from = -9;   /* (a clicked tab: the page to step to, and how many the menu has) */
+@@ -77,6 +85,7 @@ static int64_t goal_ns;
+ static uint64_t focused_button;   /* (the last pane f_802ed660 was handed) */
+ static uint64_t asked;   /* (the button the mouse asked the focus for, until it has it) */
+ static int page_now = -1;   /* (the shown page: 0 Collection, 1 Equipment, 2 Items, 3 System; L and R step through them) */
++#endif   /* (patch 0018) */
+ 
+ /* the screen's list of entries: fn(entry, button) for each, at most max */
+ static int each_entry(uint64_t screen, int max, void (*fn)(int i, uint64_t entry, uint64_t button, void *arg), void *arg) {
+@@ -93,6 +102,7 @@ static int each_entry(uint64_t screen, int max, void (*fn)(int i, uint64_t entry
+     return i;
+ }
+ 
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
+ /* the game's focus setter on a button (on the game's thread, at a screen's update) */
+ static int set_focus(Ctx *c, uint64_t screen, uint64_t button) {
+     A64Fn fn = a64_lookup(0x8088ffc0ULL);
+@@ -106,6 +116,7 @@ static int set_focus(Ctx *c, uint64_t screen, uint64_t button) {
+     hos_input_movie_menu(1, screen, button, NULL);   /* (HOS_INPUT_RECORD: the mouse's focus change, given again in a replay) */
+     return r;
+ }
++#endif   /* (patch 0018) */
+ 
+ /* A call of a guest function from the host, on the game's thread (x0, x1 in; x0 out, s0 and s1 too: a position) */
+ static uint64_t guest_call(Ctx *c, uint64_t fn_addr, uint64_t a0, uint64_t a1, float *s0, float *s1) {
+@@ -121,6 +132,7 @@ static uint64_t guest_call(Ctx *c, uint64_t fn_addr, uint64_t a0, uint64_t a1, f
+     return r;
+ }
+ 
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
+ /* Key Items' items where the page shows them, as the page finds them to place its cursor (f_833fdaa0): the item
+    database (**0x84c9e0d0), its lists 4 and 3 (f_80a8f690: +8 the count, +16 the entries); an entry's key (f_8002a520,
+    f_80d666a0(.., 0), f_8002a4c0: a string, its text first) and its pane's name (f_80a963c0: its text first); the pane in
+@@ -240,6 +252,7 @@ int hos_mouse_game_pointer(int *x, int *y, int *w, int *h, uint32_t *pressed, in
+ void hos_hid_tap(const char *press);   /* (nn_hid.c) */
+ void hos_hid_stick(int lx, int ly, int rx, int ry, int hold_ms);
+ void hos_hid_drag(int dx, int dy, int right);   /* (nn_hid.c: as the camera's mouse; the left stick or the right) */
++#endif   /* (patch 0018) */
+ /* The panel of Key Items, Threads of Time and Map (Minus opens it; L to the left, R to the right; pages 0, 1, 2), as
+    the screens told apart by vtable: Key Items' screen 0x84c07798 and Threads of Time's
+    0x84c04a18 (its list of threads: N_SlideList_00, the framework's buttons) each run only while their page is shown;
+@@ -257,6 +270,16 @@ static int panel_page(uint64_t screen) { return panel_page_vt(peek64(screen)); }
     many floors, +0x1370 the lowest; the top is the lowest + the count - 1. Kept as the screens are seen */
  #define HUD_SCREEN_VTABLE 0x84c08300ULL
  static volatile uint64_t hud_screen;
 +static volatile uint64_t panel_screen;   /* (oot-remake-multiplayer's patch 0018: the panel's frame, as seen) */
 +static volatile int64_t front_ns;        /* (patch 0018: when a screen last had the mouse: a game menu in front) */
++static volatile int64_t hud_seen_ns;     /* (patch 0018: when the HUD screen last ran; 0: not since it was seen) */
++static volatile LONG hud_refresh_wanted; /* (patch 0018: the module asked the HUD's own refresh, hos_coop_hud_refresh) */
++static volatile LONG hud_refreshes;      /* (patch 0018: refreshes made at the HUD screen's update) */
++static volatile LONG hud_refresh_gone;   /* (patch 0018: the refresh was not in this build: logged once) */
++/* (patch 0018) The HUD screen's own refresh: main + 0x33e4200 (main at 0x80020000; f_83404200, the HUD state machine
++   main+0x33e4bf0 tail-calls it). Written as main + offset: the bare 0x833e4200 was main's offset on 0x80000000, the
++   middle of f_833e4190, so its lookup failed and no refresh ever ran */
++#define HUD_REFRESH_FN (0x80020000ULL + 0x33e4200ULL)
  static int map_floors(int *cur, int *top, int *bottom) {
      int32_t f[3];
      if (!hud_screen || !peek(hud_screen + 0x1368, f, sizeof f) || f[1] < 1 || f[1] > 12) return 0;
-@@ -749,6 +751,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+@@ -265,6 +288,7 @@ static int map_floors(int *cur, int *top, int *bottom) {
+ }
+ 
+ typedef struct { float x0, y0, x1, y1; } Rect;
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
+ /* (Key Items' items, in their grid's order: item_found puts the page's own positions of them in) */
+ static const char *const item_keys[9] = {"Item_Medal_Shadow", "Item_Medal_Light", "Item_Medal_Forest", "Item_Stone_Forest",
+                                          "Item_Stone_Fire", "Item_Stone_Water", "Item_Medal_Spirit", "Item_Medal_Water",
+@@ -742,6 +766,7 @@ static void mouse_tick_locked(Ctx *c, uint64_t screen) {
+     if ((pressed & HOS_MOUSE_LEFT) && hit.hit) hos_hid_tap(just || hit.hit == asked ? "0.05:A/80" : "0:A/80");
+     if (pressed & HOS_MOUSE_RIGHT) hos_hid_tap("0:B/80");
+ }
++#endif   /* (patch 0018) */
+ 
+ /* The button's boxes (button+0x58, 0xb0 apart). The first is its hit box: its global matrix at +0x28 (3 x 4, by column:
+    the translation at +0x4c, +0x50; the layout's units, moving with a page as it slides; all 0 while its page is not shown)
+@@ -790,9 +815,14 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+         if (seen[i].screen == screen) return &seen[i];
+         if (!free_one || seen[i].seen_ns < free_one->seen_ns) free_one = &seen[i];   /* (the one gone longest) */
+     }
++    /* (patch 0018: a slot reused is a screen gone longest: the HUD or panel it held is no longer known to run, so it is
++       forgotten, never handed out as a screen that may be freed) */
++    if (free_one->screen && free_one->screen == hud_screen) hud_screen = 0, hud_seen_ns = 0;
++    if (free_one->screen && free_one->screen == panel_screen) panel_screen = 0;
      memset(free_one, 0, sizeof *free_one);
      free_one->screen = screen, free_one->first_ns = now, free_one->vt = peek64(screen);
-     if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen;
+-    if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen;
++    if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen, hud_seen_ns = 0;
 +    if (free_one->vt == PANEL_FRAME_VTABLE) panel_screen = screen;
      if (trace) {
          const uint64_t mgr = peek64(peek64(screen + 32) + 96);
          hos_log("menu: a screen: %#llx (vtable %#llx) entries %d, focus manager %#llx%s", (unsigned long long)screen,
-@@ -803,6 +806,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+@@ -814,6 +844,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+         if (trace) hos_log("menu: screen %#llx (vtable %#llx) runs", (unsigned long long)screen, (unsigned long long)peek64(screen));
+     }
+     me->seen_ns = now;
++    if (screen == hud_screen) hud_seen_ns = now;   /* (patch 0018: the HUD runs now) */
+     for (int i = 0; i < (int)(sizeof seen / sizeof *seen); i++)   /* (a screen with no update for 200 ms has stopped) */
+         if (seen[i].running && now - seen[i].seen_ns > 200000000) {
+             seen[i].running = 0;
+@@ -848,13 +879,17 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
      static uint64_t front_was;
      if (trace && front && front->screen != front_was) hos_log("menu: the mouse is for screen %#llx", (unsigned long long)front->screen);
      front_was = front ? front->screen : 0;
 +    if (front) front_ns = now;
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
      const int mine = front == me;
      /* (no screen has held the mouse for 50 ms of frames, the HUD's among them in play: the game's menus have closed,
         and the window gives the camera its mouse back now, not after display.c's 300 ms) */
-@@ -814,6 +818,26 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
-     if (mine) mouse_tick(c, screen);
+     static int64_t none_since;
+     const int gone = !front && none_since && now - none_since > 50000000;
+     none_since = front ? 0 : none_since ? none_since : now;
++#endif   /* (patch 0018) */
+     ReleaseSRWLockExclusive(&seen_lock);
++#if defined(_WIN32)   /* (patch 0018: the mouse's, Windows only) */
+     if (gone) hos_mouse_game_menu_gone();
+     /* (HOS_INPUT_PLAY: the mouse is the recording's here, not the player's: its focus changes and item choices given at
+        the frame they were made at, on their screen; its clicks and scrolls are the recording's pad. The file's button is
+@@ -873,13 +908,83 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+         mouse_tick(c, screen);
+     }
      if (screen == pause_screen_now()) InterlockedIncrement(&ticks);
++#endif   /* (patch 0018) */
++    /* (patch 0018, oot-remake-multiplayer rows 63/76) The HUD screen's own refresh HUD_REFRESH_FN (it reads the dungeon's
++       map, compass, boss key and floors into the copy the minimap and the Map page draw), when the module asked for
++       it: here, at that screen's own update on the game's thread, so the screen it runs on is alive by definition; no
++       stored pointer is ever called on. Counted only when it ran: guest_call gives 0 for a function it cannot find */
++    if (hud_refresh_wanted && peek64(screen) == HUD_SCREEN_VTABLE && InterlockedExchange(&hud_refresh_wanted, 0)) {
++        if (a64_lookup(HUD_REFRESH_FN)) {
++            guest_call(c, HUD_REFRESH_FN, screen, 0, NULL, NULL);
++            InterlockedIncrement(&hud_refreshes);
++        } else if (!InterlockedExchange(&hud_refresh_gone, 1)) {
++            hos_log("menu: the HUD refresh %#llx is not in this build of the game: not run", (unsigned long long)HUD_REFRESH_FN);
++        }
++    }
  }
 +
 +/* (oot-remake-multiplayer's patch 0018, the other players on the game's maps) For hookshot_coop.dll, found by name in
@@ -57,20 +217,62 @@ index 6e70423a..ad7b2fae 100644
 +    uint32_t size;
 +    int32_t map_page, menu_open, reserved;
 +    uint64_t hud_screen, panel_screen;
++    int64_t hud_ran_ns_ago;   /* how long ago the HUD screen last ran (-1: not since it was seen); filled when size covers it */
++    uint32_t hud_refreshes;   /* the HUD refreshes made for hos_coop_hud_refresh so far */
++    uint32_t reserved2;
++    /* (patch 0018, row 141) The screens that ran in the last 100 ms (the HUD's, the player status's with the hearts,
++       magic bar and d-pad, the menus'), for the module to find a screen by its layout's panes; filled when size covers
++       them */
++    uint32_t screen_count;
++    uint32_t reserved3;
++    uint64_t screens[24];
 +} HosCoopMenuState;
 +__declspec(dllexport) int hos_coop_menu_state(HosCoopMenuState *out) {
-+    if (!out || out->size < sizeof *out) return 0;
-+    out->size = sizeof *out;
++    if (!out || out->size < offsetof(HosCoopMenuState, hud_ran_ns_ago)) return 0;   /* (an older module's smaller one too) */
++    const int long_one = out->size >= offsetof(HosCoopMenuState, screen_count);
++    const int with_screens = out->size >= sizeof *out;   /* (row 141: the running screens too) */
++    out->size = with_screens ? (uint32_t)sizeof *out
++                : long_one   ? (uint32_t)offsetof(HosCoopMenuState, screen_count)
++                             : (uint32_t)offsetof(HosCoopMenuState, hud_ran_ns_ago);
 +    out->map_page = map_page;
 +    const int64_t at = front_ns;
 +    out->menu_open = at && hos_now_ns() - at < 150000000;
 +    out->reserved = 0;
 +    out->hud_screen = hud_screen, out->panel_screen = panel_screen;
++    if (long_one) {
++        const int64_t ran = hud_seen_ns;
++        out->hud_ran_ns_ago = out->hud_screen && ran ? hos_now_ns() - ran : -1;
++        out->hud_refreshes = (uint32_t)hud_refreshes, out->reserved2 = 0;
++    }
++    if (with_screens) {   /* (row 141) */
++        const int64_t now = hos_now_ns();
++        uint32_t n = 0;
++        AcquireSRWLockExclusive(&seen_lock);
++        for (int i = 0; i < (int)(sizeof seen / sizeof *seen) && n < 24; i++)
++            if (seen[i].screen && seen[i].running && now - seen[i].seen_ns < 100000000) out->screens[n++] = seen[i].screen;
++        ReleaseSRWLockExclusive(&seen_lock);
++        out->screen_count = n, out->reserved3 = 0;
++        for (uint32_t i = n; i < 24; i++) out->screens[i] = 0;
++    }
 +    return 1;
 +}
++/* (patch 0018, rows 63/76) The module asks the HUD screen's own refresh once: it runs at that screen's next update
++   (hos_oot_menu_tick), never on a stored pointer. 1: asked */
++__declspec(dllexport) int hos_coop_hud_refresh(void) {
++    InterlockedExchange(&hud_refresh_wanted, 1);
++    return 1;
++}
++#if defined(_WIN32)
++/* (patch 0018) Windows' hos_oot_menu_focus is above, with the mouse */
  #else
- void hos_oot_menu_focus(Ctx *c, uint64_t screen, uint64_t pane, uint64_t lr) { (void)c, (void)screen, (void)pane, (void)lr; }
- void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }
--- 
-2.56.0.windows.4
-
+ void hos_input_clear_toggles(void);
++void hos_oot_menu_pause_focus(uint64_t screen);   /* (patch 0018: above) */
+ /* Every menu screen's pane-focus hook runs on Linux too, without mouse menu navigation. */
+ void hos_oot_menu_focus(Ctx *c, uint64_t screen, uint64_t pane, uint64_t lr) {
+-    (void)c, (void)screen, (void)pane, (void)lr;
++    (void)c, (void)pane, (void)lr;
++    hos_oot_menu_pause_focus(screen);   /* (patch 0018: the pause menu, as Windows' focus_locked keeps it) */
+     hos_input_clear_toggles();
+ }
+-void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c; sprint_menu_tick(screen); }
+ #endif

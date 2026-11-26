@@ -1,0 +1,43 @@
+{
+  "preset": "deku-before-gohma",
+  "version": 1,
+  "title": "Child Link before Gohma's door in the Deku Tree, slingshot",
+  "spec": {
+    "items": [
+      "Weapon_Sword_Kokiri",
+      "Weapon_Shield_Deku",
+      "PouchData.Weapon_Range_SlingShot.StockNum"
+    ],
+    "hearts": 3,
+    "max_hearts": 3,
+    "flags": {
+      "0x7d776b61": "DefeatBoss",
+      "HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn": 0,
+      "HavePlayedEvent.Dm_Deku_BossIn": 0,
+      "HavePlayedEvent.Dm_Deku_BossOut": 0,
+      "HavePlayedEvent.InsideTheDekuTree_BossArea_Warp": 0,
+      "InsideTheDekuTree_BossArea_ShutIn": 0,
+      "InsideTheDekuTree_BossArea_ChangeENVForBoss": 0,
+      "Gohma_IsLightingForBattle": 0,
+      "Gohma_DefeatBoss": 0,
+      "HavePlayedEvent.InsideTheDekuTree_BossDie": 0
+    },
+    "boss_keys": [
+      "DekuTree"
+    ],
+    "warp": {
+      "scene": "InsideTheDekuTree",
+      "entrance": "Entrance"
+    },
+    "place": {
+      "x": -12.0,
+      "y": 48.5,
+      "z": 66.5
+    }
+  },
+  "notes": [
+    "Link is put in the corridor 11 m before Gohma's door. Walk through the door (goto -4.0 67.5, then 6.7 67.6): the game's own boss trigger and intro make Gohma. Then walk under her ceiling spot (17.0 67.8) and look up (ZL); she drops.",
+    "Not the boss rush room GohmaStage: a free-play warp there left both games black with no control and no camera (the rush room's arrival is not the plain one). The dungeon and its door are the way the autotests gohma-door and hs-boss-stun-gohma go.",
+    "The boss is made alive as docs/dungeons-boss.md (the boss set table) has it: the shared quest Get_StoneOfForest is put back to its step DefeatBoss, and the boss room's Bools and the intro's played flags to their before values. The save must be of child Link."
+  ]
+}

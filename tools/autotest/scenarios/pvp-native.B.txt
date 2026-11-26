@@ -1,0 +1,30 @@
+# pvp-native B (proof-0116): stands still 1.7 m west of A facing it; later holds ZL on A's copy while A carries a bomb (P-h).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PVP_NATIVE=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 540
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+place 196.93 163.4 309.87
+wait 30
+toward 198.63 309.87 6
+mark standing
+wait 1500
+mark hits
+wait 300
+toward 198.63 309.87 4
+hold ZL 420 bomb-z
+mark after-throw
+wait 300
+mark end

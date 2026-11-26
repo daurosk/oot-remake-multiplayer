@@ -345,3 +345,52 @@ TEST_CASE("scrubs: issue 144, a SmallHit on a brother before the last does not s
     CHECK(p.Receive(HitOn(kThree), 5'000'000));
     CHECK(p.Pending() == 1);
 }
+
+TEST_CASE("scrubs: issue 243, the last right hit sets the game's own solve flags here, after our event") {
+    const std::vector<std::uint32_t> kSolve{0xd2f46f66, 0x60c22ed7};  // RoomK_Cleared, _003
+    // Our Link in no event: the flags come out on the hit's walk, once.
+    {
+        Puzzle p;
+        Puzzle::Out out;
+        p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+        p.Look(kScene, Room("Paralysis", "Paralysis", "Wait"), std::nullopt, 2'000'000, out);
+        CHECK(out.solve.empty());  // not solved yet
+        p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 3'000'000, out);
+        CHECK(p.Solved(kManager));
+        CHECK(out.solve == kSolve);
+        out = {};
+        p.Look(kScene, Room("Paralysis", "Paralysis", "Escape"), std::nullopt, 3'300'000, out);
+        CHECK(out.solve.empty());  // once
+    }
+    // Our Link in an event (a talk): they wait for its end and tail (issue 144), then come out.
+    {
+        Puzzle p;
+        Puzzle::Out out;
+        p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+        p.SetEvent(true, 2'000'000);
+        p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 2'000'000, out);
+        CHECK(p.Solved(kManager));
+        CHECK(out.solve.empty());
+        p.SetEvent(false, 3'000'000);  // the 2 s tail
+        p.Look(kScene, Room("Paralysis", "Paralysis", "Escape"), std::nullopt, 3'000'000, out);
+        CHECK(out.solve.empty());
+        p.SetEvent(false, 4'100'000);
+        p.Look(kScene, Room("Paralysis", "Paralysis", "Escape"), std::nullopt, 4'100'000, out);
+        CHECK(out.solve == kSolve);
+    }
+    // A scene change before they came out drops them (a new visit is a new try).
+    {
+        Puzzle p;
+        Puzzle::Out out;
+        p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+        p.SetEvent(true, 2'000'000);
+        p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 2'000'000, out);
+        p.SetEvent(false, 9'000'000);
+        p.Look("KokiriForest", {}, std::nullopt, 9'000'000, out);
+        CHECK(out.solve.empty());
+    }
+    // The Kokiri Forest grotto's brothers have no saved solve flag.
+    CHECK(Puzzle::SolveFlags(0xb6df77f3871bf915ULL).empty());
+    CHECK(Puzzle::SolveFlags(0xdb89f80f885aa368ULL).empty());
+    CHECK(Puzzle::SolveFlags(kManager).size() == 2);
+}

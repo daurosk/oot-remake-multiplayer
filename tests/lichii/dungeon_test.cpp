@@ -1,11 +1,14 @@
 // Tests for the shared dungeon flags (lichii/hook/coop_dungeon.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "coop_dungeon.h"
+#include "coop_event_result.h"
 #include "coop/host/flag_watcher.hpp"
 #include "coop/protocol/codec.hpp"
 
@@ -23,12 +26,55 @@ TEST_CASE("dungeon: every flag's hash is the hash of its name, once") {
     CHECK(ints > 10);
 }
 
+TEST_CASE("dungeon: a mid-boss beaten is shared, its fight start is not (mid-boss end state)") {
+    const auto has = [](std::string_view name) {
+        const auto flags = CoopDungeon::Flags();
+        return std::any_of(flags.begin(), flags.end(), [&](const auto& f) { return f.name == name; });
+    };
+    CHECK(has("Get_StoneOfWater_BigOctoDefeat"));
+    CHECK(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"));
+    CHECK(has("BottomOfTheWell_Level_Room_06_Boss_Defeat"));  // Dead Hand, the rule they follow
+    CHECK(has("WaterTemple_DarkLink_Death"));
+    CHECK(has("ForestTemple_DefeatMeg"));
+    CHECK(has("FireTemple_Room24_FlareDancerisDead"));
+    CHECK(has("Gimmick_DefeatEnemy_Open_DodongoCave_02"));  // the second Lizalfos room
+    CHECK_FALSE(has("Get_StoneOfWater_BigOctoAppear"));
+    CHECK_FALSE(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossAppear"));
+}
+
+TEST_CASE("dungeon: an enemy room's clear reaches every game at once, never held (rows 160/161)") {
+    // Dodongo's Cavern's Lizalfos rooms: the shutters are NOT(clear flag OR asker EventBool) and the room deletes its
+    // Lizalfos on the clear flag (romfs Gimmick_DodongoCavern_MiddleBoss01/02). A game that never gets the flag (row
+    // 160: a player spectating or teleported out when the group won) re-makes the fight and stays locked in. So the
+    // flag and the event's played flag land live: no dungeon hold, no result guard, and the event is class live.
+    for (const std::string_view room : {"01", "02"}) {
+        const std::string flag = std::string("Gimmick_DefeatEnemy_Open_DodongoCave_") + std::string(room);
+        const std::string event = std::string("DodongoCavern_Gimmick_DefeatLizalfos") + std::string(room);
+        const std::string played = "HavePlayedEvent." + event;
+        CAPTURE(flag);
+        const auto flags = CoopDungeon::Flags();
+        const auto find = [&](const std::string& name) {
+            return std::find_if(flags.begin(), flags.end(), [&](const auto& f) { return f.name == name; });
+        };
+        REQUIRE(find(flag) != flags.end());
+        REQUIRE(find(played) != flags.end());
+        CHECK_FALSE(CoopDungeon::HeldIn(find(flag)->hash).has_value());
+        CHECK_FALSE(CoopDungeon::HeldIn(find(played)->hash).has_value());
+        CHECK(CoopEventResult::IsLive(event));
+        for (const auto& g : CoopEventResult::Guards()) {
+            CHECK(g.flag != flag);
+            CHECK(g.flag != played);
+        }
+    }
+}
+
 TEST_CASE("dungeon: the Water Temple's water level and switches are in the list") {
     bool level = false;
     bool shutter = false;
     for (const auto& f : CoopDungeon::Flags()) {
         level |= std::string(f.name) == "WaterTemple_Room00_WaterLevel" && f.is_int;
-        shutter |= std::string(f.name) == "WaterTemple_Room00_Switch_NearTheShutter";
+        // (Room00_Switch_NearTheShutter is where our Link stands, set both ways by an area: not shared.)
+        shutter |= std::string(f.name) == "WaterTemple_Room00_OpenDoor1F";
         // One player's own state is not shared.
         CHECK(std::string(f.name).find("NaviHelp") == std::string::npos);
         CHECK(std::string(f.name).find("IsPlayerIn") == std::string::npos);
@@ -46,11 +92,17 @@ TEST_CASE("dungeon: room state under another spelling or after Gimmick_ is share
                           "Gimmick_DefeatEnemy_Open_ForestTemple_05", "Gimmick_DeleteFire_FireTemple"}) {
         CHECK_MESSAGE(names.contains(n), n);
     }
-    // Where one player (or Ruto) stands, state set both ways, and what Link reads stay
-    // each player's own (review of da6a300).
+    // Jabu-Jabu's Room 14 water (issue 249): the two flags are the water's only input (its placement
+    // groups' saved state), set once per press and never written back by a game whose switch is free.
+    for (const char* n : {"Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_Insidejabujabu_down_MoveWater"}) {
+        CHECK_MESSAGE(names.contains(n), n);
+        CHECK_FALSE_MESSAGE(CoopDungeon::HeldIn(host::flag_hash(n)).has_value(), n);  // live, not held
+    }
+    // Where one player (or Ruto) stands, state a switch or torch holds both ways, each game's own switch
+    // arming, and what Link reads stay each player's own (review of da6a300).
     for (const char* n : {"Insidejabujabu_Room7_Switch1_InsideArea", "Insidejabujabu_Room7_Switch2_OnlyLinkOrLuto",
                           "Insidejabujabu_Room7_NearTheSwitch", "Insidejabujabu_Room7_NearTheSwitch_Tentacle_Gate",
-                          "Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_Insidejabujabu_down_MoveWater",
+                          "Gimmick_Insidejabujabu_Updown_MoveWaterSwitch", "InsidejaubjabuBelly_gimic_switchOn_Stone",
                           "Gimmick_Ignition_Open_WaterTemple_01", "Gimmick_Ignition_Open_WaterTemple_02",
                           "HavePlayedEvent.Obj_SpiritTemple_StoneTablet_A_01"}) {
         CHECK_FALSE_MESSAGE(names.contains(n), n);
@@ -131,6 +183,57 @@ TEST_CASE("dungeon: one player's failed or reset attempt is not shared (issue 14
     CHECK(names.count("InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003") == 1);
 }
 
+TEST_CASE("dungeon: where one player's Link stands in the Forest Temple is not shared (player report 108)") {
+    // Set true and false by a room graph's Player-layer areas, read only by
+    // that player's own event (the Song of Time block's, the fall-down one).
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* out : {"ForestTemple_IsLeftOfTimeBLock", "ForestTemple_IsInFallingCeilingRoom"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    // The block gone stays the group's: every game's room graph reads it live.
+    CHECK(names.count("Foresttemple_SongOfTimeBlock_A_01_Disappearance") == 1);
+    CHECK(names.count("ForestTemple_Room02_TimeBlock") == 1);
+}
+
+TEST_CASE("dungeon: where one player's Link stands is not shared in any dungeon (forest-temple-a sweep)") {
+  std::set<std::string> names;
+  for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+  for (const char* out : {"BottomOfTheWell_Level_Room_01_InTheCenterArea",
+                          "BottomOfTheWell_Level_Room_01_InTheDivingArea",
+                          "BottomOfTheWell_Level_Room_01_InTheReturnArea",
+                          "BottomOfTheWell_Level_Room_09_NearRock",
+                          "DodongoCavern_Room05_NearTreasureBox",
+                          "DodongoCavern_Room10_PlayerOutOfRoom",
+                          "FireTemple_Room04_IsAtCorrectArea",
+                          "FireTemple_Room12_IsAtCorrectArea",
+                          "ForestTemple_Room08_ClimbIvy_Near",
+                          "GerudoTrainingGround_Dungeon_Room03_InSecretRoom",
+                          "GerudoTrainingGround_Dungeon_Room08_InSecretRoom",
+                          "InsideJabuJabuBelly_Room09_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room12_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room14_IsNearGimmick",
+                          "InsideJabuJabuBelly_Room14_PlayerIsUnder",
+                          "InsideJabuJabuBelly_Room18_IsInHiddenArea",
+                          "InsideTheDekuTree_RoomA_NearScaffold",
+                          "ShadowTemple_Level_Room_09_Away",
+                          "ShadowTemple_Level_Room_13_PlayerPosCheck",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange1_2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2_2",
+                          "SpiritTemple_Level_Room_02_PlayerPosChange1",
+                          "SpiritTemple_Room16_PlayerPosCheck",
+                          "WaterTemple_Room00_Switch_NearThePlatform",
+                          "WaterTemple_Room00_Switch_NearTheShutter",
+                          "IceCavern_Room01Demo_Far"}) {
+    CHECK_MESSAGE(names.count(out) == 0, out);
+  }
+  // Room state set both ways by a graph stays shared (a switch, a fire, an air wall).
+  CHECK(names.count("FireTemple_Room04_SwitchHit") == 1);
+  CHECK(names.count("FireTemple_Room14_AirWallEnemyMove00") == 1);
+  CHECK(names.count("ForestTemple_TwistCorridor01_IsConstraint") == 1);
+}
+
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopDungeon::Merge(none, false) == 0);
@@ -138,7 +241,7 @@ TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or doe
 
     const std::size_t all =
         CoopDungeon::Flags().size() + CoopDungeon::LiveFlags().size() + CoopDungeon::AutogenFlags().size() +
-        CoopDungeon::Keys().size();
+        CoopDungeon::Keys().size() + CoopDungeon::WorldKeys().size();
     const std::size_t n = CoopDungeon::Merge(none, true);
     REQUIRE(none.has_value());
     CHECK(n == all);
@@ -190,6 +293,43 @@ TEST_CASE("dungeon: the placement keys are one each, and only things that stay d
     CHECK(per_dungeon.size() == 13);
     CHECK(per_dungeon["InsideTheDekuTree"] == 37);
     CHECK(per_dungeon["DodongoCavern"] == 36);
+}
+
+TEST_CASE("dungeon: row 220: the overworld's obstacles that stay done are shared, each player's own are not") {
+    std::set<std::uint64_t> dungeon;
+    for (const auto& k : CoopDungeon::Keys()) dungeon.insert(k.key);
+    std::set<std::uint64_t> seen;
+    std::map<std::string, std::size_t> kinds;
+    for (const auto& k : CoopDungeon::WorldKeys()) {
+        CHECK(k.key != 0);
+        CHECK_MESSAGE(seen.insert(k.key).second, k.actor);
+        CHECK_MESSAGE(!dungeon.contains(k.key), k.actor);
+        const std::string scene = k.dungeon;
+        const std::string actor = k.actor;
+        CHECK_MESSAGE(!CoopDungeon::IsDungeonScene(scene), scene);
+        CHECK_MESSAGE(scene != "DreamWorld", actor);  // Boss Rush and the battle arenas: each player's own
+        CHECK_MESSAGE(actor.find("HitTarget") == std::string::npos, actor);  // the Market's shooting gallery
+        CHECK_MESSAGE(actor.find("ArcheryTarget") == std::string::npos, actor);  // horseback archery
+        CHECK_MESSAGE(actor.find("TBox") == std::string::npos, actor);  // chests: CoopChests
+        CHECK_MESSAGE(!actor.starts_with("Obj_Rupee"), actor);  // pickups: CoopPickups
+        CHECK_MESSAGE(actor.find("Heart") == std::string::npos, actor);
+        CHECK_MESSAGE(actor != "Enemy_Skulltula_Gold", actor);
+        ++kinds[actor.substr(0, actor.rfind('_'))];
+    }
+    CHECK(CoopDungeon::WorldKeys().size() == 158);
+    CHECK(kinds["Obj_BrokenRock_A"] == 57);
+    CHECK(kinds["Obj_LiftRock_B"] == 46);
+    CHECK(kinds["WallCrack"] == 15);
+    CHECK(kinds["Obj_EnemyCounter_A"] == 5);
+    bool cover = false, rock = false, counter = false;
+    for (const auto& k : CoopDungeon::WorldKeys()) {
+        cover |= k.key == 0x2031e5ac12ff9ab4ull && std::string(k.actor) == "Land_HrlField_HidingHoleCover_A_01";
+        rock |= k.key == 0x8a4e791b05223269ull && std::string(k.actor) == "Obj_DeathMtTrail_BrokenRock_A_01";
+        counter |= k.key == 0x0d23bcff35eca9eaull && std::string(k.dungeon) == "Graveyard";
+    }
+    CHECK(cover);
+    CHECK(rock);
+    CHECK(counter);
 }
 
 TEST_CASE("dungeon: the Deku Tree's and Dodongo's Cavern's chests are in the list") {
@@ -270,6 +410,49 @@ TEST_CASE("dungeon: a chest opened in one game opens in the other and never clos
     CHECK(b.values[chest].value == 1);
 }
 
+TEST_CASE("dungeon: row 220: a boulder blown up in one game is gone in the other and stays gone") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list.has_value());
+    const auto rock = host::FlagKey::key64_flag(0x8a4e791b05223269ull);  // Death Mountain Trail's big boulder
+    REQUIRE(list->contains(rock));
+
+    Game a;
+    Game b;
+    a.set(rock, 0);
+    b.set(rock, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    for (host::FlagWatcher* w : {&wa, &wb}) {  // as the hook does with pickups on
+        for (const auto& k : CoopDungeon::WorldKeys()) w->share_pickup(host::FlagKey::key64_flag(k.key));
+    }
+    wa.frame(a);
+    wb.frame(b);
+
+    a.set(rock, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    CHECK(set->flags[0].key == rock);
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[rock].value == 1);
+
+    // B's game reads 0 for a moment (a scene load): not sent; and a 0 coming in is never written over its 1.
+    b.set(rock, 0);
+    CHECK(wb.frame(b).empty());
+    b.set(rock, 1);
+    wb.frame(b);
+    wb.receive(proto::Message{proto::FlagState{2, {{rock, proto::FlagKind::boolean, 0}}}});
+    wb.frame(b);
+    CHECK(b.values[rock].value == 1);
+}
+
 TEST_CASE("dungeon: the Deku torch plate's unnamed autogen bool is shared (deku-test, torch flame)") {
     // B stepped on room E's plate and set 0x0f8f3fa3; A got the web (RoomE_KillSpiderWave)
     // but not the torch, because the bool has no name and Flags() lists by name.
@@ -315,6 +498,59 @@ TEST_CASE("dungeon: the Deku torch plate's unnamed autogen bool is shared (deku-
     wa.receive(proto::Message{proto::FlagState{1, set->flags}});
     wa.frame(a);
     CHECK(a.values[key].value == 1);
+}
+
+TEST_CASE("dungeon: the Fire Temple pillar's fallen state and every room's unnamed bool are shared (#116)") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list);
+    std::set<std::uint32_t> autogen;
+    std::map<std::string, int> per_dungeon;
+    for (const auto& f : CoopDungeon::AutogenFlags()) {
+        autogen.insert(f.hash);
+        ++per_dungeon[f.dungeon];
+    }
+    // Generated from the romfs (tools/puppet_pack/autogen_flags.py): 47 room bools in 6 dungeons.
+    CHECK(autogen.size() == 47);
+    CHECK(per_dungeon["FireTemple"] == 18);
+    CHECK(per_dungeon["GerudoTrainingGround"] == 22);
+    // The big pillar's Buried (Logic/FireTemple_Level_Room_10_Prefab_3284; its event flow waits on the name),
+    // the two hammer floors under it, and the Deku torch plate seen in a game.
+    for (const std::uint32_t h : {0xa82cc7a2u, 0xce19219cu, 0x03a335cbu, 0x0f8f3fa3u}) {
+        CHECK(autogen.contains(h));
+    }
+    // One player's own stay out: the refill respawns (pots, grass), a gossip stone's fairy, Ganon's Castle
+    // room 24's "walked in".
+    for (const std::uint32_t h : {0x21958973u, 0xfe6d1779u, 0x58445aa7u, 0x186adf43u, 0xaecf3cfeu, 0x9de51737u,
+                                  0x0fa9d971u, 0xbd902a5bu}) {
+        CHECK_FALSE(autogen.contains(h));
+        CHECK_FALSE(list->contains(host::FlagKey(h, std::uint16_t{0})));
+    }
+
+    // A hammered the pillar from its top (it rode down, its game buried it); B stood on top too. B's game
+    // gets the bool, so its room graph makes the fallen pillar and the respawn swap at the bottom.
+    const auto key = host::FlagKey(0xa82cc7a2, std::uint16_t{0});
+    REQUIRE(list->contains(key));
+    Game a;
+    Game b;
+    a.set(key, 0);
+    b.set(key, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+    a.set(key, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[key].value == 1);
 }
 
 TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (issue 129)") {
@@ -384,6 +620,20 @@ host::HoldFlagStore::Hold HoldIn(const bool& link, const std::string& scene) {
     };
 }
 
+// The same with the row 98(2) result hold in front, as coop_hook.cpp orders them: the flags of an event whose result
+// we set here (`applied`) land; a result guard of a class-asker event not set and not played (`played`) waits.
+host::HoldFlagStore::Hold HookHold(const bool& link, const std::string& scene, const std::set<std::string>& applied,
+                                   const std::set<std::string>& played) {
+    return [&link, &scene, &applied, &played](host::FlagKey key) {
+        if (!link) return false;
+        const auto rh = CoopEventResult::HoldFor(scene, applied, [&](const std::string& e) { return played.contains(e); });
+        if (rh.Releases(key.hash)) return false;
+        if (rh.Waits(key.hash)) return true;
+        const auto in = CoopDungeon::HeldIn(key.hash);
+        return in && (in->empty() ? CoopDungeon::IsDungeonScene(scene) : scene == *in);
+    };
+}
+
 } // namespace
 
 TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own eye still works (issue 129)") {
@@ -394,15 +644,18 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
         host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
     const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
     REQUIRE(CoopDungeon::HeldIn(ladder.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
-    // deku-switches-b: the room clear deletes the ladder's asker in the room graph, so it waits with the event.
-    REQUIRE(CoopDungeon::HeldIn(cleared.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
+    // Row 98(2): the room clear (it deletes the ladder's asker) is no longer held by hand: it is the event's
+    // generated result guard, waiting in the Deku Tree until our result is set or we played it.
+    REQUIRE_FALSE(CoopDungeon::HeldIn(cleared.hash).has_value());
 
     Game b;
     b.set(ladder, 0);
     b.set(cleared, 0);
     bool link = true;
     std::string scene = "InsideTheDekuTree";
-    host::HoldFlagStore store(b, HoldIn(link, scene));
+    const std::set<std::string> applied;
+    const std::set<std::string> played;
+    host::HoldFlagStore store(b, HookHold(link, scene, applied, played));
     host::FlagWatcher wb(*list, host::FlagRole::player);
     wb.frame(store);
 
@@ -421,6 +674,53 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
     scene = "KokiriForest";
     wb.frame(store);
     CHECK(b.values[ladder].value == 1);
+    CHECK(b.values[cleared].value == 1);
+}
+
+TEST_CASE("dungeon: row 98(2): once our asker's ladder result is set, its flags land in the Deku Tree (no leaving)") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    const auto ladder =
+        host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
+    const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
+    Game b;
+    b.set(ladder, 0);
+    b.set(cleared, 0);
+    bool link = true;
+    std::string scene = "InsideTheDekuTree";
+    std::set<std::string> applied;
+    const std::set<std::string> played;
+    host::HoldFlagStore store(b, HookHold(link, scene, applied, played));
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wb.frame(store);
+    wb.receive(proto::Message{proto::FlagState{1, {{ladder, proto::FlagKind::boolean, 1},
+                                                   {cleared, proto::FlagKind::boolean, 1}}}});
+    wb.frame(store);
+    CHECK(b.values[ladder].value == 0);   // held: our result not set yet
+    CHECK(b.values[cleared].value == 0);  // waits: it would delete our asker first
+    applied.insert("InsideTheDekuTree_Gimmick_FallingLadder");  // our asker's EventBool + EventFinish read 1
+    wb.frame(store);
+    CHECK(b.values[ladder].value == 1);
+    CHECK(b.values[cleared].value == 1);
+}
+
+TEST_CASE("dungeon: row 98(2): the room clear lands at once in the Deku Tree once our game played the ladder itself") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
+    Game b;
+    b.set(cleared, 0);
+    bool link = true;
+    std::string scene = "InsideTheDekuTree";
+    const std::set<std::string> applied;
+    const std::set<std::string> played{"InsideTheDekuTree_Gimmick_FallingLadder"};
+    host::HoldFlagStore store(b, HookHold(link, scene, applied, played));
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wb.frame(store);
+    wb.receive(proto::Message{proto::FlagState{1, {{cleared, proto::FlagKind::boolean, 1}}}});
+    wb.frame(store);
     CHECK(b.values[cleared].value == 1);
 }
 
@@ -508,16 +808,19 @@ TEST_CASE("dungeon: the host answers a held write with the asked value") {
     CHECK(h.values[ladder].value == 1);
 }
 
-TEST_CASE("dungeon: which flags are held: gimmick events and the corridor, not switches or keys") {
+TEST_CASE("dungeon: which flags are held: class-asker gimmick events and the corridor, not switches or keys") {
     std::size_t held = 0;
+    std::size_t live = 0;
     for (const auto& f : CoopDungeon::Flags()) {
         const auto in = CoopDungeon::HeldIn(f.hash);
         const std::string name = f.name;
-        const bool live_on_test6 = name == "HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop" ||
-                                   name == "HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomH_CandleStick";
-        if (name.starts_with("HavePlayedEvent.") && !live_on_test6) {
-            CHECK_MESSAGE(in.has_value(), name);
+        constexpr std::string_view kPlayed = "HavePlayedEvent.";
+        if (name.starts_with(kPlayed)) {
+            // Row 98(2): a class-live event (every result by shared flags, coop_event_result.cpp) is not held.
+            const bool is_live = CoopEventResult::IsLive(std::string_view(name).substr(kPlayed.size()));
+            CHECK_MESSAGE(in.has_value() == !is_live, name);
             if (in && !in->empty()) CHECK(CoopDungeon::IsDungeonScene(*in));
+            live += is_live ? 1 : 0;
         }
         if (!name.starts_with("HavePlayedEvent.") &&
             (name.find("SmallKey") != std::string::npos || name.find("WaterLevel") != std::string::npos)) {
@@ -525,7 +828,11 @@ TEST_CASE("dungeon: which flags are held: gimmick events and the corridor, not s
         }
         held += in ? 1 : 0;
     }
-    CHECK(held > 190);
+    // 202 played events in the list (11-17): about 155 class live, about 47 held, plus the 7 corridor flags.
+    CHECK(live > 100);
+    CHECK(held > 40);
+    CHECK(held < 100);
+    CHECK(CoopDungeon::HeldIn(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder")).has_value());
     CHECK(CoopDungeon::HeldIn(host::flag_hash("HavePlayedEvent.SpritTemple_Room01_Gimmick")) == std::nullopt);
     CHECK(CoopDungeon::IsDungeonScene("InsideJabuJabuBelly"));
     CHECK_FALSE(CoopDungeon::IsDungeonScene("KokiriForest"));
@@ -661,6 +968,19 @@ TEST_CASE("dungeon: a held flag that a load puts back to 0 is kept for later, ne
     scene = "KokiriForest";  // out of the dungeon: the group's 1 is written
     CHECK_FALSE(zero_sent(wb.frame(store)));
     CHECK(b.values[ladder].value == 1);
+}
+
+TEST_CASE("dungeon: the Dark Link rooms' passage flags and the Shadow boat's crush flag are each player's own") {
+    std::set<std::uint32_t> listed;
+    for (const auto& f : CoopDungeon::Flags()) listed.insert(f.hash);
+    for (const char* name : {"WaterTemple_Room23_DeleteBackRoom", "WaterTemple_Room23_DeleteFrontRoom",
+                             "WaterTemple_Room23_ResetDeletedRoom", "WaterTemple_SwitchDarkLinkDome",
+                             "WaterTemple_Room22_CreateDome", "ShadowTemple_Level_PaddelShip_Elevator_AbyssTriggered"}) {
+        CAPTURE(name);
+        CHECK_FALSE(listed.contains(host::flag_hash(name)));
+    }
+    CHECK(listed.contains(host::flag_hash("WaterTemple_Room22_Cleared")));  // the room beaten stays shared
+    CHECK(listed.contains(host::flag_hash("WaterTemple_Room23_Cleared")));
 }
 
 TEST_CASE("dungeon: a player's place in a boss fight is never shared, the group's progress is (issue 148)") {

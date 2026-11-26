@@ -96,11 +96,46 @@ TEST_CASE("pose: translations and scales pack in 1/8192") {
 TEST_CASE("pose: a different bone list starts the blend over") {
     CoopPose::Track t;
     t.Push(OneBone({0, 0, 0, 1}, 0.0f), 0);
+    auto other = OneBone({0, 0, 0, 1}, 4.0f);
+    other.bones[0].bone = 9;  // bone 3 is gone: nothing to blend from
+    t.Push(other, 40);
+    CHECK(Near(t.At(50)->bones[0].translation->at(0), 4.0f));
+}
+
+// puppet-smooth-a-2: a pose that only adds a bone (one that moved for the first time, the rest of
+// a first pose the budget split) keeps the blend; starting over held the puppet, then jumped it.
+TEST_CASE("pose: a pose that adds a bone keeps the blend (timed and untimed)") {
     auto two = OneBone({0, 0, 0, 1}, 4.0f);
     two.bones.push_back(two.bones[0]);
     two.bones[1].bone = 9;
+    two.bones[1].translation = CoopPose::Vec3{7.0f, 0, 0};
+    CoopPose::Track t;
+    t.Push(OneBone({0, 0, 0, 1}, 0.0f), 0);
     t.Push(two, 40);
-    CHECK(Near(t.At(50)->bones[0].translation->at(0), 4.0f));
+    auto at = t.At(60);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 2.0f));  // half way, not the newest at once
+    CHECK(Near(at->bones[1].translation->at(0), 7.0f));  // the new bone as first heard
+
+    CoopPose::Track timed;
+    timed.Push(OneBone({0, 0, 0, 1}, 0.0f), 1000, 1000);
+    timed.Push(two, 1040, 1040);
+    at = timed.At(1020 + CoopPose::kShowDelayMs);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 2.0f));
+    CHECK(Near(at->bones[1].translation->at(0), 7.0f));
+
+    // A part a kept bone did not have is added the same way.
+    auto more = two;
+    more.bones[1].scale = CoopPose::Vec3{1.0f, 1.0f, 1.0f};
+    timed.Push(more, 1080, 1080);
+    at = timed.At(1060 + CoopPose::kShowDelayMs);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 4.0f));
+    CHECK(at->bones[1].scale.has_value());
 }
 
 namespace {
@@ -145,13 +180,14 @@ constexpr std::uint64_t kMain = 0x80000000;
 constexpr std::uint32_t kBones = 8;
 namespace paddr = CoopPose::addr;
 
-// An actor whose skeleton has kBones identity bones; returns the local array.
-std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor, std::string_view model = {}) {
+// An actor whose skeleton has `count` identity bones; returns the local array.
+std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor, std::string_view model = {},
+                        std::uint32_t count = kBones) {
     const std::uint64_t parts = actor + 0x1000, first = actor + 0x2000, second = actor + 0x3000,
-                        holder = actor + 0x4000, skel = actor + 0x5000, local = actor + 0x6000,
+                        holder = actor + 0x4000, skel = actor + 0x5000, local = actor + 0x10000,
                         res = actor + 0x7000;
     for (std::uint64_t at : {actor, parts, first, second, holder, skel, res}) g.Map(at, 0x400);
-    g.Map(local, kBones * paddr::kLocalStride);
+    g.Map(local, count * paddr::kLocalStride);
     g.Put(actor + 0x2c, std::uint32_t{4});
     g.Put(actor + paddr::kSkeletonPath[0], parts);
     g.Put(parts + paddr::kSkeletonPath[1], first);
@@ -166,9 +202,9 @@ std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor, std::string_view mode
         g.Put(name, static_cast<std::uint16_t>(model.size()));
         REQUIRE(g.Write(name + 2, model.data(), model.size()));
     }
-    g.Put(skel + paddr::kBoneCount, static_cast<std::uint16_t>(kBones));
+    g.Put(skel + paddr::kBoneCount, static_cast<std::uint16_t>(count));
     g.Put(skel + paddr::kLocalArray, local);
-    for (std::uint32_t i = 0; i < kBones; ++i) {
+    for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint64_t b = local + i * paddr::kLocalStride;
         g.Put(b + 0x10, CoopPose::Vec3{1, 1, 1});
         g.Put(b + 0x20, 1.0f);
@@ -364,6 +400,95 @@ TEST_CASE("pose: the piece in a hand goes as a pose of its own skeleton (issue 1
     CHECK(CoopPose::Drives(3, 101'016));
 }
 
+TEST_CASE("pose: a bone our game holds still at its own value reaches the puppet whole (issue 152)") {
+    // held-piece: only bones that moved since the first read went in the moving pose, so a bone held
+    // still away from the puppet's value (Weapon_R, the Ocarina's hand bone) was never sent and the
+    // Ocarina hung turned. Every bone also goes whole now and then (StillPicker).
+    FakeGuest g;
+    const std::uint64_t player = 0x600000000, puppet = 0x700000000;
+    const std::uint64_t mine = MakeActor(g, player, "Player_t152");  // a new skeleton: a first read of its own
+    const std::uint64_t theirs = MakeActor(g, puppet, "Player_t152");
+    MakePlayerChain(g, player);
+    CoopPose::SetLog({}, false);
+    const std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets{{4, puppet}};
+    // Bone 4 is held at a turn of its own from the first read on: it never "moves".
+    const std::uint64_t bone4 = mine + 4 * paddr::kLocalStride;
+    const float h = std::sqrt(0.5f);
+    const CoopPose::Rows r = CoopPose::QuatToRows({h, 0, 0, h});
+    for (int row = 0; row < 3; ++row) {
+        g.Put(bone4 + 0x20 + row * 16, CoopPose::Vec3{r[row * 3], r[row * 3 + 1], r[row * 3 + 2]});
+    }
+    g.Put(bone4 + 0x50, CoopPose::Vec3{0.0f, 0.25f, 0.0f});
+    CoopPose::OnCalcFrame(g, kMain, puppets, 200'000);
+    auto out = CoopPose::TakeOutgoing(5, 200'000);
+    REQUIRE_FALSE(out.empty());
+    bool has4 = false;
+    for (const auto& b : out[0].bones) {
+        if (b.bone == 4) {
+            has4 = b.rotation.has_value() && b.translation.has_value() && b.scale.has_value();
+        }
+    }
+    CHECK(has4);  // whole, though it never moved
+    // puppet-budget: the whole bones are inside the send's byte budget, with the moving ones.
+    std::size_t send_bytes = 0;
+    for (const auto& m : out) send_bytes += CoopPose::WireBytes(m);
+    CHECK(send_bytes <= CoopPose::PlanFor(0).bytes);
+    for (auto& m : out) {
+        m.player_number = 4;
+        CoopPose::Receive(m, 200'000);
+    }
+    CoopPose::OnCalcFrame(g, kMain, puppets, 200'016);
+    const std::uint64_t copy4 = theirs + 4 * paddr::kLocalStride;
+    CHECK(Near(g.Get<float>(copy4 + 0x24), r[1]));
+    CHECK(Near(g.Get<float>(copy4 + 0x28), r[2]));
+    CHECK(Near(g.Get<float>(copy4 + 0x54), 0.25f));
+
+    // Sent again only after kStillRefreshMs.
+    CoopPose::StillPicker picker;
+    std::vector<coop::protocol::PoseBone> all(20);
+    for (std::size_t i = 0; i < all.size(); ++i) all[i].bone = static_cast<std::uint16_t>(i);
+    CHECK(picker.Pick(1, all, 1000).size() == CoopPose::kStillBones);
+    CHECK(picker.Pick(1, all, 1066).front().bone == CoopPose::kStillBones);  // the next ones, never sent
+    CHECK(picker.Pick(1, all, 1133).size() == all.size() - 2 * CoopPose::kStillBones);
+    CHECK(picker.Pick(1, all, 1200).empty());
+    CHECK(picker.Pick(1, all, 1000 + CoopPose::kStillRefreshMs).size() == CoopPose::kStillBones);
+    // Merged with the moving pick: one list in bone order, a bone in both once.
+    std::vector<coop::protocol::PoseBone> moving(2), whole(2);
+    moving[0].bone = 1; moving[1].bone = 5;
+    whole[0].bone = 3; whole[1].bone = 5; whole[1].scale.emplace();
+    const auto merged = CoopPose::MergeBones(moving, whole);
+    REQUIRE(merged.size() == 3);
+    CHECK(merged[0].bone == 1);
+    CHECK(merged[1].bone == 3);
+    CHECK(merged[2].bone == 5);
+    CHECK(merged[2].scale.has_value());
+}
+
+TEST_CASE("pose: Fill keeps a part a partial pose leaves out (a whole bone sent earlier)") {
+    CoopPose::Track track;
+    CoopPose::Pose whole;
+    whole.skeleton = 9;
+    CoopPose::BonePose b;
+    b.bone = 2;
+    b.rotation = CoopPose::Quat{0, 0, 0, 1};
+    b.translation = CoopPose::Vec3{0.5f, 0, 0};
+    b.scale = CoopPose::Vec3{1, 1, 1};
+    whole.bones.push_back(b);
+    track.Push(whole, 100);
+    CoopPose::Pose part;
+    part.skeleton = 9;
+    CoopPose::BonePose p;
+    p.bone = 2;
+    p.rotation = CoopPose::Quat{1, 0, 0, 0};
+    part.bones.push_back(p);
+    const auto got = track.Fill(part);
+    REQUIRE(got.bones.size() == 1);
+    CHECK((*got.bones[0].rotation)[0] == 1.0f);       // the new part
+    REQUIRE(got.bones[0].translation.has_value());     // the old one kept
+    CHECK((*got.bones[0].translation)[0] == 0.5f);
+    CHECK(got.bones[0].scale.has_value());
+}
+
 TEST_CASE("pose: poses of the highest player number are kept (16 players), one past it is not") {
     CoopPose::SetLog({}, false);
     const std::uint8_t top = coop::protocol::kMaxPlayers;
@@ -424,12 +549,12 @@ TEST_CASE("pose: 16 players: a running Link costs about 13 KB/s, not 160 (bone b
     // Before: every moving bone, 30 times a second.
     std::size_t before = 0;
     for (int f = 0; f < 60; f += 2) before += Bytes(Running(f));  // 30 sends in 1 s of 60 frames
-    // Now: 15 sends a second, at most kMaxSendBones each.
+    // Now: 15 sends a second, at most kFloorSendBytes each (48 bones of 18 bytes).
     CoopPose::BonePicker picker;
     std::size_t now = 0;
     for (int f = 0; f < 60; f += 4) {
         const auto sent = picker.Pick(0x1234, Running(f), static_cast<std::uint64_t>(1000 + f * 1000 / 60));
-        CHECK(sent.size() <= CoopPose::kMaxSendBones);
+        CHECK(Bytes(sent) <= CoopPose::kFloorSendBytes);
         now += Bytes(sent);
     }
     MESSAGE("pose bytes per second: before " << before << ", now " << now);
@@ -446,14 +571,15 @@ TEST_CASE("pose: the receiver keeps the bones a pose leaves out, and catches up 
     std::uint64_t ms = 5000;
     auto send = [&](const std::vector<proto16::PoseBone>& full) {
         const auto sent = picker.Pick(0x1234, full, ms);
+        CHECK(Bytes(sent) <= CoopPose::kFloorSendBytes);  // the default budget: the floor's bytes
         CoopPose::Pose got = track.Fill(Unpacked(sent));
         track.Push(std::move(got), ms);
         ms += 1000 / CoopPose::kSendHz;
     };
-    // The first pose: only kMaxSendBones of 300, the rest follow in later ones.
+    // The first pose: only what the budget holds of 300, the rest follow in later ones.
     send(Running(0));
     REQUIRE(track.At(ms));
-    CHECK(track.At(ms)->bones.size() == CoopPose::kMaxSendBones);
+    CHECK(track.At(ms)->bones.size() < 300);
     for (int f = 4; f < 120; f += 4) send(Running(f));
     // Moving: every bone has been sent; the fast ones are near.
     auto shown = *track.At(ms + 1000);
@@ -471,7 +597,7 @@ TEST_CASE("pose: the receiver keeps the bones a pose leaves out, and catches up 
         CHECK(*shown.bones[i].rotation == *want.bones[i].rotation);
     }
     // And then, still: only the refreshes go, within the budget.
-    CHECK(picker.Pick(0x1234, still, ms).size() <= CoopPose::kMaxSendBones);
+    CHECK(Bytes(picker.Pick(0x1234, still, ms)) <= CoopPose::kFloorSendBytes);
 }
 
 TEST_CASE("pose: Fill puts the newest pose's bones under a partial one, in bone order") {
@@ -535,7 +661,7 @@ TEST_CASE("pose: with every limb moving fast, a still bone is still sent within 
     for (int send = 0; send < 120; ++send, ms += interval) {  // 8 s
         const auto full = pose(send);
         const auto sent = picker.Pick(0x1234, full, ms);
-        CHECK(sent.size() <= CoopPose::kMaxSendBones);
+        CHECK(Bytes(sent) <= CoopPose::kFloorSendBytes);
         for (const auto& b : sent) last[b.bone] = ms;
         track.Push(track.Fill(Unpacked(sent)), ms);
         if (send >= 10) {  // after everyone was sent once
@@ -745,4 +871,271 @@ TEST_CASE("pose: a stopped stream or another skeleton leaves the puppet to its A
     CoopPose::OnCalcFrame(g, kMain, {{6, other}}, t1 + 16);
     CHECK(CoopPose::Drives(6, t1 + 16));
     CHECK_FALSE(CoopPose::Writes(6, t1 + 16));
+}
+
+// puppet-smooth (owner 2026-11-16: "Animations seem a bit jittery and choppy").
+TEST_CASE("pose: the stream is sized by who watches it, 16 players keep the floor") {
+    struct Want {
+        std::size_t watchers;
+        int hz;
+        std::size_t bytes;
+    };
+    for (const Want w : {Want{0, 30, 3960}, Want{1, 30, 3960}, Want{2, 15, 2640}, Want{3, 15, 1320},
+                         Want{4, CoopPose::kSendHz, CoopPose::kFloorSendBytes},
+                         Want{15, CoopPose::kSendHz, CoopPose::kFloorSendBytes}}) {
+        INFO("watchers " << w.watchers);
+        const CoopPose::StreamPlan p = CoopPose::PlanFor(w.watchers);
+        CHECK(p.hz == w.hz);
+        CHECK(p.bytes == w.bytes);
+        // Each stream within its relay share (kPoseRelayBytes over all streams); the floor above it.
+        // A send every IntervalMs() (66 ms at 15 Hz: 15.15 a second).
+        CHECK(p.bytes * 1000 <= CoopPose::BudgetFor(w.watchers) * p.IntervalMs());
+        if (w.watchers <= 3) CHECK(CoopPose::BudgetFor(w.watchers) == CoopPose::ShareFor(w.watchers));
+    }
+    // Two players: every bone a walk moves fits 30 times a second, with the whole bones.
+    CHECK(CoopPose::PlanFor(1).bytes >= CoopPose::kPoseHeaderBytes + CoopPose::kFullBodyBones * CoopPose::kBoneBytes +
+                                            CoopPose::kStillBones * CoopPose::kWholeBoneBytes);
+}
+
+namespace {
+
+// A walk: bones 0-119 swing at 1.5 Hz, 0.05 to 0.5 rad (a slow shoulder to a fast leg), each at
+// its own phase; bones 120-299 still (face, fingers at rest).
+float WalkAngle(std::uint16_t i, std::uint64_t ms) {
+    if (i >= 120) return 0.0f;
+    const float amp = 0.05f + 0.05f * static_cast<float>(i % 10);
+    const float t = static_cast<float>(ms) / 1000.0f;
+    return amp * std::sin(2.0f * 3.14159265f * 1.5f * t + 0.37f * static_cast<float>(i));
+}
+
+std::vector<proto16::PoseBone> Walking(std::uint64_t ms) {
+    std::vector<proto16::PoseBone> bones;
+    for (std::uint16_t i = 0; i < 300; ++i) {
+        const float a = WalkAngle(i, ms);
+        proto16::PoseBone b;
+        b.bone = i;
+        b.rotation = CoopPose::Pack({std::sin(a / 2.0f), 0.0f, 0.0f, std::cos(a / 2.0f)});
+        bones.push_back(b);
+    }
+    return bones;
+}
+
+struct Watched {
+    float uneven = 0.0f;
+    float raw = 0.0f;
+    float jumps_per_s = 0.0f;
+    float worst_off = 0.0f;   // the most a swinging bone is off its true angle at the shown time
+    float worst_rate = 0.0f;  // the fastest any bone turned in one frame, rad/s (a jerk)
+};
+
+// The other player walks, sent by the picker at `plan`, timed, through Track::Add; shown on uneven
+// frames (15 and 23 ms in turn: ~52 a second, as two games on one PC ran).
+Watched Watch(CoopPose::StreamPlan plan) {
+    CoopPose::BonePicker picker;
+    CoopPose::Track track;
+    CoopPose::Evenness even;
+    Watched out;
+    std::optional<CoopPose::Pose> last;
+    std::uint64_t last_ms = 0;
+    std::uint64_t next_send = 5000;
+    std::uint64_t now = 5000;
+    for (int frame = 0; now < 11'000; ++frame) {
+        now += frame % 2 ? 23 : 15;
+        while (next_send <= now) {
+            const auto sent =
+                Unpacked(picker.Pick(0x1234, Walking(next_send), next_send, plan.bytes - CoopPose::kPoseHeaderBytes));
+            track.Add(sent, next_send, next_send);
+            next_send += static_cast<std::uint64_t>(1000 / plan.hz);
+        }
+        const auto shown = track.At(now);
+        if (!shown) continue;
+        if (even.Step(*shown, now)) {
+            out.uneven = even.Last().uneven;
+            out.raw = even.Last().raw;
+            out.jumps_per_s = even.Last().jumps_per_s;
+        }
+        if (now > 7000 && shown->bones.size() == 300 && last && last->bones.size() == 300) {
+            const float dt = static_cast<float>(now - last_ms) / 1000.0f;
+            for (std::uint16_t i = 0; i < 120; ++i) {
+                const float step = std::fabs(AngleOf(*shown->bones[i].rotation) - AngleOf(*last->bones[i].rotation));
+                out.worst_rate = std::max(out.worst_rate, step / dt);
+                const float off = std::fabs(AngleOf(*shown->bones[i].rotation) -
+                                            WalkAngle(i, now - CoopPose::kShowDelayMs));
+                out.worst_off = std::max(out.worst_off, off);
+            }
+        }
+        last = shown;
+        last_ms = now;
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("pose: a walking Link plays smooth for 2 players (no held-then-jumped bones)") {
+    // The old stream: 48 bones (rotation only here, 12 bytes each) a pose.
+    const CoopPose::StreamPlan old_plan{CoopPose::kSendHz, CoopPose::kPoseHeaderBytes + CoopPose::kMaxSendBones * 12};
+    const Watched before = Watch(old_plan);
+    const Watched after = Watch(CoopPose::PlanFor(1));
+    MESSAGE("before (15/s x 48): uneven " << before.uneven << ", raw " << before.raw << ", jumps "
+                                                << before.jumps_per_s << "/s, worst off " << before.worst_off);
+    MESSAGE("after (2 players): uneven " << after.uneven << ", raw " << after.raw << ", jumps "
+                                         << after.jumps_per_s << "/s, worst off " << after.worst_off);
+    CHECK(before.jumps_per_s > 50.0f);                      // the stair-steps the owner saw
+    CHECK(after.jumps_per_s < 0.05f * before.jumps_per_s);  // about none
+    CHECK(after.worst_off < 0.5f * before.worst_off);
+    CHECK(after.worst_off < 0.05f);  // within ~3 degrees of the true walk, shown 100 ms behind
+}
+
+TEST_CASE("pose: evenness is taken by frame time: an even move on uneven frames reads even") {
+    CoopPose::Evenness e;
+    std::optional<float> u;
+    std::uint64_t now = 1000;
+    float a = 0.0f;
+    for (int i = 0; i <= 600 && !u; ++i) {
+        const std::uint64_t dt = i % 2 ? 23 : 15;
+        now += dt;
+        a += 3.0f * static_cast<float>(dt) / 1000.0f;  // 3 rad a second, steady
+        u = e.Step(OneBone({std::sin(a / 2), 0, 0, std::cos(a / 2)}, 0.0f), now);
+    }
+    REQUIRE(u);
+    CHECK(e.Last().uneven < 0.05f);
+    CHECK(e.Last().raw > 0.3f);  // the old per-frame number read the frame rate
+    CHECK(e.Last().jumps_per_s == 0.0f);
+}
+
+// puppet-smooth-a-2: the jumps count is a stair-step (moved, held, moved), not a puppet's start.
+TEST_CASE("pose: jumps count a bone held between moves, not its first move after a start") {
+    auto at = [](float a) { return OneBone({std::sin(a / 2), 0, 0, std::cos(a / 2)}, 0.0f); };
+    CoopPose::Evenness e;
+    std::uint64_t now = 1000;
+    std::optional<float> u;
+    // Held on its first pose (as a puppet coming into view is), then moving: no jump.
+    float a = 0.0f;
+    for (int i = 0; i < 10; ++i) e.Step(at(a), now += 16);
+    for (int i = 0; i < 20; ++i) e.Step(at(a += 0.05f), now += 16);
+    // Then held 6 frames and on again with a step: one jump.
+    for (int i = 0; i < 6; ++i) e.Step(at(a), now += 16);
+    for (int i = 0; i <= 600 && !u; ++i) u = e.Step(at(a += 0.05f), now += 16);
+    REQUIRE(u);
+    CHECK(e.Last().jumps_per_s * static_cast<float>(CoopPose::kEvenReportMs) / 1000.0f == doctest::Approx(1.0f).epsilon(0.02));
+}
+
+// puppet-smooth-a-2: still bones (face, fingers) are sent together, so they age together; by age
+// alone a clump of them outranked limbs turning slowly (near a turning point) every
+// kBoneRefreshMs, and those limbs were held a pose or two, then jumped. A changed bone goes first.
+TEST_CASE("pose: a bone that changed is sent before still bones that only aged (148 bones a pose)") {
+    // 148 bones of 12 bytes a pose at 15/s: room for the 120 moving ones and a clump of aged still ones.
+    const CoopPose::StreamPlan plan{15, CoopPose::kPoseHeaderBytes + 148 * 12};
+    constexpr std::uint16_t kMoving = 120, kAll = 300;
+    auto pose = [&](int send) {
+        std::vector<proto16::PoseBone> bones;
+        for (std::uint16_t i = 0; i < kAll; ++i) {
+            proto16::PoseBone b;
+            b.bone = i;
+            // A slow limb: 20 packed units a send (over kBoneStep, far under kBoneRefreshMs).
+            const std::int16_t v = i < kMoving ? static_cast<std::int16_t>(send * 20 + i) : 0;
+            b.rotation = std::array<std::int16_t, 4>{v, 0, 0, 30000};
+            bones.push_back(b);
+        }
+        return bones;
+    };
+    CoopPose::BonePicker picker;
+    const std::uint64_t interval = 1000 / static_cast<std::uint64_t>(plan.hz);
+    std::uint64_t ms = 10'000;
+    int missed = 0;
+    for (int send = 0; send < 4 * plan.hz; ++send, ms += interval) {  // 4 s: several clumps aged
+        const auto sent = picker.Pick(0x1234, pose(send), ms, plan.bytes - CoopPose::kPoseHeaderBytes);
+        CHECK(Bytes(sent) <= plan.bytes);
+        if (send < 4) continue;  // everyone sent once first (300 bones, 148 a pose)
+        std::vector<bool> in(kAll, false);
+        for (const auto& b : sent) in[b.bone] = true;
+        for (std::uint16_t i = 0; i < kMoving; ++i) missed += in[i] ? 0 : 1;
+    }
+    CHECK(missed == 0);
+}
+
+// puppet-budget: the whole bones (StillPicker, issue 152) and the held pieces (issue 158) went on top
+// of the moving bones' budget (230 B x 30/s x 18 = 124,200 B/s against a 120,000 share at 1 watcher).
+// Everything one send carries now fits the plan: measured on the encoded messages TakeOutgoing gives,
+// a walking 300-bone Link with still bones and two 64-bone pieces in hand, for 0 to 15 watchers.
+TEST_CASE("pose: every pose a send carries stays in the stream's budget, 0 to 15 watchers (puppet-budget)") {
+    FakeGuest g;
+    const std::uint64_t player = 0x640000000, bow = 0x650000000, tool = 0x660000000;
+    constexpr std::uint32_t kLink = 300, kPiece = CoopPose::kMaxPieceBones;
+    const std::uint64_t mine = MakeActor(g, player, "Player_budget", kLink);
+    const std::uint64_t piece_a = MakeActor(g, bow, "Weapon_budget_a", kPiece);
+    const std::uint64_t piece_b = MakeActor(g, tool, "Weapon_budget_b", kPiece);
+    MakePlayerChain(g, player);
+    Hold(g, player, 3, bow);
+    Hold(g, player, 5, tool);
+    CoopPose::SetLog({}, false);
+    // Bones 0-199 turn (0-59 also move), 200-299 hold still; every piece bone moves.
+    auto move = [&](std::uint64_t ms) {
+        const float t = static_cast<float>(ms % 100'000) / 1000.0f;
+        for (std::uint32_t i = 0; i < 200; ++i) {
+            const float a = 0.3f * std::sin(9.0f * t + 0.37f * static_cast<float>(i));
+            const CoopPose::Rows r = CoopPose::QuatToRows({std::sin(a / 2), 0, 0, std::cos(a / 2)});
+            const std::uint64_t bone = mine + i * paddr::kLocalStride;
+            for (int row = 0; row < 3; ++row) {
+                g.Put(bone + 0x20 + row * 16, CoopPose::Vec3{r[row * 3], r[row * 3 + 1], r[row * 3 + 2]});
+            }
+            if (i < 60) g.Put(bone + 0x50, CoopPose::Vec3{0.1f * a, 0.0f, 0.0f});
+        }
+        for (const std::uint64_t piece : {piece_a, piece_b}) {
+            for (std::uint32_t i = 0; i < kPiece; ++i) {
+                const float y = 0.2f * std::sin(7.0f * t + static_cast<float>(i));
+                g.Put(piece + i * paddr::kLocalStride + 0x50, CoopPose::Vec3{0.0f, y, 0.0f});
+            }
+        }
+    };
+    std::uint64_t now = 50'000'000;
+    for (const std::size_t watchers : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{3},
+                                       std::size_t{4}, std::size_t{5}, std::size_t{8}, std::size_t{15}}) {
+        INFO("watchers " << watchers);
+        now += 100'000;  // the last run's watchers are long gone
+        const CoopPose::StreamPlan plan = CoopPose::PlanFor(watchers);
+        const std::uint64_t measure = now + 1000, end = measure + 3000;
+        std::size_t sends = 0, bytes = 0, most = 0, whole_bones = 0, piece_poses = 0;
+        for (int frame = 0; now < end; ++frame) {
+            now += frame % 3 ? 17 : 16;
+            move(now);
+            for (std::size_t n = 1; n <= watchers; ++n) {
+                proto16::PlayerPose m;
+                m.player_number = static_cast<std::uint8_t>(n);
+                m.skeleton = CoopPose::SkeletonId(kLink, "Player_Child");
+                m.bones.resize(1);
+                m.bones[0].rotation = std::array<std::int16_t, 4>{0, 0, 0, 32767};
+                CoopPose::Receive(m, now);
+            }
+            CoopPose::OnCalcFrame(g, kMain, {}, now);
+            const auto out = CoopPose::TakeOutgoing(now * 1000, now);
+            if (out.empty() || now < measure) continue;
+            std::size_t send = 0;
+            for (const auto& m : out) {
+                const auto wire = proto16::encode(proto16::Message{m});
+                REQUIRE(wire);
+                CHECK(wire->size() == CoopPose::WireBytes(m));  // the budget counts what goes out
+                send += wire->size();
+                if (m.skeleton != out[0].skeleton) ++piece_poses;
+            }
+            for (const auto& b : out[0].bones) whole_bones += b.rotation && b.translation && b.scale ? 1 : 0;
+            CHECK(send <= plan.bytes);
+            most = std::max(most, send);
+            bytes += send;
+            ++sends;
+        }
+        REQUIRE(sends > 0);
+        // Bytes a second: n sends fill n intervals of IntervalMs().
+        const std::size_t per_second = bytes * 1000 / (sends * plan.IntervalMs());
+        MESSAGE("watchers " << watchers << ": " << plan.hz << "/s, " << sends << " sends, " << per_second
+                            << " B/s of " << CoopPose::BudgetFor(watchers) << " (share "
+                            << CoopPose::ShareFor(watchers) << "), fullest send " << most << " of " << plan.bytes);
+        CHECK(sends <= 3000 / plan.IntervalMs() + 1);
+        CHECK(per_second <= CoopPose::BudgetFor(watchers));
+        if (watchers <= 3) CHECK(per_second <= CoopPose::ShareFor(watchers));
+        CHECK(whole_bones > 0);  // both pickers in the measured sends
+        CHECK(piece_poses > 0);
+        CHECK(most * 10 >= plan.bytes * 9);  // the budget was the limit, not the pose
+    }
 }

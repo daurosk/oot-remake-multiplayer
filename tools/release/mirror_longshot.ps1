@@ -54,7 +54,7 @@ function Get-Asset([string]$Name, [string]$Sha, [string[]]$Urls, [string]$What) 
 
 # tools.lock, then the tools in it the Windows kit uses (hookshot-build.ps1's list), named <sha256>-<name>.zip
 Get-Asset 'tools.lock' $tp.lock_sha256 @("$up/releases/download/$($tp.release)/tools.lock") "Longshot $($tp.release)'s tools.lock"
-$wanted = @('llvm-mingw', 'python', 'cpm', 'wgpu-native', 'third-party')
+$wanted = @('llvm-mingw', 'python', 'cpm', 'third-party')
 $n = 0
 foreach ($line in Get-Content -LiteralPath (Join-Path $Out 'tools.lock')) {
     $f = $line.Trim() -split '\s+'
@@ -127,9 +127,6 @@ $info = @{
     'cpm'         = @{ Licence = 'Libraries for the game''s build: dav1d 1.5.4, BSD-2-Clause (``dav1d/*/COPYING`` inside); SPIRV-Headers, MIT-style (``LICENSE`` inside); Vulkan-Headers 1.4.345, Apache-2.0 OR MIT (``LICENSE.md`` inside); VulkanMemoryAllocator 3.3.0, MIT (``LICENSE.txt`` inside); FFmpeg 9.0.2 static libraries, LGPL-2.1-or-later (configured without ``--enable-gpl``; no text inside, so ``LICENSE-ffmpeg-LGPL-2.1.txt`` here; source ``ffmpeg-9.0.2.tar.xz`` here).'
                        Source = 'https://code.videolan.org/videolan/dav1d (1.5.4); https://github.com/KhronosGroup/SPIRV-Headers (vulkan-sdk-1.4.341.0); https://github.com/KhronosGroup/Vulkan-Headers (v1.4.345); https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator (v3.3.0); FFmpeg: https://github.com/FFmpeg/FFmpeg/tree/n9.0.2 (commit 946fcce07b, as the folder name says)'
                        Inside = @('/dav1d/[^/]+/COPYING$', '/spirv-headers/[^/]+/LICENSE$', '/vulkanheaders/[^/]+/LICENSE\.md$', '/vulkanmemoryallocator/[^/]+/LICENSE\.txt$', '/ffmpeg/9\.0\.2-[^/]*-946fcce07b-') }
-    'wgpu-native' = @{ Licence = 'wgpu-native 29.0.1.1: MIT OR Apache-2.0 (``LICENSE.md`` inside).'
-                       Source = 'https://github.com/gfx-rs/wgpu-native/releases/tag/v29.0.1.1'
-                       Inside = @('/wgpu-native/LICENSE\.md$') }
     'third-party' = @{ Licence = 'Longshot''s prebuilt helpers (no licence text inside; given here): ``a64-kit/lift/a64emit.dll``, Longshot''s a64-kit lifter, GPL (its suyu translator is GPL-2.0-or-later; ``NOTICE-a64-kit.md`` here); ``a64-kit/tools/lld-link.exe``, LLVM''s lld 24.0.0git, Apache-2.0 WITH LLVM-exception (``LICENSE-llvm-Apache-2.0-with-LLVM-exception.txt`` here); ``sdl2/SDL2.dll`` and ``SDL3.dll``, sdl2-compat 2.32.74 and SDL 3.4.20, zlib (``LICENSE-sdl-zlib.txt`` here); ``zbic/zbic.dll``, zstd with Atmosphere-NX''s ZBIC parts, GPL-2.0 (``LICENSE-zbic-GPL-2.0.txt`` here).'
                        Source = "Longshot's source (``$srcZip`` here): ``third_party/a64-kit``, ``third_party/sdl2/PROVENANCE.md``, ``third_party/zbic``; lld: https://github.com/llvm/llvm-project at 510126255f89d693717c1ce7105b593f995f07c1 (its version string); SDL: https://github.com/libsdl-org/sdl2-compat (release-2.32.74), https://github.com/libsdl-org/SDL (release-3.4.20)"
                        Inside = @('/a64-kit/lift/a64emit\.dll$', '/a64-kit/tools/lld-link\.exe$', '/sdl2/SDL2\.dll$', '/sdl2/SDL3\.dll$', '/zbic/zbic\.dll$') }

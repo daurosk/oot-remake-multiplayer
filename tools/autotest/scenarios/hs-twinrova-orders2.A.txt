@@ -1,0 +1,58 @@
+# hs-twinrova-orders2 (row 222 follow-up of hs-twinrova-orders 20261122-111320): the three proofs that run lacked.
+#  (1) The sisters on camera on both screens for the same attack: both lock on (ZL held) at each shot.
+#  (2) A hand-over caused by a pause: the owner is not known before the run (B owned first last time), so B pauses
+#      9 s first (marks p1), then A pauses 9 s (marks p2): whichever game owns at its pause hands over (server pause
+#      rule 6 s). Proof: the owner's log has 'player N's now' within ~7 s after its menu opened, the other 'ours now'.
+#  (3) Merged Twinrova: both games 'kill' Koume and Kotake (test only: a hit of the whole life through the game's own
+#      damage; on a copy the fall goes to the owner). If the merge comes: shots m-1/m-2 show Twinrova on both screens
+#      and the logs have 'native boss sync on' for Enemy_DungeonBoss_Twinrova. If 'kill' cannot end a sister (life
+#      stops), that is logged and (3) stays open (no save near the merge exists in owner-saves).
+# PASS: both 'battle manager orders shared'; (1) a-1/b-1 .. a-2/b-2 the same sister in the same attack on both
+# screens; (2) a pause hand-over line as above and, 2-3 s after, a-3/b-3 sisters moving on both, none held;
+# (3) m-1/m-2 Twinrova on both screens; 0 crashes.
+# Server (server-out.txt): each owner change of the sisters' group has its reason: 'hand-over: ... player N -> player M:
+# its owner is unfit (paused N s)' for (2); no 'no reason given'.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in
+wait 1800               # the intro, then the fight
+hold ZL 240             # lock on a sister: the camera faces her
+hold ZL 60 a-1
+hold ZL 300
+hold ZL 60 a-2
+wait 840                # B's pause (p1) happens now: 12 s + 2 s
+hold ZL 120
+hold ZL 60 a-p1
+press PLUS 12           # p2: A pauses 9 s
+wait 540
+press B 12
+wait 150
+hold ZL 60 a-3
+hold ZL 300
+hold ZL 60 a-4
+kill Enemy_DungeonBoss_Koume
+wait 60
+kill Enemy_DungeonBoss_Kotake
+wait 600
+mark a-k
+wait 2400               # the merge cutscene, if it comes
+hold ZL 240
+hold ZL 60 m-1
+hold ZL 600
+hold ZL 60 m-2
+wait 600
+mark end

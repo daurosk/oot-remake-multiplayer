@@ -1,0 +1,33 @@
+# hs-fairy-162: B takes the hits (header in A). Down but not out stays on (no /dbno off anywhere).
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_SOUND=1
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+setflag PouchData.BottleA.StockNum 1
+wait 30
+setflag PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid 1
+wait 30
+setenum PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem Fairy
+wait 300
+mark b-bottle
+hurt 4
+wait 60
+hurt 4
+wait 600                # one heart left: the low-health beep plays here
+mark b-low
+hurt 4
+mark b-lethal
+wait 900
+mark b-revived
+wait 300
+mark end

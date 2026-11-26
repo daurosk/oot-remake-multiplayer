@@ -1,3 +1,12 @@
+# room-actor-replay-0116 (bigrun-0115 kak-gate/hs-kak-letter were INCONCLUSIVE): the warp does NOT land at
+# Kakariko_MountainTrailSide's spot: both logs had Link at -119.00 96.68 58.69, 100 m from the gate, so B's
+# 'goto' never reached it and no shot showed B's gate. Every script now places Link after the load. Also the
+# gate is Obj_Kakariko_SwitchShutter_A_01, opened by the Get_StoneOfFire quest step (romfs Logic
+# KakarikoVillage_Child_GateClose/OpenGate prefabs: HoldChallengeCurrentStepCheckOrder, KakarikoVillageLetter),
+# not by the guard's Bool; the Bool gives that step only from KakarikoVillageNpc (coop_quest.cpp kFireRules).
+# The kit host's save was at Ready (B log: 'Get_StoneOfFire KakarikoVillageNpc -> Ready (shared Threads of
+# Time)'), so no gate could open. SAVE PREP (offline job room-actor-replay-0116, profile kak-npc): both games'
+# saves get enum:0x1002b466=0x4011c4aa (Get_StoneOfFire = KakarikoVillageNpc).
 # kak-gate (world-objects-2, #171): the Death Mountain gate in Kakariko opens for every player.
 # Both games load at Kakariko_MountainTrailSide (-41.20 109.99 -16.00), on the trail side of the
 # gate (Land_Kakariko_Gate_A_02 at -42.36 109.76 -13.02, the guard Npc_Hylia_Soldier_003 beside
@@ -33,6 +42,8 @@ wait 300
 press A
 wait 2400
 mark after
+place -40.2 110.1 -17.5    # trail side, beside B's spot, 4.7 m from the gate (the warp lands elsewhere)
+wait 120
 toward -42.36 -13.02 10   # face the gate
 press ZL 10
 mark a-gate

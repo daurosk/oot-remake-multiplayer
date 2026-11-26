@@ -1,0 +1,35 @@
+# el-water-shellblade (proof-0116, enemy-left C1 + r2 sensor-read kinds): Water Temple Shell Blades (42.1-49.2 110.7 -6.5..-1.9)
+# and blue Tektites (-10.5..-0.1 99.5 -86..-69). A comes first (owns them), then leaves each area while B stays and fights.
+# PASS: b-shell / b-shell2: B's Shell Blade alive and fighting; b-tek/b-tek2 B's Tektites still there; A log has no
+# 'gone Enemy_ShellBlade' / 'gone Enemy_Tektite_Blue' (a-shell/a-away shots for A's view).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+wait 300
+place 44.0 110.7 -10.0
+wait 600
+mark a-shell
+place -5.0 99.5 -95.0
+wait 300
+mark a-away
+wait 900
+mark a-tek
+place 44.0 110.7 -10.0
+wait 600
+mark a-away2
+wait 900
+mark end

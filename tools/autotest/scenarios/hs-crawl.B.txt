@@ -16,10 +16,16 @@ wait 2400
 mark after
 wait 600                # let the arrival event end before the place
 wait 60
-place -78.94 119.3 17.04
+# probe 20261118-105813: from -78.94 17.04 (4.7 m past the inner mouth) B's camera saw only a rock
+# wall 1 m ahead (B-watching-B, A-through-B), and a low
+# mouth straight ahead hides behind B's own body. B now stands 2.3 m out from the inner
+# CrawlAnchor (-75.33 118.56 13.95) on the tunnel's line (from the outer one, -68.72 8.16), faces
+# it, and the camera tilts down over B's head (rstick 0 1 is up, hs-boss-fix-gohma) onto the mouth.
+place -77.06 118.9 15.46
 wait 180
-toward -75.58 14.13 10
+toward -75.33 13.95 10
 press ZL 10
+rstick 0 -0.6 12        # the camera looks down over B's head onto the mouth
 mark watching
 wait 900
 mark end

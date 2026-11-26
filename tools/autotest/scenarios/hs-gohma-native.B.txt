@@ -20,6 +20,7 @@ setflag InsideTheDekuTree_BossArea_ShutIn 0
 setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
 setflag Gohma_IsLightingForBattle 0
 setflag Gohma_DefeatBoss 0
+place -14.0 48.5 66.5   # before the door, in the boss's area: the area's rules move B in when A's fight starts (big-run-0115: B left at the Deku Tree's entrance was never moved; the older dungeon-wide pull is off since boss-cutscenes, docs/dungeons-boss.md 'The area')
 wait 120
 wait 4800                # A now walks in through the door first
 mark b-in

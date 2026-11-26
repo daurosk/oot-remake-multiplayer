@@ -10,10 +10,12 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "coop/voice/engine.hpp"
@@ -37,6 +39,12 @@ struct Backend {
     coop::voice::CodecFactory codecs;
     std::function<std::uint64_t()> now_us;          // the mixer's clock
     std::function<bool(std::uint32_t vk)> key_down;  // a key held in the game's window
+    // The voice's own microphone (a game whose patch 0009 has them; empty
+    // when not): the microphones there now by their names (none opened),
+    // and the one the voice records from ("": the game's, Longshot's Insert
+    // menu's). Choosing opens nothing; an open one moves to it at once.
+    std::function<std::vector<std::string>()> mic_list;
+    std::function<void(const std::string& name)> mic_choose;
 };
 
 // LICHII_COOP_VOICE_TEST, for test runs with nobody at the microphone
@@ -54,6 +62,7 @@ struct Settings {
     float range_m = 30.0f;      // heard up to here (the server sends a little further)
     bool muted = false;         // our microphone
     bool deafened = false;      // the others' voices
+    std::string mic;            // the microphone by its name ("": the game's, Longshot's Insert menu's)
     Test test = Test::none;     // the start's only: Set keeps it
     bool operator==(const Settings&) const = default;
 };
@@ -61,8 +70,8 @@ struct Settings {
 // LICHII_COOP_VOICE (off, the default; open: open mic, what the menu writes
 // when voice is turned on; ptt, or an older file's on, 1, yes: push to talk), LICHII_COOP_VOICE_KEY (a virtual-key code, decimal or 0x hex, or one
 // letter or digit), LICHII_COOP_VOICE_VOLUME (0 to 200, percent),
-// LICHII_COOP_VOICE_RANGE (metres, 5 to 100), LICHII_COOP_VOICE_TEST (log,
-// tone). `env` gives a variable's value, empty when unset. Anything it
+// LICHII_COOP_VOICE_RANGE (metres, 5 to 100), LICHII_COOP_VOICE_MIC (a
+// microphone's name, MicName), LICHII_COOP_VOICE_TEST (log, tone). `env` gives a variable's value, empty when unset. Anything it
 // cannot read stays at the default and is named in `errors`.
 Settings SettingsFrom(const std::function<std::string(const char*)>& env,
                       std::vector<std::string>& errors);
@@ -74,6 +83,16 @@ const char* ModeName(coop::voice::Mode mode);
 // The settings screen's On/Off row. On: open mic, or push to talk when that
 // was already chosen; off: off. The rest stays.
 Settings WithEnabled(Settings s, bool on);
+// A microphone's name as it is kept (LICHII_COOP_VOICE_MIC, one ini line):
+// control characters made spaces, no spaces at either end, at most
+// kMicNameBytes bytes (cut at a character's start).
+constexpr std::size_t kMicNameBytes = 127;
+std::string MicName(std::string_view name);
+// The chat's note when the chosen microphone is not among those listed:
+// "Microphone <name> is not connected: the others hear nothing until it is
+// back (or choose another in Settings)."; "" when none is chosen or it is
+// there. (No other microphone stands in: only the one chosen is opened.)
+std::string MicMissingNote(const std::string& chosen, const std::vector<std::string>& listed);
 // The push-to-talk key as the player reads it: "V", "7", else "the
 // push-to-talk key".
 std::string KeyName(std::uint32_t vk);
@@ -148,6 +167,13 @@ bool Enabled();
 void SetEnabled(bool on);
 // The Voice mode row (and On/Off together): off, open mic or push to talk.
 void SetMode(coop::voice::Mode mode);
+// The settings screen's Microphone row: the microphones there now by their
+// names (MicName; none opened), or none at all when this game cannot choose
+// one for the voice (an older patch 0009: Longshot's Insert menu chooses).
+std::optional<std::vector<std::string>> Microphones();
+// The Microphone row: the voice records from this one (MicName; "": the
+// game's) at once and for the rest of the run. Opens nothing.
+void SetMicrophone(const std::string& name);
 // The game thread: whether the host has muted our voice (CoopLobby); the
 // microphone closes while it has.
 void SetHostMuted(bool muted);
@@ -157,8 +183,9 @@ std::string TakeNotice();
 // The network thread: VOICE_FRAME in, a player gone.
 void OnEvent(const coop::net::Event& event);
 // The game thread, every frame: our Link (none: not in the game), the
-// others as presence shows them and the ones hidden (another scene, our
-// cutscene), and the session to send on (none: not connected).
+// others as presence shows them and the ones not heard (another or an
+// unknown scene: coop::host::voice_heard; our own talk or cutscene does not
+// count), and the session to send on (none: not connected).
 void Frame(const std::optional<std::array<float, 3>>& our_feet,
            const std::vector<coop::overlay::Shown>& others, const std::vector<std::uint8_t>& hidden,
            coop::host::Session* session);

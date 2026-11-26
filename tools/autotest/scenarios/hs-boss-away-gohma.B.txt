@@ -1,0 +1,40 @@
+# hs-boss-away-gohma, B: the guest who kills Gohma while the host (A) stands in Kokiri Forest (see the A file).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 600
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark b-in
+wait 300
+mark b-intro
+wait 1500               # the door's event and the intro
+mark b-fight
+wait 600
+kill Enemy_DungeonBoss_Gohma
+wait 120
+mark b-kill
+wait 300
+mark b-death
+wait 2400
+mark end

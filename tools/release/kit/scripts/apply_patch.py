@@ -5,8 +5,9 @@
 
 Build-Hookshot-Coop.ps1 runs it with Hookshot's own Python on the Hookshot source it
 downloaded (a source archive, not a git checkout). Strict: every hunk's context and
-removed lines must match the file exactly, at the line the hunk names; a file the patch
-adds must not exist yet. Nothing is written unless every patch applies (all files are
+removed lines must match the file exactly, at the line the hunk names or, as git's offset,
+at the nearest place within MAX_OFFSET lines below the hunk before (Longshot v3.1.0's Linux
+AppImage held one file a few lines off its tag; v3.1.1's and v3.2.0's match their tags); a file the patch adds must not exist yet. Nothing is written unless every patch applies (all files are
 patched in memory first). Line ends are kept as the file has them.
 
 With --refresh, the source folder may hold an earlier set of patches: the keep folder has the
@@ -114,6 +115,22 @@ def joined(value):
     return (eol.join(lines) + (eol if final_newline and lines else "")).encode("utf-8")
 
 
+MAX_OFFSET = 200   # (lines a hunk's exact text may sit away from the line it names)
+
+
+def near(lines, want, at, lowest):
+    """The start of want's exact lines nearest to at, at most MAX_OFFSET lines away and not above lowest, or None.
+    Longshot v3.1.0's Linux AppImage was built a few commits before its tag: one file (gpu/vk/vk_draw.cpp) had the same
+    text four lines higher, so one set of patches had to apply to both (as git's offset does). v3.1.1 (the
+    same commit as v3.1.0's tag) and v3.2.0 (the pin now) ship their tags' files exactly; the offset stays, as git's, for the next AppImage built
+    off its tag. The text itself is never matched loosely."""
+    for d in range(1, MAX_OFFSET + 1):
+        for p in (at - d, at + d):
+            if lowest <= p <= len(lines) - len(want) and lines[p:p + len(want)] == want:
+                return p
+    return None
+
+
 def apply_file(root, entry, staged, base=None):
     old, new = entry["old"], entry["new"]
     name = new or old
@@ -134,6 +151,7 @@ def apply_file(root, entry, staged, base=None):
         content, eol, final_newline = have
     out = list(content)
     shift = 0
+    done = 0   # (the line after the last hunk applied: a hunk never moves above it)
     for start, body in entry["hunks"]:
         want = [rest for op, rest in body if op != "+"]
         put = [rest for op, rest in body if op != "-"]
@@ -141,9 +159,14 @@ def apply_file(root, entry, staged, base=None):
         if not want and old is not None:
             at = start + shift   # (a hunk that only adds: "-N,0" means after line N)
         if out[at:at + len(want)] != want:
-            raise PatchError("%s: the hunk at line %d does not match the file" % (name, start))
+            moved = near(out, want, at, done) if want and old is not None else None
+            if moved is None:
+                raise PatchError("%s: the hunk at line %d does not match the file" % (name, start))
+            shift += moved - at
+            at = moved
         out[at:at + len(want)] = put
         shift += len(put) - len(want)
+        done = at + len(put)
     staged[name] = (out, eol, final_newline) if new is not None else None
 
 

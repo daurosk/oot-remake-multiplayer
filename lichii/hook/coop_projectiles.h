@@ -26,6 +26,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -45,6 +46,10 @@ struct Info {
     bool ballistic;  // flies free and falls: the copy is carried on along its arc
     bool fused;      // goes off by a timer: its copy can be blown up on time
     bool blasts;     // its end hurts what is around it
+    // Its end is its own burst where it stopped, at any speed (the Deku Nut:
+    // its AI emits Chemical_Light on the first contact and the nut goes), so
+    // that end is sent as hit and the copies land and burst there too.
+    bool bursts;
 };
 
 const Info* Find(std::string_view actor);
@@ -86,9 +91,12 @@ public:
     // frame. Carried on as At() only when the samples are later than that.
     // Before, a copy was carried on from the latest sample by its velocity
     // (measured between two walks, so noisy) and snapped at each sample.
+    // #239: `behind_us` is the shooter's own show delay (CoopShowDelay::Us, from its puppet's samples' ages, never
+    // under kBehindUs), so over a slow line the copy stays in its samples like the puppet that shot it (at a
+    // fixed 100 ms it ran past the newest sample at 150-350 ms ping: carried on, held, then jumped).
     static constexpr std::uint64_t kBehindUs = 100'000;
     static constexpr std::size_t kKeep = 16;
-    Vec3 Shown(std::uint64_t now_us, bool ballistic) const;
+    Vec3 Shown(std::uint64_t now_us, bool ballistic, std::uint64_t behind_us = kBehindUs) const;
     // Held still at `at` (the owner's remove): no more carrying on. A shown
     // copy goes on to `at` (taken as kStopAfterUs after the last sample, a
     // walk later) and stays there.
@@ -202,6 +210,12 @@ std::vector<std::string_view> ImpactActors(Kind kind);
 // its code emits where it hits (the spark), played on the copy through the
 // game's own emit where the copy lands (CoopSpawn::Director). Empty: none.
 std::string_view HitEffect(Kind kind);
+// Issue 166: the key of the landing sound a copy of `kind` plays on its own
+// SLink user where it lands (the director, after HitEffect): the shared
+// ReactionHit user's wall-hit sounds for the seed and the arrow (their
+// stand-ins' sound user, tools/puppet_pack STAND_IN_SLINK_USER), the nut's
+// own burst. Empty: none.
+std::string_view HitSound(Kind kind);
 bool IsImpact(std::string_view actor);
 // How long an impact actor is kept before it is deleted: its effect and
 // sound are one-shots, over by then. Short, and at most kMaxImpacts live at
@@ -243,6 +257,34 @@ private:
 };
 
 Blasts& TheBlasts();
+// ai-stuns: where another player's shot copy (nut, seed, arrow, boomerang, hookshot) hit here, kept the same way: a
+// stun of our copy of an enemy there is that player's (its game asks for the enemy), not ours.
+Blasts& TheShotHits();
+
+// Issue 133 (whose hit): our own projectiles (seeds, arrows, nuts, bombs, the boomerang, the hookshot's tip) by
+// actor address, kept kKeepUs after each was last seen on our list, so a seed that hit an enemy and was removed
+// that frame still names the hit ours when the walk reads the enemy's hit record a moment later. The spawn sync
+// notes, the objects sync asks; any thread may call. Its own clock (CoopEvery::NowUs on both sides).
+class OwnShots {
+public:
+    static constexpr std::uint64_t kKeepUs = 1'500'000;
+    static constexpr std::size_t kKeep = 64;
+
+    void Note(std::uint64_t address, std::uint64_t now_us);
+    bool Was(std::uint64_t address, std::uint64_t now_us) const;
+    void Reset();
+
+private:
+    mutable std::mutex mutex_;
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> seen_;  // address, last seen
+};
+
+OwnShots& TheOwnShots();
+
+// Whose hit an enemy's newest hit record names (its attacker actor): ours when our Link (a sword, a stick, the
+// hammer, a shield bash) or one of our own projectiles made it. Anything else (a projectile copy's blast, an
+// explosion actor, another enemy) is not known to be ours.
+bool HitIsOurs(std::uint64_t attacker, std::uint64_t our_link, const OwnShots& shots, std::uint64_t now_us);
 
 // Issue 151 (fishing-2). A cast lure: Weapon_Lure or Weapon_SinkingLure. The
 // spawn sync shares ours (copies are model-only stand-ins, so another

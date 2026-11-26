@@ -1,0 +1,54 @@
+# hs-mask-real (Hookshot, issue 91 probe): how the game itself puts a mask on Link, so the puppet can do the same.
+# hs-masks never got a mask on A: `assign SkullMask` left the ZR box empty (the mask rental quest, not PouchData,
+# makes a shop mask usable; world-fails-0115). A tries each way in turn, a mark (shots of both games) after each:
+#   a-quest: the rental quest (GameDataList Enum 0xea010310) at Step03 (Skull Mask rented), then assign + ZR
+#   b-6bee / c-76f8 / d-301f: the three unnamed Enums whose values are the AssignableItem names set to SkullMask
+#   e-zr: ZR once more (off, or on again)
+# `setenum <hash> ?` logs each Enum's value (a hash; flag_hash("SkullMask") is 0x...: see the run's lines) before and
+# after every step. With LICHII_COOP_DEBUG_ANIM, A's `slots (local player` lines list its armor links (where a
+# really worn mask sits, its height `up` over Link) and B's `slots (puppet` lines the puppet's.
+# Look: the A shot of the first mark with the mask on A's face names the way; B's shot of it is the puppet.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+give PouchData.Armor_Child_Mask_Skull.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+setenum 0xea010310 ?
+setenum 0x6bee602d ?
+setenum 0x76f85e6d ?
+setenum 0x301f7bb5 ?
+mark before
+setenum 0xea010310 Step03
+wait 30
+assign SkullMask
+wait 30
+press ZR 10
+wait 240
+setenum 0xea010310 ?
+setenum 0x6bee602d ?
+setenum 0x76f85e6d ?
+setenum 0x301f7bb5 ?
+mark a-quest
+setenum 0x6bee602d SkullMask
+wait 240
+mark b-6bee
+setenum 0x76f85e6d SkullMask
+wait 240
+mark c-76f8
+setenum 0x301f7bb5 SkullMask
+wait 240
+setenum 0x6bee602d ?
+setenum 0x76f85e6d ?
+setenum 0x301f7bb5 ?
+mark d-301f
+press ZR 10
+wait 240
+setenum 0x6bee602d ?
+setenum 0x76f85e6d ?
+setenum 0x301f7bb5 ?
+mark e-zr
+wait 120
+mark end

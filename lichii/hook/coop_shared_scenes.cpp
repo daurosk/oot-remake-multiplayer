@@ -30,7 +30,7 @@ constexpr std::string_view kNames[] = {
     "Dm_ForestTemple_0015", "Dm_ForestTemple_0016", "Dm_ForestTemple_0017", "Dm_ForestTemple_0020",
     "Dm_ForestTemple_0021", "Dm_ForestTemple_0022", "Dm_ForestTemple_0031", "Dm_ForestTemple_0032",
     "Dm_GanonCastle_0000", "Dm_GerudoValley_0000", "Dm_GerudoValley_0010", "Dm_GerudoValley_0020",
-    "Dm_Gerudo_0000", "Dm_Gerudo_0010", "Dm_Gerudo_0020", "Dm_Gerudo_0025",
+    "Dm_Gerudo_0000", "Dm_Gerudo_0025",  // (not 0010, 0020: player report 200, coop_shared_scenes.h)
     "Dm_Gerudo_0030", "Dm_Goron_0000", "Dm_Goron_0010", "Dm_Goron_0020",
     "Dm_Goron_0025", "Dm_Goron_0028", "Dm_Goron_0030", "Dm_Goron_0040",
     "Dm_Goron_0045", "Dm_Graveyard_0000", "Dm_Graveyard_0010", "Dm_Graveyard_0030",
@@ -80,6 +80,81 @@ bool IsShared(std::string_view name) {
     return std::binary_search(std::begin(kNames), std::end(kNames), name);
 }
 
+namespace {
+#include "coop_story_requests.inc"
+}  // namespace
+
+std::span<const StorySetting> StorySettings() {
+    return kStorySettings;
+}
+
+std::optional<std::string_view> StoryOfRequest(std::string_view request) {
+    if (const auto it = std::lower_bound(std::begin(kNames), std::end(kNames), request);
+        it != std::end(kNames) && *it == request) {
+        return *it;
+    }
+    for (const StorySetting& r : kStorySettings) {
+        if (r.request == request) {
+            return r.flow;
+        }
+    }
+    return std::nullopt;
+}
+
+bool IsStorySetting(std::string_view name) {
+    for (const StorySetting& r : kStorySettings) {
+        if (r.request == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsStory(std::string_view name) {
+    return IsShared(name) || IsStorySetting(name);
+}
+
+std::vector<std::string_view> RequestNames() {
+    std::vector<std::string_view> out(std::begin(kNames), std::end(kNames));
+    for (const StorySetting& r : kStorySettings) {
+        out.push_back(r.request);
+    }
+    return out;
+}
+
+namespace {
+// Rows 195/204 (docs/items.md "Saria's gift spent"): the parts of Saria's bridge scene. The setting
+// KokiriForest_ArriveLostWood plays Dm_Kokiri_0150 (timeline, no item) and then Dm_Kokiri_0155 (the Fairy Ocarina's
+// only get). A game asked for 0150 alone played the timeline and spent the gift there without it (the bridge zone and
+// Saria are deleted once HavePlayedEvent.Dm_Kokiri_0150 is 1); asked for 0155 alone it would play the get with no
+// Saria. Each game plays its own bridge scene; its played flags wait for the shared ocarina (CoopStory::GiftHolds).
+constexpr std::string_view kGiftParts[] = {"Dm_Kokiri_0150", "Dm_Kokiri_0155"};
+}  // namespace
+
+std::string_view NotShared(std::string_view name) {
+    if (std::find(std::begin(kGiftParts), std::end(kGiftParts), name) != std::end(kGiftParts)) {
+        return "a part of a gift scene (its setting gives the gift): joined alone it spends the gift here without it";
+    }
+    if (std::find(std::begin(kNoSetting), std::end(kNoSetting), name) != std::end(kNoSetting)) {
+        return "the game has no event setting of that name";
+    }
+    for (const StoryOwn& o : kOwnStory) {
+        if (o.name == name) {
+            return "it changes the player's own things";
+        }
+    }
+    for (const StoryOwn& o : kRoomStory) {
+        if (o.name == name) {
+            return "it turns a room of each game's own (the held flags bring it)";
+        }
+    }
+    return {};
+}
+
+bool Askable(std::string_view name) {
+    return NotShared(name).empty();
+}
+
 void Joiner::Visit(const std::string& scene) {
     if (scene.empty() || scene == scene_) {
         return;  // a load keeps what waits; its scene decides next frame
@@ -92,6 +167,11 @@ void Joiner::Visit(const std::string& scene) {
 
 void Joiner::Started(std::uint8_t player, const std::string& name, const std::string& scene,
                      std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room) {
+    if (const std::string_view why = NotShared(name); !why.empty()) {
+        notes_.push_back("player " + std::to_string(player) + " started the story cutscene " + name +
+                         ": not played here (" + std::string(why) + ")");
+        return;
+    }
     for (const Pending& p : pending_) {
         if (p.name == name && p.scene == scene) {
             return;  // two players started it: one is enough
@@ -100,11 +180,46 @@ void Joiner::Started(std::uint8_t player, const std::string& name, const std::st
     pending_.push_back(Pending{player, name, scene, starter, now_us, room});
 }
 
+bool Joiner::StarterStays(const Pending& p, const Here& here) {
+    if (!p.held) {
+        return false;  // only a start already held for us (it was in reach of the hold)
+    }
+    if (here.scene.empty()) {
+        return true;  // a load: its scene decides next frame (Visit drops it on a change)
+    }
+    return p.scene == here.scene &&
+           std::find(here.in_scene.begin(), here.in_scene.end(), p.player) != here.in_scene.end();
+}
+
+bool StackedScene(std::string_view scene) {
+    return scene.starts_with("GerudoFortress");
+}
+
+bool NotNearYet(std::string_view why) {
+    return why == "we are in another scene" || why.starts_with("too far") ||
+           why == "they are in another room of this dungeon" || why.starts_with("their room in this dungeon");
+}
+
 bool Joiner::Ours(const std::string& name, const std::string& scene) {
     Visit(scene);
+    std::optional<std::uint8_t> held_by;
+    for (const Pending& p : pending_) {
+        if (p.name == name && p.held && p.scene == scene) {
+            held_by = p.player;
+        }
+    }
     std::erase_if(pending_, [&](const Pending& p) { return p.name == name; });
     if (joined_.contains(name) || done_.contains(name)) {
         return false;  // we only joined it, or sent it already
+    }
+    if (held_by) {
+        // Row 176: player N's start of it was held for us (we were not near); our game started it as we came
+        // in. It is theirs, late here: not sent (it would come back to them as a second start).
+        done_.insert(name);
+        joined_.insert(name);
+        notes_.push_back("our game started the story cutscene " + name + ", which player " +
+                         std::to_string(*held_by) + " started here earlier (held for us): theirs, not sent");
+        return false;
     }
     done_.insert(name);
     return true;
@@ -133,6 +248,13 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
             std::snprintf(text, sizeof text, "too far: %.0f m from them", d);
             return text;
         }
+        if (!here.dungeon && StackedScene(here.scene) && std::fabs(dy) > kJoinRiseM) {
+            // Report 200: on another level of the fortress (a floor between us): its warp would move our Link
+            // through it.
+            char text[64];
+            std::snprintf(text, sizeof text, "too far: %.0f m %s them", std::fabs(dy), dy > 0 ? "above" : "below");
+            return text;
+        }
         if (here.dungeon) {
             // Never from another room of a dungeon: it is not loaded here.
             if (p.room && here.room) {
@@ -145,7 +267,8 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
         }
     }
     if (!here.can_start || !here.link || here.scene.empty()) {
-        return here.now_us >= p.at_us + kJoinUs ? "our game was busy for 3 s" : "wait";
+        const std::uint64_t from = p.near_us != 0 ? p.near_us : p.at_us;
+        return here.now_us >= from + kJoinUs ? "our game was busy for 3 s" : "wait";
     }
     return "";
 }

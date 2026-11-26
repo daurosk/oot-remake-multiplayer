@@ -1,6 +1,6 @@
 # Writes Update.bat: kit\update-bat-head.cmd, a marker line, then kit\scripts\update.ps1.
 # One file, so it also works copied into an old kit that has no scripts\update.ps1.
-# make_kit.ps1 puts it in every kit; the release step attaches the same file to the release.
+# make_kit_hookshot.ps1 puts it in every kit; the release step attaches the same file to the release.
 #   make_update_bat.ps1 -Out <path\Update.bat>
 param([Parameter(Mandatory = $true)][string]$Out)
 $ErrorActionPreference = 'Stop'

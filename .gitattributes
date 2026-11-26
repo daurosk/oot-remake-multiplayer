@@ -1,1 +1,3 @@
 * text=auto eol=lf
+tools/puppet_pack/charsel/data/*.cdelta binary
+tools/puppet_pack/charsel/data/*.ips binary

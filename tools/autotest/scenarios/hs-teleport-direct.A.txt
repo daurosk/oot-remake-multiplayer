@@ -1,0 +1,45 @@
+# hs-teleport-direct (teleport-direct-0116, #197): hs-teleport-room WITHOUT the sign. A /teleports from Kokiri
+# Forest to B in the Deku Tree's slingshot room and does nothing else: the game's map change event
+# Dm_SY_BancChangeGo (arrival Dm_SY_BancChangeArrive_InsideTheDekuTree_01) must carry it at once.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-direct
+# Pass, A's log: "teleport on (... by the game's map change event)", "asking the game's map change event
+# Dm_SY_BancChangeGo for InsideTheDekuTree at Entrance (arrival Dm_SY_BancChangeArrive_InsideTheDekuTree_01)",
+# "live event Dm_SY_BancChangeGo asked of the game (result 1)", the probe: event=1 then loading=1 ONCE (no second
+# load), then "teleport: move to -33.2 ...: asked" (teleport-197: A is moved from the Entrance start into B's
+# room on 2F once settled), 'mark arrived' with Link at x about -33, no "goto timed out", no "talk to someone or
+# read a sign", no "did not start the map change".
+# SCREENSHOTS (required): arrived = A on 2F beside B (map 2F), picture not black; walked = A moved from
+# there; end = still in the Deku Tree (no second load after the press A).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+mark placed
+wait 900
+chat /teleport B
+wait 120
+mark asked
+wait 1200                  # no input: the map change must start on its own
+mark arrived
+goto -31.6 11.6 1.0 600    # a couple of metres from B's spot (-33.2 10.4): Link must move (#197)
+wait 60
+goto -32.6 10.0 1.0 600
+wait 60
+mark walked
+press A 12                 # a check/talk here must not load anything again
+wait 600
+mark end

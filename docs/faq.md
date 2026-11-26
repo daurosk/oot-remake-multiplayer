@@ -1,12 +1,12 @@
 # Questions testers ask
 
-Short answers. Setting up is in [setup.md](setup.md), playing over the internet in [play-online.md](play-online.md), what works in [known-issues.md](known-issues.md).
+Short answers about Squadala!, the co-op mod. Setting up is in [setup.md](setup.md), playing over the internet in [play-online.md](play-online.md), what works in [known-issues.md](known-issues.md).
 
 ## Who is the host?
 
 The **first player to join** the server is the host. The host's game is the one the others follow: time of day, and the shared progress when the host loads a save ([Playing from the host's save](play-online.md#playing-from-the-hosts-save)).
 
-When the host leaves, the host role **moves to another player** who is still in (the one with the lowest player number). Nobody needs to do anything. A player who joins later never takes the role by joining.
+When the host leaves, the host role **moves to another player** who is still in (the one who has been in the session longest). Nobody needs to do anything. A player who joins later never takes the role by joining. While others stay, the new host keeps playing the group's save (the old host's) for the rest of the session, so everyone carries on with the same progress. A player left alone goes back to their own saves: on the title right away, or on their next return to the title when a save is being played (never under a game being played). When the server restarts, the first game back hosts (it keeps its player number); alone, it plays from its own saves, and a game that comes back after it is a guest and gets that host's save. After **Leave**, a game on the host's save goes back to its own saves on the title too.
 
 ## Host in the game or start-server.cmd?
 
@@ -27,13 +27,21 @@ That is Longshot building its shaders: the first time it sees an effect or an ar
 
 ## Where are my saves?
 
-In the kit: `hookshot\game\bin\user\save\`. They are your own and stay on your PC; updates keep them. Back up that folder if you want a copy. A guest who joined from the title plays from a copy of the host's save in a co-op save folder; their own saves are untouched ([setup.md](setup.md)).
+In the kit: `hookshot\game\user\save\`. They are your own and stay on your PC; updates keep them. Back up that folder if you want a copy. A guest who joined from the title plays from a copy of the host's save in a co-op save folder; their own saves are untouched ([setup.md](setup.md)).
 
 We never ship save files, keys, firmware or the game in a release or in this repository: each player uses their own.
 
+## I started longshot.exe and cannot see my friend
+
+Always start with **Start Squadala.bat** (`bash start-squadala.sh` on Linux), never `longshot.exe`. You do not need your own Longshot build: the kit builds its own game, in its `hookshotgame` folder, with co-op inside. A Longshot you built or downloaded yourself has no co-op at all, so it cannot see anyone. The kit's own `longshot.exe` started by hand has co-op, but not what the start file adds (the puppet pack that gives the others their Link and colours, your settings, the update check), so the game's chat says "This game was not started with Start Squadala.bat" and the others may show as names only. Close the game and start the kit with Start Squadala.bat (the **Play OoT Co-op** shortcut on your desktop does the same). Your saves are not touched either way.
+
+## Start Squadala.bat or Start OoT Co-op.bat?
+
+`Start Squadala.bat` (`bash start-squadala.sh` on Linux). It is the only start file from 0.11.4 on; `Start OoT Co-op.bat` (`start-oot-coop.sh`) was its old name. When your kit updates to 0.11.4, your desktop and Start menu shortcuts, the Linux menu entry and your Steam entry are moved over to the new name and the old file goes. If Steam was open at the time, restart it once.
+
 ## The update did not happen
 
-`Start OoT Co-op.bat` and `Update.bat` say why and how to update by hand. Most often: the game is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). If it says the release signature does not check, the release was published moments ago and is not signed yet: try again later (only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere). By hand: download **Update.bat** from the newest [release](https://github.com/daurosk/oot-remake-multiplayer/releases) into your kit folder and double-click it.
+`Start Squadala.bat` and `Update.bat` say why and how to update by hand. Most often: the game is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). If it says the release signature does not check, the release was published moments ago and is not signed yet: try again later (only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere). By hand: download **Update.bat** from the newest [release](https://github.com/daurosk/oot-remake-multiplayer/releases) into your kit folder and double-click it.
 
 ## Can I go back to the version I had?
 

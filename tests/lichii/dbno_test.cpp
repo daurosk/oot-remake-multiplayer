@@ -2,10 +2,14 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
@@ -59,6 +63,14 @@ struct Game {
     std::vector<Teammate> team{Mate(1)};
     std::vector<proto::DbnoStatus> sent;
     std::vector<Event> events;
+    // The respawn's move: how it goes (answered the frame after it is asked).
+    CoopDbno::Moved beside_result = CoopDbno::Moved::done;
+    CoopDbno::Moved entrance_result = CoopDbno::Moved::done;
+    CoopDbno::Moved pending = CoopDbno::Moved::none;
+    int beside_asks = 0;
+    int entrance_asks = 0;
+    bool enemy_near_us = false;
+    bool bottled_fairy = false;
 
     Output Step(bool lethal = false) {
         now += kFrame;
@@ -73,7 +85,18 @@ struct Game {
         in.scene = scene;
         in.position = position;
         in.team = team;
+        in.moved = std::exchange(pending, CoopDbno::Moved::none);
+        in.enemy_near_us = enemy_near_us;
+        in.bottled_fairy = bottled_fairy;
         Output out = machine.Frame(in);
+        if (out.move_beside != 0) {
+            ++beside_asks;
+            pending = beside_result;
+        }
+        if (out.move_entrance) {
+            ++entrance_asks;
+            pending = entrance_result;
+        }
         if (out.write_life) {
             life = *out.write_life;
         }
@@ -227,6 +250,38 @@ TEST_CASE("dbno: up with a teammate up the guard is the last stand, alone, off o
     CHECK(g.Step(true).state == State::up);
 }
 
+TEST_CASE("dbno: a bottled fairy is the game's own revive: no last stand, its death runs, back up, never downed (row 162)") {
+    Game g;
+    CHECK(g.Step().guard == Guard::last_stand);
+    g.bottled_fairy = true;
+    CHECK(g.Step().guard == Guard::off);  // the lethal hit is the game's: its death, its fairy
+    // The game's death at no life, then its fairy brings him back within the dying watch.
+    g.life = 0;
+    g.Run(3 * kS);
+    CHECK(g.machine.Now() == State::up);
+    g.bottled_fairy = false;  // the fairy left the bottle
+    g.life = 32;
+    const Output back = g.Step();
+    CHECK(back.state == State::up);
+    CHECK(back.guard == Guard::last_stand);  // the next lethal hit downs him again
+    CHECK(g.events.empty());
+    CHECK(g.sent.empty());  // nobody was told he was down
+    // A fairy that does not save him (the life stays 0): out, as the game's own death.
+    g.bottled_fairy = true;
+    g.Step();
+    g.life = 0;
+    g.Run(CoopDbno::kDyingUs + kS);
+    CHECK(g.machine.Now() == State::out);
+    CHECK(g.Saw(Event::died));
+    // Already down, a fairy changes nothing: still shielded, the teammates' revive.
+    Game d;
+    d.Step();
+    d.Down();
+    d.bottled_fairy = true;
+    CHECK(d.Step().guard == Guard::shielded);
+    CHECK(d.machine.Now() == State::downed);
+}
+
 TEST_CASE("dbno: a lethal hit downs, tells everyone, shields, and the bleed-out runs") {
     Game g;
     g.Step();
@@ -257,15 +312,34 @@ TEST_CASE("dbno: the downed life is put back when the game changes it") {
     CHECK_FALSE(g.Step().write_life);
 }
 
-TEST_CASE("dbno: bled out is out, the life goes, and the game's death runs") {
+TEST_CASE("dbno: bled out spectates the one still up, shielded, life kept, and says so") {
     Game g;
     g.rules.bleed_s = 10;
+    g.team = {Mate(3, {20, 0, 0})};
     g.Down();
     const Output o = g.Run(10 * kS + kFrame);
-    CHECK(o.state == State::out);
-    CHECK(o.guard == Guard::off);
+    CHECK(o.state == State::spectating);
+    CHECK(o.guard == Guard::shielded);
+    CHECK(o.watching == 3);
     CHECK(g.Saw(Event::bled_out));
     CHECK_FALSE(g.Saw(Event::wiped));
+    CHECK(g.life == CoopDbno::kDownedLife);
+    CHECK(g.sent.back() == proto::DbnoStatus{0, State::spectating, 0, 0, 0});
+    std::vector<std::uint8_t> bytes;
+    CHECK(proto::encode(proto::Message{g.sent.back()}, bytes) == proto::Error::none);
+    // A hit while spectating takes nothing; a heart rolled in is put back.
+    g.life = 8;
+    CHECK(g.Step().write_life == CoopDbno::kDownedLife);
+}
+
+TEST_CASE("dbno: the game over when nobody is left: out, the life goes, the game's death, then a continue") {
+    Game g;
+    g.Down();
+    g.team = {Mate(1, {1, 0, 0}, State::spectating)};
+    const Output o = g.Run(CoopDbno::kWipeGraceUs + kFrame);
+    CHECK(o.state == State::out);
+    CHECK(o.guard == Guard::off);
+    CHECK(g.Saw(Event::wiped));
     CHECK(g.life == 0);
     CHECK(g.sent.back() == proto::DbnoStatus{0, State::out, 0, 0, 0});
 
@@ -278,14 +352,20 @@ TEST_CASE("dbno: bled out is out, the life goes, and the game's death runs") {
     CHECK(g.Step().state == State::up);
     CHECK(g.Saw(Event::back));
     CHECK(g.sent.back() == proto::DbnoStatus{});
+    // The teammate was spectating, so it went out with us (its own Game Over). Until it is back up,
+    // nobody else is up: the game's own rules (no last stand alone).
+    g.team[0].state = State::out;
+    CHECK(g.Step().guard == Guard::off);
+    // Its continue: up again, and the last stand is back for both.
+    g.team[0].state = State::up;
     CHECK(g.Step().guard == Guard::last_stand);
 }
 
 TEST_CASE("dbno: out and the write did not hold: written again, a fairy brings him back") {
     Game g;
-    g.rules.bleed_s = 10;
     g.Down();
-    g.Run(10 * kS);  // the bleed-out's last frame: out, life written 0
+    g.team = {Mate(1, {1, 0, 0}, State::out)};
+    g.Run(CoopDbno::kWipeGraceUs);  // nobody up: out, life written 0
     REQUIRE(g.machine.Now() == State::out);
     g.life = 1;  // the game put it back before it looked
     int writes = 0;
@@ -312,18 +392,18 @@ TEST_CASE("dbno: a held revive fills the ring, stops the bleed-out, and brings h
     const std::uint64_t left = g.Step().left_us;
     g.sent.clear();
 
-    Output o = g.RunHeld(1500'000);
+    Output o = g.RunHeld(2500'000);
     CHECK(o.state == State::downed);
     CHECK(o.reviver == 1);
     CHECK(o.progress == doctest::Approx(0.5f).epsilon(0.05));
     CHECK(o.left_us == left);  // stands still
     // The ring is told ten times a second, with the reviver.
-    CHECK(g.sent.size() >= 14);
-    CHECK(g.sent.size() <= 16);
+    CHECK(g.sent.size() >= 24);
+    CHECK(g.sent.size() <= 26);
     CHECK(g.sent.front().reviver == 1);
     CHECK(g.sent.back().progress == doctest::Approx(127).epsilon(0.1));
 
-    o = g.RunHeld(1500'000 + kFrame);
+    o = g.RunHeld(2500'000 + kFrame);
     CHECK(o.state == State::up);
     CHECK(g.Saw(Event::revived));
     CHECK(g.life == 12);
@@ -341,7 +421,7 @@ TEST_CASE("dbno: the revive names who did it, and a Link with few hearts gets no
     g.rules.revive_life = 40;
     g.Down();
     Output o;
-    for (int i = 0; i < 70 && g.machine.Now() == State::downed; ++i) {
+    for (int i = 0; i < 120 && g.machine.Now() == State::downed; ++i) {
         g.machine.Hold(3, true, g.now);
         o = g.Step();
     }
@@ -353,7 +433,7 @@ TEST_CASE("dbno: the revive names who did it, and a Link with few hearts gets no
 TEST_CASE("dbno: letting go empties the ring and the bleed-out goes on") {
     Game g;
     g.Down();
-    Output o = g.RunHeld(2 * kS);
+    Output o = g.RunHeld(4 * kS);
     CHECK(o.progress > 0.6f);
     const std::uint64_t left = o.left_us;
     g.machine.Hold(1, false, g.now);
@@ -366,7 +446,7 @@ TEST_CASE("dbno: letting go empties the ring and the bleed-out goes on") {
     CHECK(o.left_us < left);
     // Starting over starts from nothing.
     o = g.RunHeld(kS);
-    CHECK(o.progress == doctest::Approx(1.0f / 3.0f).epsilon(0.1));
+    CHECK(o.progress == doctest::Approx(1.0f / 5.0f).epsilon(0.1));
 }
 
 TEST_CASE("dbno: a hold whose messages stop counts for a moment only") {
@@ -419,6 +499,19 @@ TEST_CASE("dbno: only a teammate who is up, here and beside him revives") {
     }
 }
 
+TEST_CASE("dbno: a teammate beside him in the other era's scene of his place revives (row 221)") {
+    Game g;
+    g.scene = "Graveyard_Child";
+    g.team = {Mate(1, {1, 0, 0}, State::up, "Graveyard_Adult")};
+    g.Down();
+    CHECK(g.RunHeld(kS, 1).reviver == 1);
+    Game h;
+    h.scene = "Graveyard_Child";
+    h.team = {Mate(1, {1, 0, 0}, State::up, "Kakariko_Adult")};
+    h.Down();
+    CHECK(h.RunHeld(kS, 1).reviver == 0);
+}
+
 TEST_CASE("dbno: two revivers: whoever began goes on, then the lower number") {
     Game g;
     g.team = {Mate(1), Mate(3)};
@@ -464,10 +557,13 @@ TEST_CASE("dbno: the connection drops while down: still down, nothing sent, no w
     g.connected = false;
     CHECK(g.Run(10 * kS).state == State::downed);
     CHECK_FALSE(g.Saw(Event::wiped));
-    CHECK(g.Run(g.rules.BleedUs()).state == State::out);
+    // Offline nobody is judged: spectating, and no respawn until connected.
+    CHECK(g.Run(g.rules.BleedUs()).state == State::spectating);
     CHECK(g.Saw(Event::bled_out));
+    CHECK(g.Run(10 * kS).state == State::spectating);
     CHECK_FALSE(g.Saw(Event::wiped));
-    CHECK(g.life == 0);
+    CHECK_FALSE(g.Saw(Event::respawned));
+    CHECK(g.life == CoopDbno::kDownedLife);
 }
 
 TEST_CASE("dbno: the host turns it off: the downed get up with the rules' hearts") {
@@ -548,7 +644,7 @@ TEST_CASE("dbno: every status the machine sends is one the codec takes") {
     g.Down();
     g.RunHeld(2 * kS);
     g.Run(kS);
-    g.RunHeld(4 * kS);
+    g.RunHeld(6 * kS);
     REQUIRE(g.sent.size() > 20);
     for (const auto& s : g.sent) {
         std::vector<std::uint8_t> bytes;
@@ -634,6 +730,16 @@ TEST_CASE("dbno reviver: nobody in reach, another scene, or not able: no target 
     CHECK(r.Frame(kS, false, true, {0, 0, 0}, scene, near).target == 0);  // we are down, or in a cutscene
     CHECK(r.Frame(kS, true, true, {0, 0, 0}, std::nullopt, near).target == 0);
     CHECK_FALSE(r.Frame(kS, true, true, {0, 0, 0}, scene, {}).send);
+}
+
+TEST_CASE("dbno reviver: a downed player in the other era's scene of our place is a target (row 221)") {
+    CoopDbno::Reviver r;
+    const std::optional<std::string> scene = "Graveyard_Adult";
+    const std::vector<CoopDbno::Fallen> child{{2, "Graveyard_Child", {1, 0, 0}}};
+    CHECK(r.Frame(kS, true, true, {0, 0, 0}, scene, child).target == 2);
+    CoopDbno::Reviver q;
+    const std::vector<CoopDbno::Fallen> elsewhere{{2, "Kakariko_Child", {1, 0, 0}}};
+    CHECK(q.Frame(kS, true, true, {0, 0, 0}, scene, elsewhere).target == 0);
 }
 
 TEST_CASE("dbno reviver: the nearest is the target, it stays ours a little past the reach, a change lets go first") {
@@ -754,8 +860,8 @@ TEST_CASE("dbno chat command: /dbno shows, on and off and the three numbers chan
     // A change keeps the rest as the session has it, within the limits.
     Rules now = On();
     now.bleed_s = 90;
-    CHECK(CoopDbno::Applied(now, *Parse("/dbno hearts 5")) == proto::DbnoMode{0, true, 90, 30, 20});
-    CHECK(CoopDbno::Applied(now, *Parse("/dbno off")) == proto::DbnoMode{0, false, 90, 30, 12});
+    CHECK(CoopDbno::Applied(now, *Parse("/dbno hearts 5")) == proto::DbnoMode{0, true, 90, 50, 20});
+    CHECK(CoopDbno::Applied(now, *Parse("/dbno off")) == proto::DbnoMode{0, false, 90, 50, 12});
     CHECK(CoopDbno::Applied(now, *Parse("/dbno time 5")).bleed_s == proto::kDbnoMinBleedS);
 }
 
@@ -767,7 +873,7 @@ TEST_CASE("dbno texts: the clock, the rules, our own notices and the others'") {
 
     CHECK(CoopDbno::RulesLine(Rules{}, 1, "") == "Down but not out is off: at no hearts you die");
     CHECK(CoopDbno::RulesLine(On(), 1, "") ==
-          "Down but not out is on: 0:45 to be revived, hold A 3 s, back with 3 hearts");
+          "Down but not out is on: 0:45 to be revived, hold A 5 s, back with 3 hearts");
     Rules r = On();
     r.revive_tenths = 25;
     r.revive_life = 2;
@@ -826,4 +932,353 @@ TEST_CASE("dbno: a lowering the Life step does not take in a quarter second is w
     l.Drop();
     CHECK(l.Take() == -1);
     CHECK_FALSE(l.Ask(1, t0 + 900'000));  // after a drop the wait starts again
+}
+
+// --- Spectating (row 113 parts 3 to 5) ---
+
+namespace {
+
+// Down, then bled out: spectating.
+void Spectate(Game& g) {
+    g.rules.bleed_s = 10;
+    g.Down();
+    g.Run(10 * kS);
+    REQUIRE(g.machine.Now() == State::spectating);
+}
+
+Teammate Threatened(Teammate t, CoopDbno::Threat threat) {
+    t.threat = threat;
+    return t;
+}
+
+std::vector<std::uint8_t> Encoded(const proto::Message& m, proto::Error want = proto::Error::none) {
+    std::vector<std::uint8_t> bytes;
+    CHECK(proto::encode(m, bytes) == want);
+    return bytes;
+}
+
+}  // namespace
+
+TEST_CASE("dbno spectate: back up beside the one watched once no enemy is near, with the continue's hearts") {
+    Game g;
+    g.team = {Threatened(Mate(2, {30, 0, 0}), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    // A fight goes on near them: no respawn however long.
+    CHECK(g.Run(20 * kS).state == State::spectating);
+    CHECK_FALSE(g.Saw(Event::respawned));
+    // Cleared: kQuietUs later, up beside them.
+    g.team[0].threat = CoopDbno::Threat::clear;
+    CHECK(g.Run(CoopDbno::kQuietUs - kFrame).state == State::spectating);
+    g.events.clear();
+    // First our Link is moved beside them (still spectating), then up.
+    const Output asked = g.Step();
+    CHECK(asked.state == State::spectating);
+    CHECK(asked.move_beside == 2);
+    CHECK_FALSE(g.Saw(Event::respawned));
+    const Output o = g.Step();
+    CHECK(o.state == State::up);
+    CHECK(o.by == 2);
+    CHECK(g.beside_asks == 1);
+    CHECK(g.entrance_asks == 0);
+    CHECK(g.Saw(Event::respawned));
+    CHECK(g.life == CoopDbno::kRespawnLife);
+    CHECK(o.guard == Guard::shielded);  // the mercy after coming back
+    CHECK(g.sent.back() == proto::DbnoStatus{});
+    CHECK(CoopDbno::OwnLine(Event::respawned, "Saria") == "No enemy is near: you are back beside Saria");
+}
+
+TEST_CASE("dbno spectate: an enemy near anyone up in the watched one's scene holds the respawn") {
+    Game g;
+    g.team = {Threatened(Mate(2, {30, 0, 0}), CoopDbno::Threat::clear),
+              Threatened(Mate(3, {35, 0, 0}), CoopDbno::Threat::enemy),
+              Threatened(Mate(4, {0, 0, 0}, State::up, "elsewhere"), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.Run(10 * kS).state == State::spectating);
+    // Player 4's fight is in another scene: it does not count.
+    g.team[1].threat = CoopDbno::Threat::clear;
+    CHECK(g.Run(CoopDbno::kQuietUs + kFrame).state == State::up);
+}
+
+TEST_CASE("dbno spectate: an unknown threat (none heard) never traps anyone") {
+    Game g;
+    g.team = {Mate(2, {30, 0, 0})};
+    Spectate(g);
+    g.Run(CoopDbno::kSpectateMinUs + 2 * kFrame);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.Saw(Event::respawned));
+}
+
+TEST_CASE("dbno spectate: respawn hearts are capped at the player's own") {
+    Game g;
+    g.max_life = 8;
+    g.team = {Mate(2)};
+    Spectate(g);
+    g.Run(CoopDbno::kSpectateMinUs + 2 * kFrame);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.life == 8);
+}
+
+TEST_CASE("dbno spectate: the first pick takes the other era's scene of our place as ours (row 221)") {
+    Game g;
+    g.scene = "Graveyard_Child";
+    g.position = {0, 0, 0};
+    g.team = {Threatened(Mate(2, {40, 0, 0}, State::up, "Graveyard_Child"), CoopDbno::Threat::enemy),
+              Threatened(Mate(4, {10, 0, 0}, State::up, "Graveyard_Adult"), CoopDbno::Threat::enemy),
+              Threatened(Mate(5, {3, 0, 0}, State::up, "Kakariko_Child"), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.Step().watching == 4);  // nearest up in our place (5 is in another place)
+}
+
+TEST_CASE("dbno spectate: the first pick is the nearest in our scene, and A goes round the players still up") {
+    Game g;
+    g.position = {0, 0, 0};
+    g.team = {Threatened(Mate(5, {3, 0, 0}, State::up, "other"), CoopDbno::Threat::enemy),
+              Threatened(Mate(2, {40, 0, 0}), CoopDbno::Threat::enemy),
+              Threatened(Mate(4, {10, 0, 0}), CoopDbno::Threat::enemy),
+              Threatened(Mate(3, {1, 0, 0}, State::downed), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.Step().watching == 4);  // nearest up in our scene (3 is down, 5 elsewhere)
+    auto next = [&g] {
+        g.now += kFrame;
+        Input in;
+        in.now_us = g.now;
+        in.rules = g.rules;
+        in.connected = true;
+        in.guard_live = true;
+        in.life = g.life;
+        in.max_life = g.max_life;
+        in.scene = g.scene;
+        in.position = g.position;
+        in.team = g.team;
+        in.next = true;
+        return g.machine.Frame(in).watching;
+    };
+    CHECK(next() == 5);
+    CHECK(next() == 2);  // round again, by number: 2, 4, 5
+    CHECK(next() == 4);
+    CHECK(g.Step().watching == 4);  // no press: stays
+    // The one watched goes down: the next pick.
+    g.team[2].state = State::downed;
+    CHECK(g.Step().watching == 2);
+}
+
+TEST_CASE("dbno spectate: nobody left up: out in every game (each runs its own Game Over)") {
+    Game g;
+    g.team = {Threatened(Mate(2, {30, 0, 0}), CoopDbno::Threat::enemy), Mate(3, {31, 0, 0}, State::downed)};
+    Spectate(g);
+    g.team[0].state = State::out;  // the last one standing died
+    g.events.clear();
+    CHECK(g.Run(CoopDbno::kWipeGraceUs - kFrame).state == State::spectating);
+    const Output o = g.Step();
+    CHECK(o.state == State::out);
+    CHECK(g.Saw(Event::wiped));
+    CHECK(g.life == 0);  // through the game's own Life step: its death and Game Over
+    CHECK(g.sent.back().state == State::out);
+}
+
+TEST_CASE("dbno: the last one standing dies the game's death and says out, so the others wipe") {
+    Game g;
+    g.team = {Mate(2, {5, 0, 0}, State::spectating)};
+    CHECK(g.Step().guard == Guard::off);  // nobody else up: the game's own rules
+    g.life = 0;
+    CHECK(g.Run(kS).state == State::up);  // its death runs; a fairy could still save him
+    CHECK(g.sent.empty());
+    g.life.reset();  // the Game Over screen: no Link
+    const Output o = g.Step();
+    CHECK(o.state == State::out);
+    CHECK(g.Saw(Event::died));
+    CHECK(g.sent.back().state == State::out);
+    // Try Again (the host's save, patch 0024): alive, up again.
+    g.life.reset();
+    g.Run(kS);
+    g.life = 12;
+    CHECK(g.Step().state == State::up);
+    CHECK(g.Saw(Event::back));
+}
+
+TEST_CASE("dbno: solo, or the mode off, a death is the game's alone and nothing is sent") {
+    Game g;
+    g.connected = false;
+    g.team.clear();
+    g.life = 0;
+    CHECK(g.Step().state == State::up);
+    g.connected = true;
+    g.rules.on = false;
+    CHECK(g.Step().state == State::up);
+    CHECK(g.sent.empty());
+    CHECK(g.events.empty());
+}
+
+TEST_CASE("dbno spectate: the host turns the mode off: up again where he lies") {
+    Game g;
+    g.team = {Threatened(Mate(2), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    g.rules.on = false;
+    CHECK(g.Step().state == State::up);
+    CHECK(g.Saw(Event::got_up));
+    CHECK(g.life == g.rules.revive_life);
+}
+
+TEST_CASE("dbno spectate: no revive holds count while spectating") {
+    Game g;
+    g.team = {Threatened(Mate(1, {1, 0, 0}), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.RunHeld(10 * kS).state == State::spectating);
+    CHECK_FALSE(g.Saw(Event::revived));
+}
+
+TEST_CASE("dbno spectate: the pad keeps the camera stick and the pause buttons only") {
+    using CoopDbno::Pad;
+    namespace pad = CoopDbno::pad;
+    Pad in;
+    in.buttons = pad::a | pad::plus | pad::minus | pad::stick_l_dirs | pad::stick_r_dirs | (1ull << 4);
+    in.stick = {30000, -20000, 1000, -2000};
+    const Pad out = CoopDbno::SpectatorPad(in);
+    CHECK(out.buttons == (pad::plus | pad::minus | pad::stick_r_dirs));
+    CHECK(out.stick == std::array<std::int32_t, 4>{0, 0, 1000, -2000});
+}
+
+TEST_CASE("dbno spectate: the others' lines") {
+    const proto::DbnoStatus down{2, State::downed, 100, 0, 0};
+    const proto::DbnoStatus watching{2, State::spectating, 0, 0, 0};
+    const proto::DbnoStatus up{2, State::up, 0, 0, 0};
+    CHECK(CoopDbno::TheirLine(down, watching, "Saria", "") == "Saria is watching: back once no enemy is near");
+    CHECK(CoopDbno::TheirLine(watching, up, "Saria", "") == "Saria is up again");
+    CHECK(CoopDbno::OwnLine(Event::bled_out, "Mido")->find("you watch Mido") != std::string::npos);
+}
+
+TEST_CASE("dbno threat: enemies near, level and height") {
+    const Vec3 self{0, 0, 0};
+    CHECK_FALSE(CoopDbno::AnyNear(self, std::vector<Vec3>{}));
+    CHECK(CoopDbno::AnyNear(self, std::vector<Vec3>{{10, 1, 10}}));
+    CHECK_FALSE(CoopDbno::AnyNear(self, std::vector<Vec3>{{20, 0, 0}}));  // fled out of range
+    CHECK_FALSE(CoopDbno::AnyNear(self, std::vector<Vec3>{{1, 20, 0}}));  // another floor
+    CHECK_FALSE(CoopDbno::AnyNear(self, std::vector<Vec3>{{NAN, 0, 0}}));
+}
+
+TEST_CASE("dbno threat: told on a change and every few seconds, only while able") {
+    CoopDbno::ThreatTeller t;
+    const std::uint64_t t0 = 5 * kS;
+    CHECK_FALSE(t.Frame(t0, false, true));
+    auto a = t.Frame(t0, true, true);
+    REQUIRE(a);
+    CHECK(a->enemy_near);
+    CHECK_FALSE(t.Frame(t0 + kS, true, true));
+    a = t.Frame(t0 + kS + kFrame, true, false);  // a change: at once
+    REQUIRE(a);
+    CHECK_FALSE(a->enemy_near);
+    CHECK_FALSE(t.Frame(t0 + 2 * kS, true, false));
+    CHECK(t.Frame(t0 + kS + kFrame + CoopDbno::kThreatSendUs, true, false));  // again
+    CHECK_FALSE(t.Frame(t0 + 10 * kS, false, false));
+    CHECK(t.Frame(t0 + 10 * kS + kFrame, true, false));  // able again: at once
+}
+
+TEST_CASE("dbno threat: DBNO_THREAT and the spectating state through the codec") {
+    for (const bool value : {false, true}) {
+        const auto bytes = Encoded(proto::Message{proto::DbnoThreat{3, value}});
+        proto::Message back;
+        REQUIRE(proto::decode(bytes, back) == proto::Error::none);
+        CHECK(std::get<proto::DbnoThreat>(back) == proto::DbnoThreat{3, value});
+        CHECK(proto::type_of(back) == proto::MessageType::dbno_threat);
+        CHECK(proto::channel_of(back) == proto::kChannelSession);
+    }
+    auto bad = Encoded(proto::Message{proto::DbnoThreat{3, true}});
+    bad.back() = 2;  // neither 0 nor 1
+    proto::Message back;
+    CHECK(proto::decode(bad, back) == proto::Error::bad_value);
+    // Spectating carries no time, reviver or progress.
+    Encoded(proto::Message{proto::DbnoStatus{2, State::spectating, 10, 0, 0}}, proto::Error::bad_value);
+    auto st = Encoded(proto::Message{proto::DbnoStatus{2, State::spectating, 0, 0, 0}});
+    REQUIRE(st.size() >= 5);
+    st[st.size() - 5] = 4;  // a state past spectating
+    CHECK(proto::decode(st, back) == proto::Error::bad_value);
+}
+
+TEST_CASE("dbno spectate: the move beside them refused: the entrance, then up there") {
+    Game g;
+    g.team = {Mate(2, {30, 0, 0})};
+    g.beside_result = CoopDbno::Moved::failed;
+    Spectate(g);
+    g.Run(CoopDbno::kSpectateMinUs + 3 * kFrame);
+    CHECK(g.beside_asks == 1);
+    CHECK(g.entrance_asks == 1);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.Saw(Event::respawned));
+    CHECK(g.life == CoopDbno::kRespawnLife);
+}
+
+TEST_CASE("dbno spectate: no move at all: up where he lay only with no enemy near him, else wait and try again") {
+    Game g;
+    g.team = {Mate(2, {30, 0, 0})};
+    g.beside_result = CoopDbno::Moved::failed;
+    g.entrance_result = CoopDbno::Moved::failed;
+    g.enemy_near_us = true;
+    Spectate(g);
+    g.Run(CoopDbno::kSpectateMinUs + 3 * kFrame);
+    CHECK(g.machine.Now() == State::spectating);
+    CHECK(g.life == CoopDbno::kDownedLife);
+    // Quiet again (kQuietUs): asked again.
+    g.Run(CoopDbno::kQuietUs + kFrame);
+    CHECK(g.beside_asks == 2);
+    g.enemy_near_us = false;
+    g.Run(CoopDbno::kQuietUs + 3 * kFrame);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.Saw(Event::respawned));
+}
+
+TEST_CASE("dbno spectate: a move that never answers counts as failed after kRespawnWaitUs") {
+    Game g;
+    g.team = {Mate(2, {30, 0, 0})};
+    g.beside_result = CoopDbno::Moved::none;  // no answer ever
+    Spectate(g);
+    g.Run(CoopDbno::kSpectateMinUs + kFrame);
+    CHECK(g.beside_asks == 1);
+    CHECK(g.Run(CoopDbno::kRespawnWaitUs - 2 * kFrame).state == State::spectating);
+    CHECK(g.entrance_asks == 0);
+    g.Run(2 * kFrame);
+    CHECK(g.entrance_asks == 1);
+    g.Step();
+    CHECK(g.machine.Now() == State::up);
+}
+
+TEST_CASE("dbno: the last one up loading (a door, a teleport) is still up for the wipe while connected") {
+    Game g;
+    g.team = {Mate(2, {30, 0, 0}), Threatened(Mate(3, {31, 0, 0}), CoopDbno::Threat::enemy)};
+    g.rules.bleed_s = 120;  // the wipe, not the bleed-out
+    g.Down();
+    g.team[0].state = State::downed;
+    g.team[1].in_game = false;  // 3 takes a door
+    g.team[1].loading = true;
+    CHECK(g.Run(40 * kS).state == State::downed);  // a slow first load: as long as it takes
+    CHECK_FALSE(g.Saw(Event::wiped));
+    // They leave the session (a crash, a quit): nobody up, the wipe.
+    g.team.pop_back();
+    CHECK(g.Run(CoopDbno::kWipeGraceUs + kFrame).state == State::out);
+    CHECK(g.Saw(Event::wiped));
+}
+
+TEST_CASE("dbno: one up who never had a Link (still on the title) is nobody up") {
+    Game g;
+    Teammate title = Mate(2);
+    title.in_game = false;
+    g.team = {Mate(3)};
+    g.Down();
+    g.team = {title};
+    CHECK(g.Run(CoopDbno::kWipeGraceUs + kFrame).state == State::out);
+    CHECK(g.Saw(Event::wiped));
+}
+
+TEST_CASE("dbno: the last one standing saved by a fairy is never out") {
+    Game g;
+    g.team = {Mate(2, {5, 0, 0}, State::spectating)};
+    g.life = 0;
+    CHECK(g.Run(2 * kS).state == State::up);  // the fairy's revive reads 0 for a while
+    g.life = 20;
+    CHECK(g.Run(CoopDbno::kDyingUs).state == State::up);
+    CHECK(g.sent.empty());
+    CHECK_FALSE(g.Saw(Event::died));
+    // At no life past kDyingUs with a Link (no Game Over screen seen): out after all.
+    g.life = 0;
+    g.Run(CoopDbno::kDyingUs + kFrame);
+    CHECK(g.machine.Now() == State::out);
 }

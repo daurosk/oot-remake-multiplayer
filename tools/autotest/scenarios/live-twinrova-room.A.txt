@@ -1,0 +1,18 @@
+# live-twinrova-room A (boot for live.py start): adult save into the Twinrova room, past the title, the session starts at the intro (same boot as hs-twinrova-orders2).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in

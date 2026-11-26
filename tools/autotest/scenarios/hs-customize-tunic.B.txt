@@ -1,0 +1,10 @@
+# hs-customize-tunic, B: faces where A stands and watches A's puppet before and after A's change (see the A file).
+wait 120
+stick 1 0 8             # face right
+press ZL                # camera behind B
+wait 170
+mark b-before
+wait 1550               # A opens the menu, his Customize screen, changes the tunic, closes it
+mark b-after
+wait 200
+mark b-end

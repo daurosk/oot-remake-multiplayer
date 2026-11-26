@@ -1,0 +1,332 @@
+From bc63d41493629a93c858b36a69ad3c8b05b00b29 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 12:42:25 -0900
+Subject: [PATCH] Co-op Discord status: always Squadala!'s, the module's line
+
+A co-op build's Discord status is always Squadala!'s (owner's rule): the
+Squadala! application (its name above the status and its icon: no art is
+sent), whatever discord_app_id= or HOS_DISCORD_APP_ID say, and the frame
+host/hos_discord_activity.h writes, at the title, in play, paused or idle
+alike. Longshot's own template (host/discord_activity.c: discord_text=,
+discord_image=, discord_image_text=, the place Link is) is never sent.
+
+host/discord_rpc.c reads discord_details= (first line) and discord_state=
+(second line) from longshot_options.ini next to Longshot's own keys; each
+is "Squadala!" when absent or not usable (2 to 127 bytes of valid UTF-8,
+no control character).
+
+host/hos_discord_activity.h (new, plain C, static inline, no I/O)
+writes the activity: the checks, the JSON escapes (bytes that are no
+UTF-8 dropped) and the frame. The same file is in
+oot-remake-multiplayer's hookshot/src, where unit tests drive it.
+
+A loaded co-op module gives the second line itself through the optional
+export hos_coop_discord_state(out, cap) (1 = a line written: "Solo",
+"Co-op: 3 players"), found by name as host/coop_world.c finds its
+exports, with a reference held across the call. It is asked at each of
+Longshot's looks (every 2 s) and a change goes out as Longshot's own do;
+the 60 s keep-alive stays. Nothing is sent at the end: Discord clears the
+status when the pipe closes.
+---
+ host/discord_rpc.c          |  83 +++++++++++++++++++++-
+ host/hos_discord_activity.h | 137 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 219 insertions(+), 1 deletion(-)
+ create mode 100644 host/hos_discord_activity.h
+
+diff --git a/host/discord_rpc.c b/host/discord_rpc.c
+index 37a863a9..38328345 100644
+--- a/host/discord_rpc.c
++++ b/host/discord_rpc.c
+@@ -17,12 +17,24 @@
+ 
+    The protocol is Discord's documented IPC (discord-rpc's rpc_connection.h): a frame is <opcode u32 LE><length u32 LE><JSON>,
+    Handshake 0, Frame 1, Close 2, Ping 3, Pong 4. The handshake {"v":1,"client_id":...} is answered by a Ready frame; a
+-   SET_ACTIVITY frame by a frame; a Ping is echoed as a Pong. */
++   SET_ACTIVITY frame by a frame; a Ping is echoed as a Pong.
++
++   (oot-remake-multiplayer's patch 0026) A co-op build's status is always Squadala!'s (the owner's rule): the Squadala!
++   application (COOP_DISCORD_APP_ID: its name above the status and its icon, as no art is sent), whatever discord_app_id=
++   or HOS_DISCORD_APP_ID say, and the frame host/hos_discord_activity.h writes, at the title, in play, paused or idle alike;
++   Longshot's own template (host/discord_activity.c: discord_text=, discord_image=, discord_image_text=) is never sent.
++   Its words: discord_details= (the first line) and discord_state= (the second line) from longshot_options.ini (the kit
++   writes "Squadala! <release>" and "Solo"), each "Squadala!" when absent or not usable; a loaded co-op module says the
++   second line itself through the optional export hos_coop_discord_state (found by name, as host/coop_world.c finds its
++   exports): 1 = a line was written ("Solo", "Co-op: 3 players"), 0 = none. The module's line is asked for with each look
++   (every 2 s); a change goes out as Longshot's own changes do. Nothing is sent at the end: Discord clears the status when
++   the pipe closes. */
+ #include "hos_paths.h"   /* (first: windows.h on Windows) */
+ #include "options_path.h"
+ #ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
+ #include "../gpu/vk/compat/longshot_env.h"
+ #endif
++#include <stddef.h>   /* (patch 0026: offsetof) */
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -32,6 +44,7 @@
+ #ifdef _WIN32
+ #include <windows.h>
+ #else
++#include <dlfcn.h>   /* (patch 0026: the module's hos_coop_discord_state) */
+ #include <errno.h>
+ #include <poll.h>
+ #include <pthread.h>
+@@ -44,8 +57,11 @@
+ #include "discord_activity.h"
+ #include "oot_area_names.h"
+ #include "oot_heart_containers.h"
++#include "hos_discord_activity.h"   /* (patch 0026) */
+ 
+ #define LONGSHOT_DISCORD_APP_ID_DEFAULT "1570559772111933578"   /* (the Longshot application's id, digits) */
++#define COOP_DISCORD_APP_ID "1571917068994089063"   /* (patch 0026: the Squadala! application, the kit's discord_status.py APP_ID) */
++#define COOP_DISCORD_NAME "Squadala!"   /* (patch 0026: the words where none are set) */
+ 
+ void hos_log(const char *fmt, ...);
+ int rx_option(int id, int otherwise);
+@@ -152,9 +168,30 @@ static int valid_app_id(const char *s) {
+ /* the application id: HOS_DISCORD_APP_ID, then longshot_options.ini's discord_app_id=, then the default; and the status's
+    texts, its discord_*= lines (host/discord_activity.c) */
+ static DiscordSettings settings;
++/* (patch 0026) the file's discord_image=, discord_details=, discord_state=, discord_large_text= (each the last usable line of
++   its key; "" each: none) */
++static HosDiscordWords words;
++static void read_words_line(const char *raw) {
++    static const struct { const char *key; size_t at; size_t cap; int (*ok)(const char *); } keys[] = {
++        {"discord_image=", offsetof(HosDiscordWords, image), sizeof ((HosDiscordWords *)0)->image, hos_discord_valid_image},
++        {"discord_details=", offsetof(HosDiscordWords, details), sizeof ((HosDiscordWords *)0)->details, hos_discord_valid_text},
++        {"discord_state=", offsetof(HosDiscordWords, state), sizeof ((HosDiscordWords *)0)->state, hos_discord_valid_text},
++        {"discord_large_text=", offsetof(HosDiscordWords, large_text), sizeof ((HosDiscordWords *)0)->large_text,
++         hos_discord_valid_text},
++    };
++    char line[600];
++    snprintf(line, sizeof line, "%s", raw);
++    line[strcspn(line, "\r\n")] = 0;
++    for (size_t k = 0; k < sizeof keys / sizeof *keys; k++) {
++        const size_t kn = strlen(keys[k].key);
++        if (strncmp(line, keys[k].key, kn) || !keys[k].ok(line + kn)) continue;
++        snprintf((char *)&words + keys[k].at, keys[k].cap, "%s", line + kn);
++    }
++}
+ static void read_app_id(char *out, size_t cap) {
+     snprintf(out, cap, "%s", LONGSHOT_DISCORD_APP_ID_DEFAULT);
+     discord_settings_default(&settings);
++    memset(&words, 0, sizeof words);
+     FILE *f = fopen(hos_options_file(), "r");   /* (host/options_path.c) */
+     if (f) {
+         char line[600];
+@@ -164,6 +201,7 @@ static void read_app_id(char *out, size_t cap) {
+                 if (valid_app_id(line + 15)) snprintf(out, cap, "%s", line + 15);
+             } else {
+                 discord_settings_line(&settings, line);
++                read_words_line(line);   /* (patch 0026) */
+             }
+         }
+         fclose(f);
+@@ -171,7 +209,34 @@ static void read_app_id(char *out, size_t cap) {
+     const char *e = getenv("HOS_DISCORD_APP_ID");
+     if (e && valid_app_id(e)) snprintf(out, cap, "%s", e);
+     if (*out && !valid_app_id(out)) *out = 0;
++    snprintf(out, cap, "%s", COOP_DISCORD_APP_ID);   /* (patch 0026: always the Squadala! application) */
++}
++
++/* (patch 0026) The co-op module's second line: its optional export hos_coop_discord_state(out, cap), 1 = a line written. Looked
++   up again on each call: the module may load after the game starts, or not at all. */
++typedef int (*hos_coop_discord_state_fn)(char *out, size_t cap);
++static int module_state(char *out, size_t cap) {
++    if (cap < 2) return 0;
++    out[0] = 0;
++    int got = 0;
++    /* (a reference held across the call: the bridge frees a module that says co-op is off) */
++#ifdef _WIN32
++    HMODULE m = NULL;
++    if (!GetModuleHandleExA(0, "hookshot_coop.dll", &m)) return 0;
++    hos_coop_discord_state_fn fn = (hos_coop_discord_state_fn)(void *)GetProcAddress(m, "hos_coop_discord_state");
++    if (fn) got = fn(out, cap) == 1;
++    FreeLibrary(m);
++#else
++    void *m = dlopen("hookshot_coop.so", RTLD_NOW | RTLD_NOLOAD);
++    hos_coop_discord_state_fn fn =
++        (hos_coop_discord_state_fn)(m ? dlsym(m, "hos_coop_discord_state") : dlsym(RTLD_DEFAULT, "hos_coop_discord_state"));
++    if (fn) got = fn(out, cap) == 1;
++    if (m) dlclose(m);
++#endif
++    out[cap - 1] = 0;
++    return got && hos_discord_valid_text(out);
+ }
++static char module_line[128];   /* (patch 0026: the module's line at the last look, "" none) */
+ 
+ /* ---- frames ---- */
+ static void le32(uint8_t *at, uint32_t v) { at[0] = (uint8_t)v, at[1] = (uint8_t)(v >> 8), at[2] = (uint8_t)(v >> 16), at[3] = (uint8_t)(v >> 24); }
+@@ -234,6 +299,21 @@ static Ipc connect_client(const char *app_id) {
+ /* the activity (host/discord_activity.c): in a map the place Link is, elsewhere "Longshot" and the release; the start of
+    play for the elapsed time; the application's art. json is the activity with nonce 0, for telling a change */
+ static void activity_now(unsigned nonce, long long started, char *json, size_t cap) {
++    if (1) {   /* (patch 0026: always Squadala!'s frame, no art (the application's icon); Longshot's template below is never used) */
++        HosDiscordWords w = words;
++        snprintf(w.image, sizeof w.image, "none");
++        if (!*w.details) snprintf(w.details, sizeof w.details, "%s", COOP_DISCORD_NAME);
++        if (!*w.state) snprintf(w.state, sizeof w.state, "%s", COOP_DISCORD_NAME);
++        if (!*w.large_text) snprintf(w.large_text, sizeof w.large_text, "%s", COOP_DISCORD_NAME);
++        char activity[1536];
++        if (!hos_discord_activity(activity, sizeof activity, COOP_DISCORD_NAME, "", "none", &w, module_line, started) ||
++            !hos_discord_set_activity(json, cap, nonce, process_id(), activity)) {   /* (cannot happen: the words are checked) */
++            static const HosDiscordWords plain = {"none", COOP_DISCORD_NAME, COOP_DISCORD_NAME, COOP_DISCORD_NAME};
++            hos_discord_activity(activity, sizeof activity, COOP_DISCORD_NAME, "", "none", &plain, "", started);
++            hos_discord_set_activity(json, cap, nonce, process_id(), activity);
++        }
++        return;
++    }
+     char version[64], build[64], commit[64], release[64], map[96] = "", area[128] = "";
+     discord_version_parts(hos_version(), version, build, commit, release, sizeof version);
+     const int known = hos_oot_current_map(map, sizeof map);
+@@ -328,6 +408,7 @@ static void presence_main(void) {
+         if (ipc != IPC_NONE && now_ms() >= look_at) {   /* (what it says now: a change goes out within 15 s) */
+             look_at = now_ms() + 2000;
+             hos_oot_heart_containers_load();   /* (once, here and not on the game's thread: a few map files read) */
++            if (!module_state(module_line, sizeof module_line)) *module_line = 0;   /* (patch 0026) */
+             char now_json[1600];
+             activity_now(0, started, now_json, sizeof now_json);
+             if (strcmp(now_json, sent) && now_ms() >= sent_at + 15000) send_at = 0;
+diff --git a/host/hos_discord_activity.h b/host/hos_discord_activity.h
+new file mode 100644
+index 00000000..5b363d6b
+--- /dev/null
++++ b/host/hos_discord_activity.h
+@@ -0,0 +1,137 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The Discord status's activity text (oot-remake-multiplayer's patch 0026, Longshot's host/discord_rpc.c).
++
++   The same file is in Longshot's host/ through the patch and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it; tests/hookshot/discord_activity_test.cpp checks what it writes).
++   Plain C with static inline functions only: no state, no I/O, so the tests drive it as discord_rpc.c does.
++
++   With no setting and no module line the SET_ACTIVITY frame is byte for byte the one Longshot wrote before the patch:
++   details "<name>", state and the art's hover text "<name> <version>", the art <default image>. A setting replaces one
++   of them; discord_image=none sends no art at all (Discord then shows the application's own icon). */
++#ifndef HOS_DISCORD_ACTIVITY_H
++#define HOS_DISCORD_ACTIVITY_H
++#include <stddef.h>
++#include <stdio.h>
++#include <string.h>
++
++/* The settings' words: each "" when longshot_options.ini has no usable line for it. */
++typedef struct HosDiscordWords {
++    char image[256];        /* discord_image=: an art asset key or an https image; "none": no art */
++    char details[128];      /* discord_details= */
++    char state[128];        /* discord_state= */
++    char large_text[128];   /* discord_large_text= */
++} HosDiscordWords;
++
++/* 1 for an art asset key or an image's https address: letters, digits and _ - . : / ? = & %, 1 to 255 of them */
++static inline int hos_discord_valid_image(const char *s) {
++    const size_t n = strlen(s);
++    if (!n || n > 255) return 0;
++    for (; *s; s++)
++        if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') || strchr("_-.:/?=&%", *s)))
++            return 0;
++    return 1;
++}
++
++/* The length of the whole UTF-8 sequence at s (1 to 4), 0 when it is not one (a stray or cut byte, an overlong form,
++   a surrogate, past U+10FFFF) */
++static inline size_t hos_discord_utf8_len(const unsigned char *s) {
++    const unsigned char c = s[0];
++    if (c < 0x80) return 1;
++    size_t n;
++    unsigned min;
++    unsigned v;
++    if (c >= 0xc2 && c <= 0xdf) n = 2, min = 0x80, v = c & 0x1fu;
++    else if (c >= 0xe0 && c <= 0xef) n = 3, min = 0x800, v = c & 0x0fu;
++    else if (c >= 0xf0 && c <= 0xf4) n = 4, min = 0x10000, v = c & 0x07u;
++    else return 0;
++    for (size_t i = 1; i < n; i++) {
++        if ((s[i] & 0xc0) != 0x80) return 0;
++        v = v << 6 | (s[i] & 0x3fu);
++    }
++    if (v < min || v > 0x10ffff || (v >= 0xd800 && v <= 0xdfff)) return 0;
++    return n;
++}
++
++/* 1 for words Discord takes: 2 to 127 bytes of UTF-8 with no control character (Discord refuses a line shorter than 2
++   or longer than 128 characters) */
++static inline int hos_discord_valid_text(const char *s) {
++    const size_t n = strlen(s);
++    if (n < 2 || n > 127) return 0;
++    for (const unsigned char *p = (const unsigned char *)s; *p;) {
++        if (*p < 0x20 || *p == 0x7f) return 0;
++        const size_t k = hos_discord_utf8_len(p);
++        if (!k) return 0;
++        p += k;
++    }
++    return 1;
++}
++
++/* s as the inside of a JSON string: " and \ escaped, control characters and bytes that are no UTF-8 left out, cut
++   before a character that would not fit (out always ended) */
++static inline void hos_discord_json_text(char *out, size_t cap, const char *s) {
++    size_t o = 0;
++    if (!cap) return;
++    for (const unsigned char *p = (const unsigned char *)s; *p;) {
++        const size_t k = hos_discord_utf8_len(p);
++        if (!k || *p < 0x20 || *p == 0x7f) {   /* (dropped: one byte) */
++            p++;
++            continue;
++        }
++        const size_t escape = (*p == '"' || *p == '\\') ? 1 : 0;   /* (only " and \: k is 1 for them) */
++        if (o + escape + k + 1 > cap) break;
++        if (escape) out[o++] = '\\';
++        memcpy(out + o, p, k);
++        o += k, p += k;
++    }
++    out[o] = 0;
++}
++
++/* Joins the strings of parts (NULL-ended) into out. All or nothing: 1 when the whole fits (out ended), else 0 and out "" (a cut
++   would leave half an escape or a JSON object without its end). No snprintf of a string of unknown length. */
++static inline int hos_discord_join(char *out, size_t cap, const char *const *parts) {
++    size_t o = 0;
++    if (!cap) return 0;
++    for (; *parts; parts++) {
++        const size_t n = strlen(*parts);
++        if (n >= cap - o) {
++            out[0] = 0;
++            return 0;
++        }
++        memcpy(out + o, *parts, n);
++        o += n;
++    }
++    out[o] = 0;
++    return 1;
++}
++
++/* The activity object: name ("Longshot") and version ("v3.0.0-rc.4") make the default words, default_image the default
++   art; w (may be NULL) the settings; module_line ("" or NULL: none) the second line, before the settings' state.
++   1 when it fits in cap (1536 always does: each word is at most 254 bytes escaped, the image 255), else 0 and out "". */
++static inline int hos_discord_activity(char *out, size_t cap, const char *name, const char *version, const char *default_image,
++                                       const HosDiscordWords *w, const char *module_line, long long started) {
++    static const HosDiscordWords none_set = {"", "", "", ""};
++    if (!w) w = &none_set;
++    char own[256], details[256], state[256], large[256], image[300], start[24];
++    const char *const own_parts[] = {name, " ", version, NULL}, *const name_only[] = {name, NULL};
++    if (!hos_discord_join(own, sizeof own, own_parts)) hos_discord_join(own, sizeof own, name_only);
++    hos_discord_json_text(details, sizeof details, *w->details ? w->details : name);
++    hos_discord_json_text(state, sizeof state, module_line && *module_line ? module_line : *w->state ? w->state : own);
++    hos_discord_json_text(large, sizeof large, *w->large_text ? w->large_text : own);
++    hos_discord_json_text(image, sizeof image, *w->image ? w->image : default_image);
++    snprintf(start, sizeof start, "%lld", started);   /* (at most 20 characters) */
++    const int art = strcmp(image, "none") != 0;
++    const char *const parts[] = {"{\"details\":\"", details, "\",\"state\":\"", state, "\",\"timestamps\":{\"start\":", start,
++                                 art ? "},\"assets\":{\"large_image\":\"" : "}}", art ? image : NULL, "\",\"large_text\":\"",
++                                 large, "\"}}", NULL};
++    return hos_discord_join(out, cap, parts);
++}
++
++/* The SET_ACTIVITY frame's JSON around an activity object; 1 when it fits, else 0 and out "" */
++static inline int hos_discord_set_activity(char *out, size_t cap, unsigned nonce, unsigned long pid, const char *activity) {
++    char head[96];
++    snprintf(head, sizeof head, "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":", nonce, pid);
++    const char *const parts[] = {head, activity, "}}", NULL};
++    return hos_discord_join(out, cap, parts);
++}
++
++#endif

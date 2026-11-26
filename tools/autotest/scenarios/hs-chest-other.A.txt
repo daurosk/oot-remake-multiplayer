@@ -1,4 +1,9 @@
 # hs-chest-other (Hookshot and emulator, issue 195): chest-other with the map chest closed again.
+# room-actor-replay-0116: bigrun-0115 (profile chest-closed: bool:0x89787395=0 only) was INCONCLUSIVE. A's log:
+# 'already shows open here (open idle since first seen)': A's chest loaded OPEN. The chest's own opened flag is
+# the Bool 0xe4fb555d (coop_chests.cpp, its row for 0x771092ae2f3b7100), not IsGetMap, and A's save had it. Prep
+# now (offline job room-actor-replay-0116, profile chest-closed): bool:0x89787395=0 AND bool:0xe4fb555d=0 in both.
+# A's 'placed' shot also looked away from the chest: A now turns to it (toward + ZL) before 'placed' and 'a-look'.
 # bigrun2 was INCONCLUSIVE: DungeonInfo.InsideTheDekuTree.IsGetMap (bool 0x89787395) was already 1 in
 # both games right after the load (the kit saves have that chest open), so nothing was left to sync.
 # The Hookshot pairs' baselines have it set too (save_flags.py get on hookshot-A, 2026-11-12: 1). The
@@ -63,9 +68,14 @@ mark after
 place 3.5 108.9 4.2       # 4.3 m in front of the chest (chest-lid-b: 7.57 8.35 is behind it, against the wall)
 wait 240
 goto 3.9 4.6 0.25 120     # a short walk at the chest (3.7 m, behind B's start 4.4 5.1): the camera looks at its front
+toward 6.51 7.25 4        # face it (4 ticks: a step, not a walk into B)
+press ZL 10               # camera behind Link, on the chest
+wait 30
 mark placed
 wait 1560                 # B walks up and opens it (B's goto .. press B)
 wait 600
+press ZL 10
+wait 30
 mark a-look
 wait 600
 mark a-look2

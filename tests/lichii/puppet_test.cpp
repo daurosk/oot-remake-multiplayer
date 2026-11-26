@@ -9,10 +9,12 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
+#include "coop_lift_player.h"
 #include "coop_puppet.h"
 #include "coop_puppet_own.h"
 #include "coop_sites.h"
@@ -86,6 +88,7 @@ struct Game {
     std::uint64_t create_result = 1;  // what the game's create returns
     bool queue_anyway = false;        // a request in the handle even so
     std::uint64_t unequip_result = 1; // what the game's armor take-off returns
+    std::uint64_t equip_result = 0;   // what the game's equip call returns (1: worn)
     std::array<std::uint64_t, 8> slot_state{};  // what the game's state read (kEquipState) returns per slot
     std::vector<Call> state_checks;            // those reads, in order
     Game() {
@@ -146,6 +149,8 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             }
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
+        } else if (call->function == kBase + addr::kEquip) {
+            result = g.equip_result;
         } else if (call->function == kBase + addr::kUnequipArmor) {
             result = g.unequip_result;
         } else if (call->function == kBase + addr::kTakeCreated) {
@@ -859,6 +864,103 @@ TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
     CHECK(calls[1].x[1] == 8u);
     CHECK(calls[1].x[3] == 2u);
 }
+TEST_CASE("puppet gear: where null reads cannot give 0, the Hookshot is left off the puppet, and its slot is not ours (issue 232)") {
+    Game g;
+    Director d;
+    d.SetNullReadsZero(false);
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[2] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);  // the mask only
+    CHECK(calls[0].x[1] == 7u);
+
+    // The held slot is the Hookshot: no call is made for it, now or later.
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_Hookshot";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(Frame(d, g, 9000).empty());
+
+    // Its going away is no take-off either: the mask stays, nothing is made again.
+    t.gear[CoopPuppet::kGearHeld] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 10000).empty());
+    CHECK(Frame(d, g, 20000).empty());
+
+    // Any other piece of the same slot is worn as before: the slingshot, kind 5.
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 30000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[1] == 5u);
+
+    // Slingshot -> Hookshot: the slingshot must not stay in slot 3, and no
+    // call is known to take a held piece away, so the puppet is made again
+    // without it (daurosk, PR 233: "the slingshot stays in slot 3").
+    // (the frame that learns it only marks the remake: the delete is the next
+    // frame's, as for a mask taken off)
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_Hookshot";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 40000).empty());
+    calls = Frame(d, g, 41000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+    // Made again (a delete, then a malloc and a create over the next frames),
+    // and the Hookshot is never worn on it.
+    bool equipped = false;
+    for (std::uint64_t ms = 42000; ms <= 60000; ms += 1000) {
+        for (const auto& c : Frame(d, g, ms)) {
+            if (c.function == kBase + addr::kEquip) {
+                equipped = true;
+            }
+        }
+    }
+    CHECK_FALSE(equipped);
+}
+TEST_CASE("puppet gear: where null reads give 0, the Hookshot and the Longshot are worn like any held item (issue 232)") {
+    // The crash was the missing-Player read every held piece makes (guest
+    // 0x7d8); with the null page armed (or on the emulator) it reads 0, so
+    // the piece is worn, put away and drawn as the slingshot is.
+    for (const char* name : {"Weapon_Range_Hookshot", "Weapon_Range_Longshot"}) {
+        Game g;
+        Director d;
+        MakeLive(d, g);
+        constexpr std::uint64_t kParts = 0x500000000;
+        constexpr std::uint64_t kEu = kParts + 0x800;
+        g.guest.Map(kParts, 0x1000);
+        g.guest.Set(kActor + addr::kActorParts, kParts);
+        g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+        Target t = At(1, 4, 5, 6);
+        t.gear[CoopPuppet::kGearHeld] = name;
+        d.SetInput(Wants({t}));
+        auto calls = Frame(d, g, 20);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kEquip);
+        CHECK(calls[0].x[1] == 5u);
+        CHECK(d.LeftOff(name) == false);
+
+        // Switched to the slingshot: worn in its place, no remake.
+        t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+        d.SetInput(Wants({t}));
+        calls = Frame(d, g, 1000);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kEquip);
+        CHECK(calls[0].x[1] == 5u);
+    }
+    Director off;
+    off.SetNullReadsZero(false);
+    CHECK(off.LeftOff("Weapon_Range_Hookshot"));
+    CHECK(off.LeftOff("Weapon_Range_Longshot"));
+    CHECK_FALSE(off.LeftOff("Weapon_Range_SlingShot"));
+}
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;
@@ -909,6 +1011,66 @@ TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a he
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kEquip);
     CHECK(calls[0].x[1] == 7u);
+}
+
+TEST_CASE("puppet gear: a mask worn is shown with the game's own call, the hair put back when it comes off (#91)") {
+    Game g;
+    g.equip_result = 1;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    // 0x33abfa0(owner) reads the EquipmentUser at owner + 0x470: a cell of the block
+    CHECK(calls[1].function == kBase + addr::kShowHeadArmor);
+    CHECK(calls[1].x[0] + addr::kShowHeadArmorEu == kHeap + block::kHeadOwnerEu);
+    CHECK(g.guest.Get<std::uint64_t>(kHeap + block::kHeadOwnerEu) == kEu);
+    CHECK(Frame(d, g, 100).empty());   // once
+
+    // Another mask: worn and shown again.
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Bunny";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 200);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[1].function == kBase + addr::kShowHeadArmor);
+
+    // Taken off: the game's take-off, then the hair as without a mask, once.
+    t.gear[CoopPuppet::kGearHead] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 300).empty());
+    calls = Frame(d, g, 300 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kUnequipArmor);
+    CHECK(calls[1].function == kBase + addr::kHeadArmorHairBack);
+    CHECK(calls[1].x[0] == kEu);
+    CHECK(Frame(d, g, 400 + Director::kTakeOffMs).empty());
+
+    // A piece the equip call did not wear is not shown.
+    g.equip_result = 0;
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Keaton";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 9000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+}
+
+TEST_CASE("puppet gear: the head show call's addresses are the game's (#91)") {
+    // 0x33abfa0: eu = [x0 + 0x470]; byte eu + 0x13c4 = (byte & ~3) | 2; 0x4b84b0(eu).
+    CHECK(addr::kShowHeadArmor == 0x33abfa0u);
+    CHECK(addr::kShowHeadArmorEu == 0x470u);
+    CHECK(addr::kHeadArmorHairBack == 0x4b8240u);
+    // the armor links' shown bytes follow the 8 hand slots' bytes
+    CHECK(addr::kArmorShownBytes == addr::kEquipSlotBits + 8);
+    CHECK(CoopPuppet::kGearKinds[CoopPuppet::kGearHead] == addr::kArmorKindFirst);
 }
 
 TEST_CASE("puppet gear: tunic, boots and gauntlets come off by their armor index") {
@@ -1185,6 +1347,75 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
         CHECK(calls[0].x[1] == 0u);
     }
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
+
+    // Row 268: parked (hidden), then held (their cutscene): the setter still runs once a frame in both,
+    // so the physics body follows the place we write and does not pull it back to the parked spot.
+    Target t = At(1, 4, 5, 6);
+    std::uint64_t now = 40;
+    for (const auto show : {CoopPuppet::Show::hide, CoopPuppet::Show::hold, CoopPuppet::Show::hold,
+                            CoopPuppet::Show::show}) {
+        t.show = show;
+        d2.SetInput(Wants({t}));
+        now += 10;
+        calls = Frame(d2, g2, now);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kSetMatrix);
+        CHECK(calls[0].x[0] == kActor);
+    }
+    CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
+}
+
+
+TEST_CASE("puppet: parking a hidden puppet takes its held pieces with it") {
+    // A held piece is an actor of its own, and the game keeps stepping it. Parked with
+    // the puppet left behind, the game follows a piece whose owner is 500 m below it;
+    // seen 2026-11-15 as the other player changed to the Hookshot while the puppet came
+    // and went: 0xc0000005 reading a null + 0x7d8 on a guest thread.
+    Game g;
+    Director d;
+    MakeLive(d, g);
+
+    // The puppet's equipment: one slot with a piece actor in it (after MakeLive: it
+    // writes the actor's own state as the game does).
+    const std::uint64_t kParts = 0x500000000;
+    const std::uint64_t kEu = 0x500001000;
+    const std::uint64_t kHolder = 0x500002000;
+    const std::uint64_t kPiece = 0x500003000;
+    g.guest.Map(kParts, 0x400);
+    g.guest.Map(kEu, 0x1600);
+    g.guest.Map(kHolder, 0x100);
+    g.guest.Map(kPiece, 0x600);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotId,
+                std::uint32_t{0x1234});
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotHolder, kHolder);
+    g.guest.Set(kHolder + addr::kHolderActor, kPiece);
+    g.guest.Set(kPiece + addr::kActorState, std::uint32_t{addr::kStatePresent});
+    const float at[3] = {4.0f, 5.0f, 6.0f};
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        g.guest.Set(kPiece + addr::kActorPosition + 4 * i, at[i]);
+    }
+
+    // Parked: the piece moves down with it, not left where the puppet was.
+    Target hidden = At(1, 40, 5, 6);
+    hidden.show = CoopPuppet::Show::hide;
+    // (the piece's own record: what the test wrote must still be there)
+    CHECK(g.guest.Get<std::uint64_t>(kActor + addr::kActorParts) == kParts);
+    CHECK(g.guest.Get<std::uint64_t>(kParts + addr::kPartsEquipmentUser) == kEu);
+    CHECK(g.guest.Get<std::uint32_t>(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 +
+                                    addr::kEquipSlotId) == 0x1234u);
+    d.SetInput(Wants({hidden}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+    CheckPosition(g.guest, kPiece + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+
+    // Shown again at their place: the puppet comes back up (the piece follows the
+    // game's own bone bind from there, so it is not parked again).
+    Target shown = At(1, 40, 5, 6);
+    d.SetInput(Wants({shown}));
+    Frame(d, g, 200);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
 }
 
 TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {
@@ -1982,6 +2213,23 @@ TEST_CASE("puppet gear: a PLAYER_EQUIP becomes the pieces, the sword hand's own 
     CHECK(GearOf(e)[0] == "Weapon_Sword_Kokiri");
     e.weapon_slot = "Weapon_Sword_DekuStick";  // a stick in the sword hand
     CHECK(GearOf(e)[0] == "Weapon_Sword_DekuStick");
+    // Only a mask is worn on the head (row 197): a 0.11.8 sender's Lens of
+    // Truth flag is taken off, a mask stays, nothing sent stays unknown.
+    CHECK_FALSE(GearOf(e)[kGearHead]);
+    e.head = "Armor_GlassTruth";
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Child_GlassTruth";
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Adult_Default_Head";
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Mask_Base";  // the masks' base actor is no mask
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Child_Mask_";
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Child_Mask_Truth";
+    CHECK(GearOf(e)[kGearHead] == "Armor_Child_Mask_Truth");
+    e.head = "";
+    CHECK(GearOf(e)[kGearHead] == "");
 }
 
 TEST_CASE("puppet gear: the Ocarina and its belt holder come from PLAYER_EQUIP's ocarina (issue 152)") {
@@ -2593,4 +2841,240 @@ TEST_CASE("own drawn: the director asks the game's state of the local Link's swo
     REQUIRE(g.state_checks.size() == 3);
     CHECK(g.state_checks[2].x[1] == 0);
     own.Clear();
+}
+
+TEST_CASE("puppet: a player the PvP mask names gets the _Pvp copy, the others the plain one") {
+    CoopPuppet::PlannerSettings s;
+    CoopPuppet::Planner p(s);
+    std::vector<CoopPuppet::Remote> remotes(2);
+    remotes[0].number = 2;
+    remotes[0].scene = "Kokiri";
+    remotes[1].number = 3;
+    remotes[1].scene = "Kokiri";
+    // Off (the default): every copy plain.
+    auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 1000);
+    REQUIRE(in.targets.size() == 2);
+    const std::string two = in.targets[0].actor, three = in.targets[1].actor;
+    CHECK(two == "CoopPuppet_Child_Red");
+    CHECK(three.find("_Pvp") == std::string::npos);
+    CoopPuppet::SetPvpCopies(1u << 3);
+    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 2000);
+    CoopPuppet::SetPvpCopies(0);
+    REQUIRE(in.targets.size() == 2);
+    CHECK(in.targets[0].actor == two);
+    CHECK(in.targets[1].actor == three + "_Pvp");
+}
+
+TEST_CASE("puppet: a PvP mode change re-makes the copy, but not while our Link holds it or it holds something") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // Lifted by our Link (phase 3): no delete while it lasts.
+    CoopPuppet::WatchGamePlaces(true);
+    CoopPuppet::SetGameHolds(1);
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Pvp")}));
+    for (const auto& c : Frame(d, g, 20)) CHECK(c.function != kBase + addr::kRequestDelete);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+    CoopPuppet::SetGameHolds(0);
+    CoopPuppet::WatchGamePlaces(false);
+
+    // Its player holds something (its animation): kept too.
+    Target held = At(1, 0, 0, 0, "CoopPuppet_Child_Pvp");
+    held.anim = CoopPuppet::Anim{"Carry_Wait", 0.0f, 1.0f};
+    d.SetInput(Wants({held}));
+    for (const auto& c : Frame(d, g, 30)) CHECK(c.function != kBase + addr::kRequestDelete);
+
+    // Its player is carried by another (lift-young: the carried pose on every copy): kept too.
+    Target carried = At(1, 0, 0, 0, "CoopPuppet_Child_Pvp");
+    carried.anim = CoopPuppet::Anim{std::string(CoopLiftPlayer::kCarriedPose), 0.0f, 1.0f};
+    d.SetInput(Wants({carried}));
+    for (const auto& c : Frame(d, g, 35)) CHECK(c.function != kBase + addr::kRequestDelete);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+
+    // Free again: the _Pvp copy at once.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Pvp")}));
+    calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+}
+
+TEST_CASE("puppet: a playing pose sent at a still frame plays on, not set back each sample (carried pose)") {
+    using CoopPuppet::Anim;
+    using CoopPuppet::FrameFollowed;
+    // The first sample of a command, or a new command: followed (set once).
+    CHECK(FrameFollowed("", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    CHECK(FrameFollowed("Wait", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    // The same command at the same frame while playing (the lift's carried pose: frame 0, rate 1): not followed,
+    // so the copy loops on instead of snapping back to frame 0 on every sample.
+    CHECK_FALSE(FrameFollowed("Eaten", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    // A real player's animation moves on between samples: followed as before.
+    CHECK(FrameFollowed("Run", 10.0f, Anim{"Run", 11.5f, 1.0f}));
+    // A held pose (rate 0) at a still frame: followed (the copy is kept on that frame).
+    CHECK(FrameFollowed("Pose", 4.0f, Anim{"Pose", 4.0f, 0.0f}));
+}
+
+// Character Select's colour routine for a character's puppet (Director::Dress; review of #299 at 07de2fe2).
+namespace {
+constexpr std::uint64_t kDressAt = 0x2E1A000;   // main's offset, as the pack's manifest names it
+constexpr std::uint64_t kAgainMs = 3000;      // Director::kDressAgainMs (private)
+constexpr std::array<std::uint8_t, 16> kDressHead = {0xfd, 0x7b, 0xbf, 0xa9, 0xe0, 0x03, 0x00, 0x34,
+                                                     0xab, 0x2c, 0x40, 0xb9, 0x6b, 0x1d, 0x00, 0x51};
+std::size_t Dresses(const std::vector<Call>& calls, std::uint64_t* word = nullptr) {
+    std::size_t n = 0;
+    for (const auto& c : calls) {
+        if (c.function == kBase + kDressAt) {
+            ++n;
+            if (word != nullptr) {
+                *word = c.x[1];
+            }
+        }
+    }
+    return n;
+}
+Target Dressed(std::string actor, std::uint64_t custom) {
+    Target t = At(1, 4, 5, 6, std::move(actor));
+    t.custom = custom;
+    return t;
+}
+// The calls of the frames that bring the puppet live (a Frame runs every Step until none is left, so the first
+// colour routine call is among them, at the frame the puppet goes live).
+std::vector<Call> LiveAs(Director& d, Game& g, const Target& t) {
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() >= 2);
+    g.Spawn(calls[1].x[3]);
+    calls = Frame(d, g, 10);
+    const auto more = Frame(d, g, 15);
+    calls.insert(calls.end(), more.begin(), more.end());
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    return calls;
+}
+}  // namespace
+
+TEST_CASE("puppet characters: the mod's colour routine is called with the options, once per change and again later") {
+    Game g;
+    g.guest.Map(kBase + kDressAt, 16);
+    REQUIRE(g.guest.Write(kBase + kDressAt, kDressHead.data(), kDressHead.size()));
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetCharacterApply(kDressAt, kDressHead);
+    const std::uint64_t word = (std::uint64_t{9} << 32) | 0x123456u;
+    auto calls = LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", word));
+    std::uint64_t given = 0;
+    REQUIRE(Dresses(calls, &given) == 1);                                    // as soon as it is live
+    CHECK(given == word);
+    for (const auto& c : calls) {
+        if (c.function == kBase + kDressAt) {
+            CHECK(c.x[0] == kActor);   // the puppet's actor
+        }
+    }
+    CHECK(Dresses(Frame(d, g, 20)) == 0);                                    // once
+    CHECK(Dresses(Frame(d, g, 500)) == 0);
+    CHECK(Dresses(Frame(d, g, 20 + kAgainMs + 1)) == 1);      // and again later (a late model)
+    const std::uint64_t other = (std::uint64_t{9} << 32) | 0x000001u;
+    d.SetInput(Wants({Dressed("CoopPuppet_Adult_C005", other)}));
+    calls = Frame(d, g, 20 + kAgainMs + 50);
+    REQUIRE(Dresses(calls, &given) == 1);                                    // a change: at once
+    CHECK(given == other);
+    // Options cleared: the model's own once (the routine with none), then left alone.
+    const std::uint64_t none = std::uint64_t{9} << 32;
+    d.SetInput(Wants({Dressed("CoopPuppet_Adult_C005", none)}));
+    CHECK(Dresses(Frame(d, g, 20 + kAgainMs + 100)) == 1);
+    CHECK(Dresses(Frame(d, g, 20 + 3 * kAgainMs)) == 0);
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) {
+        return l.find("colour routine is at main+") != std::string::npos;
+    }));
+}
+
+TEST_CASE("puppet characters: no routine call for another build of the mod, a non-character puppet or no options") {
+    // Bytes that are not the routine's (another build of the mod, or no mod code in the game): never called.
+    {
+        Game g;
+        g.guest.Map(kBase + kDressAt, 16);
+        std::vector<std::string> log;
+        Director d([&](const std::string& line) { log.push_back(line); });
+        d.SetCharacterApply(kDressAt, kDressHead);
+        LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", (std::uint64_t{9} << 32) | 0x12u));
+        CHECK(Dresses(Frame(d, g, 20)) == 0);
+        CHECK(Dresses(Frame(d, g, 20 + 2 * kAgainMs)) == 0);
+        CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) {
+                  return l.find("colour routine is not at main+") != std::string::npos;
+              }) == 1);   // said once
+    }
+    // A colour puppet, or a pack without the routine, or a character with nothing set: no call.
+    const std::vector<std::tuple<std::string, std::uint64_t, std::uint64_t>> cases = {
+        {"CoopPuppet_Adult_Red", kDressAt, 0x12u},
+        {"CoopPuppet_Adult_C005", 0, (std::uint64_t{9} << 32) | 0x12u},
+        {"CoopPuppet_Adult_C005", kDressAt, std::uint64_t{9} << 32}};
+    for (const auto& [actor, offset, custom] : cases) {
+        Game g;
+        g.guest.Map(kBase + kDressAt, 16);
+        REQUIRE(g.guest.Write(kBase + kDressAt, kDressHead.data(), kDressHead.size()));
+        Director d;
+        d.SetCharacterApply(offset, kDressHead);
+        LiveAs(d, g, Dressed(actor, custom));
+        CHECK(Dresses(Frame(d, g, 20)) == 0);
+        CHECK(Dresses(Frame(d, g, 20 + 2 * kAgainMs)) == 0);
+    }
+}
+
+TEST_CASE("puppet (row 177): only a plain puppet of a pack with perception is seen by enemies") {
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", true));
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Adult_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_ChildQuiet", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_AdultQuiet_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", false));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("Player_Child", true));
+}
+
+// Review of charsel-colours-0118 (S1): a routine whose bytes match but that the runtime cannot call (not a game
+// function the build knows) hands the puppets to co-op's own dressing after kDressNotMade calls not made.
+namespace {
+// One frame whose colour routine call is not made: the frame ends at it (as Hookshot's RunFrame on a failed call).
+bool FrameEndingAtDress(Director& d, Game& g, std::uint64_t now_ms) {
+    auto call = d.Step(g.guest, false, 0, now_ms);
+    while (call) {
+        if (call->function == kBase + kDressAt) {
+            return true;
+        }
+        std::uint64_t result = 0;
+        if (call->function == kBase + addr::kEquip) result = g.equip_result;
+        if (call->function == kBase + addr::kTakeCreated) REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
+        call = d.Step(g.guest, true, result, now_ms);
+    }
+    return false;
+}
+}  // namespace
+
+TEST_CASE("puppet characters: a colour routine that cannot be called gives the puppet to co-op's own dressing") {
+    Game g;
+    g.guest.Map(kBase + kDressAt, 16);
+    REQUIRE(g.guest.Write(kBase + kDressAt, kDressHead.data(), kDressHead.size()));
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetCharacterApply(kDressAt, kDressHead);
+    const std::uint64_t word = (std::uint64_t{9} << 32) | 0x12u;
+    REQUIRE(Dresses(LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", (std::uint64_t{9} << 32) | 0x1u))) == 1);
+    d.SetInput(Wants({Dressed("CoopPuppet_Adult_C005", word)}));   // a change: its call is not made
+    const std::uint64_t now = 100;
+    REQUIRE(FrameEndingAtDress(d, g, now - 5));
+    REQUIRE(d.DressTargets().size() == 1);
+    CHECK(d.DressTargets()[0].mods_routine);    // its bytes match: the mod's routine's
+    CHECK(d.DressTargets()[0].character);
+    CHECK(d.DressTargets()[0].custom == 0x12u);
+    REQUIRE(FrameEndingAtDress(d, g, now + 5));   // the first not made: asked again
+    FrameEndingAtDress(d, g, now + 10);           // the second not made: ours from now on
+    REQUIRE(d.DressTargets().size() == 1);
+    CHECK_FALSE(d.DressTargets()[0].mods_routine);
+    CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) {
+              return l.find("could not be called") != std::string::npos;
+          }) == 1);
+    CHECK(Dresses(Frame(d, g, now + 20 + kAgainMs)) == 0);   // never asked of it again
 }

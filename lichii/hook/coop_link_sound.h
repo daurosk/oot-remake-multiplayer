@@ -71,6 +71,18 @@ inline constexpr std::uint32_t kPlayPerSecond = 24;    // started per second, al
 
 // --- Sending ------------------------------------------------------------------
 
+// The player's own sounds (tracker row 163): the game's system sounds (its
+// SE_Sys_ bank, played flat, not at Link) that a few of Link's own assets
+// start, which in the solo game only that player hears. The low-health beep
+// HeartAlert (SE_Sys_HeartAlert, the one system sound in Player.bars; the
+// game's own heart check, f_71004aaa80, starts it on our Link's sound user by
+// name, and it ran only for the own Link: a puppet has no Player component),
+// the hearts' and magic's HeartRecover / HeartReduce (UI_Static.bars) and the
+// Lens of Truth's GlassTruth_* (ExpressionSound.bars SE_Sys_GlassTruth_*).
+// Never sent, and never played on a puppet (a 0.11.7 or older sender still
+// sends them).
+bool OwnOnly(std::string_view name);
+
 // Our Link's sound user (0: none, nothing is caught). The calc thread, each walk.
 void SetOurUser(std::uint64_t user);
 std::uint64_t OurUser();

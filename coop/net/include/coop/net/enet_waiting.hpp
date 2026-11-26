@@ -23,6 +23,8 @@
 
 #include <cstddef>
 
+#include "coop/protocol/messages.hpp"
+
 // Written against ENet 1.3.18's peer.c (its list layout, and where it adds to
 // and takes from the count). A new ENet: check those again, then change this.
 static_assert(ENET_VERSION == ENET_VERSION_CREATE(1, 3, 18),
@@ -47,6 +49,36 @@ inline std::size_t waiting_bytes(const ENetPeer& peer) {
   add(peer.dispatchedCommands);
   return total;
 }
+
+// What we gave ENet for `peer` that it still holds (row 260): queued and not
+// sent yet, and reliable sent but not acknowledged. ENet bounds none of it: a
+// reliable send past the peer's window stays queued (protocol.c, windowSize),
+// so to a peer that takes less than we send this only grows. Each command's
+// fragmentLength: a whole message's length, or one fragment's.
+inline std::size_t outgoing_bytes(const ENetPeer& peer) {
+  std::size_t total = 0;
+  auto add = [&total](const ENetList& list) {
+    for (const ENetListNode* node = list.sentinel.next; node != &list.sentinel; node = node->next) {
+      total += reinterpret_cast<const ENetOutgoingCommand*>(node)->fragmentLength;
+    }
+  };
+  add(peer.outgoingCommands);
+  add(peer.outgoingSendReliableCommands);
+  add(peer.sentReliableCommands);
+  return total;
+}
+
+// Past this much held for a peer, unreliable messages to it (samples, poses:
+// the next one replaces them) are not queued; reliable ones still are. Above
+// the largest backlog normal play makes: the host's whole save outbox (four
+// saves of up to protocol::kMaxSaveBytes, save::kMaxOutboxParts, checked in
+// save_transfer.hpp) and 2 MiB more, so puppets never stop while saves are in
+// flight (review-01112-d).
+inline constexpr std::size_t kSlowPeerBytes = 4 * std::size_t{protocol::kMaxSaveBytes} + (std::size_t{2} << 20);
+// Past this much the peer is dropped (it reconnects; the server tells it why:
+// kDisconnectBacklog): held for it any longer, the memory would only grow.
+inline constexpr std::size_t kMaxOutgoingBytes = std::size_t{16} << 20;
+static_assert(kSlowPeerBytes < kMaxOutgoingBytes);
 
 // Sets peer->totalWaitingData to what really waits. Returns the bytes ENet
 // had counted too many (the packets it threw away without subtracting).

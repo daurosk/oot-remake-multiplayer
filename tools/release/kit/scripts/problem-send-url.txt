@@ -1,0 +1,4 @@
+# The Squadala! report bot's problem-report address (tools/discord-bot/README.md, "Problem-report intake"), on the
+# first line that is not a comment, for example https://reports.example.org/v1/problem-report. Empty: the kit does not
+# ask about sending and sends nothing (problem reports stay local, as before).
+https://squadala-reports.taile8ce85.ts.net/v1/problem-report

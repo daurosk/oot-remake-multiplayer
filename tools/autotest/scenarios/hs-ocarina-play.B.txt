@@ -1,0 +1,44 @@
+# hs-ocarina-play, B: see hs-ocarina-play.A.txt. B never got the ocarina (no-ocarina baseline) and gets
+# A's through item sharing, then takes it out and plays it in the Graveyard, walks into Kakariko (a scene
+# load) and tries again. Notes as in ocarina-probe: A = A, L = Down, R = Right, Y = Left, X = Up.
+mark start
+wait 240
+setflag IsGet.Item_Melody_ZeldaLullaby 1        # the song, whatever the lane save holds
+wait 60
+press DLEFT 12
+wait 240
+mark out-1
+press A 12
+wait 120
+mark note-a
+press Y 12                                      # Zelda's Lullaby: Left Up Right, twice
+wait 40
+press X 12
+wait 40
+press R 12
+wait 40
+press Y 12
+wait 40
+press X 12
+wait 40
+press R 12
+wait 300
+mark lullaby
+press B 12
+wait 120
+press B 12
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard (as hs-items-share)
+wait 420                # Kakariko loads
+wait 300
+press DLEFT 12
+wait 240
+mark out-2
+press A 12
+wait 120
+mark note-a-2
+press B 12
+wait 120
+press B 12
+wait 600
+mark end

@@ -1,0 +1,35 @@
+# metal-look (proof-0116, #202 puppet-looks-0116-3): run with A's coop-options.ini look_hylian_frame=#E0C030, look_master_blade=#D02020
+# (proof-0116-lane2.ps1 -IniA). PASS (shots): a-back/a-drawn: A's own shield frame yellow (not dark olive); B's b-back/b-drawn: A's
+# puppet the same; A log '13 metal part block lists'. Daylight, A facing B.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+place 194.43 163.4 309.87      # 5 m off the Kokiri Forest exit (harness-0116, as giant-blade)
+wait 30
+toward 191.93 309.87 10
+wait 60
+mark a-back
+press Y
+wait 40
+mark a-drawn
+wait 120
+toward 210.0 309.87 10
+wait 30
+mark a-back-turned
+wait 300
+mark end

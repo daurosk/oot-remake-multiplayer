@@ -1,0 +1,37 @@
+# hs-lift-ride (Hookshot, jabu-lifts, player report #65): B stands on Jabu-Jabu's lift; does A's copy of the lift
+# rise too? A stands beside the lift and watches. In A's log: "coop: lift ride: another player is on our lift ...:
+# its RideOnPlayer set through the game's set-bool" once, and with the probe "logic probe:
+# Obj_InsideJabu_Jabu_ElevatorLift_A_01 plug a4ab760d (type 7) 0 -> 1" (RideOnPlayer). Look at A's "a-*" shots:
+# the lift (and B's puppet on it) going up in a-during/a-during2 is the pass; the lift staying down while B's
+# puppet rises alone is the fail (then the lift's AI puts its own 0 back before its logic reads ours).
+# Kit saves (lane 1).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_LOGIC_PROBE=1
+#! timeout 420
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place -27.5 84.5 -93.31    # 4.9 m beside the lift (Obj_InsideJabu_Jabu_ElevatorLift_A_01 at -32.36 83.0 -93.31)
+wait 120
+toward -32.36 -93.31 20    # face it
+wait 180
+mark a-before
+wait 600
+mark a-during
+wait 600
+mark a-during2
+wait 900
+mark a-after
+wait 300
+mark end

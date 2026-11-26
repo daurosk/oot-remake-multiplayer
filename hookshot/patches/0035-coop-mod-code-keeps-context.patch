@@ -1,0 +1,154 @@
+From 31ce07db8d7bfbc11f670e52967716544afd2316 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 19 Nov 2026 17:24:39 -0900
+Subject: [PATCH] Mods' code patches: the functions they write into keep their
+ registers in the context, and the co-op Mods tab's switches
+
+Longshot v3.0.0's register locals (nx2/guest_locals.py, a64_lift.localize_regs)
+write a function's locals back before a call and at a return except x9-x15,
+which the usual calling convention leaves dead there. A mod's code need not
+follow it: Character Select's routines take values in x11 and x14 and answer
+in x12, so with x11 in a local of the game's function its hook sits in
+(f_80c35c30, a ran_funcs.txt function) the routine read a stale x11 and the
+game crashed at a pick (snaildev99, kit 0.11.6). Every function holding a
+word a mod's ExeFS patch writes (the hook sites, which lift the hook's code
+as their own, and the routines in the cave) now joins Lifter.no_local
+(exefs_patches.functions_written, from nx2/lift.py). The patches' hash is
+in the lift's key already (patch 0034), so a changed patch lifts again.
+
+The co-op kit's Mods tab keeps its switches and order in
+<mods>/coop-mods.list (patch 0011), not mods.json: with that file the
+patches follow it (an off mod's patches stay out; the list's first row
+wins, as host/mods.c indexes it). host/mods.c's log line no longer says
+the patches are left out.
+
+A list with the "default off" line (co-op's Original game) leaves the
+patches of a mod it does not name out too, as host/mods.c leaves its files
+out (player report 266).
+---
+ nx2/exefs_patches.py | 88 ++++++++++++++++++++++++++++++++++++++++++++
+ nx2/lift.py          |  5 +++
+ 2 files changed, 93 insertions(+)
+
+diff --git a/nx2/exefs_patches.py b/nx2/exefs_patches.py
+index 54916f67..680fef10 100644
+--- a/nx2/exefs_patches.py
++++ b/nx2/exefs_patches.py
+@@ -59,6 +59,90 @@ def mods_root(game):
+     return os.environ.get("HOS_MODS") or os.path.join(game, "mods")
+ 
+ 
++# ---- (oot-remake-multiplayer, patch 0035) the co-op kit's Mods tab: <mods>/coop-mods.list, as patch 0011's host/mods.c
++# reads it (hos_coop_mods.h): "coop-mods 1", then "on <name>" / "off <name>" a line, its first row indexed last (it wins);
++# an off one is not indexed. On Longshot 3.1 the list goes over mods.json's order and switches (host/mods.c
++# coop_mods_rank): a mod it does not name keeps mods.json's place and switch, under the named ones, or is off with the
++# list's "default off" line (co-op's Original game: a mod put into the folder later stays out). The patches follow the
++# same order and switches as the game's files.
++
++COOP_LIST = "coop-mods.list"
++COOP_DEFAULT_OFF = "default off"   # (hos_coop_mods.h HOS_COOP_MODS_DEFAULT_OFF)
++
++
++def _fold(name):
++    """A name as hos_coop_mods.h compares them: ASCII letters without case, '\\' as '/'"""
++    return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in name.replace("\\", "/"))
++
++
++def coop_list(root):
++    """The Mods tab's rows [(name, on)] from <root>/coop-mods.list, or None (no file, or not version 1)"""
++    got = coop_list_default(root)
++    return None if got is None else got[0]
++
++
++def coop_list_default(root):
++    """(rows, default_off): coop_list's rows and whether the list has the "default off" line; None as coop_list"""
++    try:
++        with open(os.path.join(root, COOP_LIST), "rb") as f:
++            text = f.read().decode("utf-8", "replace")
++    except OSError:
++        return None
++    lines = text.split("\n")
++    if lines[0].rstrip("\r") != "coop-mods 1":
++        return None
++    rows, seen, default_off = [], set(), False
++    for line in lines[1:]:
++        line = line.rstrip("\r")
++        if line == COOP_DEFAULT_OFF:
++            default_off = True
++            continue
++        for head, on in (("on ", True), ("off ", False)):
++            if line.startswith(head) and len(line) > len(head):
++                name = line[len(head):]
++                if _fold(name) not in seen:
++                    seen.add(_fold(name))
++                    rows.append((name, on))
++                break
++    return rows, default_off
++
++
++def coop_ordered(mods, rows, default_off=False):
++    """mods ([(name, path, on)] in mods.json's order, ordered) with the co-op list over it, as host/mods.c coop_mods_rank: by
++    the list's rank (an off one first, then the mods it does not name in mods.json's order, then the named ones, its first
++    row last: the last one wins, as the later patch file does here); a named mod on or off as the list says, the others as
++    mods.json says, or off with default_off (the list's "default off" line)"""
++    rank = {_fold(n): (len(rows) - i if on else -1) for i, (n, on) in enumerate(rows)}
++    unnamed = -1 if default_off else 0
++    out = sorted(((rank.get(_fold(n), unnamed), i, n, p, on) for i, (n, p, on) in enumerate(mods)), key=lambda t: (t[0], t[1]))
++    return [(n, p, on if r == 0 else r > 0) for r, _, n, p, on in out]
++
++
++def written_words(path=None):
++    """The words (4-byte aligned offsets into main's image) the code and data files in the JSON at path (or
++    $OOT_EXEFS_PATCHES) write: nx2/lift.py keeps the functions that hold one in the context (functions_written)"""
++    path = path or os.environ.get(ENV)
++    if not path:
++        return set()
++    with open(path, encoding="utf-8") as f:
++        files = json.load(f)
++    return {off & ~3 for f in files if f.get("kind") in ("code", "data") for off, _ in f.get("writes", ())}
++
++
++def functions_written(funcs, main_base, words):
++    """(oot-remake-multiplayer, patch 0035) The functions of the lift (funcs: entry -> (body {pc: kind}, labels)) with an
++    instruction a mod's patch wrote (words: written_words, offsets into main at main_base). They keep their registers in
++    the context (Lifter.no_local): a mod's code need not follow the calling convention the locals assume (x9-x15 dead at
++    calls and returns, a64_lift.localize_regs), and Character Select's routines pass values in x11 and x14 and answer in
++    x12; with x11 in a local of the game's function its hook sits in, the routine read a stale x11 and the game crashed
++    (snaildev99, kit 0.11.6). The hook's code is lifted as part of the function it branches from, and the mod's routines
++    are functions of their own in the cave: both hold written words."""
++    if not words:
++        return set()
++    pcs = {main_base + w for w in words}
++    return {e for e, (body, _) in funcs.items() if not pcs.isdisjoint(body)}
++
++
+ def find_mods(root):
+     """[(name, path)] of the mod folders under root: a folder holding romfs, exefs or cheats, up to four deep; '-' and '_'
+     left out (host/mods.c find_mods)"""
+@@ -437,6 +521,10 @@ def collect(exefs, game, log=print, user=None):
+     elif os.path.normcase(os.path.abspath(beside)) == os.path.normcase(os.path.abspath(listed)):
+         beside = None   # (the list is the game folder's)
+     mods = ordered(find_mods(root), listed, old, said.append, beside)
++    got = coop_list_default(root)   # (oot-remake-multiplayer, patch 0035: the co-op kit's Mods tab, when it has its list)
++    if got is not None:
++        mods = coop_ordered(mods, *got)
++        said.append("exefs: the co-op Mods tab's order and switches over the list's: %s" % os.path.join(root, COOP_LIST))
+     files = [(name, path, on, f) for name, path, on in mods for f in patch_files(path)]
+     for line in said if files else ():
+         log(line)
+diff --git a/nx2/lift.py b/nx2/lift.py
+index dcbb883b..0333826f 100644
+--- a/nx2/lift.py
++++ b/nx2/lift.py
+@@ -211,6 +211,11 @@ def main():
+         print("locals: %d functions entered above their first block kept in the context" % local_regs.keep_entered_below(L))
+         print("locals: %d functions that hold an address the patches name kept in the context" % (
+             local_regs.keep_mentioned(L, oot_patches.mentioned_addresses())))
++        import exefs_patches   # (oot-remake-multiplayer, patch 0035: a mod's code need not follow the locals' calling convention)
++        main_base = next((m["base"] for m in meta["modules"] if m["name"] == "main"), 0)
++        written = exefs_patches.functions_written(L.funcs, main_base, exefs_patches.written_words())
++        L.no_local |= written
++        print("locals: %d functions a mod's ExeFS patch writes into kept in the context" % len(written))
+         cold = local_regs.keep_not_ran(L)   # (locals only where play runs the code: nx2/ran_funcs.txt, A64_LOCAL_FUNCS)
+         print("locals: every function may have them (A64_LOCAL_FUNCS=all, or no nx2/ran_funcs.txt)" if cold is None else
+               "locals: %d functions no play session ran kept in the context (nx2/ran_funcs.txt)" % cold)

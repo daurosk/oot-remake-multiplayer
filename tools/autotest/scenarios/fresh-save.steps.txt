@@ -1,0 +1,29 @@
+# fresh-save (player reports #96/#97: items from older saves came back into the host's new file). Run:
+#   tools\autotest\hookshot.py run --lane 1 ... with this steps file (or run.ps1 -Runtime hookshot -Scenario fresh-save)
+# A (player 1, the host) plays a POORER file: no Fairy Ocarina. B (guest) joins on the title and then loads its OWN
+# richer save (LICHII_COOP_TEST_OWN_SAVE=1, the steps default): the baseline, which has the Ocarina. B's load only
+# goes forward of the group's values (no flag back), the second way in of #96; on Hookshot the title in B's load
+# window now makes it a save load: B takes the group's values and sends none of its own.
+# Prep, games closed (save_flags.py keeps a backup; put the baseline back after the run):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py no-ocarina <lane1-A>\autotest-save\slot_0*\progress.sav
+#   (B's baseline is left as it is: check it has the Ocarina with
+#    save_flags.py get <lane1-B>\autotest-save\slot_0*\progress.sav bool:0x42bd296f  -> 1)
+# PASS: a-no-b-items, a-no-ocarina, a-no-quests (A's file got nothing from B), b-load-seen and b-never-ocarina
+# (B ended with A's values: its save's Ocarina is put back to the group's 0 in the frame the load sets it, so the
+# watch, which reads once a frame, never shows a 1 in B; run 20261115-171716 showed that, and the group's quest
+# steps written into B as its save loaded). Check the prep first: B's baseline must have the Ocarina, or
+# b-never-ocarina proves nothing (INCONCLUSIVE). The other way in (a guest already in its save when it connects) is in the unit
+# tests (tests/host/flag_watcher_test.cpp, "#96"): the harness joins each game at its start, on the title.
+#! switches LICHII_COOP_DEBUG_BOOL=42bd296f
+start A B
+load A
+sleep 20
+shot a-loaded
+load B
+sleep 45
+shot b-loaded
+lines b-load-seen B min=1 coop: flags: save load seen
+lines b-never-ocarina B max=0 get_bool\(0x42bd296f\) = 1
+lines a-no-ocarina A max=0 get_bool\(0x42bd296f\) = 1
+lines a-no-b-items A max=0 coop: notice: B (?:got|learned)
+lines a-no-quests A max=0 coop: quests: \S+ \S+ -> \S+ \(shared

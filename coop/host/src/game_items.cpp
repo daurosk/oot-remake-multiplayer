@@ -1,7 +1,9 @@
 #include "coop/host/game_items.hpp"
 
 #include <algorithm>
+#include <initializer_list>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace coop::host {
@@ -47,6 +49,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.InsideJabuJabuBelly.SmallKeyNum", 0x1470a816, K::int32, R::count, true},
   {"IsGet.Item_AlarmCucco", 0x14909166, K::boolean, R::any, true},
   {"IsGet.Item_Melody_SunSong", 0x165dd1ad, K::boolean, R::any, true},
+  {"IsGet.Item_Bottle_Letter", 0x170b5df2, K::boolean, R::any, true},  // Ruto's Letter was got (issue 58)
   {"DungeonInfo.SpiritTemple.IsGetBossKey", 0x1984c03f, K::boolean, R::any, true},
   {"PouchData.Item_NutBag_Small.StockNum", 0x19b80dbc, K::int32, R::max, true},
   {"PouchData.Item_Hammer.StockNum", 0x1aafdb66, K::int32, R::max, true},
@@ -456,6 +459,15 @@ const ItemFlag* find_item(std::uint32_t hash) {
 
 std::span<const std::uint64_t> gold_skulltula_keys() { return kGoldSkulltulas; }
 
+std::span<const std::uint32_t> gold_race_flags() {
+  static constexpr std::uint32_t kRace[] = {
+      0x9086a22e, 0x39dad76d, 0xcdcc9add, 0x8dc37ac6, 0xe3c6e4a3,  // GetReward10, 20, 30, 40, 50
+      0x1d74617e, 0xb6e5a3a5, 0x2d2c874b, 0xd1360de8, 0xafa4bb52, 0xb5031190,  // the wallet tiers (StockNum, IsGet)
+      0xdd587ed8, 0xf3b14ce2,  // IsGet.Item_AgonyStone, PouchData.Item_AgonyStone.StockNum
+  };
+  return kRace;
+}
+
 SharedFlags item_shared_flags(bool with_off) {
   std::vector<FlagKey> keys;
   for (const auto& item : kItems) {
@@ -631,6 +643,107 @@ std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, fl
   return want;
 }
 
+std::optional<std::size_t> trade_step_rank(std::uint32_t step) {
+  const auto it = std::find(trade::kSteps.begin(), trade::kSteps.end(), step);
+  if (it == trade::kSteps.end()) return std::nullopt;
+  return static_cast<std::size_t>(it - trade::kSteps.begin());
+}
+
+std::optional<std::uint32_t> trade_step_raise(std::optional<std::uint32_t> step,
+                                              const std::function<std::optional<std::int32_t>(std::uint32_t)>& stock) {
+  if (!step) return std::nullopt;
+  const auto now = trade_step_rank(*step);
+  if (!now || *now < 1) return std::nullopt;  // unknown, or NotReady: left alone
+  std::optional<std::size_t> want;
+  for (const trade::Hold& h : trade::kHolds) {
+    const auto n = stock(h.item);
+    if (!n) return std::nullopt;  // an unread item: left alone
+    if (*n <= 0) continue;
+    const auto r = trade_step_rank(h.step);
+    if (r && (!want || *r > *want)) want = r;
+  }
+  if (!want || *want <= *now) return std::nullopt;  // ours is as far or further
+  return trade::kSteps[*want];
+}
+
+bool zelda_letter_spent(std::int32_t held, std::optional<bool> gate_open) {
+  return held > 0 && gate_open == true;
+}
+
+std::optional<bool> king_zora_moved(std::uint32_t live_step) {
+  const auto in = [&](const auto& steps) { return std::find(steps.begin(), steps.end(), live_step) != steps.end(); };
+  if (in(letters::kKingMoved)) return true;
+  if (in(letters::kKingWaits)) return false;
+  return std::nullopt;
+}
+
+std::string_view ruto_wait_text(RutoWait why) {
+  switch (why) {
+    case RutoWait::not_got: return "nobody got it";
+    case RutoWait::shown: return "shown to King Zora in some game (HavePlayedEvent.Dm_Zora_0010): spent";
+    case RutoWait::shown_king_waits:
+      return "shown in another game, but King Zora (ChallengeMgr Get_StoneOfWater) has not moved here: ours is kept";
+    case RutoWait::shown_unread: return "HavePlayedEvent.Dm_Zora_0010 (King Zora read the letter) unread";
+    case RutoWait::king_unread: return "King Zora's step (ChallengeMgr Get_StoneOfWater) unread";
+    case RutoWait::king_moved: return "King Zora has moved here";
+    case RutoWait::bottle_unread: return "a bottle unread";
+    case RutoWait::has_letter: return "a bottle holds it";
+    case RutoWait::no_empty: return "no owned empty bottle";
+    case RutoWait::give: return "into a bottle";
+  }
+  return "?";
+}
+
+RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> shown, std::optional<bool> king_moved,
+                            const std::function<std::optional<bool>(std::uint32_t)>& valid,
+                            const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
+  // Shown in any game: never given again. A letter still held here is spent
+  // (row 117: the shower's went, the host kept one with no use), but only
+  // once our own King Zora has moved (Step07 or later read from our
+  // ChallengeMgr): while he still blocks the way, the letter is the only way
+  // past him, so it is kept until the quest catch-up moves him. Only a bottle
+  // read as holding the letter is touched; an unread one is left.
+  if (shown == true) {
+    for (const letters::Bottle& b : letters::kBottles) {
+      if (item(b.item) != letters::kLetter) continue;
+      if (king_moved != true) return {RutoWait::shown_king_waits, std::nullopt, std::nullopt};
+      return {RutoWait::shown, std::nullopt, b.item};
+    }
+    return {RutoWait::shown, std::nullopt, std::nullopt};
+  }
+  // Unread: neither given nor taken (a read that fails must not give a
+  // letter someone may have shown already).
+  if (!shown) return {RutoWait::shown_unread, std::nullopt, std::nullopt};
+  if (got != true) return {RutoWait::not_got, std::nullopt, std::nullopt};
+  if (!king_moved) return {RutoWait::king_unread, std::nullopt, std::nullopt};
+  if (*king_moved) return {RutoWait::king_moved, std::nullopt, std::nullopt};
+  std::optional<std::uint32_t> empty;
+  for (const letters::Bottle& b : letters::kBottles) {
+    const auto v = valid(b.valid);
+    const auto in = item(b.item);
+    if (!v || !in) return {RutoWait::bottle_unread, std::nullopt, std::nullopt};  // leave every bottle alone
+    if (*in == letters::kLetter) return {RutoWait::has_letter, std::nullopt, std::nullopt};
+    if (*v && *in == letters::kEmpty && !empty) empty = b.item;
+  }
+  if (!empty) return {RutoWait::no_empty, std::nullopt, std::nullopt};
+  return {RutoWait::give, empty, std::nullopt};
+}
+
+bool bottled_fairy(const std::function<std::optional<bool>(std::uint32_t)>& valid,
+                   const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
+  for (const letters::Bottle& b : letters::kBottles) {
+    if (valid(b.valid) == true && item(b.item) == kBottledFairy) return true;
+  }
+  return false;
+}
+
+std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> shown,
+                                                std::optional<bool> king_moved,
+                                                const std::function<std::optional<bool>(std::uint32_t)>& valid,
+                                                const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
+  return ruto_letter_plan(got, shown, king_moved, valid, item).bottle;
+}
+
 std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
                                                    std::string_view current) {
   const std::string_view want =
@@ -655,6 +768,76 @@ std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t t
   return out;
 }
 
+std::string_view ocarina_held(std::int32_t fairy, std::int32_t time, std::string_view current) {
+  const std::string_view best =
+      time >= 1 ? ocarina::kTimeName : fairy >= 1 ? ocarina::kFairyName : std::string_view{};
+  return !best.empty() && current == best ? best : std::string_view{};
+}
+
+void OcarinaEquip::want(std::string_view name) {
+  std::lock_guard lock(mutex_);
+  want_locked(name);
+}
+
+void OcarinaEquip::link(bool in_game, std::string_view held) {
+  std::lock_guard lock(mutex_);
+  if (!in_game) {
+    asked_this_stay_ = false;
+    return;
+  }
+  if (asked_this_stay_ || held.empty()) return;
+  asked_this_stay_ = true;
+  want_locked(held);
+}
+
+void OcarinaEquip::want_locked(std::string_view name) {
+  if (name.empty() || (wanted_ && *wanted_ == name)) return;  // (asked already: its count goes on)
+  wanted_ = std::string(name);
+  armed_ = false;
+  seen_ = 0;
+  next_ = 0;
+}
+
+void OcarinaEquip::arm(const std::optional<std::string_view>& live, bool link_known, bool busy) {
+  std::lock_guard lock(mutex_);
+  const bool reads = wanted_ && live && *live == *wanted_;
+  seen_ = reads ? std::min(seen_ + 1, kSettleFrames) : 0;
+  armed_ = reads && seen_ >= kSettleFrames && link_known && !busy;
+}
+
+std::optional<std::uint32_t> OcarinaEquip::step(bool after_call) {
+  std::lock_guard lock(mutex_);
+  if (!after_call) {
+    if (!armed_ || !wanted_) return std::nullopt;
+    next_ = 0;
+  } else if (next_ == 0) {
+    return std::nullopt;  // (a call that was not ours)
+  }
+  if (next_ < ocarina::kEquipSlots.size()) return ocarina::kEquipSlots[next_++];
+  notes_.push_back("ocarina '" + *wanted_ + "' equipped by the game from its flags (slots 13, 16)");
+  wanted_.reset();
+  armed_ = false;
+  seen_ = 0;
+  next_ = 0;
+  return std::nullopt;
+}
+
+void OcarinaEquip::not_now() {
+  std::lock_guard lock(mutex_);
+  armed_ = false;
+  next_ = 0;
+}
+
+std::vector<std::string> OcarinaEquip::take_notes() {
+  std::lock_guard lock(mutex_);
+  return std::exchange(notes_, {});
+}
+
+bool OcarinaEquip::waiting() const {
+  std::lock_guard lock(mutex_);
+  return wanted_.has_value();
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.
@@ -677,11 +860,11 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const bool named = key.kind == protocol::FlagKeyKind::named && key.index == 0;
   const ItemFlag* item = named ? find_item(key.hash) : nullptr;
   if (entry.kind == protocol::FlagKind::count_delta) {
-    // A change, not a value: added to what the game holds, which must be known.
-    const auto now = item != nullptr && item->rule == ItemRule::count &&
-                             item->kind == protocol::FlagKind::int32
-                         ? inner_.read(key)
-                         : std::nullopt;
+    // A change, not a value: added to what the game holds, which must be known. A max-rule int takes a gain only
+    // (row 218: a heart container another player took, FlagWatcher::share_containers); it never goes down by one.
+    const bool takes = item != nullptr && item->kind == protocol::FlagKind::int32 &&
+                       (item->rule == ItemRule::count || (item->rule == ItemRule::max && as_int(entry.value) > 0));
+    const auto now = takes ? inner_.read(key) : std::nullopt;
     if (!now || now->kind != protocol::FlagKind::int32) {
       ++stats_.refused;
       return false;
@@ -702,7 +885,12 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const auto now = inner_.read(key);
   if (!now || now->kind != entry.kind) return inner_.write(entry);
   protocol::FlagEntry merged = entry;
-  merged.value = exact_ ? entry.value : merge_item(item->rule, item->kind, now->value, entry.value);
+  // An exact write (the host's save-load FLAG_RESET, the join snapshot) replaces the value: the host's save decides.
+  // A guest's own load write-back (keep_bits_) ORs a dungeon's floors (ItemRule::bits): a floor it entered is not
+  // taken off its map by its own load (#63/#76).
+  merged.value = exact_ && !(keep_bits_ && item->rule == ItemRule::bits)
+                     ? entry.value
+                     : merge_item(item->rule, item->kind, now->value, entry.value);
   const bool int_item = item->kind == protocol::FlagKind::int32;
   const auto held = [&](std::uint32_t v) { return int_item ? as_int(v) >= 1 : v != 0; };
   if (merged.value == now->value) {
@@ -757,6 +945,15 @@ bool is_one_way_item(FlagKey key) {
   return item != nullptr && one_way_entry(*item);
 }
 
+bool is_hud_dungeon_item(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  if (item == nullptr || !item->on || !item->name.starts_with("DungeonInfo.")) return false;
+  const std::string_view n = item->name;
+  return n.ends_with(".IsGetMap") || n.ends_with(".IsGetCompass") || n.ends_with(".IsGetBossKey") ||
+         n.ends_with(".EnteredFloorBit");
+}
+
 std::vector<FlagKey> one_way_item_flags() {
   std::vector<FlagKey> keys;
   for (const ItemFlag& item : item_flags()) {
@@ -765,12 +962,31 @@ std::vector<FlagKey> one_way_item_flags() {
   return keys;
 }
 
+std::optional<FlagKey> map_of_floors(FlagKey floors) {
+  if (floors.kind != protocol::FlagKeyKind::named || floors.index != 0) return std::nullopt;
+  const ItemFlag* item = find_item(floors.hash);
+  constexpr std::string_view kFloors = ".EnteredFloorBit";
+  if (item == nullptr || !item->name.starts_with("DungeonInfo.") || !item->name.ends_with(kFloors)) {
+    return std::nullopt;
+  }
+  std::string name(item->name.substr(0, item->name.size() - kFloors.size()));
+  name += ".IsGetMap";
+  return FlagKey{flag_hash(name), 0};
+}
+
 bool ItemFlagStore::is_one_way(FlagKey key) {
   if (is_one_way_item(key)) return true;
   // A dungeon's floors (EnteredFloorBit): a floor once on the map stays on it.
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);
   return item != nullptr && item->on && item->rule == ItemRule::bits;
+}
+
+bool ItemFlagStore::write_load_back(const protocol::FlagEntry& entry) {
+  keep_bits_ = true;
+  const bool ok = write_exact(entry);
+  keep_bits_ = false;
+  return ok;
 }
 
 bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {
@@ -805,3 +1021,47 @@ bool ItemFlagStore::is_max(FlagKey key) {
 }
 
 }  // namespace coop::host
+
+namespace coop::host::rewards {
+
+std::vector<std::vector<FlagKey>> units(Family family) {
+  const auto pairs = [](std::initializer_list<std::array<std::uint32_t, 2>> list) {
+    std::vector<std::vector<FlagKey>> out;
+    for (const auto& p : list) out.push_back({FlagKey(p[0], std::uint16_t{0}), FlagKey(p[1], std::uint16_t{0})});
+    return out;
+  };
+  switch (family) {
+    case Family::bottle:  // {PouchData.Bottle<X>.StockNum, BottleInfo.Bottle<X>.IsValid}, A to E
+      return pairs({{0xd53ce3a7, letters::kBottles[0].valid},
+                    {0xfca29a04, letters::kBottles[1].valid},
+                    {0x893216a1, letters::kBottles[2].valid},
+                    {0x5324f9d3, letters::kBottles[3].valid},
+                    {0xc92b16be, letters::kBottles[4].valid}});
+    // {PouchData.<tier>.StockNum, IsGet.<tier>}, small to large
+    case Family::wallet:
+      return pairs({{0x1d74617e, 0xb6e5a3a5}, {0x2d2c874b, 0xd1360de8}, {0xafa4bb52, 0xb5031190}});
+    case Family::bomb_bag:
+      return pairs({{0xb0a1bf51, 0xa63f1e2d}, {0xe5ff45aa, 0xb2c478da}, {0xbd3ca2c6, 0x968a5a79}});
+    case Family::seed_bag:  // Item_BulletBag_*
+      return pairs({{0xdc52acaf, 0x488ca1be}, {0x9a30a9e5, 0xe6cd55d2}, {0x7b9673f5, 0xb669f025}});
+    case Family::nut_bag:
+      return pairs({{0x19b80dbc, 0x2bedd82e}, {0xeaa1785e, 0x960820db}, {0xd60e4b23, 0x9a5db0b6}});
+    case Family::stick_bag:
+      return pairs({{0x2fe6ab1a, 0xde2389d4}, {0x41db7ab5, 0xcbf00480}, {0x48e53698, 0xa10f2dcf}});
+    case Family::quiver:
+      return pairs({{0xa8c3e1fb, 0x0a550531}, {0x3bb370e1, 0x9d872202}, {0xd331c7da, 0x21985b09}});
+    case Family::none:
+      break;
+  }
+  return {};
+}
+
+std::vector<FlagKey> sources(Family family) {
+  std::vector<FlagKey> out;
+  for (const Source& s : kGuarded) {
+    if (s.family == family) out.emplace_back(s.hash, std::uint16_t{0});
+  }
+  return out;
+}
+
+}  // namespace coop::host::rewards

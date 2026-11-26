@@ -1,0 +1,9 @@
+# hs-gerudo phase 4 (B, guest first): cell 2's rescue done in B; it must reach A.
+mark b-rescue2
+setflag GerudoFortress_DestroyGerudoThief_Npc_Hylia_014_Adult 1
+setflag IsGet_SmallKey_GerudoFortress.SmallKey02 1
+setflag GerudoFortress_Saved_Npc_Hylia_014_Adult 1
+setflag GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_014_Adult 1
+setflag GerudoFortress_WarpPoint02_ClearEvent 1
+wait 600
+mark b-rescue2-done

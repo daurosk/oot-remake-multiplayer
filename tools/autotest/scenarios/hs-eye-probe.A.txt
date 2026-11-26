@@ -1,0 +1,111 @@
+# hs-eye-probe (deku-switches, #176 #129, step 0 of reports/deku-ladder-a.md option (c)): the probe (reads) and the fix
+# (OFF by default) on in both; the fix acts only in B, which did not shoot. Needs a hookshot_coop module built from
+# the deku-switches branch (module-only install in the lane; no game rebuild): the probe's eye/asker watch and
+# LICHII_COOP_EYE_SWITCH are not in the 0.11.2 module.
+# A shoots the Deku Tree slingshot room's eye as hs-ladder does (same save setup: clear
+# HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, Bool 0xb3a4fe84, in both baselines first, see hs-ladder.A.txt).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-eye-probe -Lane 1   (~12 min)
+# What A's log must show (LICHII_COOP_LOGIC_PROBE=1 watches the eye Obj_EyeSwitch_A_02, the asker EventRequestActor,
+#   the ladder and the pillar, each "coop: logic probe: <name> plugs (key type value): ..." once, then changes):
+#   1. FirstOn's key: the eye's plug list has key 0x2d9754fa (Murmur3("FirstOn") 0x2d9754fd ^ 7), type 7.
+#   2. On A's hit: "plug 0x2d9754fa (type 7) 0 -> 1" on the eye, and whether it stays 1 (latch) or falls back
+#      (pulse: then the fix must write it each frame, which it does for up to 2 s).
+#   3. The asker's EventRequestTrigger (key 0xf446f53a = Murmur3 ^ 7) going 0 -> 1 in the same or the next frame,
+#      then its EventBool (0xf6d5440b) 0 -> 1 when the ladder falls.
+# What B's log must show (LICHII_COOP_EYE_SWITCH=1, B stands in the room):
+#   "coop: dungeon: eye switch: InsideTheDekuTree_Gimmick_FallingLadder: our eye 0x... (4.x m from the asker) FirstOn
+#   set through the game's set-bool", then "... an event started after our eye's FirstOn (the room's asker asked it)",
+#   and NO "asked the old way" line. B's shots b-ladder/late: the ladder DOWN and the pillar moved (today: up).
+# FAIL meanings: no 0x2d9754fa on the eye -> wrong key or the eye has no FirstOn output plug (read the probe list);
+#   FirstOn 1 in B but no event -> the room graph needs more than FirstOn: go to option (b) (a real seed hit).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_DEBUG_BOOL=0xb3a4fe84,A:LICHII_COOP_CHEATS=1,LICHII_COOP_LOGIC_PROBE=1,LICHII_COOP_EYE_SWITCH=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+wait 60
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -51.8 112.6 12.2
+wait 240
+mark placed
+goto -50.0 12.2 0.5 200   # deku-test: walk 3 m east, toward the eye (the chest in t11 left the camera on the wall)
+toward -35.6 10.7 20      # face the eye switch across the room (-35.6 114.3 10.7)
+press ZL 10               # nothing to target: the camera goes behind Link, looking at the eye
+wait 60
+mark trap
+# deku-test 4th run: the right stick moves the aim while ZR is down, +y up. 10 ticks of 1.0 up put the aim
+# 60 px right of the eye and a little above it (shot aim1); 20 ticks went far over. Tries around that:
+hold ZR 30
+rstick 0 1.0 9 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim1
+wait 90
+mark shot1
+hold ZR 30
+rstick 0 1.0 9 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim2
+wait 90
+mark shot2
+hold ZR 30
+rstick 0 1.0 8 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim3
+wait 90
+mark shot3
+hold ZR 30
+rstick 0 1.0 8 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim4
+wait 90
+mark shot4
+hold ZR 30
+rstick 0 1.0 9 ZR
+rstick -1.0 0 2 ZR
+hold ZR 12 aim5
+wait 90
+mark shot5
+hold ZR 30
+rstick 0 1.0 10 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim6
+wait 90
+mark shot6
+hold ZL+ZR 60 aim7        # Z-target lock (the eye shows a target mark), then shoot
+wait 120
+press B
+# deku-test (after groups-20261114-071719, 7 misses): the aim1 screens of that run and of the pass -053933 both
+# have the reticle on the eye, and A stood 0.05 m apart; the miss's shot1 screen shows the seed's puff low, at the
+# door under the eye (the seed drops on the way). Two more tries, untested: aim higher, and let go of ZR while ZL
+# still holds the lock (each step replaces the held keys, so the 2nd hold releases only ZR).
+hold ZR 30
+rstick 0 1.0 11 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim8
+wait 90
+mark shot8
+hold ZL 20
+hold ZL+ZR 40
+hold ZL 20 aim9
+wait 120
+mark shot9
+mark ladder
+wait 900
+mark late
+mark a-end

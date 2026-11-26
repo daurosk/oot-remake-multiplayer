@@ -1,0 +1,12 @@
+# teleport-direct-0116: /teleport to another area by the game's map change event (no talk or sign), for
+# tools/autotest/groups.py (docs/testing.md, "Hookshot test loop"). Group N plays on <kit>\hookshot-A<N> + -B<N>.
+# PASS needs the screenshots too (see=): A arrived, picture not black; a log line alone is no pass.
+
+[g1]
+hs-teleport-direct  expect='A:asking the game.s map change event Dm_SY_BancChangeGo for InsideTheDekuTree'  expect='A:live event Dm_SY_BancChangeGo asked of the game \(result 1\)'  expect='A:scene change taken'  expect='A:coop: teleport: move to -3[0-5].[0-9] .*: asked'  expect='A:test mark arrived \(Link at -3[0-5]\.'  expect='A:test goto reached'  label="#197 direct"  see=hs-teleport-direct-A  see=hs-teleport-direct-B
+
+[g2]
+hs-teleport-direct-kak  expect='A:asking the game.s map change event Dm_SY_BancChangeGo for KakarikoVillage_Child'  expect='A:live event Dm_SY_BancChangeGo asked of the game \(result 1\)'  expect='A:scene change taken'  expect='A:teleport: next to B'  label="direct overworld"  see=hs-teleport-direct-kak-A
+
+[g3]
+hs-teleport-room  expect='A:scene change taken'  expect='A:coop: teleport: move to -3[0-5].[0-9] .*: asked'  expect='A:test mark arrived \(Link at -3[0-5]\.'  expect='A:test goto reached'  label="#197 (sign read after: harmless)"  see=hs-teleport-room-A  see=hs-teleport-room-B

@@ -1,0 +1,26 @@
+# hs-and-gate, B (see hs-and-gate.A.txt): in Jabu-Jabu room 1, 5 m from the step switch, facing it; does not step on it.
+#! noload
+#! start coop: test warp done
+#! timeout 480
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place 11.0 104.0 -51.4    # on the switch's platform, 2.5 m east of it (room 1; 4.0 103.0 -47.5 fell into room 17)
+wait 240
+toward 8.5 -51.4 20       # face the switch
+wait 600
+mark b-before
+wait 1500                 # A steps on the switch about now; B's copy of the event should play
+mark b-event
+wait 600
+mark b-end

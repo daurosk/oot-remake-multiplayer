@@ -21,7 +21,7 @@
 # "walking": on foot, no copy horse. b-rides 0 = B never got on (place/press missed): INCONCLUSIVE.
 # horse-made-A counts the spawn of the copy (an old pack or a failed spawn FAILs it). a-never-hides
 # counts a hide or hold of the rider between "rides" and "off the horse" (riding keeps show).
-#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
 #! timeout 360
 # epona (issue 199), A: the watcher. Loads into Hyrule Field as adult like B (epona.B.txt) and
 # stands 10 m south of Epona, facing her, while B gets on, rides and gets off.
@@ -34,21 +34,16 @@
 #   in A's game stays where she is). "dismounted", "walking": B's puppet on foot, no copy horse.
 # The kits' puppet pack must be made again (make-puppet-pack.cmd) to have CoopRide_Epona; an old
 # pack logs no create and shows B in the riding pose without a horse (the fallback).
-#! noload
-#! start coop: test warp done
 # (the A script's own switches LICHII_COOP_DEBUG_ANIM=1: the steps file's line above is the one the emulator ran with)
 mark start
+# The lane saves are child and Hookshot's warp (the bridge's teleport) keeps the save's age: big-run-0115
+# landed in HyruleField_Child ('sent (map HyruleField_Child)'), with no Epona and no adult Link. So the
+# game is made adult first (Sequence_IsChildhood 0), as hs-held-adult does.
+setflag Sequence_IsChildhood 0  # adult AFTER the save is loaded (run.ps1 loads it first): set at the
+# title, the save's load put the child age back and the warp landed in HyruleField_Child
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
 warp HyruleField_Adult HyruleField_FrontOfMarket
-wait 1200               # the title screen
-mark title
-press A
-wait 180
-press A
-wait 180
-press A
-wait 300
-press A                 # loads the save, then the warp
-wait 2400               # the save loads, then the warp lands (about 30 s)
+wait 1200               # the warp lands
 mark field
 place -100.5 151.0 254.5 # 10 m south of Epona
 wait 240

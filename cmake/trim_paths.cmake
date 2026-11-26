@@ -16,10 +16,14 @@
 # and build folders of the build, and last the user's home folder (whatever is
 # left under it, such as a package cache).
 #
-# MSVC: /d1trimfile:<root>/ (it matches either slash and any letter case; the
+# MSVC: -d1trimfile:<root>/ (it matches either slash and any letter case; the
 # root is given with forward slashes, because a quoted argument that ends in a
 # backslash would swallow its closing quote) and /PDBALTPATH:%_PDB% (the .pdb
 # is named without its folder). GCC and Clang: -ffile-prefix-map=<root>/=.
+#
+# The dash form, not /d1trimfile: sccache reads a slash flag it does not know as a
+# second source file and then caches nothing ("multiple input files"), which made
+# every Windows CI compile a cache miss; a dash flag it does not know it passes on.
 if(COOP_TRIM_PATHS_DONE)
   return()
 endif()
@@ -66,7 +70,7 @@ endwhile()
 foreach(_coop_root IN LISTS _coop_trim_sorted)
   foreach(_coop_lang C CXX)
     add_compile_options(
-      "$<$<COMPILE_LANG_AND_ID:${_coop_lang},MSVC>:/d1trimfile:${_coop_root}/>"
+      "$<$<COMPILE_LANG_AND_ID:${_coop_lang},MSVC>:-d1trimfile:${_coop_root}/>"
       "$<$<COMPILE_LANG_AND_ID:${_coop_lang},GNU,Clang,AppleClang>:-ffile-prefix-map=${_coop_root}/=>")
   endforeach()
 endforeach()

@@ -36,7 +36,11 @@ constexpr Table kInt{0xd0, 0xd8, 0xe0, 0xec, 0x28, 0x1c, 0xf0, 0xf8, 0x100, 12};
 // so such a flag is not found here.
 constexpr Table kUInt{0x790, 0x798, 0x7a0, 0x7ac, 0x28, 0x1c, 0x7b0, 0x7b8, 0x7c0, 12};
 // String64 (type 16, M + 0x610): entries of 0x108, char* to the text at
-// +0x68, s32 buffer size at +0x70 (0x3758110). Queue not read.
+// +0x68, s32 buffer size at +0x70 (0x3758110). Its write queue (M + 0x608 is
+// what the push f_710376b9b0 takes): slot count at M + 0x630, slots of 0x58
+// at M + 0x638 {char* text buffer of its own +0, s32 its size +8, u32 hash
+// +0x50}, the word at M + 0x640. The applier (0xb99980) copies a slot's text
+// into the entry's live text and its saved copy (+0xb8), as for a Bool.
 // Enum (type 6, M + 0x250): entries of 0x38, value (the name's hash) at
 // +0x1c, 8-byte queue slots {u32 value, u32 hash}, as the getter 0x7e73d0
 // and the setter 0x3e0980 read them.
@@ -47,6 +51,8 @@ constexpr Table kEnum{0x250, 0x258, 0x260, 0x26c, 0x38, 0x1c, 0x270, 0x278, 0x28
 constexpr Table kFloat{0x190, 0x198, 0x1a0, 0x1ac, 0x28, 0x1c, 0x1b0, 0x1b8, 0x1c0, 12};
 constexpr Table kString64{0x610, 0x618, 0x620, 0x62c, 0x108, 0, 0, 0, 0, 0};
 constexpr std::uint64_t kStringText = 0x68, kStringSize = 0x70;
+constexpr std::uint64_t kStringQueueCap = 0x630, kStringQueueBuf = 0x638, kStringQueueWord = 0x640;
+constexpr std::uint64_t kStringSlotSize = 0x58, kStringSlotText = 0, kStringSlotBytes = 8, kStringSlotHash = 0x50;
 // The game's String64 buffers hold 64 bytes; more is not a String64.
 constexpr std::uint32_t kMaxString64Bytes = 64;
 // BoolArray: entries of 0x40, element count u32 at +0x20, bits at *(+0x28).
@@ -73,6 +79,9 @@ std::optional<std::uint64_t> manager(GameMemory& m) {
 // GameFlags::use_calls: the writes go to the game's own setters, not into
 // its queues.
 std::atomic<GameFlagCalls*> g_calls{nullptr};
+
+// GameFlags::on_int_written.
+std::atomic<GameFlags::IntWritten> g_int_written{nullptr};
 
 // The value a write still waiting for the game's setter gives this flag.
 std::optional<std::uint32_t> waiting(GameFlagType type, std::uint64_t id) {
@@ -153,24 +162,54 @@ bool no_room(GameMemory& m, std::uint64_t mgr, std::uint64_t cap_at, std::uint64
   return cap && word && (*word & kTakenMask) >= ours(*cap);
 }
 
+// A queue slot taken for one write: its address and the word it was taken
+// with (finish_slot checks the round).
+struct TakenSlot {
+  std::uint64_t at = 0;
+  std::uint32_t word = 0;
+};
+
+// Takes a slot as the game's setters do (0x682b20), within our half.
+std::optional<TakenSlot> take_slot(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
+                                   std::uint64_t buf_at, std::uint64_t word_at, std::uint64_t slot_size) {
+  const auto cap = read_u32(m, mgr + cap_at);
+  const auto buf = read_ptr(m, mgr + buf_at);
+  if (!cap || !buf) return std::nullopt;
+  const std::uint64_t word_addr = mgr + word_at;
+  for (int t = 0; t < kCasTries; ++t) {
+    const auto w = read_u32(m, word_addr);
+    if (!w || (*w & kTakenMask) >= ours(*cap)) return std::nullopt;
+    if (m.compare_exchange_u32(word_addr, *w, *w + 1) == w) {
+      return TakenSlot{*buf + slot_size * (*w & kTakenMask), *w};
+    }
+  }
+  return std::nullopt;
+}
+
+// Marks a written slot finished, so the applier takes it.
+bool finish_slot(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t word_at, const TakenSlot& slot) {
+  const std::uint64_t word_addr = mgr + word_at;
+  for (int t = 0; t < kCasTries; ++t) {
+    const auto w = read_u32(m, word_addr);
+    if (!w) return false;
+    // The applier ran since the slot was taken: the slot may be lost.
+    if ((*w >> 28) != (slot.word >> 28)) return false;
+    const std::uint32_t next = (*w & kFinishedMask) == kFinishedMask ? (*w & ~kFinishedMask)
+                                                                     : *w + kFinishedOne;
+    if (m.compare_exchange_u32(word_addr, *w, next) == w) return true;
+  }
+  return false;
+}
+
 // Takes a slot, writes it, marks it finished: the game's setter (0x682b20).
 // `word8`: a u32 the setter also stores at slot + 8 (the UInt setter stores 1).
 bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
              std::uint64_t buf_at, std::uint64_t word_at, std::uint64_t slot_size,
              std::uint32_t value, std::uint32_t id, bool value_is_byte,
              std::optional<std::uint32_t> word8 = std::nullopt) {
-  const auto cap = read_u32(m, mgr + cap_at);
-  const auto buf = read_ptr(m, mgr + buf_at);
-  if (!cap || !buf) return false;
-  const std::uint64_t word_addr = mgr + word_at;
-  std::optional<std::uint32_t> taken_word;
-  for (int t = 0; t < kCasTries && !taken_word; ++t) {
-    const auto w = read_u32(m, word_addr);
-    if (!w || (*w & kTakenMask) >= ours(*cap)) return false;
-    if (m.compare_exchange_u32(word_addr, *w, *w + 1) == w) taken_word = *w;
-  }
-  if (!taken_word) return false;
-  const std::uint64_t at = *buf + slot_size * (*taken_word & kTakenMask);
+  const auto slot = take_slot(m, mgr, cap_at, buf_at, word_at, slot_size);
+  if (!slot) return false;
+  const std::uint64_t at = slot->at;
   std::array<std::uint8_t, 4> id_bytes{}, value_bytes{};
   std::memcpy(id_bytes.data(), &id, 4);  // the guest is little-endian, as is every host we build for
   std::memcpy(value_bytes.data(), &value, 4);
@@ -181,16 +220,63 @@ bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
     std::memcpy(bytes.data(), &*word8, 4);
     if (!m.write(at + 8, bytes)) return false;
   }
-  for (int t = 0; t < kCasTries; ++t) {
-    const auto w = read_u32(m, word_addr);
-    if (!w) return false;
-    // The applier ran since the slot was taken: the slot may be lost.
-    if ((*w >> 28) != (*taken_word >> 28)) return false;
-    const std::uint32_t next = (*w & kFinishedMask) == kFinishedMask ? (*w & ~kFinishedMask)
-                                                                     : *w + kFinishedOne;
-    if (m.compare_exchange_u32(word_addr, *w, next) == w) return true;
+  return finish_slot(m, mgr, word_at, *slot);
+}
+
+// A String64 text we may write: at most 63 bytes of printable ASCII.
+bool string64_text_ok(std::string_view text) {
+  if (text.size() + 1 > kMaxString64Bytes) return false;
+  for (const char ch : text) {
+    if (ch < 0x20 || ch > 0x7e) return false;
   }
-  return false;
+  return true;
+}
+
+// A String64 write into the game's queue, as its push f_710376b9b0 makes it:
+// the hash at +0x50 and the text copied into the slot's own buffer (the push
+// cuts a long text at the buffer's size - 1; here one that does not fit is
+// refused).
+bool enqueue_string(WritableGameMemory& m, std::uint64_t mgr, std::uint32_t hash, std::string_view text) {
+  const auto slot = take_slot(m, mgr, kStringQueueCap, kStringQueueBuf, kStringQueueWord, kStringSlotSize);
+  if (!slot) return false;
+  const auto buffer = read_ptr(m, slot->at + kStringSlotText);
+  const auto size = read_u32(m, slot->at + kStringSlotBytes);
+  std::array<std::uint8_t, 4> hash_bytes{};
+  std::memcpy(hash_bytes.data(), &hash, 4);
+  std::array<std::uint8_t, kMaxString64Bytes> bytes{};
+  std::copy(text.begin(), text.end(), bytes.begin());
+  // A taken slot is finished even when it could not be filled (the applier
+  // stops at the first unfinished one); its hash stays 0, a flag it skips.
+  const bool fits = buffer && size && *size >= text.size() + 1;
+  const bool wrote = fits &&
+                     m.write(*buffer, std::span<const std::uint8_t>(bytes.data(), text.size() + 1)) &&
+                     m.write(slot->at + kStringSlotHash, hash_bytes);
+  return finish_slot(m, mgr, kStringQueueWord, *slot) && wrote;
+}
+
+// The newest text queued for `hash` in the game's String64 queue.
+std::optional<std::string> queued_string(GameMemory& m, std::uint64_t mgr, std::uint32_t hash) {
+  const auto cap = read_u32(m, mgr + kStringQueueCap);
+  const auto buf = read_ptr(m, mgr + kStringQueueBuf);
+  const auto word = read_u32(m, mgr + kStringQueueWord);
+  if (!cap || !buf || !word) return std::nullopt;
+  std::uint32_t taken = *word & kTakenMask;
+  if (taken > *cap) taken = *cap;
+  for (std::uint32_t i = taken; i-- > 0;) {
+    const std::uint64_t at = *buf + kStringSlotSize * i;
+    if (read_u32(m, at + kStringSlotHash) != hash) continue;
+    const auto text = read_ptr(m, at + kStringSlotText);
+    const auto size = read_u32(m, at + kStringSlotBytes);
+    if (!text || !size || *size == 0) return std::nullopt;
+    const std::size_t n = std::min<std::size_t>(*size, kMaxString64Bytes);
+    std::array<std::uint8_t, kMaxString64Bytes> bytes{};
+    if (!m.read(*text, std::span(bytes.data(), n))) return std::nullopt;
+    std::string out;
+    for (std::size_t k = 0; k < n && bytes[k] != 0; ++k) out.push_back(static_cast<char>(bytes[k]));
+    if (!string64_text_ok(out)) return std::nullopt;
+    return out;
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -220,6 +306,18 @@ std::optional<std::int32_t> GameFlags::get_int(std::uint32_t hash) {
   if (const auto q = queued(memory_, *mgr, kInt.queue_cap, kInt.queue_buf, kInt.queue_word,
                             kInt.slot_size, hash))
     return static_cast<std::int32_t>(*q);
+  const auto entries = read_ptr(memory_, *mgr + kInt.entries);
+  if (!entries) return std::nullopt;
+  const auto v = read_u32(memory_, *entries + kInt.stride * *index + kInt.value);
+  if (!v) return std::nullopt;
+  return static_cast<std::int32_t>(*v);
+}
+
+std::optional<std::int32_t> GameFlags::get_int_live(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto index = find(memory_, *mgr, kInt, hash);
+  if (!index) return std::nullopt;
   const auto entries = read_ptr(memory_, *mgr + kInt.entries);
   if (!entries) return std::nullopt;
   const auto v = read_u32(memory_, *entries + kInt.stride * *index + kInt.value);
@@ -307,6 +405,11 @@ std::optional<std::string> GameFlags::get_string64(std::uint32_t hash) {
   if (!mgr) return std::nullopt;
   const auto entry_index = find(memory_, *mgr, kString64, hash);
   if (!entry_index) return std::nullopt;
+  // A write still waiting for the game's setter, then one in its queue, as the other getters.
+  if (const GameFlagCalls* calls = g_calls.load(std::memory_order_acquire)) {
+    if (auto text = calls->pending_string(hash)) return text;
+  }
+  if (auto text = queued_string(memory_, *mgr, hash)) return text;
   const auto entries = read_ptr(memory_, *mgr + kString64.entries);
   if (!entries) return std::nullopt;
   const std::uint64_t entry = *entries + kString64.stride * *entry_index;
@@ -326,12 +429,17 @@ std::optional<std::string> GameFlags::get_string64(std::uint32_t hash) {
   return std::nullopt;  // not terminated within the buffer
 }
 
+bool GameFlags::set_string64(WritableGameMemory& m, std::uint32_t hash, std::string_view text) {
+  if (!string64_text_ok(text)) return false;
+  const auto mgr = manager(m);
+  if (!mgr || !find(m, *mgr, kString64, hash)) return false;
+  if (GameFlagCalls* calls = g_calls.load(std::memory_order_acquire)) return calls->put_string(hash, text);
+  return enqueue_string(m, *mgr, hash, text);
+}
+
 bool GameFlags::set_string64_now(WritableGameMemory& m, std::uint32_t hash,
                                  std::string_view text) {
-  if (text.size() + 1 > kMaxString64Bytes) return false;
-  for (const char ch : text) {
-    if (ch < 0x20 || ch > 0x7e) return false;
-  }
+  if (!string64_text_ok(text)) return false;
   const auto mgr = manager(m);
   if (!mgr) return false;
   const auto index = find(m, *mgr, kString64, hash);
@@ -347,6 +455,19 @@ bool GameFlags::set_string64_now(WritableGameMemory& m, std::uint32_t hash,
   return m.write(*buffer, std::span<const std::uint8_t>(bytes.data(), text.size() + 1));
 }
 
+bool GameFlags::set_int_now(WritableGameMemory& m, std::uint32_t hash, std::int32_t value) {
+  const auto mgr = manager(m);
+  if (!mgr) return false;
+  const auto index = find(m, *mgr, kInt, hash);
+  if (!index) return false;
+  const auto entries = read_ptr(m, *mgr + kInt.entries);
+  if (!entries) return false;
+  const auto v = static_cast<std::uint32_t>(value);
+  const std::array<std::uint8_t, 4> bytes{static_cast<std::uint8_t>(v), static_cast<std::uint8_t>(v >> 8),
+                                          static_cast<std::uint8_t>(v >> 16), static_cast<std::uint8_t>(v >> 24)};
+  return m.write(*entries + kInt.stride * *index + kInt.value, std::span<const std::uint8_t>(bytes.data(), 4));
+}
+
 std::optional<GameFlags::QueueSizes> GameFlags::queue_sizes() {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;
@@ -360,6 +481,9 @@ std::optional<GameFlags::QueueSizes> GameFlags::queue_sizes() {
 }
 
 void GameFlags::use_calls(GameFlagCalls* calls) { g_calls.store(calls, std::memory_order_release); }
+void GameFlags::on_int_written(IntWritten callback) {
+  g_int_written.store(callback, std::memory_order_release);
+}
 
 bool GameFlags::setter_has_room(GameMemory& m, GameFlagType type) {
   const auto mgr = manager(m);
@@ -370,6 +494,7 @@ bool GameFlags::setter_has_room(GameMemory& m, GameFlagType type) {
     case GameFlagType::float32: return !no_room(m, *mgr, kFloat.queue_cap, kFloat.queue_word);
     case GameFlagType::enum32: return !no_room(m, *mgr, kEnum.queue_cap, kEnum.queue_word);
     case GameFlagType::uint32: return !no_room(m, *mgr, kUInt.queue_cap, kUInt.queue_word);
+    case GameFlagType::string64: return !no_room(m, *mgr, kStringQueueCap, kStringQueueWord);
     case GameFlagType::key64: return !no_room(m, *mgr, kKeyQueueCap, kKeyQueueWord);
   }
   return false;
@@ -455,10 +580,16 @@ bool GameFlags::set_bool(WritableGameMemory& m, std::uint32_t hash, bool value) 
 bool GameFlags::set_int(WritableGameMemory& m, std::uint32_t hash, std::int32_t value) {
   const auto mgr = manager(m);
   if (!mgr || !find(m, *mgr, kInt, hash)) return false;
+  bool queued = false;
   if (GameFlagCalls* calls = g_calls.load(std::memory_order_acquire))
-    return calls->put({GameFlagType::int32, hash, static_cast<std::uint32_t>(value)});
-  return enqueue(m, *mgr, kInt.queue_cap, kInt.queue_buf, kInt.queue_word, kInt.slot_size,
-                 static_cast<std::uint32_t>(value), hash, false);
+    queued = calls->put({GameFlagType::int32, hash, static_cast<std::uint32_t>(value)});
+  else
+    queued = enqueue(m, *mgr, kInt.queue_cap, kInt.queue_buf, kInt.queue_word, kInt.slot_size,
+                     static_cast<std::uint32_t>(value), hash, false);
+  if (queued) {
+    if (const IntWritten written = g_int_written.load(std::memory_order_acquire)) written(hash, value);
+  }
+  return queued;
 }
 
 bool GameFlags::set_float(WritableGameMemory& m, std::uint32_t hash, float value) {

@@ -216,6 +216,85 @@ TEST_CASE("difficulty: enemy life is how much of each hit an enemy takes") {
   CHECK(EnemyTakes(INT32_MAX, 25, carry) == INT32_MAX);  // no overflow
 }
 
+TEST_CASE("difficulty: an enemy's hits to kill are its life times the setting, rounded to the nearest hit") {
+  // Player report 2026-11-24 (2 players, automatic: enemy life 140%, count 125%): "at 125% mobs took way
+  // more hits". The carry started at 0, so the first hit always rounded down: a one-life enemy took two
+  // sword hits at 125% and 140%, as at 200%. Now it starts at half the first hit (kEnemyFirstCarry).
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::Kinds;
+  const auto none = [] { return std::uint64_t{0}; };
+  const auto hits_to_kill = [&](Kind kind, std::int32_t life, std::int32_t hit, const Values& values) {
+    auto kinds = std::make_unique<Kinds>();
+    constexpr std::uint64_t kLife = 0x40'0000'1000;
+    REQUIRE(kinds->Mark(kLife, kind));
+    int hits = 0;
+    while (life > 0 && hits < 1000) {
+      life -= kinds->Step(kLife, hit, values, 0, none);
+      ++hits;
+    }
+    return hits;
+  };
+  const auto enemy = [&](std::int32_t life, std::int32_t hit, std::uint16_t pct) {
+    return hits_to_kill(Kind::enemy_life, life, hit, Values{pct, 100, 100});
+  };
+  struct Row {
+    std::int32_t life, hit;
+    std::uint16_t pct;
+    int hits;
+  };
+  for (const Row r : {
+           // a 1-life Keese or Skulltula with the Kokiri Sword (1 a hit)
+           Row{1, 1, 100, 1}, Row{1, 1, 125, 1}, Row{1, 1, 140, 1}, Row{1, 1, 150, 1}, Row{1, 1, 175, 2},
+           Row{1, 1, 200, 2}, Row{1, 1, 300, 3},
+           // a 2-life Deku Baba
+           Row{2, 1, 100, 2}, Row{2, 1, 125, 2}, Row{2, 1, 140, 3}, Row{2, 1, 150, 3}, Row{2, 1, 200, 4},
+           // an 8-life enemy (a Lizalfos): 8 hits at 100%, 10 at 125%, 12 at 150%
+           Row{8, 1, 100, 8}, Row{8, 1, 125, 10}, Row{8, 1, 140, 11}, Row{8, 1, 150, 12}, Row{8, 1, 175, 14},
+           Row{8, 1, 200, 16},
+           // the Master Sword (2 a hit)
+           Row{1, 2, 125, 1}, Row{1, 2, 200, 1}, Row{2, 2, 200, 2}, Row{8, 2, 100, 4}, Row{8, 2, 125, 5},
+           Row{8, 2, 140, 6}, Row{8, 2, 150, 6}, Row{8, 2, 200, 8},
+       }) {
+    CAPTURE(r.life);
+    CAPTURE(r.hit);
+    CAPTURE(r.pct);
+    CHECK(enemy(r.life, r.hit, r.pct) == r.hits);
+  }
+  // At every slider mark, for lives 1..24 and hits 1..4 of one size: never further than half a hit from
+  // life * pct / 100 / hit, and never fewer hits than at 100% (a big hit at a small step cannot kill sooner).
+  for (std::uint16_t pct = coop::protocol::kMinHpPct; pct <= coop::protocol::kMaxHpPct;
+       pct += coop::protocol::kDifficultyStep) {
+    for (std::int32_t life = 1; life <= 24; ++life) {
+      for (std::int32_t hit = 1; hit <= 4; ++hit) {
+        CAPTURE(pct);
+        CAPTURE(life);
+        CAPTURE(hit);
+        const int hits = enemy(life, hit, pct);
+        const double exact = static_cast<double>(life) * pct / 100.0 / hit;
+        if (50 * hit < pct) {  // (half the hit fits under one life point)
+          CHECK(std::abs(hits - exact) <= 0.5);
+        }
+        CHECK(hits >= 1);
+        if (pct >= 100) {
+          CHECK(hits >= enemy(life, hit, 100));
+        }
+      }
+    }
+  }
+  // The same rule for enemies folded in a dungeon (life x count) and bosses. Automatic, 2 players: enemies
+  // 140%, count 125% (a no-spot enemy with its one extra folds to 280%), bosses 200%.
+  const Values two = proto::auto_difficulty(2);
+  CHECK(two.hp_pct == 140);
+  CHECK(two.count_pct == 125);
+  CHECK(two.boss_hp_pct == 200);
+  CHECK(hits_to_kill(Kind::enemy_life, 1, 1, two) == 1);         // was 2
+  CHECK(hits_to_kill(Kind::folded_enemy_life, 1, 1, two) == 2);  // a Treatment::fold enemy: 175% (1.75 hits)
+  CHECK(hits_to_kill(Kind::boss_life, 1, 1, two) == 2);
+  // Gohma (life 21, the Kokiri Sword's 1 a hit on her eye, 2 players): 42 hits, as at 200%.
+  CHECK(hits_to_kill(Kind::boss_life, 21, 1, two) == 42);
+  CHECK(hits_to_kill(Kind::boss_life, 21, 1, Values{}) == 21);
+}
+
 TEST_CASE("difficulty: enemy damage on Link carries the parts of a quarter heart") {
   using CoopDifficulty::LinkTakes;
   std::int32_t carry = 0;
@@ -282,7 +361,7 @@ TEST_CASE("difficulty: the Life step scales enemies' hits, and enemies' hits on 
     ++asked;
     return attacker;
   };
-  // An enemy: a third of each hit, the parts carried.
+  // An enemy: a third of each hit, the parts carried (from half its first hit: 150, 250, 350).
   CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
   CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
   CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 1);
@@ -312,8 +391,8 @@ TEST_CASE("difficulty: the Life step scales enemies' hits, and enemies' hits on 
   CHECK(kinds->EnemyHits() == 3);
   CHECK(kinds->LinkHits() == 2);
   // A carry made at other values is dropped: at 200% the Keese starts afresh.
-  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);  // carry 100 at 300
-  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, kNow, attacker_of) == 0);  // 100 / 200, not 200 / 200
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);  // carry 150 at 300
+  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, kNow, attacker_of) == 0);  // 150 / 200, not 250 / 200
   CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, kNow, attacker_of) == 1);
   // Marked again as something else (the address is another actor's now): its carry goes.
   CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
@@ -343,10 +422,121 @@ TEST_CASE("difficulty: a full kinds table marks nothing more and scales nothing 
   }
   CHECK(found == marked);
   CHECK(kinds->Of(0x7777'0000'0000) == Kind::none);
-  // The refused ones are counted (for the log), until a new scene.
+  // The refused ones of a walk are counted when it ends (for the log), with what the table holds.
+  CHECK(kinds->Unmarked() == 0);
+  kinds->Sweep();
   CHECK(kinds->Unmarked() == 4 * CoopDifficulty::Kinds::kSlots - marked);
+  CHECK(kinds->Held() == marked);
+  kinds->Sweep();  // (a walk that refused nothing)
+  CHECK(kinds->Unmarked() == 0);
   kinds->Clear();
   CHECK(kinds->Unmarked() == 0);
+  CHECK(kinds->Held() == 0);
+}
+
+TEST_CASE("difficulty: an address the walk no longer marks gives its slot back (row 270)") {
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::Kinds;
+  auto kinds = std::make_unique<Kinds>();
+  const std::uint64_t kLink = 0x5000'0010;
+  // One scene, never left: 40 enemies alive at a time (an actor and a Life component each), and every few
+  // seconds they are other ones at other addresses (a night's Stalchildren, a boss's shots). Far more
+  // addresses than slots pass through; none is ever refused, and each one alive is scaled.
+  const std::uint64_t kAlive = 40;
+  const std::uint64_t kWaves = 200;  // 200 * 80 = 16000 addresses through 1024 slots
+  for (std::uint64_t wave = 0; wave < kWaves; ++wave) {
+    const std::uint64_t base = 0x6000'0000 + wave * 0x10000;
+    for (std::uint64_t walk = 0; walk < Kinds::kKeepWalks + 10; ++walk) {
+      CHECK(kinds->Mark(kLink, Kind::our_link_life));
+      for (std::uint64_t i = 0; i < kAlive; ++i) {
+        CHECK(kinds->Mark(base + i * 0x200, Kind::enemy));
+        CHECK(kinds->Mark(base + i * 0x200 + 0x100, Kind::enemy_life));
+      }
+      kinds->Sweep();
+      CHECK(kinds->Unmarked() == 0);
+    }
+    CHECK(kinds->Of(base) == Kind::enemy);
+    CHECK(kinds->Of(base + 0x100) == Kind::enemy_life);
+    CHECK(kinds->Of(kLink) == Kind::our_link_life);
+    CHECK(kinds->Held() <= 1 + 4 * kAlive);  // this wave's and at most the one before's
+    if (wave > 0) {
+      CHECK(kinds->Of(base - 0x10000) == Kind::none);  // the wave before: gone, its slots free
+    }
+  }
+}
+
+TEST_CASE("difficulty: a slot is kept while its address is marked, and through a few walks that miss it") {
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::Kinds;
+  auto kinds = std::make_unique<Kinds>();
+  const CoopDifficulty::Values hard{150, 150, 100};
+  const auto none = [] { return std::uint64_t{0}; };
+  const std::uint64_t kLife = 0x7000'0100;
+  CHECK(kinds->Mark(kLife, Kind::enemy_life));
+  CHECK(kinds->Step(kLife, 1, hard, 0, none) == 1);  // 1 at 150% life, from half a point: 1 now, none carried
+  for (std::uint64_t walk = 0; walk + 1 < Kinds::kKeepWalks; ++walk) {
+    kinds->Sweep();  // (walks that do not read it: a load, a missed read)
+  }
+  CHECK(kinds->Of(kLife) == Kind::enemy_life);
+  CHECK(kinds->Mark(kLife, Kind::enemy_life));  // read again: the same slot, its carry kept
+  CHECK(kinds->Step(kLife, 1, hard, 0, none) == 0);  // 100 / 150 (afresh it would take 1 again)
+  for (std::uint64_t walk = 0; walk < Kinds::kKeepWalks; ++walk) {
+    kinds->Sweep();
+  }
+  CHECK(kinds->Of(kLife) == Kind::enemy_life);  // (its own walk and kKeepWalks - 1 more: still held)
+  kinds->Sweep();
+  CHECK(kinds->Of(kLife) == Kind::none);  // gone for good: freed
+  CHECK(kinds->Step(kLife, 3, hard, 0, none) == 3);
+  CHECK(kinds->Held() == 0);
+}
+
+TEST_CASE("difficulty: an address past a freed slot is still found, and marked again in its own slot") {
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::Kinds;
+  auto kinds = std::make_unique<Kinds>();
+  // Enough addresses that many share a probe run; the even ones are then left to go.
+  const std::uint64_t kCount = 600;
+  const auto address = [](std::uint64_t i) { return 0x8000'0000 + i * 0x130; };
+  std::vector<bool> in(kCount, false);
+  for (std::uint64_t i = 0; i < kCount; ++i) {
+    in[i] = kinds->Mark(address(i), Kind::enemy);
+  }
+  kinds->Sweep();
+  for (std::uint64_t walk = 0; walk < Kinds::kKeepWalks; ++walk) {
+    for (std::uint64_t i = 1; i < kCount; i += 2) {
+      if (in[i]) {
+        CHECK(kinds->Mark(address(i), Kind::enemy));
+      }
+    }
+    kinds->Sweep();
+  }
+  std::uint64_t odd = 0;
+  for (std::uint64_t i = 0; i < kCount; ++i) {
+    if (i % 2 == 0) {
+      CHECK(kinds->Of(address(i)) == Kind::none);
+    } else if (in[i]) {
+      ++odd;
+      CHECK(kinds->Of(address(i)) == Kind::enemy);
+    }
+  }
+  CHECK(kinds->Held() == odd);
+  // A kept address marked again takes no second slot; new addresses take the freed ones.
+  for (std::uint64_t i = 1; i < kCount; i += 2) {
+    if (in[i]) {
+      CHECK(kinds->Mark(address(i), Kind::folded_enemy));
+    }
+  }
+  for (std::uint64_t i = 0; i < kCount; i += 2) {
+    CHECK(kinds->Mark(0x9000'0000 + i * 0x130, Kind::boss));
+  }
+  kinds->Sweep();
+  CHECK(kinds->Unmarked() == 0);
+  CHECK(kinds->Held() == odd + kCount / 2);
+  for (std::uint64_t i = 1; i < kCount; i += 2) {
+    if (in[i]) {
+      CHECK(kinds->Of(address(i)) == Kind::folded_enemy);
+    }
+  }
 }
 
 TEST_CASE("difficulty: a reused address is no enemy any more once the walk sees another actor there") {
@@ -635,6 +825,28 @@ TEST_CASE("difficulty: water enemies get their weight, never a land spot") {
   }
 }
 
+TEST_CASE("difficulty: a dungeon's enemies get extras like the overworld's (player report 111)") {
+  // Report 111's buried Deku Baba extra was the give-back ping-pong of report
+  // 109 (a copy's own wake put back to the owner's rest), not the extra's
+  // dungeon room: the same Babas plan the same extras in the Deku Tree as in
+  // the same layout outside, and only an enemy with no spot gets its weight.
+  World w;
+  const World::Data& d = w.Grid("InsideTheDekuTree", "Enemy_Dekubaba", 0x0dec'0000'0000ULL, 12);
+  World w2;
+  const World::Data& d2 = w2.Grid("Lake", "Enemy_Dekubaba", 0x0dec'0000'0000ULL, 12);
+  for (const std::uint16_t pct : {std::uint16_t{125}, std::uint16_t{200}}) {
+    CoopDifficulty::Extras in(w.Lookup());
+    CoopDifficulty::Extras out(w2.Lookup());
+    const std::size_t made = in.Plan("InsideTheDekuTree", Walk(d), pct, false, 0);
+    CHECK(made > 0);
+    CHECK(made == out.Plan("Lake", Walk(d2), pct, false, 0));
+    CHECK(in.NoSpots() == out.NoSpots());
+    for (const auto& o : Walk(d)) {
+      CHECK(in.NoSpot(o.hash) == out.NoSpot(o.hash));
+    }
+  }
+}
+
 TEST_CASE("difficulty: every game plans the same extras whatever it has loaded and wherever its enemies walked") {
   World w;
   const World::Data& d =
@@ -720,9 +932,11 @@ TEST_CASE("difficulty: a placed enemy with no ground for its copies gets their w
   CHECK(x.Plan("Room", walk, 200, false, 0) == 0);
   CHECK(x.NoSpot(kLone));
   CHECK(x.NoSpots() == 1);
-  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kLone, x.NoSpot(kLone)) == Kind::folded_enemy_life);
-  CHECK(CoopDifficulty::AttackerKind("Enemy_Stalfos", kLone, x.NoSpot(kLone)) == Kind::folded_enemy);
-  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kLone, false) == Kind::enemy_life);
+  // (kLone is a test hash; the kinds see a placement of the baked table, which a no-spot enemy always is.)
+  constexpr std::uint64_t kBaked = 0xadd2ec76107dc677ULL;
+  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kBaked, true) == Kind::folded_enemy_life);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_Stalfos", kBaked, true) == Kind::folded_enemy);
+  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kBaked, false) == Kind::enemy_life);
   // A marker appears (another age's data, a test) and the count rises: still no copy on top of the weight.
   d.ground = {{4.0f, 0.0f, 0.0f}, {-4.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 4.0f}};
   CHECK(x.Plan("Room", walk, 400, false, 100) == 0);
@@ -732,10 +946,10 @@ TEST_CASE("difficulty: a placed enemy with no ground for its copies gets their w
   CHECK(x.Plan("Field", {}, 200, false, 200) == 0);
   CHECK_FALSE(x.NoSpot(kLone));
   CHECK(x.Plan("Room", walk, 200, false, 300) == 1);
-  // A placement the data does not have: no ground known, its weight.
+  // A placement the data does not have (a mod's added enemy): no copies and no fold, its own weight.
   constexpr std::uint64_t kUnknown = 0x7777'0000'0001ULL;
   CHECK(x.Plan("Room", {{"Enemy_Stalfos", kUnknown}}, 200, false, 400) == 0);
-  CHECK(x.NoSpot(kUnknown));
+  CHECK_FALSE(x.NoSpot(kUnknown));
 }
 
 TEST_CASE("difficulty: an extra's address is its own only while its actor is there") {
@@ -885,6 +1099,51 @@ TEST_CASE("difficulty: an enemy that gets no copies has the enemy count folded i
   CHECK(kinds->Of(kPoe) == Kind::none);
 }
 
+TEST_CASE("difficulty: an enemy with no ground for its copies folds by the extras it would have had") {
+  using CoopDifficulty::ExtraCount;
+  using CoopDifficulty::FoldCount;
+  using CoopDifficulty::Kind;
+  CHECK(FoldCount(0, 150) == 150);  // a patrol (Treatment::fold): the whole count
+  CHECK(FoldCount(0x1234, 100) == 100);
+  CHECK(FoldCount(0x1234, 80) == 80);
+  // Placement keys with 0 and with 1 extra at 150% and at 125%.
+  for (const std::uint16_t pct : {std::uint16_t(125), std::uint16_t(150), std::uint16_t(200), std::uint16_t(300)}) {
+    std::uint64_t none = 0, one = 0;
+    unsigned total = 0, extras = 0;
+    for (std::uint64_t k = 1; k <= 400; ++k) {
+      const unsigned e = ExtraCount(k, pct);
+      CHECK(FoldCount(k, pct) == 100 * (1 + e));
+      total += FoldCount(k, pct);
+      extras += 100 * (1 + e);
+      if (e == pct / 100u - 1u && none == 0 && pct % 100 != 0) none = k;
+      if (e == pct / 100u && one == 0) one = k;
+    }
+    CHECK(total == extras);  // the folded strength is exactly what the extras would add
+    if (pct % 100 == 0) {
+      continue;
+    }
+    REQUIRE(none != 0);
+    REQUIRE(one != 0);
+    // Life and damage of each, as the Life step scales them.
+    auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+    constexpr std::uint64_t kLifeNone = 0x30'0000'1000, kLifeOne = 0x30'0000'2000;
+    constexpr std::uint64_t kNone = 0x30'0000'3000, kOne = 0x30'0000'4000, kLinkLife = 0x30'0000'5000;
+    CHECK(kinds->Mark(kLifeNone, Kind::folded_enemy_life, none));
+    CHECK(kinds->Mark(kLifeOne, Kind::folded_enemy_life, one));
+    CHECK(kinds->Mark(kNone, Kind::folded_enemy, none));
+    CHECK(kinds->Mark(kOne, Kind::folded_enemy, one));
+    CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+    std::uint64_t attacker = kNone;
+    auto attacker_of = [&] { return attacker; };
+    const Values count_only{100, 100, pct};
+    CHECK(kinds->Step(kLifeNone, 4, count_only, 1000, attacker_of) == 4);  // x1: it would have had none
+    CHECK(kinds->Step(kLifeOne, 4, count_only, 1000, attacker_of) == 2);   // x2: itself and its one extra
+    CHECK(kinds->Step(kLinkLife, 4, count_only, 1000, attacker_of) == 4);
+    attacker = kOne;
+    CHECK(kinds->Step(kLinkLife, 4, count_only, 1000, attacker_of) == 8);
+  }
+}
+
 namespace {
 // The game's own rolls seen earlier in this visit, risen on a ring 4 m around `at`
 // (at 100% enemies: no horde of theirs): where the horde may rise.
@@ -1031,7 +1290,14 @@ TEST_CASE("difficulty: bosses and mini-bosses scale by the boss values") {
   constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
   CHECK(CoopDifficulty::LifeKind("Enemy_DungeonBoss_Gohma", kPlain) == Kind::boss_life);
   CHECK(CoopDifficulty::AttackerKind("Enemy_DungeonBoss_Gohma", kPlain) == Kind::boss);
-  CHECK(CoopDifficulty::LifeKind("Enemy_DeadHand", kPlain) == Kind::folded_enemy_life);
+  CHECK(CoopDifficulty::LifeKind("Enemy_DeadHand", 0) == Kind::folded_enemy_life);  // a made one: no placement
+  // A placement our table does not have (a mod's added enemy) is plain whatever its kind; a baked one folds.
+  CHECK(CoopDifficulty::LifeKind("Enemy_DeadHand", kPlain) == Kind::enemy_life);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_ReDead", kPlain) == Kind::enemy);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_ReDead", kPlain, true) == Kind::enemy);
+  constexpr std::uint64_t kBakedReDead = 0xadd2ec76107dc677ULL;
+  CHECK(CoopDifficulty::AttackerKind("Enemy_ReDead", kBakedReDead) == Kind::folded_enemy);
+  CHECK(CoopDifficulty::LifeKind("Enemy_LikeLike", 0xb45720bb25faeb7eULL) == Kind::folded_enemy_life);
   CHECK(CoopDifficulty::AttackerKind("Enemy_Keese", kPlain) == Kind::enemy);
 
   auto kinds = std::make_unique<CoopDifficulty::Kinds>();
@@ -1043,6 +1309,10 @@ TEST_CASE("difficulty: bosses and mini-bosses scale by the boss values") {
   // Automatic, 4 players: enemies life 220%, bosses 400% and damage 160%.
   const Values four = proto::auto_difficulty(4);
   CHECK(kinds->Step(kBossLife, 8, four, 0, attacker_of) == 2);
+  // Traced apart for the log (boss life scaling): one step, 8 in, 2 taken.
+  CHECK(kinds->BossSteps() == 1);
+  CHECK(kinds->BossDamageIn() == 8);
+  CHECK(kinds->BossDamageTaken() == 2);
   CHECK(kinds->Step(kLinkLife, 5, four, 0, attacker_of) == 8);  // 5 x 1.6
   // 16 players, the most: 1600% life (a sixteenth of each hit), 400% damage; no overflow.
   const Values sixteen = proto::auto_difficulty(16);
@@ -1057,4 +1327,54 @@ TEST_CASE("difficulty: bosses and mini-bosses scale by the boss values") {
   CHECK(hard.boss_damage_pct == hard.damage_pct);
   kinds->Forget(kBoss);
   CHECK(kinds->Of(kBoss) == Kind::none);
+}
+
+TEST_CASE("difficulty: the word the Life step reads keeps the boss values (issue 55)") {
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::PackValues;
+  using CoopDifficulty::UnpackValues;
+  // Every value the host can be in: the automatic scaler for 1..16 players, each preset, the slider ends.
+  for (std::size_t players = 1; players <= 16; ++players) {
+    const Values v = proto::auto_difficulty(players);
+    CHECK(UnpackValues(PackValues(v)) == v);
+  }
+  for (const Preset p : {Preset::easy, Preset::normal, Preset::hard}) {
+    const Values v = proto::preset_difficulty(p);
+    CHECK(UnpackValues(PackValues(v)) == v);
+  }
+  Values ends;
+  ends.hp_pct = proto::kMaxHpPct;
+  ends.damage_pct = proto::kMinDamagePct;
+  ends.count_pct = proto::kMaxCountPct;
+  ends.boss_hp_pct = proto::kMaxBossHpPct;
+  ends.boss_damage_pct = proto::kMaxBossDamagePct;
+  CHECK(UnpackValues(PackValues(ends)) == ends);
+  CHECK(UnpackValues(PackValues(Values{})) == Values{});
+  // A value past 12 bits (never valid) is kept at 4095, not wrapped into its neighbour.
+  Values big;
+  big.boss_hp_pct = 0xffff;
+  const Values kept = UnpackValues(PackValues(big));
+  CHECK(kept.boss_hp_pct == 0xfff);
+  CHECK(kept.boss_damage_pct == 100);
+  CHECK(kept.count_pct == 100);
+
+  // Seed N2BTEYKM: 3 players, boss life 300%; Gohma's eye hits of 1 each. Through the word (as Now() gives
+  // them to the Life step), every third hit is taken, not every one.
+  const Values three = UnpackValues(PackValues(proto::auto_difficulty(3)));
+  CHECK(three.boss_hp_pct == 300);
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kGohmaLife = 0x30'0000'4000, kGohma = 0x30'0000'5000, kLinkLife = 0x30'0000'6000;
+  CHECK(kinds->Mark(kGohmaLife, Kind::boss_life));
+  CHECK(kinds->Mark(kGohma, Kind::boss));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  auto attacker_of = [&] { return kGohma; };
+  std::int32_t taken = 0;
+  for (int hit = 0; hit < 21; ++hit) {
+    taken += kinds->Step(kGohmaLife, 1, three, 0, attacker_of);
+  }
+  CHECK(taken == 7);
+  CHECK(kinds->BossSteps() == 21);
+  CHECK(kinds->BossDamageTaken() == 7);
+  // Her hits on our Link at the boss damage, 140%: 5 quarter hearts become 7.
+  CHECK(kinds->Step(kLinkLife, 5, three, 0, attacker_of) == 7);
 }

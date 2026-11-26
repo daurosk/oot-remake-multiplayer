@@ -1,0 +1,32 @@
+# hs-epona-sync (Hookshot), A: the watcher (see hs-epona-sync.B.txt for the pass lines). A stands
+# 10 m south of the field's Epona as adult and watches B get on, win her, gallop, get off, walk away
+# and get on again. A's own Epona (the field's, A's game has not won her until the shared end
+# arrives) stays A's own: nothing of B's horse is made as a real Epona here.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+setflag Sequence_IsChildhood 0  # adult AFTER the save is loaded (run.ps1 loads it first): set at the
+# title, the save's load put the child age back and the warp landed in HyruleField_Child
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the warp lands
+mark field
+place -100.5 151.0 254.5 # 10 m south of Epona
+wait 240
+toward -100.47 264.55 6  # face her (and B)
+press ZL                 # camera behind A
+mark by-horse
+wait 300
+mark mounted
+wait 360
+mark gallop
+wait 180
+mark jump
+wait 560
+mark dismounted
+wait 220
+mark walked-away
+wait 400
+mark mounted-again
+wait 420
+mark end

@@ -78,6 +78,8 @@ struct Config {
   // little (a router on the home network answers in milliseconds); a missed
   // one is asked again a quarter of the lease later.
   std::vector<std::uint32_t> renew_waits_ms{100};
+  // The one IPv4 address of this PC (host order) the asking socket binds to; none: all addresses (tests: 127.0.0.1).
+  std::optional<std::uint32_t> bind;
   std::function<void(const std::string&)> log;
 };
 

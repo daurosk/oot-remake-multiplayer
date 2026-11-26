@@ -2,6 +2,8 @@
 // The Lobby's rules (coop_lobby.h).
 #include "coop_lobby.h"
 
+#include <algorithm>
+
 namespace CoopLobby {
 
 namespace {
@@ -45,10 +47,25 @@ std::optional<Command> Parse(std::string_view text) {
         c.kind = Command::Kind::mute;
     } else if (c.word == "unmute") {
         c.kind = Command::Kind::unmute;
+    } else if (c.word == "allow") {
+        c.kind = Command::Kind::allow;
+    } else if (c.word == "deny") {
+        c.kind = Command::Kind::deny;
     } else {
         return std::nullopt;
     }
     std::string_view rest = space == std::string_view::npos ? std::string_view{} : Trim(text.substr(space));
+    if (c.kind == Command::Kind::allow || c.kind == Command::Kind::deny) {
+        // "/allow Riley always", "/allow always": the last word says to remember the answer.
+        const auto last = rest.find_last_of(" \t");
+        const std::string_view tail = last == std::string_view::npos ? rest : rest.substr(last + 1);
+        if (Lower(tail) == "always") {
+            c.always = true;
+            rest = last == std::string_view::npos ? std::string_view{} : Trim(rest.substr(0, last));
+        }
+        c.name = std::string(rest);  // "": the oldest who asks
+        return c;
+    }
     if (c.kind == Command::Kind::mute || c.kind == Command::Kind::unmute) {
         // "/mute Saria voice": the last word says what, when it is voice or chat.
         const auto last = rest.find_last_of(" \t");
@@ -88,6 +105,8 @@ std::vector<proto::LobbyAction> ActionsFor(Command::Kind kind, std::uint8_t what
         }
         break;
     }
+    case Command::Kind::allow:
+    case Command::Kind::deny:
     case Command::Kind::bad: break;
     }
     return out;
@@ -175,6 +194,90 @@ std::string OwnMuteLine(std::string_view name, std::uint8_t what, bool on, bool 
     }
     return on ? "you muted " + n + "'s " + WhatWords(what) + " (only you: nobody is told)"
               : "you hear " + n + "'s " + WhatWords(what) + " again";
+}
+
+std::optional<std::string> Knocks::Take(const proto::JoinKnock& knock) {
+    const auto it = std::find_if(open_.begin(), open_.end(),
+                                 [&](const proto::JoinKnock& k) { return k.knock == knock.knock; });
+    if (knock.wait_s == 0) {
+        if (it == open_.end()) {
+            return std::nullopt;  // answered already
+        }
+        open_.erase(it);
+        return knock.nickname + " is no longer waiting to join";
+    }
+    if (it != open_.end()) {
+        *it = knock;
+    } else {
+        open_.push_back(knock);
+    }
+    const bool known = (knock.flags & proto::join_knock::known) != 0;
+    // With more than one waiting, the commands name the player.
+    const std::string who = open_.size() > 1 ? " " + knock.nickname : std::string();
+    return knock.nickname + " wants to join" + (known ? " (you let this player in before)" : "") + ": /allow" +
+           who + " or /deny" + who + " (" + std::to_string(knock.wait_s) + " s)";
+}
+
+std::optional<proto::JoinKnock> Knocks::Find(std::string_view who) const {
+    if (open_.empty()) {
+        return std::nullopt;
+    }
+    if (who.empty()) {
+        return open_.front();
+    }
+    const std::string want = Lower(who);
+    for (const auto& k : open_) {
+        if (Lower(k.nickname) == want) {
+            return k;
+        }
+    }
+    for (const auto& k : open_) {
+        if (Lower(k.nickname).rfind(want, 0) == 0) {
+            return k;
+        }
+    }
+    return std::nullopt;
+}
+
+void Knocks::Forget(std::uint32_t knock) {
+    std::erase_if(open_, [&](const proto::JoinKnock& k) { return k.knock == knock; });
+}
+
+proto::JoinAllow AnswerFor(const proto::JoinKnock& knock, Command::Kind kind, bool always) {
+    return proto::JoinAllow{knock.knock, kind == Command::Kind::allow, always};
+}
+
+std::string AnswerLine(std::string_view name, bool allow, bool always) {
+    const std::string n(name);
+    if (allow) {
+        return "you let " + n + " in" + (always ? "; they join without asking until you stop hosting" : "");
+    }
+    return "you turned " + n + " away" + (always ? "; they are kept out until you stop hosting" : "");
+}
+
+std::string HostChangedLine(std::uint8_t before, std::uint8_t after, std::string_view name, bool self) {
+    // (this game: the host_changed event's own line says it, "you host now: ...", in the player's language)
+    if (before == 0 || after == 0 || before == after || self) return {};
+    return std::string(name) + " is now the host: their save is the one played";
+}
+
+std::string TitleHostLine(bool connected, bool self_hosts, std::string_view host_name) {
+    if (!connected) return {};
+    if (self_hosts) return "Co-op: you host. Continue loads your save.";
+    return "Co-op: " + (host_name.empty() ? std::string("another player") : std::string(host_name)) +
+           " hosts. Continue loads their save.";
+}
+
+std::string NoKnockLine(std::string_view word, std::string_view who) {
+    const std::string w(word);
+    if (who.empty()) {
+        return w + ": nobody is asking to join";
+    }
+    return w + ": nobody called " + std::string(who) + " is asking to join";
+}
+
+std::string WaitingLine(std::uint16_t wait_s) {
+    return "the host is asked to let you in: waiting up to " + std::to_string(wait_s) + " s";
 }
 
 }  // namespace CoopLobby

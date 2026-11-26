@@ -456,6 +456,36 @@ void put_user(FakeMemory& m, const Layout& l) {
   }
 }
 
+// The 13 armor links after the 8 hand slots, each read and empty, as the
+// game has them: without this a test's other links are not readable.
+// Int flags of the GameData manager (its Int table, as GameFlags reads it).
+constexpr std::uint64_t kIntEntries = 0x90400000, kIntSlots = 0x90500000;
+constexpr std::uint32_t kIntCap = 17;
+void put_ints(FakeMemory& m, const std::vector<std::pair<std::string, std::int32_t>>& flags) {
+  m.put_u64(FakeMemory::kBase + 0x4e842a8, kGameData);
+  m.put_u32(kGameData + 0xd0, static_cast<std::uint32_t>(flags.size()));
+  m.put_u64(kGameData + 0xd8, kIntEntries);
+  m.put_u64(kGameData + 0xe0, kIntSlots);
+  m.put_u32(kGameData + 0xec, kIntCap);
+  for (std::uint32_t i = 0; i < kIntCap; ++i) m.put_u64(kIntSlots + 8 * i, 0);
+  for (std::uint32_t i = 0; i < flags.size(); ++i) {
+    const std::uint32_t hash = proto::flag_hash(flags[i].first);
+    std::uint32_t s = hash % kIntCap;
+    while (*read_u32(m, kIntSlots + 8 * s) != 0) s = (s + 1) % kIntCap;
+    m.put_u32(kIntSlots + 8 * s, hash);
+    m.put_u32(kIntSlots + 8 * s + 4, i);
+    m.put_u32(kIntEntries + 0x28ull * i + 0x1c, static_cast<std::uint32_t>(flags[i].second));
+  }
+}
+
+void put_links(FakeMemory& m) {
+  for (std::uint32_t a = 0; a < addr::kArmorLinkCount; ++a) {
+    const std::uint32_t link = 8 + a;
+    m.put_u64(kUser + 0x20 + 0x18 * link + 8, kEquipHolders + 0x100 * link);
+    m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+  }
+}
+
 void put_equipped(FakeMemory& m, std::uint32_t slot, std::uint32_t id, std::uint32_t state,
                   std::uint8_t bits) {
   const std::uint64_t holder = kEquipHolders + 0x100 * slot;
@@ -516,6 +546,38 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e.ocarina == "Item_Ocarina_Time");
     CHECK_FALSE(e.arrow);
     CHECK(e.drawn == 0x01);
+    CHECK(e.lit == 0x00);  // the sword plays no Chemical_Fire
+  }
+  SUBCASE("a lit Deku stick in hand (issue 248): its ELink user plays Chemical_Fire") {
+    put_user(m, l);
+    put_equipped(m, 0, 40, 4, 0x2);  // the stick, drawn
+    const std::uint64_t stick = kEquipActors;
+    const std::uint64_t table = 0x7100000, xlink = 0x7110000, user = 0x7120000;
+    const std::uint64_t event = 0x7130000, call = 0x7140000, key = 0x7150000;
+    const std::uint32_t back = 0x10;  // the link's place in its event
+    m.put_u64(stick + 0x270, table);
+    m.put_u64(table + 0x68, xlink);
+    m.put_u64(xlink + 0x70, user);
+    m.put_u32(user + 0x3c, back);
+    m.put_u64(event + back + 8, user + 0x28);  // the only event: its next link is the head
+    m.put_u64(event + 0x30, call);
+    m.put_u64(call, key);
+    SUBCASE("burning") {
+      m.put_u64(user + 0x30, event + back);
+      m.put(key, "Chemical_Fire", 14);
+      CHECK(reader.read_equipment()->lit == 0x01);
+      m.put_u8(kUser + 0x13bc, 0x4);  // put away: not looked at
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
+    SUBCASE("another effect only (the ignite flash) is not lit") {
+      m.put_u64(user + 0x30, event + back);
+      m.put(key, "Chemical_FireStart", 19);
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
+    SUBCASE("nothing playing") {
+      m.put_u64(user + 0x30, user + 0x28);
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
   }
   SUBCASE("bad strings are dropped") {
     put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Kokiri"}, {addr::kEquipShield, "x"}});
@@ -594,6 +656,59 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->sub_tool == "");
     CHECK(e->held == "");
   }
+  SUBCASE("puppet-gear-148: the shield the game holds (slot 4) over the EquipShield flag") {
+    put_user(m, l);
+    put_strings(m, {{addr::kEquipShield, "Weapon_Shield_Mirror"}});
+    const auto name_in = [&](std::uint32_t slot, const std::string& name) {
+      put_equipped(m, slot, 60 + slot, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * slot;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("an empty slot leaves the flag") {
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+    SUBCASE("a child at the age change: the Deku Shield it holds, not the adult's Mirror Shield") {
+      name_in(4, "Weapon_Shield_Deku");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Deku");
+    }
+    SUBCASE("something else in the slot is no shield: the flag stands") {
+      name_in(4, "Item_Ocarina_Fairy");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+  }
+  SUBCASE("puppet-gear-148: a shield or tunic the player lost (StockNum 0) is not worn") {
+    put_user(m, l);
+    put_links(m);
+    put_strings(m, {{addr::kEquipShield, "Weapon_Shield_Hylian"},
+                    {addr::kEquipArmor, "Armor_Adult_Goron"},
+                    {addr::kEquipBoot, "Armor_Adult_HoverBoot"}});
+    CHECK(proto::flag_hash("PouchData.Weapon_Shield_Deku.StockNum") == 0x7ca64f23u);
+    SUBCASE("burnt or eaten: the count is 0") {
+      put_ints(m, {{"PouchData.Weapon_Shield_Hylian.StockNum", 0},
+                   {"PouchData.Armor_Adult_Goron.StockNum", 0},
+                   {"PouchData.Armor_Adult_HoverBoot.StockNum", 1}});
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "");
+      CHECK(e->armor == "");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+    }
+    SUBCASE("still owned: the flags stand") {
+      put_ints(m, {{"PouchData.Weapon_Shield_Hylian.StockNum", 1},
+                   {"PouchData.Armor_Adult_Goron.StockNum", 1}});
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "Weapon_Shield_Hylian");
+      CHECK(e->armor == "Armor_Adult_Goron");
+    }
+    SUBCASE("a count not read leaves the name") {
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "Weapon_Shield_Hylian");
+      CHECK(e->armor == "Armor_Adult_Goron");
+    }
+  }
   SUBCASE("the child's Goron's Bracelet is sent as hand, from its accessory link") {
     put_user(m, l);
     // Armor link 9 is the 18th link of the same array (8 hand slots first).
@@ -615,31 +730,206 @@ TEST_CASE("host reader: what the player wears") {
       put_strings(m, {{addr::kEquipHandArmor, ""}, {addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
       CHECK_FALSE(reader.read_equipment()->hand);
     }
-    SUBCASE("an empty flag and an empty link: no hand piece") {
+    SUBCASE("an empty flag with every link read but one is not known either") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
-      m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+      put_links(m);
+      m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag and empty links: no hand piece") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       CHECK(reader.read_equipment()->hand == "");
     }
     SUBCASE("the bracelet, while EquipHandArmor is empty") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Armor_Child_Gauntlet_Goron");
       CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
     }
-    SUBCASE("the adult's gauntlets flag stands") {
+    SUBCASE("row 148: a young Link whose flag still names the Golden Gauntlets") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      put_links(m);
+      SUBCASE("wears the bracelet the game draws, not the adult's gauntlets") {
+        wear("Armor_Child_Gauntlet_Goron");
+        CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
+      }
+      SUBCASE("with no hand piece in any link wears none") {
+        CHECK(reader.read_equipment()->hand == "");
+      }
+      SUBCASE("with a link unreadable (a load) not known: the flag is never sent") {
+        m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+        CHECK_FALSE(reader.read_equipment()->hand);
+      }
+    }
+    SUBCASE("an adult's named hand flag stands, as before row 148") {
       put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"}});
+      put_links(m);
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
       wear("Armor_Child_Gauntlet_Goron");
       CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
     }
     SUBCASE("another piece in that link is not a bracelet") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Item_Ocarina_Fairy");
       CHECK(reader.read_equipment()->hand == "");
     }
     SUBCASE("the bracelet gone") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Armor_Child_Gauntlet_Goron");
       m.put_u32(kEquipActors + 0x1000 * link + 0x2c, 8);
       CHECK(reader.read_equipment()->hand == "");
+    }
+  }
+  SUBCASE("a mask, tunic, boots or gauntlets are read from the armor links (issue 91, row 148)") {
+    put_user(m, l);
+    put_links(m);
+    // Armor link a is link 8 + a of the same array (8 hand slots first).
+    const auto wear = [&](std::uint32_t a, const std::string& name) {
+      const std::uint32_t link = 8 + a;
+      put_equipped(m, link, 80 + a, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * link;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("a mask from ZR while EquipHeadArmor is empty") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}});
+      wear(0, "Armor_Child_Mask_Skull");
+      CHECK(reader.read_equipment()->head == "Armor_Child_Mask_Skull");
+    }
+    SUBCASE("by name, in whichever link the game put it") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}, {addr::kEquipBoot, ""}});
+      wear(4, "Armor_Child_Mask_Bunny");
+      wear(2, "Armor_Adult_HoverBoot");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "Armor_Child_Mask_Bunny");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+    }
+    SUBCASE("an unknown flag is filled too") {
+      put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
+      wear(2, "Armor_Adult_HeavyBoot");
+      wear(1, "Armor_Adult_Zora");
+      const auto e = reader.read_equipment();
+      CHECK(e->boots == "Armor_Adult_HeavyBoot");
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK_FALSE(e->head);  // no mask worn and its flag unknown: still unknown
+    }
+    SUBCASE("the adult wearing what the flags name: sent as worn") {
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Goron"},
+                      {addr::kEquipBoot, "Armor_Adult_HoverBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      wear(1, "Armor_Adult_Goron");
+      wear(2, "Armor_Adult_HoverBoot");
+      wear(3, "Armor_Adult_Gauntlet_Gold");
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Goron");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Gold");
+    }
+    SUBCASE("a child: the link decides over the flag") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
+                      {addr::kEquipArmor, "Armor_Adult_Goron"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      wear(0, "Armor_Child_Mask_Skull");
+      wear(1, "Armor_Adult_Zora");
+      wear(3, "Armor_Adult_Gauntlet_Silver");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "Armor_Child_Mask_Skull");
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
+    }
+    SUBCASE("row 148, every such piece: a young Link's adult flags that no link holds are not worn") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
+                      {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
+                      {addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "");
+      CHECK(e->boots == "");
+      CHECK(e->hand == "");
+      CHECK(e->head == "");  // a mask by its flag alone: the game draws none (wear-masks)
+    }
+    SUBCASE("an adult's named flags stand with no link piece (rule before row 148)") {
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
+                      {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
+                      {addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"}});
+      wear(0, "Armor_Child_Mask_Skull");
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK(e->boots == "Armor_Adult_HeavyBoot");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
+      // A child's piece is the links' at any age (puppet-gear-148): the mask
+      // the link holds, not the flag's.
+      CHECK(e->head == "Armor_Child_Mask_Skull");
+    }
+    SUBCASE("puppet-gear-148, the other way: an adult's child flags that no link holds are not worn") {
+      put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
+                      {addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"},
+                      {addr::kEquipArmor, "Armor_Adult_Goron"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "");
+      CHECK(e->hand == "");
+      CHECK(e->armor == "Armor_Adult_Goron");  // an adult's own piece: the flag stands
+      SUBCASE("with a link unreadable (a load) not known") {
+        m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+        const auto during = reader.read_equipment();
+        CHECK_FALSE(during->head);
+        CHECK_FALSE(during->hand);
+      }
+    }
+    SUBCASE("an adult wearing a child's piece the link holds keeps it") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"}});
+      wear(9, "Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
+    }
+    SUBCASE("a flag naming a piece the links never hold stands, for a child too") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Normal"},
+                      {addr::kEquipHeadArmor, "Armor_GlassTruth"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Normal");
+      // ...but a head flag that is no mask is never sent (row 197): the Lens
+      // of Truth's base actor, the adult's unposed glasses on a puppet.
+      CHECK(e->head == "");
+    }
+    SUBCASE("the Lens of Truth's head flag is not sent, at either age (row 197)") {
+      for (const std::uint8_t child : {std::uint8_t{0}, std::uint8_t{1}}) {
+        CAPTURE(child);
+        m.put_u8(l.game_ui + addr::kGameUiIsChild, child);
+        put_strings(m, {{addr::kEquipHeadArmor, "Armor_GlassTruth"}});
+        CHECK(reader.read_equipment()->head == "");
+        wear(0, "Armor_Child_GlassTruth");  // nor the lens in a link
+        CHECK(reader.read_equipment()->head == "");
+        wear(0, "Armor_Child_Mask_Keaton");  // a mask in a link still is
+        CHECK(reader.read_equipment()->head == "Armor_Child_Mask_Keaton");
+        wear(0, "");
+      }
+    }
+    SUBCASE("other pieces in the links are not a mask, tunic or boots") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}, {addr::kEquipBoot, ""}, {addr::kEquipArmor, ""}});
+      wear(0, "Item_Ocarina_Fairy");
+      wear(9, "Armor_Child_Gauntlet_Goron");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "");
+      CHECK(e->boots == "");
+      CHECK(e->armor == "");
+      CHECK(e->hand == "Armor_Child_Gauntlet_Goron");
+    }
+    SUBCASE("the mask taken off again (ZR): its link empties, head is empty") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}});
+      wear(0, "Armor_Child_Mask_Skull");
+      CHECK(reader.read_equipment()->head == "Armor_Child_Mask_Skull");
+      m.put_u32(kEquipActors + 0x1000 * 8 + 0x2c, 8);  // the piece gone
+      CHECK(reader.read_equipment()->head == "");
     }
   }
   SUBCASE("a request lasts a moment: the last one stands") {
@@ -729,4 +1019,133 @@ TEST_CASE("host reader: what the player wears") {
     PlayerReader alone(m);
     CHECK(alone.read_equipment()->drawn == 0x00);
   }
+}
+
+TEST_CASE("host reader: our Link an event member counts as in an event, word 0 or not (row 97, G1)") {
+  // The game's own member test: M = [[actor + 0x270] + 0x88], its record L = [M + 0x18], four slots
+  // of 0x38 bytes from L + 0x10, a member when a slot holds an event pointer and flag bit 0.
+  FakeMemory m;
+  const Layout l = make_game(m);
+  constexpr std::uint64_t kParts = 0x92000000, kMember = 0x92100000, kRecord = 0x92200000;
+  constexpr std::uint64_t kEvent = 0x106d85b750;  // as the offline run fable-g1-events read it
+  const auto slot = [&](std::uint64_t i) { return kRecord + addr::kRecordSlots + addr::kMemberSlotSize * i; };
+  m.put_u64(l.actor1 + addr::kActorComponents, kParts);
+  m.put_u64(kParts + addr::kEventMemberSlot, kMember);
+  m.put_u64(kMember + addr::kMemberRecord, 0);  // in no event
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == false);
+    CHECK_FALSE(r->event_by_link);
+    CHECK_FALSE(r->link_bound);
+  }
+  m.put_u64(kMember + addr::kMemberRecord, kRecord);
+  for (std::uint64_t i = 0; i < addr::kMemberSlots; ++i) {
+    m.put_u64(slot(i), 0);
+    m.put_u8(slot(i) + addr::kSlotFlags, 0);
+  }
+  // Our Link holds the event's pointer without the member flag (as Link's sword does): not a member.
+  m.put_u64(slot(0), kEvent);
+  m.put_u8(slot(0) + addr::kSlotFlags, 0x2);
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
+    CHECK(reader.read()->event_running == false);
+  }
+  // The flag in another slot (an event nested in a running one): a member.
+  m.put_u64(slot(1), kEvent + 0x1220);
+  m.put_u8(slot(1) + addr::kSlotFlags, 0x1);
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK(r->event_by_link);
+    CHECK(r->link_bound);
+    CHECK(reader.read_event_running() == true);
+    CHECK(reader.read_event_word() == false);
+  }
+  m.put_u64(l.events + addr::kEventRunning, 0x10000);  // the word too: not "by the link only"
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK_FALSE(r->event_by_link);
+    CHECK(r->link_bound);
+  }
+  // The word alone, our Link not a member: an event runs that does not take our Link.
+  m.put_u8(slot(1) + addr::kSlotFlags, 0);
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK_FALSE(r->link_bound);
+  }
+  // A record that cannot be read: not known, never a member.
+  m.put_u64(l.events + addr::kEventRunning, 0);
+  m.put_u64(kMember + addr::kMemberRecord, 0x93000000);
+  m.put_u64(kParts + addr::kEventMemberSlot, 0x94000000);  // M itself unreadable
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == std::nullopt);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == false);
+    CHECK_FALSE(r->link_bound);
+  }
+}
+
+TEST_CASE("host reader: the player's life from its own Life component, dead at 0 (away-status)") {
+  // [[[actor + 0x270] + 0x2b8] + 0x1c10] + 8: the objects walk's read (coop_objects.cpp LifeValue).
+  FakeMemory m;
+  const Layout l = make_game(m);
+  {
+    PlayerReader reader(m);  // no Life component: not known, never "alive" or "dead"
+    CHECK(reader.read_life() == std::nullopt);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->dead == std::nullopt);
+  }
+  constexpr std::uint64_t kParts = 0x93000000, kLife = 0x93100000, kValue = 0x93200000;
+  m.put_u64(l.actor1 + addr::kActorComponents, kParts);
+  m.put_u64(kParts + addr::kComponentLife, kLife);
+  m.put_u64(kLife + addr::kLifeValue, kValue);
+  m.put_u32(kValue + addr::kLifeValueWord, 12);  // three hearts
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_life() == 12);
+    CHECK(reader.read()->dead == false);
+  }
+  m.put_u32(kValue + addr::kLifeValueWord, 1);  // a downed Link's quarter heart (down but not out): not dead
+  CHECK(PlayerReader(m).read()->dead == false);
+  m.put_u32(kValue + addr::kLifeValueWord, 0);  // Game Over
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_life() == 0);
+    CHECK(reader.read()->dead == true);
+  }
+  m.put_u32(kValue + addr::kLifeValueWord, 0xFFFFFFFFu);  // garbage (-1): not known
+  CHECK(PlayerReader(m).read()->dead == std::nullopt);
+  m.put_u32(kValue + addr::kLifeValueWord, 4 * 41);  // above protocol::kMaxLifeQuarters: not known
+  CHECK(PlayerReader(m).read_life() == std::nullopt);
+
+  // A split-screen seat (set_actor) reads its own actor's Life, not the first Link's.
+  constexpr std::uint64_t kSeat = 0x94000000, kSeatParts = 0x94100000, kSeatLife = 0x94200000,
+                          kSeatValue = 0x94300000;
+  m.put_u32(kValue + addr::kLifeValueWord, 12);
+  m.put_u32(kSeat + addr::kActorState, addr::kActorStatePresent);
+  m.put_vec3(kSeat + addr::kActorPosition, {4.0f, 5.0f, 6.0f});
+  put_matrix(m, kSeat, Mat3{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}});
+  m.put_u64(kSeat + addr::kActorComponents, kSeatParts);
+  m.put_u64(kSeatParts + addr::kComponentLife, kSeatLife);
+  m.put_u64(kSeatLife + addr::kLifeValue, kSeatValue);
+  m.put_u32(kSeatValue + addr::kLifeValueWord, 0);
+  PlayerReader seat(m);
+  seat.set_actor(kSeat);
+  CHECK(seat.read_life() == 0);
+  CHECK(PlayerReader(m).read_life() == 12);
 }

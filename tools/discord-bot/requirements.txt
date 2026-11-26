@@ -1,0 +1,2 @@
+# The bug-report bot runs only on the owner PC (run-bot.ps1). Pinned.
+discord.py==2.5.2

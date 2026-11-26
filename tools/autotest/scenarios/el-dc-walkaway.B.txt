@@ -1,0 +1,29 @@
+# el-dc-walkaway B (proof-0116): stands 6 m from the Keese the whole time (comes in after A).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp DodongoCavern EntrancePos
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+place 56.0 98.5 8.0
+wait 30
+toward 64.0 16.0 6
+wait 570
+mark b-near
+wait 900
+mark b-away
+wait 600
+mark b-back
+wait 300
+mark end

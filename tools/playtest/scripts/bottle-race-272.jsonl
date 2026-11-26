@@ -1,0 +1,26 @@
+# what: Row 272: both players get Anju's bottle in the same frame; A's bottle lands in B, B's own then in C. One new bottle each, no third.
+# scene: KakarikoVillage
+# start: Both games in play after the boot (any child save with bottle B and C empty), both held (oot-pair: both run frame for frame).
+# expect: B's log has the 'put back, not sent (row 272)' flags line once, A's none; shots menu-A / menu-B show the same bottles (the save's own and ONE new empty).
+# kit: 1
+{"server":"oot-pair","tool":"get_state","args":{}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p1","name":"MiniGame_CatchCucco_IsCompleted","value":1}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p2","name":"MiniGame_CatchCucco_IsCompleted","value":1}}
+{"server":"oot-pair","tool":"step","args":{"frames":90}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p1","name":"PouchData.BottleB.StockNum","value":1}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p1","name":"PlayerStatus.AssignableItem.BottleInfo.BottleB.IsValid","value":1}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p1","name":"PlayerStatus.AssignableItem.BottleInfo.BottleB.BottleItem","value":"Empty"}}
+{"server":"oot-pair","tool":"step","args":{"frames":240}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p2","name":"PouchData.BottleC.StockNum","value":1}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p2","name":"PlayerStatus.AssignableItem.BottleInfo.BottleC.IsValid","value":1}}
+{"server":"oot-pair","tool":"flag","args":{"player":"p2","name":"PlayerStatus.AssignableItem.BottleInfo.BottleC.BottleItem","value":"Empty"}}
+{"server":"oot-pair","tool":"step","args":{"frames":660}}
+{"server":"oot-pair","tool":"press","args":{"player":"p1","buttons":["PLUS"],"frames":12}}
+{"server":"oot-pair","tool":"press","args":{"player":"p2","buttons":["PLUS"],"frames":12}}
+{"server":"oot-pair","tool":"step","args":{"frames":180}}
+{"server":"oot-pair","tool":"screenshot","args":{"player":"p1","name":"menu-A"}}
+{"server":"oot-pair","tool":"screenshot","args":{"player":"p2","name":"menu-B"}}
+{"server":"oot-pair","tool":"check_logs","args":{"player":"p1"}}
+{"server":"oot-pair","tool":"check_logs","args":{"player":"p2"}}
+{"server":"oot-pair","tool":"press","args":{"player":"p1","buttons":["B"],"frames":12}}
+{"server":"oot-pair","tool":"press","args":{"player":"p2","buttons":["B"],"frames":12}}

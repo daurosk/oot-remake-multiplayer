@@ -1,0 +1,31 @@
+# cucco-claim B (proof-0116): lands later, picks up A's Cucco, walks 5 m with it, puts it down.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1800
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark landed
+goto -11.04 27.0 1.0 600
+toward -11.04 28.49 8
+press A
+wait 90
+mark b-lifted
+goto -11.0 22.5 1.0 600
+mark b-carry
+wait 120
+mark b-carry2
+press A
+wait 120
+mark b-dropped
+wait 600
+mark end

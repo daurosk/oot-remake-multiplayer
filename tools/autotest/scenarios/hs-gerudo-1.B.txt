@@ -1,0 +1,10 @@
+# hs-gerudo phase 1 (B): adult, warp into Gerudo Fortress, stand at cell 1's guard spot (23.3 102.5 -66.8).
+mark start
+setflag Sequence_IsChildhood 0
+warp GerudoFortress_Adult GerudoFortress_FromGerudoValley
+wait 900
+mark arrived
+place 23.3 102.6 -68.0
+wait 300
+toward 31.9 -66.6 10   # face the cell
+mark at-cell1

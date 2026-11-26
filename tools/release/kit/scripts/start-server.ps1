@@ -10,6 +10,11 @@ param(
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 $ErrorActionPreference = 'Continue'
+# QuickEdit off first (#239, the alt-tab freeze): a click in this window starts a selection that pauses
+# Write-Host below; coop_server.exe's output pipe then fills, its log write blocks and the server stops
+# sending to every player (0.11.0 logs: "nothing from the server for 16 s", then a reconnect). console-mode.ps1, never fails.
+$consoleMode = Join-Path $PSScriptRoot 'console-mode.ps1'
+if (Test-Path -LiteralPath $consoleMode) { . $consoleMode; [void](Disable-KitQuickEdit) }
 $kit = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $kit 'server\coop_server.exe'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
@@ -33,6 +38,11 @@ if ($Bind.Trim()) {
 . (Join-Path $PSScriptRoot 'invite.ps1')
 $kitAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
 $password = $kitAccess.Password
+if ($kitAccess.PublicGame) {
+    # A public game (public_game = on): the room Host.bat chose (or a ready one), its password made from it.
+    $kitAccess.RelayRoom = Get-KitPublicRoom $kitAccess $env:OOT_COOP_PUBLIC_ROOM
+    $password = Get-KitPublicPassword $kitAccess.RelayRoom
+}
 # No server_password (no line, or an empty one): a new random one for this session. Every
 # session has a password, which also encrypts the traffic (docs/play-online.md). Host.bat
 # makes it and hands it over in OOT_COOP_SESSION_PASSWORD, so the host's own game has it too.
@@ -59,7 +69,10 @@ $log = Join-Path $logs ('server-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
 
 Write-Host "Co-op server on UDP port $Port. Log: $log"
 Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
-if ($madePassword) {
+if ($kitAccess.PublicGame) {
+    Write-Host "Public game: room $($kitAccess.RelayRoom). Anyone can join it from Public games with no password, only through the relay (your address is never shown). Kick or ban in the game's Lobby tab."
+}
+elseif ($madePassword) {
     Write-Host 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).'
     # Shown here only (never in the log), for friends who join by a VPN or home-network address.
     Write-Host "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
@@ -104,8 +117,13 @@ try { $sessionText = Write-KitHostSession $kit $Port $password } catch { }
     if ($release -and $text -match 'refused a connection, reason 1\b') {
         $text += ". This server is co-op ${release}: every player needs $release (Update.bat updates to the newest release)."
     }
-    # The relay's join code (relay-join.ps1): copied, so the host can paste it to the others.
-    if ($text -match 'relay: join code \S+\. Give your friends (\S+) ') {
+    # The relay's room name or join code (relay-join.ps1): copied, so the host can paste it to the
+    # others. The room, when the host has one (relay_room), is what friends type; the code does not
+    # take its place on the clipboard.
+    if ($text -match 'relay: room "\S+" is yours\. Friends join with (\S+)') {
+        try { Set-Clipboard -Value $Matches[1] -ErrorAction Stop; $text += ' Copied to the clipboard.'; $script:RoomCopied = $true } catch { }
+    }
+    elseif (-not $script:RoomCopied -and $text -match 'relay: join code \S+\. Give your friends (\S+) ') {
         try { Set-Clipboard -Value $Matches[1] -ErrorAction Stop; $text += ' Copied to the clipboard.' } catch { }
     }
     # The invite code (coop_server --invite): copied for the host, and never written to the log

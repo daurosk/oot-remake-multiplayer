@@ -1,0 +1,70 @@
+# hs-seed-wall, B (see hs-seed-wall.A.txt): B shoots three seeds at the map chest / the wall behind it,
+# ~3-4 m ahead. A seed flies ~74 m/s, so it lands ~3 ticks after the shot; A shows the copy kBehindUs
+# late and holds it 0.2 s at the spot: hitNa..hitNf (every 3 ticks from the shot) span the landing on
+# both screens.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 300
+place 4.4 108.9 5.1
+wait 30
+toward 6.51 7.25 4        # face the chest
+press ZL 10
+wait 60
+mark ready
+hold ZR 90
+mark aim1
+wait 3
+mark hit1a
+wait 3
+mark hit1b
+wait 3
+mark hit1c
+wait 3
+mark hit1d
+wait 3
+mark hit1e
+wait 3
+mark hit1f
+wait 90
+hold ZR 90
+wait 3
+mark hit2a
+wait 3
+mark hit2b
+wait 3
+mark hit2c
+wait 3
+mark hit2d
+wait 3
+mark hit2e
+wait 3
+mark hit2f
+wait 90
+hold ZR 90
+wait 3
+mark hit3a
+wait 3
+mark hit3b
+wait 3
+mark hit3c
+wait 3
+mark hit3d
+wait 3
+mark hit3e
+wait 3
+mark hit3f
+wait 90
+press B
+wait 30
+mark end

@@ -1,0 +1,42 @@
+# hs-dbno-crawl, B (not the host): stands beside the Deku Baba (-71.33, 3.5) until it is downed, then waits
+# lying beside it (the Baba must ignore it), crawls forward, sideways and back (see hs-dbno-crawl.A.txt).
+# The Baba is on the lower floor (y 82): B is placed 3 m east of it (the old goto ran into a 1F wall, run 20261116-114617).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (VOID 2026-11-21)
+place -68.0 82.5 3.5     # beside the Baba (-71.33 82.21 3.50; lower floor, a straight goto from the entrance hits a 1F wall)
+wait 240
+toward -71.33 3.5 20
+mark baba
+wait 1800
+mark bitten1
+wait 1800
+mark bitten2
+hurt 80                  # downed for sure (the bites alone left B up at a high difficulty life, VOID 2026-11-21); the guard holds the lethal hit while A is up
+wait 1800
+mark down
+wait 900
+mark lying
+stick 0 1 240
+mark crawl-fwd
+stick 1 0 180
+mark crawl-side
+stick 0 -1 240
+mark crawl-back
+stick -1 0.5 600
+mark crawl-far
+wait 1200
+mark still-down
+wait 1200
+mark late

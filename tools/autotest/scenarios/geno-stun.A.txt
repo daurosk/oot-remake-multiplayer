@@ -1,0 +1,59 @@
+# geno-stun (geno-polish-ai, ai-stuns #332): A stands by the Deku Tree entrance's Deku Baba (-71.33 3.50) first, so
+# A owns it; B comes beside A and throws Deku Nuts at it: B's copy is stunned in B's game, B's DAMAGE of 0 hands the
+# Baba to B (server 'a stun by a copy (ai-stuns)', stun_to_stunner), and A's Baba then shows B's stun.
+# PASS: B's b-stun-* shots and A's a-watch-* shots both show the Baba stunned (no Baba attacking A while B's is
+# stunned); A's log has the owner change to player 2; no crash.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+goto -68.5 3.5 1.5 900
+toward -71.33 3.5 10
+wait 300
+mark a-near
+wait 60
+mark a-watch-01
+wait 60
+mark a-watch-02
+wait 60
+mark a-watch-03
+wait 60
+mark a-watch-04
+wait 60
+mark a-watch-05
+wait 60
+mark a-watch-06
+wait 60
+mark a-watch-07
+wait 60
+mark a-watch-08
+wait 60
+mark a-watch-09
+wait 60
+mark a-watch-10
+wait 60
+mark a-watch-11
+wait 60
+mark a-watch-12
+wait 60
+mark a-watch-13
+wait 60
+mark a-watch-14
+wait 60
+mark a-watch-15
+wait 60
+mark a-watch-16
+mark end

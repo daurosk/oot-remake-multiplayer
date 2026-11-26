@@ -1,0 +1,19 @@
+# hs-native-tags, B: stands in A's view at 3, 8 and 15 m (see the A file).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+place 7.4 108.9 5.1
+wait 600
+goto 12.4 5.1 0.5 300
+wait 300
+goto 19.4 5.1 0.5 300
+wait 1500
+mark end

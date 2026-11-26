@@ -1,12 +1,15 @@
 # Builds the Hookshot-only co-op kit (no emulator): one folder (and a zip of it) a player unzips and starts with
-# "Start OoT Co-op.bat". No emulator, Fritchii or Lichii file goes in: each player builds the Hookshot game on
+# "Start Squadala.bat". No emulator, Fritchii or Lichii file goes in: each player builds the Hookshot game on
 # their own PC from their own game (scripts\hookshot-build.ps1), and Host and Join are in the game itself.
-# make_kit.ps1 still makes the emulator kits (the older releases); this script shares its kit scripts.
+# This is the only Windows kit builder: the emulator kit builder (make_kit.ps1) was removed in 0.11.12 with the emulator.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\release\make_kit_hookshot.ps1 -Release <tag>
 #
 # The kit (docs/setup.md says what the player does with it):
-#   Start OoT Co-op.bat     the one entry point: checks, update, first game build, start (scripts\start.ps1)
+#   Start Squadala.bat      the one entry point: checks, update, first game build, start (scripts\start.ps1). The only
+#                           start file from v0.11.4 on: its old name "Start OoT Co-op.bat" (up to v0.11.3) is gone, and
+#                           the kit's updater points the player's shortcuts and Steam entries at this one
+#                           (update.ps1 Update-KitStartLinks)
 #   README.txt              ten lines: what to do
 #   Update.bat              the updater in one file (also attached to the release for older kits)
 #   Revert.bat              back to the version before the last update (Update.bat -Revert)
@@ -14,10 +17,13 @@
 #   start-server.cmd        a dedicated server, for those who want one; with server\ it also marks the kit
 #                           folder for the module (hookshot/src/coop_title.cpp, FindKit)
 #   make-puppet-pack.cmd    the puppet pack made again on its own (hookshot-build.ps1 -PackOnly; the start makes it too)
+#   NVIDIA DLSS.bat         the game built again with NVIDIA DLSS, after NVIDIA's license (hookshot-build.ps1 -Dlss)
 #   server\                 coop_server.exe and the Visual C++ runtime
 #   hookshot\               hookshot_coop.dll (the co-op module), the runtime, PIN, TOOLS.txt, patches\
 #   scripts\                everything else the launcher runs; collect-logs.cmd for bug reports
 #   tools\puppet_pack\      builds the other players' Link from the player's own game
+#   nucleus\                OoTCoop.js, the Nucleus Co-op split-screen handler (tools\nucleus), and README.txt: how
+#                           to install it (Nucleus's + / Add game) and play, also with friends on other PCs
 #   docs\                   SETUP.md, KNOWN-ISSUES.md
 #   licenses\               GPL-3.0, THIRD_PARTY_NOTICES.md, SOURCE.txt, ENet and fmt licences
 #   logs\, VERSION.txt, MANIFEST.txt (the kit's own files, for the updater)
@@ -27,7 +33,7 @@
 # -HookshotDll  hookshot_coop.dll (default: found under -BuildDir)
 # -OutRoot      where the kit folder goes (default ..\coop-kit beside the main checkout)
 # -Port         the default server port written into the kit (27510)
-# -Release      the release tag: the kit is named oot-coop-<Release>
+# -Release      the release tag: the kit is named Squadala-<Release>
 # -NoZip        skip the zip
 param(
     [string]$BuildDir = '',
@@ -41,6 +47,8 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 . (Join-Path $here 'check_paths.ps1')
 . (Join-Path $here 'kit_text.ps1')
+. (Join-Path $here 'kit_pack.ps1')   # (the puppet pack tool's part: Copy-KitPack, Test-KitPackData)
+. (Join-Path $here 'kit_deps.ps1')   # (the licences of fmt and ENet: where the build's CMakeCache says their sources are)
 function Copy-Text([string]$From, [string]$To) { Copy-KitText $From $To $Port }
 function Invoke-Git([string]$Dir) {
     $out = & git.exe -C $Dir @args 2>$null
@@ -53,10 +61,10 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
 function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # What goes in. Files listed here and nowhere else, so a review sees the whole kit in one place.
-$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini')
+$KitTop = @('Start Squadala.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini', 'NVIDIA DLSS.bat')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
-    'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1', 'windows-checks.ps1')
+    'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'discord_status.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd', 'problem-report.ps1', 'problem-report.cmd', 'problem-send.ps1', 'problem-send-url.txt',
+    'log-mask.ps1', 'windows-checks.ps1', 'console-mode.ps1', 'local-coop.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
 $EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
@@ -108,14 +116,13 @@ for ($d = Split-Path -Parent ([System.IO.Path]::GetFullPath($HookshotDll)); $d; 
     if (Test-Path -LiteralPath (Join-Path $d 'CMakeCache.txt')) { $fmtRoots += $d; break }
 }
 $fmtRoots += $BuildDir
-$fmtLicense = $fmtRoots | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $_ '_deps\fmt-src') -Filter 'LICENSE*' -File -ErrorAction SilentlyContinue } |
-    Select-Object -First 1 -ExpandProperty FullName
-if (-not $fmtLicense) { throw "fmt's LICENSE not found under _deps\fmt-src of the build that made $HookshotDll." }
-$enetLicense = Join-Path $BuildDir '_deps\enet-src\LICENSE'
-if (-not (Test-Path $enetLicense)) { throw "ENet's LICENSE not found in $BuildDir\_deps\enet-src." }
+$fmtLicense = Find-KitDepLicense $fmtRoots 'fmt'
+if (-not $fmtLicense) { throw "fmt's LICENSE not found in the fmt source of the build that made $HookshotDll ($(Get-KitDepSource $fmtRoots[0] 'fmt'))." }
+$enetLicense = Find-KitDepLicense @($BuildDir) 'enet'
+if (-not $enetLicense) { throw "ENet's LICENSE not found in the ENet source of $BuildDir ($(Get-KitDepSource $BuildDir 'enet'))." }
 
 # Lay out the kit.
-$name = if ($Release) { "oot-coop-$Release" } else { 'oot-coop-{0:yyyyMMdd-HHmm}' -f (Get-Date) }
+$name = if ($Release) { "Squadala-$Release" } else { 'Squadala-{0:yyyyMMdd-HHmm}' -f (Get-Date) }
 $kit = Join-Path $OutRoot $name
 if (Test-Path $kit) { throw "$kit already exists; wait a minute or remove it." }
 New-Item -ItemType Directory -Force -Path $kit | Out-Null
@@ -124,6 +131,8 @@ $src = Join-Path $here 'kit'
 foreach ($f in $KitTop) { Copy-Text (Join-Path $src $f) (Join-Path $kit $f) }
 foreach ($f in $KitScripts) { Copy-Text (Join-Path $src "scripts\$f") (Join-Path $kit "scripts\$f") }
 Copy-Text (Join-Path $src 'coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
+# the game window's icon (hookshot-build.ps1 puts the png beside the exe; the module sets it with the title "Squadala!")
+foreach ($f in 'squadala-icon.png', 'squadala.ico') { Copy-Item -LiteralPath (Join-Path $src "assets\$f") -Destination (Join-Path $kit "scripts\$f") -Force }
 Copy-Text (Join-Path $src 'coop-options.ini') (Join-Path $kit 'scripts\coop-options.default.ini')
 Copy-Text (Join-Path $here 'verify_kit.ps1') (Join-Path $kit 'scripts\verify_kit.ps1')
 & (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
@@ -138,20 +147,16 @@ foreach ($dir in $srv, $hsKit) { Get-ChildItem $crt.FullName -Filter '*.dll' | C
 Copy-Text $hsPin (Join-Path $hsKit 'PIN')
 Copy-Text (Join-Path $src 'hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
 Copy-Text (Join-Path $src 'hookshot\OOTRR.txt') (Join-Path $hsKit 'OOTRR.txt')   # (the randomizer the build fetches)
+Copy-Text (Join-Path $src 'hookshot\CHARACTER-SELECT.txt') (Join-Path $hsKit 'CHARACTER-SELECT.txt')   # (Snail's mod the start fetches, asked first)
 foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }   # (byte for byte)
 
-# The puppet pack tool (hookshot-build.ps1 runs it with Hookshot's own Python): every module build.py imports.
-$packTool = Join-Path $repo 'tools\puppet_pack'
-# (make_kit.ps1's list: its tests and the scene-placing test helper stay out), plus every module build.py imports.
-$packFiles = @('ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py',
-    'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py')
-foreach ($line in (Get-Content (Join-Path $packTool 'build.py') | Where-Object { $_ -match '^\s*from \. import ' })) {
-    $packFiles += (($line -replace '#.*$', '') -replace '^\s*from \. import ', '').Split(',') | ForEach-Object { "$($_.Trim()).py" } | Where-Object { $_ -ne '.py' }
-}
-foreach ($f in ($packFiles | Sort-Object -Unique)) {
-    if (-not (Test-Path (Join-Path $packTool $f))) { throw "tools\puppet_pack\$f (needed by build.py) is not in the repo" }
-    Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
-}
+# The puppet pack tool (hookshot-build.ps1 runs it with Hookshot's own Python): its modules, strings and data folders
+# (kit_pack.ps1, which tests\kit_pack_test.ps1 checks on its own in CI).
+$null = Copy-KitPack $repo $kit $Port
+
+# The Nucleus Co-op handler (split screen on one PC; docs/play-lan.md) and its few steps.
+Copy-Text (Join-Path $repo 'tools\nucleus\OoTCoop.js') (Join-Path $kit 'nucleus\OoTCoop.js')
+Copy-Text (Join-Path $src 'nucleus\README.txt') (Join-Path $kit 'nucleus\README.txt')
 
 foreach ($doc in $KitDocs) { Copy-Text (Join-Path $repo "docs\$($doc[0])") (Join-Path $kit "docs\$($doc[1])") }
 $lic = Join-Path $kit 'licenses'
@@ -169,7 +174,7 @@ $commit = Invoke-Git $repo rev-parse HEAD
     "  https://github.com/daurosk/oot-remake-multiplayer/tree/$commit",
     "  $(if ($Release) { "(tag $Release) " })commit $commit; hookshot\hookshot_coop.dll is its CMake target hookshot_coop.",
     '',
-    'Longshot: Team MagicBean''s static recompilation, GPL-3.0. Not in this kit: "Start OoT Co-op.bat" downloads it and builds',
+    'Longshot: Team MagicBean''s static recompilation, GPL-3.0. Not in this kit: "Start Squadala.bat" downloads it and builds',
     'it on your PC from your own game:',
     "  $($pin.repo)/src/commit/$($pin.commit)",
     '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and the build tools of the',
@@ -203,22 +208,23 @@ $own = @(Get-ChildItem $kit -Recurse -File | ForEach-Object { $_.FullName.Substr
     Where-Object { $_ -notmatch '^(?i)(logs\\|coop-options\.ini$)' } | Sort-Object)
 [System.IO.File]::WriteAllLines((Join-Path $kit 'MANIFEST.txt'), [string[]](@("# Files of $name, for Update.bat. Do not edit.", 'MANIFEST.txt') + $own))
 
+# Self-check (review-01111-a; CI builds only the Linux kit, which checks the same): every file of every pack data folder
+# in the repo (tools\puppet_pack\<name>\data: charsel, coopmenu) is in the kit byte for byte, and strings\*.txt, or no kit is made.
+$dataMiss = @(Test-KitPackData $repo $kit)
+if ($dataMiss.Count -gt 0) { throw "make_kit_hookshot: the kit misses pack data (or it differs): $($dataMiss -join ', ')" }
+Write-Host "Pack data self-check: OK (every tools\puppet_pack\*\data file in the kit, byte for byte)"
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N1} MB, {1} files' -f ($size / 1MB), ($own.Count + 1))
 if (-not $NoZip) {
-    # Two names, the same bytes: oot-coop-<tag>-windows.zip is the one players download (beside the Linux kit's
-    # oot-coop-<tag>-linux.zip); oot-coop-<tag>.zip is the name every updater up to v0.10.1 looks for (its
-    # Select-KitRelease takes nothing else), so those kits still find and install this release. Both go up.
+    # Squadala-<tag>-windows.zip (beside the Linux kit's Squadala-<tag>-linux.zip), its .sha256 and Update.bat: the release
+    # assets from v0.11.4 on. No oot-coop-<tag>.zip copy any more: the updaters up to v0.11.2 know only that name, so
+    # they take v0.11.3 (the last release with it) and that kit's updater takes this one; or Update.bat does it at once.
     $zip = Join-Path $OutRoot "$name-windows.zip"
-    $old = "$kit.zip"
     & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $OutRoot $name
     if ($LASTEXITCODE -ne 0) { throw "Zipping failed (tar $LASTEXITCODE)." }
-    Copy-Item -LiteralPath $zip -Destination $old -Force
     $hash = Get-Sha $zip
-    if ((Get-Sha $old) -ne $hash) { throw "The copy $old does not match $zip." }
     [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name-windows.zip`n", [System.Text.Encoding]::ASCII)
-    [System.IO.File]::WriteAllText("$old.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
     Copy-Item -LiteralPath (Join-Path $kit 'Update.bat') -Destination (Join-Path $OutRoot 'Update.bat') -Force
     Write-Host ('Zip: {0} ({1:N1} MB), SHA-256 {2}' -f $zip, ((Get-Item $zip).Length / 1MB), $hash)
-    Write-Host "Release assets: $name-windows.zip and $name.zip (the same file, the name kits up to v0.10.1 update from), each with its .sha256, and Update.bat, all in $OutRoot"
+    Write-Host "Release assets: $name-windows.zip, its .sha256 and Update.bat, all in $OutRoot"
 }

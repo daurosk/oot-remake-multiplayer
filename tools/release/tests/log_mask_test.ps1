@@ -133,7 +133,7 @@ try {
     $kit = Join-Path $zt 'kit'
     $src = Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts'
     New-Item -ItemType Directory -Force -Path (Join-Path $kit 'scripts'), (Join-Path $kit 'logs'), (Join-Path $kit 'hookshot\game') | Out-Null
-    foreach ($s in 'collect-logs.ps1', 'log-mask.ps1', 'kit-paths.ps1') { Copy-Item -LiteralPath (Join-Path $src $s) -Destination (Join-Path $kit 'scripts') }
+    foreach ($s in 'collect-logs.ps1', 'log-mask.ps1', 'kit-paths.ps1', 'console-mode.ps1') { Copy-Item -LiteralPath (Join-Path $src $s) -Destination (Join-Path $kit 'scripts') }
     foreach ($p in 'VERSION.txt', 'coop-options.ini', 'logs\coop_server.log', 'hookshot\build.log', 'hookshot\game\longshot.exe',
                    'hookshot\game\longshot_log.txt', 'hookshot\game\coop.ini') {
         [System.IO.File]::WriteAllText((Join-Path $kit $p), "x $p from 192.168.1.20")
@@ -142,6 +142,12 @@ try {
     $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\collect-logs.ps1') 2>&1 | Out-String
     $made = @(Get-ChildItem -LiteralPath $kit -Filter 'coop-logs-*.zip' -File)
     Check ($LASTEXITCODE -eq 0 -and $made.Count -eq 1) "collect-logs: ran and wrote one zip [$($out.Trim() -replace '\s+', ' ')]"
+    # Issue #67: it says at once that it runs, names each file with its size, and ends with the zip's path.
+    $outLines = @($out -split '\r?\n' | Where-Object { $_.Trim() })
+    Check ($outLines[0] -eq 'Collecting your logs (this can take a few minutes)...') "collect-logs: the first line says it runs [$($outLines[0])]"
+    Check ($out -match '(?m)^  hookshot\\longshot_log\.txt \(\d+ bytes\)\r?$' -and $out -match '(?m)^  server\\coop_server\.log \(') 'collect-logs: one line per file with its size'
+    Check ($made.Count -eq 1 -and $outLines[-1] -eq "Send this zip: $($made[0].FullName)") "collect-logs: the last line is the zip's path [$($outLines[-1])]"
+    Check ($out -match 'type /bugreport' -and $out -match 'discord\.gg/GwtRKAqng5' -and $out -cnotmatch '\bDM\b') 'collect-logs: says to attach the zip to /bugreport on the Discord, no DM'
     if ($made.Count -eq 1) {
         $names = Get-ZipNames $made[0].FullName
         Test-ZipNames $names @('about-this-pc.txt', 'VERSION.txt', 'coop-options.ini', 'server/coop_server.log', 'hookshot/build/build.log',

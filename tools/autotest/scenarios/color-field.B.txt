@@ -1,17 +1,14 @@
 # color-field: B is adult in Hyrule Field too, backs off about 3 m, turns to face A and
 # watches A's puppet in daylight (color-field.A.txt).
 mark start
+# The lane saves are child and Hookshot's warp (the bridge's teleport) keeps the save's age: big-run-0115
+# landed in HyruleField_Child ('sent (map HyruleField_Child)'), with no Epona and no adult Link. So the
+# game is made adult first (Sequence_IsChildhood 0), as hs-held-adult does.
+setflag Sequence_IsChildhood 0  # adult AFTER the save is loaded (run.ps1 loads it first): set at the
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+# title, the save's load put the child age back and the warp went to the _Child map
 warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
-wait 1200               # the title screen
-mark title
-press A
-wait 180
-press A
-wait 180
-press A
-wait 300
-press A                 # loads the save, then the warp
-wait 2400               # the save loads, then the warp lands (about 30 s)
+wait 1200               # the warp lands
 mark after
 wait 200
 stick 0 -0.6 40         # walk back toward the camera, away from A

@@ -1,0 +1,197 @@
+From 163b20a22b3cfb12d016eb77893c090b26e39648 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 19 Nov 2026 11:58:55 -0600
+Subject: [PATCH] Co-op settings: the Insert menu's settings for the module
+
+The pause menu's Longshot Settings (oot-remake-multiplayer's
+docs/hookshot.md). HosCoopApi gains setting and setting_set: the control
+bridge's own rx_control_setting and rx_control_setting_set (rx_backend.c),
+which list the Insert menu's rows and set one as its Left and Right do
+(clamped, the Quality preset to Custom, a restart noted, the options file
+saved), copied field by field into HosCoopSetting. An older module reads
+the API's size and goes without them.
+
+The microphones (gpu/vk/vk_menu.cpp, menu_setting): the menu lists them
+when it opens, so through the bridge the Microphone row ended at the
+default until the menu was opened once. An enumeration's start now lists
+them as they are, at most each 2 s, and only when their count moved
+(refresh_mics tells the host its choice, which starts it again).
+
+The keys (menu_setting_set): MkwVkSetting's key holds 31 bytes, so a
+longer ini key (version_and_hardware_at_every_level) was handed out cut
+and then matched no row. A cut key now matches the row it starts.
+---
+ gpu/vk/menu/audio.cpp | 11 +++++++++++
+ gpu/vk/menu/audio.h   |  1 +
+ gpu/vk/vk_menu.cpp    | 11 ++++++++++-
+ host/coop_bridge.c    | 33 +++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h   | 17 +++++++++++++++++
+ 5 files changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/gpu/vk/menu/audio.cpp b/gpu/vk/menu/audio.cpp
+index 88d36f1c..67bb25f8 100644
+--- a/gpu/vk/menu/audio.cpp
++++ b/gpu/vk/menu/audio.cpp
+@@ -19,6 +19,8 @@
+ #include <string>
+ #include <vector>
+ 
++#include <algorithm>
++#include <chrono>
+ namespace mkwvk {
+ 
+ int output_pick = 0;   // (the Output device row: 0 Default, then output_devices from 1; past them, the saved one unplugged)
+@@ -203,6 +205,15 @@ void refresh_mics() {
+     mic_row_ends();
+     mic_tell_host();
+ }
++/// (oot-remake-multiplayer, patch 0032) The control bridge's settings list (menu_setting) lists the microphones as they are
++/// now, as the menu does when it opens: refresh_mics when their count moved (it tells the host its choice, which starts it
++/// again), at most each 2 s
++void mics_as_now() {
++    static auto asked = std::chrono::steady_clock::time_point{};
++    if (!can_mic() || std::chrono::steady_clock::now() - asked < std::chrono::seconds(2)) return;
++    asked = std::chrono::steady_clock::now();
++    if (std::min(host->mic_count(), kMaxMics) != mic_listed) refresh_mics();
++}
+ // (the row changed by the player: the choice is now this one, by its name; the "(not connected)" entry is kept only while
+ // it is the one chosen)
+ void mic_chosen() {
+diff --git a/gpu/vk/menu/audio.h b/gpu/vk/menu/audio.h
+index 6032a4f8..4cc092f0 100644
+--- a/gpu/vk/menu/audio.h
++++ b/gpu/vk/menu/audio.h
+@@ -18,6 +18,7 @@ void refresh_outputs();   // (the host's playback devices listed again, the row
+ extern std::string mic_want;
+ std::string mic_key(const char* name);
+ void refresh_mics();   // (the host's microphones listed again, the row on mic_want's)
++void mics_as_now();     // (oot-remake-multiplayer, patch 0032: refresh_mics when their count moved, at most each 2 s)
+ void mic_tell_host();
+ 
+ // (the microphone test: on while the player has it on (Test microphone), the levels the host measured and its state)
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 7f5dbc99..491af88c 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -4849,6 +4849,9 @@ static void bridge_probe_first() { (void)upscalers_available(), (void)dlss_why()
+ int menu_setting(int index, MkwVkSetting* out) {
+     bridge_probe_first();
+     std::lock_guard lk(menu_mu);
++    // (oot-remake-multiplayer, patch 0032) the microphones as they are now, as the menu lists them when it opens: else the
++    // Microphone row ends at the default until the menu was opened once (menu/audio.cpp mics_as_now)
++    if (index == 0) mics_as_now();
+     for (int i = 0, n = 0; i < (int)std::size(rows); i++)
+         if (bridge_row(i) && n++ == index) return bridge_fill(i, out), 1;
+     return 0;
+@@ -4946,11 +4949,17 @@ void menu_auto_tune(double gpu_ms, double draws, double fps) {
+ /// through a list of their own (the Upscaler, Render resolution, the output resolution) are walked to value: walk_to. out: the
+ /// row as it is now. 1 set, 0 no such row, -1 nothing to choose on this PC (row_fixed), -2 none of a list row's steps reach
+ /// value here (the row and the rest as they were)
++// (oot-remake-multiplayer, patch 0032) a key as the bridge handed it out: MkwVkSetting's key holds 31 bytes, so a
++// longer ini key ("version_and_hardware_at_every_level") came back cut, and was no row's; a cut key is the row's it starts
++static bool bridge_key_is(const char* row_key, const char* key) {
++    const size_t n = strlen(key);
++    return !strcmp(row_key, key) || (n == sizeof ((MkwVkSetting*)0)->key - 1 && !strncmp(row_key, key, n));
++}
+ int menu_setting_set(const char* key, int value, MkwVkSetting* out) {
+     bridge_probe_first();
+     std::lock_guard lk(menu_mu);
+     int i = 0;
+-    while (i < (int)std::size(rows) && !(bridge_row(i) && !strcmp(ini_key(rows[i]), key))) i++;
++    while (i < (int)std::size(rows) && !(bridge_row(i) && bridge_key_is(ini_key(rows[i]), key))) i++;
+     if (i == (int)std::size(rows)) return 0;
+     Row& r = rows[i];
+     if (row_fixed(r.value)) return bridge_fill(i, out), -1;
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index 889a0716..89fe118a 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -8,6 +8,7 @@
+ #include "hos.h"
+ #include "hos_coop_api.h"
+ #include "hos_coop_view.h"   /* (oot-remake-multiplayer, patch 0019) */
++#include "control.h"         /* (the Insert menu's settings, as the control bridge has them) */
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -107,6 +108,37 @@ static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad,
+ /* (a key held now, by virtual-key code: Windows' own, or the SDL window's keys on Linux, host/posix/display_sdl.c) */
+ static int bridge_key_down(uint32_t vk) { return vk < 256 && (GetAsyncKeyState((int)vk) & 0x8000) != 0; }
+ 
++/* The Insert menu's settings for the module (rx_backend.c, the control bridge's own two), field by field */
++int rx_control_setting(int index, HosControlSetting *out);
++int rx_control_setting_set(const char *key, int value, HosControlSetting *out);
++/* (the module's copy of the row, hos_coop_api.h, is kept by hand: the same fields in the same places) */
++_Static_assert(sizeof(HosCoopSetting) == sizeof(HosControlSetting), "HosCoopSetting is HosControlSetting's fields");
++_Static_assert(offsetof(HosCoopSetting, value) == offsetof(HosControlSetting, value), "HosCoopSetting.value");
++_Static_assert(offsetof(HosCoopSetting, fixed) == offsetof(HosControlSetting, fixed), "HosCoopSetting.fixed");
++static void setting_copy(HosCoopSetting *to, const HosControlSetting *from) {
++    memcpy(to->key, from->key, sizeof to->key), memcpy(to->name, from->name, sizeof to->name);
++    memcpy(to->text, from->text, sizeof to->text), memcpy(to->tab, from->tab, sizeof to->tab);
++    to->value = from->value, to->lo = from->lo, to->hi = from->hi, to->step = from->step;
++    to->restart = from->restart, to->fixed = from->fixed;
++}
++static int bridge_setting(int index, HosCoopSetting *out) {
++    HosControlSetting s;
++    memset(&s, 0, sizeof s);
++    if (!out || !rx_control_setting(index, &s)) return 0;
++    setting_copy(out, &s);
++    return 1;
++}
++static int bridge_setting_set(const char *key, int value, HosCoopSetting *out) {
++    HosControlSetting s;
++    memset(&s, 0, sizeof s);
++    if (!key) return 0;
++    /* 1 set, 0 no such row, -1 nothing to choose on this PC, -2 no step reaches value (left as it was): the control
++       bridge's own answer, *out the row as it is after it (host/control.h) */
++    const int r = rx_control_setting_set(key, value, &s);
++    if (r && out) setting_copy(out, &s);
++    return r;
++}
++
+ static void at_exit(void) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_stop) coop_stop();
+ }
+@@ -186,6 +218,7 @@ static void load(void) {
+     api.pad_buttons = bridge_pad_buttons;
+     api.key_down = bridge_key_down;
+     api.scratch = bridge_scratch;
++    api.setting = bridge_setting, api.setting_set = bridge_setting_set;
+     if (!start(&api)) {
+         hos_log("coop: the module stays off");
+         __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
+diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
+index bc47834c..c45382fc 100644
+--- a/host/hos_coop_api.h
++++ b/host/hos_coop_api.h
+@@ -28,6 +28,15 @@ typedef struct HosCoopCall {
+     float s0;
+ } HosCoopCall;
+ 
++/* One of the Insert menu's settings (host/control.h HosControlSetting's fields): its key in the options file, its name
++   and the value as the menu shows them, its tab; the value and its range; restart: it applies at the next start;
++   fixed: nothing to choose on this PC. */
++typedef struct HosCoopSetting {
++    char key[32], name[48], text[64], tab[16];
++    int value, lo, hi, step;
++    int restart, fixed;
++} HosCoopSetting;
++
+ typedef struct HosCoopApi {
+     uint32_t version;             /* HOS_COOP_API_VERSION */
+     uint32_t size;                /* sizeof(HosCoopApi) */
+@@ -56,6 +65,14 @@ typedef struct HosCoopApi {
+        0 when they do not fit. Only with the ctx of a hook that may call(), for the next call made with it. With it,
+        call() also points x8 (where a function puts a result it returns in memory) at 128 free bytes of that stack. */
+     uint64_t (*scratch)(void *ctx, const void *data, size_t n);
++    /* Added with the pause menu's Settings tab (check size covers it): the Insert menu's settings, as the control
++       bridge has them (host/control.h HosControlSetting, rx_backend.c rx_control_setting). setting: the index-th row,
++       to list them (0 past the last). setting_set: that key to `value`, as the menu's Left and Right do (clamped to
++       its range, the Quality preset to Custom, a restart noted, the options file saved): 1 set, 0 no such row (or no
++       key), -1 nothing to choose on this PC, -2 no step of a list row reaches value (left as it was); *out its row
++       after when not 0. Any thread. */
++    int (*setting)(int index, HosCoopSetting *out);
++    int (*setting_set)(const char *key, int value, HosCoopSetting *out);
+ } HosCoopApi;
+ 
+ /* The module's exports (extern "C"). */

@@ -43,11 +43,59 @@ void push(std::vector<Outgoing>& out, const protocol::Message& message) {
 
 }  // namespace
 
+std::uint8_t status_bits(std::uint8_t previous, const std::optional<PlayerReading>& reading, bool title_up) {
+  namespace st = protocol::status;
+  std::uint8_t flags = previous;
+  const auto set = [&flags](std::uint8_t bit, bool on) {
+    flags = static_cast<std::uint8_t>(on ? (flags | bit) : (flags & ~bit));
+  };
+  const bool play = reading.has_value() && !title_up;
+  set(st::loading, !play);
+  if (reading && reading->event_running) {
+    // G1 (event_owner.hpp): only an event our Link is in. Another player's event replayed here
+    // and our free Ocarina (its take-out is a plain event, ~4 s: issue 86) do not hold our puppet
+    // in the other games.
+    set(st::in_cutscene, our_link_in_event(*reading->event_running, reading->event_whose));
+  }
+  const bool menu = play && reading->in_menu.value_or(false);
+  set(st::in_menu, menu);
+  // Row 164 follow-up: a world standing still with no menu named (the quick-switch menu) is paused too, not in_menu
+  // (no menu is known to be in front).
+  const bool still = play && reading->world_still;
+  set(st::paused, (menu || still) && (flags & st::in_cutscene) == 0);
+  if (reading && reading->dead) set(st::dead, *reading->dead);
+  return flags;
+}
+
+bool WorldStill::step(const protocol::Animation* animation, const Vec3& position, bool event, std::uint64_t now_us) {
+  if (animation == nullptr || animation->rate == 0.0f || event) {
+    // No animation read, a pose held on purpose, or our event (a cutscene may hold Link): not judged.
+    seen_ = false;
+    still_ = false;
+    return false;
+  }
+  const protocol::Animation& a = *animation;
+  const bool moved = !seen_ || a.name != name_ || std::fabs(a.frame - frame_) > kFrameEpsilon ||
+                     distance(position, place_) > kPlaceEpsilon;
+  if (moved) {
+    seen_ = true;
+    name_ = a.name;
+    frame_ = a.frame;
+    place_ = position;
+    changed_us_ = now_us;
+    still_ = false;
+    return false;
+  }
+  still_ = now_us >= changed_us_ && now_us - changed_us_ >= kStillUs;
+  return still_;
+}
+
 void Sampler::reset() {
   status_sent_ = false;
   previous_.reset();
   last_sent_.reset();
   equipment_sent_.reset();
+  hold_floor_us_ = 0;  // a new connection's clock
 }
 
 std::optional<Vec3> Sampler::velocity(const PlayerReading& reading, std::uint64_t now) const {
@@ -92,23 +140,29 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
 }
 
 std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading,
-                                     std::uint64_t server_now_us) {
+                                     std::uint64_t frame_us, bool title_up) {
+  // Just after a hold the frame's time can be older than the last held
+  // sample's: stamp after it (hold), each frame a little later, until the
+  // frames pass it.
+  std::uint64_t server_now_us = frame_us;
+  // The floor covers only a frame's age (kFrameAgeMaxUs). A frame further back is another clock (a new server).
+  if (hold_floor_us_ != 0) {
+    if (frame_us <= hold_floor_us_ && hold_floor_us_ - frame_us <= kFrameAgeMaxUs) {
+      server_now_us = ++hold_floor_us_;
+    } else {
+      hold_floor_us_ = 0;
+    }
+  }
   std::vector<Outgoing> out;
-  if (!reading) {
-    previous_.reset();  // no velocity across a gap in the readings
-    return out;
-  }
-
-  std::uint8_t flags = flags_;
-  if (reading->event_running) {
-    flags = static_cast<std::uint8_t>(
-        (flags & ~protocol::status::in_cutscene) |
-        (*reading->event_running ? protocol::status::in_cutscene : 0));
-  }
+  const std::uint8_t flags = status_bits(flags_, reading, title_up);
   if (!status_sent_ || flags != flags_) {
     flags_ = flags;
     status_sent_ = true;
     push(out, protocol::PlayerStatus{protocol::kPlayerSelf, flags_});
+  }
+  if (!reading) {
+    previous_.reset();  // no velocity across a gap in the readings
+    return out;
   }
 
   std::optional<protocol::Equipment> read = reading->equipment;
@@ -144,6 +198,41 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
 
   previous_ = reading;
   previous_time_us_ = server_now_us;
+  return out;
+}
+
+std::optional<Outgoing> Sampler::hold(std::uint64_t server_now_us) {
+  if (!previous_ || !last_sent_ || !last_sent_->position) return std::nullopt;
+  const std::uint64_t last = last_sent_->time.server_time_us;
+  if (server_now_us <= last || server_now_us - last < settings_.keepalive_us) return std::nullopt;
+  protocol::PlayerSample sample = *last_sent_;
+  sample.time = {server_now_us, sequence_};
+  sample.velocity = Vec3{0.0f, 0.0f, 0.0f};  // held: standing, not moving on
+  ++sequence_;
+  std::vector<Outgoing> out;
+  push(out, sample);
+  if (out.empty()) return std::nullopt;
+  last_sent_ = std::move(sample);
+  hold_floor_us_ = server_now_us;
+  return std::move(out.front());
+}
+
+std::vector<Outgoing> Sampler::hold_reconnected(std::uint64_t server_now_us) {
+  std::vector<Outgoing> out;
+  if (!previous_ || !last_sent_ || !last_sent_->position) return out;
+  push(out, protocol::PlayerStatus{protocol::kPlayerSelf, flags_});
+  status_sent_ = true;
+  if (equipment_sent_) push(out, protocol::PlayerEquip{protocol::kPlayerSelf, *equipment_sent_});
+  protocol::PlayerSample sample = *last_sent_;
+  // The new connection's clock: after a server restart the old sample's time is the old server's uptime, and the
+  // others' presence forgot the old samples with their own WELCOME.
+  const std::uint64_t at = server_now_us;
+  sample.time = {at, sequence_};
+  sample.velocity = Vec3{0.0f, 0.0f, 0.0f};
+  ++sequence_;
+  push(out, sample);
+  last_sent_ = std::move(sample);
+  hold_floor_us_ = at;
   return out;
 }
 

@@ -1,0 +1,5 @@
+# hs-boss-reload-159, B part 2 (after the host's load): B stays in Gohma's room; the put-back is already done.
+wait 300
+mark b-in-area          # still in her room: no warp, Gohma back
+wait 1800
+mark b-late             # 30 s on: still no warp (nothing put the beaten set back)

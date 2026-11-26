@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the Linux co-op kit for Longshot: one folder and a zip of it, which a player
-# unzips and starts with `bash start-oot-coop.sh`. The Linux twin of make_kit_hookshot.ps1, in the
+# unzips and starts with `bash start-squadala.sh`. The Linux twin of make_kit_hookshot.ps1, in the
 # same layout and wording (docs/setup-linux.md). Nothing of the game or of Longshot is in it: the
 # kit downloads Longshot's own Linux builder (data/longshot/LINUX.txt) and builds the game on the
 # player's PC from their own game file.
@@ -10,12 +10,14 @@
 #
 # --licenses: the CMake build folder that fetched ENet and fmt (_deps/enet-src, _deps/fmt-src): their
 # licence texts go in data/licenses/.
-# Out: <out>/oot-coop-<release>-linux/ and, unless --no-zip, <out>/oot-coop-<release>-linux.zip
-# and its .sha256 (the names scripts/update.sh looks for). The zip keeps the scripts' executable bit;
-# a player whose unzip drops it still starts the kit with `bash start-oot-coop.sh` (README.txt).
+# Out: <out>/Squadala-<release>-linux/ and, unless --no-zip, <out>/Squadala-<release>-linux.zip and its .sha256 (the
+# names scripts/update.sh looks for). No oot-coop-<release>-linux.zip copy from v0.11.4 on: the update.sh of the kits
+# up to v0.11.2 knows only that name, so it takes v0.11.3 (the last release with it), whose update.sh takes this one. The zip keeps the scripts' executable bit;
+# a player whose unzip drops it still starts the kit with `bash start-squadala.sh` (README.txt).
 #
 # The kit:
-#   start-oot-coop.sh, revert.sh (back to the version before the last update), README.txt, VERSION.txt, MANIFEST.txt
+#   start-squadala.sh (the one start file; its old name start-oot-coop.sh is gone from v0.11.4 on: update.sh --tidy
+#   points the menu and Steam entries at start-squadala.sh), revert.sh (back to the version before the last update), README.txt, VERSION.txt, MANIFEST.txt
 #   scripts/      start.sh, build.sh, update.sh, collect-logs.sh, lib.sh, apply_patch.py, coop.ini.template
 #   data/         coop-options.ini, server/coop_server, longshot/ (PIN, LINUX.txt, patches/, hookshot_coop.so),
 #                 tools/puppet_pack/, docs/ (SETUP-LINUX.md, KNOWN-ISSUES.md), licenses/
@@ -41,17 +43,19 @@ die() { echo "make_kit_linux: $*" >&2; exit 1; }
 kind=$(file -b "$module" 2>/dev/null)   # ("ELF 64-bit LSB shared object, x86-64, ...")
 [[ $kind == *'ELF 64-bit'* && $kind == *'shared object'* && $kind == *x86-64* ]] || die "$module is not an x86-64 Linux shared object"
 file -b "$server" 2>/dev/null | grep -q 'ELF 64-bit.*x86-64' || die "$server is not an x86-64 Linux program"
-enet_licence=$licenses/_deps/enet-src/LICENSE
-fmt_licence=$(find "$licenses/_deps" "$repo/build"*/_deps -maxdepth 2 -path '*fmt-src/LICENSE*' -type f 2>/dev/null | head -n1 || true)
-[[ -f $enet_licence ]] || die "ENet's LICENSE not found in $licenses/_deps/enet-src"
-[[ -n $fmt_licence ]] || die "fmt's LICENSE not found under $licenses/_deps/fmt-src"
+# (the licences where the build's CMakeCache says the sources are: _deps/<name>-src, or a source given from outside)
+. "$repo/tools/release/kit_deps.sh"
+enet_licence=$(kit_dep_license enet "$licenses")
+fmt_licence=$(kit_dep_license fmt "$licenses" "$(kit_build_of "$module")" "$repo/build"*)
+[[ -n $enet_licence ]] || die "ENet's LICENSE not found in the ENet source of $licenses ($(kit_dep_source "$licenses" enet))"
+[[ -n $fmt_licence ]] || die "fmt's LICENSE not found in the fmt source of $licenses ($(kit_dep_source "$licenses" fmt))"
 src=$repo/tools/release/kit/linux-longshot
 pin=$repo/hookshot/PIN
 linux_pin=$repo/hookshot/LINUX.txt
 [[ $(sed -n 's/^tag=//p' "$pin") == "$(sed -n 's/^tag=//p' "$linux_pin")" ]] ||
     die "hookshot/PIN and hookshot/LINUX.txt name different Longshot releases"
 
-name=oot-coop-${release:-dev}-linux
+name=Squadala-${release:-dev}-linux
 mkdir -p "$out" && out=$(cd "$out" && pwd)   # absolute: the zip step below runs inside it
 kit=$out/$name
 rm -rf "$kit"
@@ -61,48 +65,81 @@ text() {   # text FROM TO: LF line ends
     mkdir -p "$(dirname "$2")"
     tr -d '\r' <"$1" >"$2"
 }
-text "$src/start-oot-coop.sh" "$kit/start-oot-coop.sh"
+text "$src/start-squadala.sh" "$kit/start-squadala.sh"
 text "$src/README.txt" "$kit/README.txt"
 text "$src/revert.sh" "$kit/revert.sh"
 for f in start.sh build.sh update.sh collect-logs.sh lib.sh; do text "$src/scripts/$f" "$kit/scripts/$f"; done
 text "$repo/tools/release/kit/scripts/apply_patch.py" "$kit/scripts/apply_patch.py"
+text "$repo/tools/release/kit/scripts/discord_status.py" "$kit/scripts/discord_status.py"
+text "$src/scripts/problem_report.py" "$kit/scripts/problem_report.py"
+text "$repo/tools/release/kit/scripts/problem-send-url.txt" "$kit/scripts/problem-send-url.txt"
 text "$repo/tools/release/kit/coop.ini.template" "$kit/scripts/coop.ini.template"
 text "$repo/tools/release/kit/coop-options.ini" "$kit/data/coop-options.ini"
-chmod 755 "$kit/start-oot-coop.sh" "$kit/revert.sh" "$kit"/scripts/*.sh
+cp -- "$repo/tools/release/kit/assets/squadala-icon.png" "$kit/data/squadala-icon.png"   # (the window and menu icon, start.sh)
+chmod 755 "$kit/start-squadala.sh" "$kit/revert.sh" "$kit"/scripts/*.sh
 install -m 755 "$server" "$kit/data/server/coop_server"
 install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
 text "$linux_pin" "$kit/data/longshot/LINUX.txt"
 text "$repo/tools/release/kit/hookshot/OOTRR.txt" "$kit/data/longshot/OOTRR.txt"   # (the randomizer build.sh fetches)
-# (byte for byte) Every patch but those for the WebGPU renderer (gpu/render's .cpp files): Longshot's Linux builder
-# carries gpu/render's headers only and builds the Vulkan renderer, so those patches have nothing to apply to. The list
-# is explicit: a patch not on it that changes a gpu/render .cpp stops the kit, as does a name on it that is gone.
-webgpu_only=(0021-coop-texture-override-webgpu.patch)
-for w in "${webgpu_only[@]}"; do [[ -f $repo/hookshot/patches/$w ]] || die "hookshot/patches/$w (webgpu_only) is not in the repo"; done
+text "$repo/tools/release/kit/hookshot/CHARACTER-SELECT.txt" "$kit/data/longshot/CHARACTER-SELECT.txt"   # (Snail's mod build.sh fetches, asked first)
+# (byte for byte) Every patch. Longshot (since rc.5) has no WebGPU renderer and gpu/render holds headers only, on Windows
+# and Linux alike, so a patch that changes a gpu/render .cpp has nothing to apply to: it stops the kit.
 for p in "$repo"/hookshot/patches/*.patch; do
     n=${p##*/}
-    if printf '%s\n' "${webgpu_only[@]}" | grep -qxF -- "$n"; then
-        # (the file list captured first: grep -q quitting early under pipefail would make a pipe here fail)
-        diffs=$(grep -E '^diff --git ' "$p" || true)
-        [[ -n $diffs ]] || die "hookshot/patches/$n (webgpu_only) changes no file"
-        others=$(grep -vE '^diff --git a/gpu/render/' <<<"$diffs" || true)
-        [[ -z $others ]] || die "hookshot/patches/$n (webgpu_only) changes more than gpu/render"
-        continue
-    fi
     if grep -qE '^diff --git a/gpu/render/[^ ]*\.cpp ' "$p"; then
-        die "hookshot/patches/$n changes gpu/render (the WebGPU renderer, not in Longshot's Linux source): split that part into a patch of its own and add it to webgpu_only"
+        die "hookshot/patches/$n changes gpu/render (the WebGPU renderer, gone from Longshot since rc.5)"
     fi
     cp -- "$p" "$kit/data/longshot/patches/"
 done
 # The puppet pack tool: make_kit_hookshot.ps1's list, plus every module build.py imports.
 pack=$repo/tools/puppet_pack
 files=(ainb.py build.py __init__.py byml.py dumpcheck.py dungeon_rooms.py hud.py nup.py rstb.py sarc.py texture.py
-    title_menu.py tunic.py tunic_extra.py zs.py self_tunic.py)   # (self_tunic.py: start.sh, colour-agree)
-while IFS= read -r m; do files+=("$m.py"); done < <(sed -n 's/#.*//; s/^[[:space:]]*from \. import //p' "$pack/build.py" | tr ',' '\n' | tr -d ' ' | grep .)
-for f in $(printf '%s\n' "${files[@]}" | sort -u); do
+    title_menu.py tunic.py tunic_extra.py zs.py self_tunic.py merge_tables.py)   # (self_tunic.py, merge_tables.py: start.sh)
+# Followed through every module they import, and theirs (title_menu.py -> ui_pack.py -> msbt.py): one missing from
+# the kit stops build.py at its first import, and the pack is never made on the players' PCs.
+imports_of() {   # the modules a file imports from its own package, one per line
+    sed -n 's/#.*//; s/^[[:space:]]*from \.\([A-Za-z0-9_][A-Za-z0-9_]*\) import .*/\1/p; s/^[[:space:]]*from \. import //p' "$1" \
+        | tr ',' '\n' | awk '{print $1}' | grep -v '^$' || true
+}
+declare -A seen=()
+queue=("${files[@]}")
+while ((${#queue[@]})); do
+    f=${queue[0]}; queue=("${queue[@]:1}")
+    [[ -n ${seen[$f]:-} ]] && continue
+    seen[$f]=1
     [[ -f $pack/$f ]] || die "tools/puppet_pack/$f (needed by build.py) is not in the repo"
+    while IFS= read -r m; do queue+=("$m.py"); done < <(imports_of "$pack/$f")
+done
+for f in $(printf '%s\n' "${!seen[@]}" | sort); do
     text "$pack/$f" "$kit/data/tools/puppet_pack/$f"
 done
+for s in "$pack"/strings/*.txt; do   # ui_pack.py's words for the game's menus, read where the module is
+    text "$s" "$kit/data/tools/puppet_pack/strings/$(basename "$s")"
+done
+# Every data folder a kit module reads (DATA = os.path.join(HERE, "<name>", "data"): charsel_ui.py's charsel/data,
+# coop_menu.py's coopmenu/data), byte for byte (deltas and code patch are checked by their hashes), never through
+# text(). The import walk finds only .py files; without them build.py stops on the players' PCs (0.11.12's
+# integrate-01110 db12ad12 kits: FileNotFoundError charsel/data/manifest.json), as kit_pack.ps1's Copy-KitPack.
+for f in $(printf '%s\n' "${!seen[@]}" | sort); do
+    while IFS= read -r sub; do
+        [[ -n $sub ]] || continue
+        compgen -G "$pack/$sub/data/*" >/dev/null || die "tools/puppet_pack/$sub/data (read by $f) is not in the repo"
+        mkdir -p "$kit/data/tools/puppet_pack/$sub/data"
+        for d in "$pack/$sub/data"/*; do [[ -f $d ]] && cp -- "$d" "$kit/data/tools/puppet_pack/$sub/data/"; done
+    done < <(grep -o 'os\.path\.join(HERE, *"[A-Za-z0-9_]*", *"data")' "$pack/$f" | sed 's/.*HERE, *"\([A-Za-z0-9_]*\)".*/\1/' | sort -u)
+done
+# Self-check (as kit_pack.ps1's Test-KitPackData): every file of every pack data folder in the repo is in the kit byte
+# for byte, and every strings/*.txt, or no kit is made.
+miss=()
+for d in "$pack"/*/data/*; do
+    [[ -f $d ]] || continue
+    rel=${d#"$pack"/}
+    cmp -s -- "$d" "$kit/data/tools/puppet_pack/$rel" || miss+=("$rel")
+done
+for s in "$pack"/strings/*.txt; do [[ -f $kit/data/tools/puppet_pack/strings/$(basename "$s") ]] || miss+=("strings/$(basename "$s")"); done
+((${#miss[@]} == 0)) || die "the kit misses pack data (or it differs): ${miss[*]}"
+echo "Pack data self-check: OK (every tools/puppet_pack/*/data file in the kit, byte for byte)"
 text "$repo/docs/setup-linux.md" "$kit/data/docs/SETUP-LINUX.md"
 text "$repo/docs/known-issues.md" "$kit/data/docs/KNOWN-ISSUES.md"
 cp -- "$repo/LICENSE" "$kit/data/licenses/oot-remake-multiplayer-GPL-3.0.txt"
@@ -120,10 +157,10 @@ The co-op code (the module, the server, the puppet pack tool, these scripts), GP
   https://github.com/daurosk/oot-remake-multiplayer/tree/$commit
   ${release:+(tag $release) }commit $commit; data/longshot/hookshot_coop.so is its CMake target hookshot_coop.
 
-Longshot: Team MagicBean's static recompilation, GPL-3.0. Not in this kit: start-oot-coop.sh
+Longshot: Team MagicBean's static recompilation, GPL-3.0. Not in this kit: start-squadala.sh
 downloads Longshot $ls_tag's own Linux builder (data/longshot/LINUX.txt) and builds the game on your PC from your own game:
   https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$ls_commit
-  with the patches in data/longshot/patches (hookshot/patches in the co-op repo, less the WebGPU renderer's).
+  with the patches in data/longshot/patches (hookshot/patches in the co-op repo).
 
 If a link stops working, open an issue on the co-op repo and the source will be sent to you.
 EOF
@@ -150,9 +187,11 @@ if [[ -n $home && $home != / ]] && grep -rlF -- "$home/" "$kit" >/dev/null 2>&1;
 fi
 
 # MANIFEST.txt: the kit's own files (the player's coop-options.ini is in it: the updater merges it).
-(cd "$kit" && { echo MANIFEST.txt; find . -type f ! -name MANIFEST.txt | sed 's|^\./||'; } | LC_ALL=C sort) >"$kit/MANIFEST.txt.tmp"
-{ echo "# Files of $name, for scripts/update.sh. Do not edit."; cat "$kit/MANIFEST.txt.tmp"; } >"$kit/MANIFEST.txt"
-rm -f "$kit/MANIFEST.txt.tmp"
+# The temp file lives OUTSIDE the kit: inside it, it listed itself (v0.11.2 to v0.11.4 kits name MANIFEST.txt.tmp).
+mtmp=$(mktemp) || die 'mktemp failed'
+(cd "$kit" && { echo MANIFEST.txt; find . -type f ! -name MANIFEST.txt | sed 's|^\./||'; } | LC_ALL=C sort) >"$mtmp"
+{ echo "# Files of $name, for scripts/update.sh. Do not edit."; cat "$mtmp"; } >"$kit/MANIFEST.txt"
+rm -f "$mtmp"
 
 if ((zip)); then
     command -v zip >/dev/null || die 'zip is not installed (sudo apt install zip)'

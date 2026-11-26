@@ -38,6 +38,30 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<coop::host::PlayerReading>& reading,
            coop::host::Session* session);
 
+// Down but not out (coop_dbno_game.cpp): a spectating player comes back
+// beside player `number` (`name` for the chat), as /teleport takes them
+// there. Any thread. False when teleport is off in this game.
+bool Beside(std::uint8_t number, std::string name);
+// The respawn's fallback: our scene again at its entrance nearest our Link
+// (the game's own scene change to a start point: its own respawn place).
+bool ToEntrance();
+// The play-test bridge's `warp` in free play (docs/playtest.md): our scene change to `scene` at its start point `start`
+// by the game's own map change event (Dm_SY_BancChangeGo), as an entrance does it, with no player to follow and no
+// talk or sign needed: any scene of the start list, a boss stage included. The caller has checked the names
+// (CoopTestInput::WarpProblem); `start` empty means the scene's first start point (DefaultStart). False when
+// teleport is off or the map change event is off (LICHII_COOP_TELEPORT=0, LICHII_COOP_TELEPORT_EVENT=0), or there is
+// no start point. The event is asked at the next frames for 5 s (the respawn's window); the caller waits for the
+// scene. Any thread.
+bool MapChange(std::string scene, std::string start);
+// How the last Beside / ToEntrance went, once known: true moved (or the
+// scene change asked), false not (refused, no answer, not moved, no start
+// point). Nothing while not known. Taken once.
+std::optional<bool> TakeRespawnMove();
+
+// cutscene-bleed (#197): a trip of ours is past its answer (travelling to its scene, settling there, or asking
+// again): no other player's event may be asked of our game now (coop_hook.cpp drops them). Any thread.
+bool Underway();
+
 // The chat notices since the last call (for the chat box).
 std::vector<std::string> TakeLines();
 

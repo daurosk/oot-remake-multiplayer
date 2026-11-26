@@ -1,12 +1,15 @@
 #include <bit>
 #include <doctest/doctest.h>
 
+#include <cstring>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop/host/game_flag_events.hpp"
 #include "coop/host/game_flags.hpp"
+#include "coop_flag_native.h"
 #include "fake_memory.hpp"
 
 // Lays out a GameDataMgr as docs/flags.md describes it, with offsets written
@@ -171,6 +174,21 @@ TEST_CASE("game flags: a set is queued as the game's setter does, and read back 
   CHECK(coop::host::read_u32(w.mem, kKeyQueue + 4) == 2u);  // the record index, not the key
   CHECK(f.get_key64(0x8c44828386468bfull) == true);
   CHECK(f.get_key64(9) == false);
+}
+
+TEST_CASE("game flags: each Int write that was queued is told to the hook (row 238, the HUD gauges' refresh)") {
+  static std::vector<std::pair<std::uint32_t, std::int32_t>> told;
+  told.clear();
+  GameFlags::on_int_written([](std::uint32_t hash, std::int32_t value) { told.emplace_back(hash, value); });
+  auto w = game();
+  REQUIRE(GameFlags::set_int(w, 0x22, 16));
+  CHECK_FALSE(GameFlags::set_int(w, 0x99, 1));  // an unknown flag: nothing queued, nothing told
+  REQUIRE(GameFlags::set_bool(w, 0x11, true));  // not an Int
+  GameFlags::on_int_written(nullptr);
+  REQUIRE(GameFlags::set_int(w, 0x22, 20));     // no hook: still written
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].first == 0x22u);
+  CHECK(told[0].second == 16);
 }
 
 TEST_CASE("game flags: UInt flags are read and queued like Int, in their own table") {
@@ -350,6 +368,25 @@ TEST_CASE("game flags: a String64 written at once into its buffer, and its type 
   CHECK_FALSE(flags.find_type(0x99));
 }
 
+TEST_CASE("game flags: an Int written at once into its entry, and its live value read past the queue") {
+  auto w = game();
+  GameFlags f(w);
+  w.mem.put_u32(kIntEntries + 0x1c, 3);
+  REQUIRE(GameFlags::set_int(w, 0x22, 5));   // queued, not applied
+  CHECK(f.get_int(0x22) == 5);
+  CHECK(f.get_int_live(0x22) == 3);          // what the game's getter reads now
+  CHECK(GameFlags::set_int_now(w, 0x22, -2));
+  CHECK(coop::host::read_u32(w.mem, kIntEntries + 0x1c) == static_cast<std::uint32_t>(-2));
+  CHECK(f.get_int_live(0x22) == -2);
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0xd0 + 0x30) == 0x30100001u);   // the queue: only the set_int's slot
+  CHECK_FALSE(GameFlags::set_int_now(w, 0x25, 1));   // unknown
+  CHECK_FALSE(f.get_int_live(0x25));
+  CHECK_FALSE(GameFlags::set_int_now(w, 0x11, 1));   // a Bool is not an Int
+  w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, 0);
+  CHECK_FALSE(GameFlags::set_int_now(w, 0x22, 1));   // the manager not up
+  CHECK_FALSE(f.get_int_live(0x22));
+}
+
 TEST_CASE("game flags: the writes waiting in the game's queues, as its applier is about to take them") {
   using coop::host::GameFlagType;
   using coop::host::GameFlagWrite;
@@ -503,4 +540,176 @@ TEST_CASE("game flags: Float flags (PlayerStatus.DiveDepth) read and set as the 
   REQUIRE(GameFlags::set_float(w, 0x77, 9.0f));
   CHECK(calls.pending(GameFlagType::float32, 0x77) == std::bit_cast<std::uint32_t>(9.0f));
   CHECK(f.get_float(0x77) == 9.0f);
+}
+
+namespace {
+// String64 0x44 (entry 0) with its live text, and the game's String64 queue
+// (M + 0x630 count, slots of 0x58 at M + 0x638, word at M + 0x640): each slot
+// has its own 64-byte text buffer at +0, its size at +8, the hash at +0x50.
+constexpr std::uint64_t kS64Entries = 0x8700000000ull, kS64Slots = 0x8710000000ull, kS64Text = 0x8720000000ull,
+                        kS64Queue = 0x8730000000ull, kS64SlotTexts = 0x8740000000ull;
+constexpr std::uint64_t kS64Word = kMgr + 0x640;
+Writable game_with_strings() {
+  auto w = game();
+  auto& m = w.mem;
+  table(m, 0x610, kS64Entries, kS64Slots, 0x108, {0x44});
+  m.put_u64(kS64Entries + 0x68, kS64Text);
+  m.put_u32(kS64Entries + 0x70, 64);
+  zero(m, kS64Text, 64);
+  queue(m, 0x610, kS64Queue, 0x58);
+  for (std::uint32_t i = 0; i < kQueueCap; ++i) {
+    m.put_u64(kS64Queue + 0x58 * i, kS64SlotTexts + 64 * i);
+    m.put_u32(kS64Queue + 0x58 * i + 8, 64);
+    zero(m, kS64SlotTexts + 64 * i, 64);
+  }
+  return w;
+}
+std::string slot_text(FakeMemory& m, std::uint32_t i) {
+  std::string out;
+  for (std::uint64_t a = kS64SlotTexts + 64 * i; *coop::host::read_u8(m, a) != 0; ++a) {
+    out.push_back(static_cast<char>(*coop::host::read_u8(m, a)));
+  }
+  return out;
+}
+}  // namespace
+
+TEST_CASE("game flags: a String64 is queued as the game's push does, so the saved copy changes too (issue 57)") {
+  auto w = game_with_strings();
+  GameFlags::use_calls(nullptr);
+  GameFlags flags(w);
+  CHECK(flags.get_string64(0x44) == "");
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Fairy"));
+  // One slot taken and finished (round 3), the hash at +0x50, the text in the slot's own buffer.
+  CHECK(*coop::host::read_u32(w.mem, kS64Word) == 0x30000000u + 1 + 0x100000);
+  CHECK(*coop::host::read_u32(w.mem, kS64Queue + 0x50) == 0x44u);
+  CHECK(slot_text(w.mem, 0) == "Item_Ocarina_Fairy");
+  CHECK(*coop::host::read_u8(w.mem, kS64Text) == 0);  // the table is the applier's to write
+  // Read back at once from the queue, the newest write first.
+  CHECK(flags.get_string64(0x44) == "Item_Ocarina_Fairy");
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Time"));
+  CHECK(slot_text(w.mem, 1) == "Item_Ocarina_Time");
+  CHECK(flags.get_string64(0x44) == "Item_Ocarina_Time");
+  // Refused: unknown, too long, not printable.
+  CHECK_FALSE(GameFlags::set_string64(w, 0x45, "x"));
+  CHECK_FALSE(GameFlags::set_string64(w, 0x44, std::string(64, 'a')));
+  CHECK_FALSE(GameFlags::set_string64(w, 0x44, "a\nb"));
+  // Our half of the queue (4 of 8) is full after two more.
+  CHECK(GameFlags::setter_has_room(w, coop::host::GameFlagType::string64));
+  CHECK(GameFlags::set_string64(w, 0x44, "a"));
+  CHECK(GameFlags::set_string64(w, 0x44, "b"));
+  CHECK_FALSE(GameFlags::setter_has_room(w, coop::host::GameFlagType::string64));
+  CHECK_FALSE(GameFlags::set_string64(w, 0x44, "c"));
+}
+
+TEST_CASE("game flags: a String64 slot whose buffer is too small is finished empty, and the write refused") {
+  auto w = game_with_strings();
+  GameFlags::use_calls(nullptr);
+  w.mem.put_u32(kS64Queue + 8, 4);  // slot 0's buffer holds 3 characters
+  CHECK_FALSE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Fairy"));
+  // Finished (the applier walks only to the first unfinished slot), with no flag in it.
+  CHECK(*coop::host::read_u32(w.mem, kS64Word) == 0x30000000u + 1 + 0x100000);
+  CHECK(*coop::host::read_u32(w.mem, kS64Queue + 0x50) == 0u);
+  CHECK(GameFlags(w).get_string64(0x44) == "");
+}
+
+TEST_CASE("game flags: with the game's setters a String64 waits in the call list with its text") {
+  using coop::host::GameFlagType;
+  using coop::host::GameFlagWrite;
+  auto w = game_with_strings();
+  coop::host::GameFlagCalls calls;
+  GameFlags::use_calls(&calls);
+  struct Off {
+    ~Off() { GameFlags::use_calls(nullptr); }
+  } off;
+  GameFlags flags(w);
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Fairy"));
+  CHECK(*coop::host::read_u32(w.mem, kS64Word) == 0x30000000u);  // nothing in the game's queue
+  CHECK(calls.size() == 1);
+  CHECK(flags.get_string64(0x44) == "Item_Ocarina_Fairy");
+  // The same flag again keeps its place, with the newer text.
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Time"));
+  CHECK(calls.size() == 1);
+  std::vector<std::string> handed;
+  CHECK(calls.run(8, [&](const GameFlagWrite& write) {
+    CHECK(write.type == GameFlagType::string64);
+    CHECK(write.id == 0x44u);
+    handed.push_back(calls.text(write).value_or("?"));
+    return true;
+  }) == 1);
+  CHECK(handed == std::vector<std::string>{"Item_Ocarina_Time"});
+  CHECK(calls.size() == 0);
+  CHECK_FALSE(calls.pending_string(0x44));
+  CHECK(flags.get_string64(0x44) == "");  // (this test's setter wrote nothing)
+
+  // A newer text put while the setter has the older one is not lost: it is handed over after it.
+  REQUIRE(GameFlags::set_string64(w, 0x44, "A"));
+  std::vector<std::string> seen;
+  CHECK(calls.run(8, [&](const GameFlagWrite& write) {
+    seen.push_back(calls.text(write).value_or("?"));
+    if (seen.size() == 1) calls.put_string(0x44, "B");
+    return true;
+  }) == 2);
+  CHECK(seen == std::vector<std::string>{"A", "B"});
+  CHECK_FALSE(calls.pending_string(0x44));
+  // A setter that cannot take it now keeps it waiting; clear() drops it.
+  REQUIRE(GameFlags::set_string64(w, 0x44, "C"));
+  CHECK(calls.run(8, [](const GameFlagWrite&) { return false; }) == 0);
+  CHECK(calls.pending_string(0x44) == "C");
+  calls.clear();
+  CHECK_FALSE(calls.pending_string(0x44));
+}
+
+TEST_CASE("flag setters: a String64 goes to the game's push with its text on the game's stack") {
+  auto w = game_with_strings();
+  coop::host::GameFlagCalls& calls = CoopFlagNative::Calls();
+  calls.clear();
+  GameFlags::use_calls(&calls);
+  struct Off {
+    ~Off() {
+      GameFlags::use_calls(nullptr);
+      CoopFlagNative::Calls().clear();
+    }
+  } off;
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Fairy"));
+  REQUIRE(GameFlags::set_bool(w, 0x18, true));
+  constexpr std::uint64_t kS64Stack = 0x8750000000ull;
+  std::vector<std::uint8_t> stack;
+  struct Made {
+    std::uint64_t function, x0, x1, x2;
+  };
+  std::vector<Made> made;
+  const bool ok = CoopFlagNative::RunSetters(
+      w,
+      [&](std::uint64_t function, std::uint64_t x0, std::uint64_t x1, std::uint64_t x2,
+          std::optional<std::uint32_t>) {
+        made.push_back({function, x0, x1, x2});
+        return true;
+      },
+      [&](const void* data, std::size_t n) -> std::uint64_t {
+        stack.assign(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + n);
+        return kS64Stack;
+      });
+  CHECK(ok);
+  REQUIRE(made.size() == 2);
+  // (manager + 0x608, &{char* text, u32 hash}) to f_710376b9b0.
+  CHECK(made[0].function == FakeMemory::kBase + 0x376b9b0);
+  CHECK(made[0].x0 == kMgr + 0x608);
+  CHECK(made[0].x1 == kS64Stack);
+  REQUIRE(stack.size() >= 0x10 + 19);
+  std::uint64_t text_at = 0;
+  std::uint32_t hash = 0;
+  std::memcpy(&text_at, stack.data(), 8);
+  std::memcpy(&hash, stack.data() + 8, 4);
+  CHECK(text_at == kS64Stack + 0x10);
+  CHECK(hash == 0x44u);
+  CHECK(std::string(reinterpret_cast<const char*>(stack.data() + 0x10)) == "Item_Ocarina_Fairy");
+  CHECK(made[1].function == FakeMemory::kBase + 0x682b20);  // the Bool after it, as before
+  CHECK(calls.size() == 0);
+
+  // No scratch (an older Hookshot): the setters stop, and the caller goes back to the queues.
+  REQUIRE(GameFlags::set_string64(w, 0x44, "Item_Ocarina_Time"));
+  CHECK_FALSE(CoopFlagNative::RunSetters(
+      w, [](std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::optional<std::uint32_t>) { return true; },
+      [](const void*, std::size_t) -> std::uint64_t { return 0; }));
+  CHECK(calls.size() == 1);
 }

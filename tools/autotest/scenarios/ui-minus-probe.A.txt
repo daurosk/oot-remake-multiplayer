@@ -1,0 +1,50 @@
+#! switches COOP_TEST_SCREEN_PROBE=1,LICHII_COOP_DEBUG_OBJECTS=1
+# ui-minus-probe (ui-tabs-0119, R1): which screens update on each page of the + and - menus (the module's
+# "census:" lines, COOP_TEST_SCREEN_PROBE=1), to place co-op's - menu tabs. One game is enough (A); B idles.
+# A screenshot (mark) after each step; read them with the log's census lines.
+mark start
+press PLUS
+wait 120
+mark plus-open
+press L
+wait 90
+mark plus-L1
+press L
+wait 90
+mark plus-L2
+press L
+wait 90
+mark plus-L3
+press R
+wait 90
+press R
+wait 90
+press R
+wait 90
+mark plus-back
+press PLUS
+wait 120
+mark closed
+press MINUS
+wait 150
+mark minus-open-map
+press L
+wait 120
+mark minus-threads
+press L
+wait 120
+mark minus-keyitems
+press R
+wait 120
+press R
+wait 120
+mark minus-map-again
+press R
+wait 120
+mark minus-past-map
+press PLUS
+wait 120
+mark minus-to-plus
+press PLUS
+wait 120
+mark end

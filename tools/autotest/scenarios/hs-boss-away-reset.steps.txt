@@ -1,0 +1,33 @@
+# hs-boss-away-reset (row 138 item 4, row 137; boss-away-0115): a guest holds Gohma beaten, then the HOST loads its
+# save from before her. Her quest (shared) follows the host back; her Bools (each game's own) did not: B's room had
+# the blue warp up while the quest said she lives. The fix puts B's beaten Bools back (Gohma_DefeatBoss, her death
+# events; her intro kept) once B is out of her area. A (host) boots and stays on the title, B loads and kills her,
+# takes the container if there is one, then A loads its pre-boss save -> FLAG_RESET.
+# SAVE: as hs-boss-away-dungeon (quest at GoToBossRoom, her set alive), both lanes (boss-away-0115-probe.ps1).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-away-reset -Server <protocol 13 server>
+# PASS (shots decide):
+#  1. b-kill: B "Dm_Deku_BossOut: our game started the death"; B's shot b-pickup: the warp up (and her container
+#     taken if it fell: B's hearts +1).
+#  2. after A's load: B "the fights this session knew are forgotten", then, only after B's b-out place (out of her
+#     area): "Queen Gohma is alive in the host's save: Gohma_DefeatBoss = 0 (written)" (+ BossDie, BossOut; never
+#     Dm_Deku_BossIn).
+#  3. B's shot b-back (B walked into her room again): NO blue warp; Gohma there (her intro or the fight) as in
+#     A's save. FAIL: the warp in b-back.
+#  4. row 137 (only if B took the container): B "our Link's max life N -> M (the host loaded a save with fewer
+#     hearts" and B's shots b-back / end show one heart fewer than b-pickup; B's log has no MaxLife sent upward
+#     after the reset (A's hearts in a-loaded = A's save's).
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+start A
+start B
+sleep 40
+load B
+play B hs-boss-away-reset-kill.B.txt
+lines b-killed B min=1 Dm_Deku_BossOut: our game started
+shot b-pickup
+load A
+sleep 30
+lines forgotten B min=1 the fights this session knew are forgotten
+shot a-loaded
+play B hs-boss-away-reset-after.B.txt
+lines reverted B min=1 Queen Gohma is alive in the host's save: Gohma_DefeatBoss = 0
+shot end

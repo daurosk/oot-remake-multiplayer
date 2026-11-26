@@ -22,12 +22,23 @@
 // - No stand-in in the pack (an old pack) or no horse found: the puppet still
 //   shows in its riding pose where the rider is (never invisible).
 //
+// epona-sync (protocol 18): every player has their own Epona, seen by the
+// others also while nobody rides her. A game that has won her (Get_Epona
+// Complete: the only Animal_Epona_Adult it then has is the one its own player
+// called with her song) sends her as a free horse (kRideFree: her place and
+// turn in the world) while she is on its actor list and its Link is on foot.
+// The others draw the same copy there, and keep that one copy (one key) when
+// the player gets on or off, so the horse never blinks. A game that has not
+// won her sends only while it rides (the ranch's Epona is every game's own
+// placement: a free copy of it would stand inside the real one).
+//
 // Rider and Rides need no emulator code (tests/lichii/ride_test.cpp); the
 // glue at the end of coop_ride.cpp is built into the emulator only.
 
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -78,16 +89,27 @@ public:
     static constexpr std::uint64_t kEveryUs = 33'000;  // 30 a second
     static constexpr float kNear = 4.0f;               // the horse under us, metres
     static constexpr int kOffSends = 3;                // riding off, sent this many times
+    // Our own Epona with nobody on her: looked for this often while she is
+    // not on the list, sent this often while she stands still (under
+    // Rides::kStaleUs, with room for a lost one), and given up this long
+    // after she was last seen (one missed read is not her leaving).
+    static constexpr std::uint64_t kSeekEveryUs = 500'000;
+    static constexpr std::uint64_t kIdleEveryUs = 150'000;
+    static constexpr std::uint64_t kGoneUs = 400'000;
+    static constexpr float kStillM = 0.01f;
 
     // Each frame. `riding`: our command names a horse. `rotation` unset:
-    // identity. Returns the message to send now, if any.
+    // identity. `own`: this game has won Epona, so the Epona on its list is
+    // sent while nobody rides her too. Returns the message to send now, if any.
     std::optional<coop::protocol::PlayerRide> Tick(bool riding, const std::optional<Vec3>& position,
                                                    const std::optional<Quat>& rotation,
                                                    const std::vector<HorseSeen>& horses,
-                                                   std::uint64_t now_us);
-    // Whether a walk for horses is needed this frame (riding, or off to send).
-    bool Wants(bool riding, std::uint64_t now_us) const;
+                                                   std::uint64_t now_us, bool own = false);
+    // Whether a walk for horses is needed this frame (riding, our own Epona
+    // to look for or follow, or off to send).
+    bool Wants(bool riding, std::uint64_t now_us, bool own = false) const;
     bool Riding() const { return riding_; }
+    bool Free() const { return free_; }  // our Epona is sent with nobody on her
     // The horse we last sent (0 none), for the log.
     std::uint64_t Horse() const { return horse_; }
     void Reset();
@@ -98,6 +120,9 @@ private:
     std::uint64_t last_us_ = 0;   // last sent
     std::uint64_t tried_us_ = 0;  // last Tick (Wants: a walk at most kEveryUs apart)
     std::uint64_t horse_ = 0;
+    bool free_ = false;
+    std::uint64_t seek_us_ = 0;  // last walk made for our own Epona on foot
+    Vec3 sent_place_{};          // where she was when last sent free
 };
 
 // What the others' games draw.
@@ -115,7 +140,9 @@ public:
     // Present thread. `remotes`: CoopPuppet::Collect, as the puppets plan.
     // `live_puppets`: CoopPuppet::LivePuppets (bit n: puppet n is live and
     // not parked). One copy per remote who rides here and whose puppet is
-    // live, at the puppet's place.
+    // live, at the puppet's place; or, for a free horse (kRideFree), at the
+    // place its owner's game gave. One key for a player's horse from the
+    // first message until she is gone, across getting on and off.
     std::vector<CoopSpawn::Copy> Plan(const std::optional<std::string>& scene, bool local_event,
                                       const std::vector<CoopPuppet::Remote>& remotes,
                                       std::uint32_t live_puppets, std::uint64_t now_us);
@@ -132,7 +159,7 @@ private:
     };
     std::mutex mutex_;
     std::map<std::uint8_t, Ride> rides_;  // guarded
-    std::map<std::uint8_t, bool> shown_;  // present thread
+    std::map<std::uint8_t, std::uint8_t> shown_;  // present thread: kRideRiding or kRideFree
     std::vector<std::string> changes_;    // present thread
 };
 
@@ -142,7 +169,7 @@ void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* s
            const std::optional<std::string>& scene, bool local_event,
            const std::optional<Vec3>& own_position, const std::optional<Quat>& own_rotation,
            const std::optional<coop::protocol::Animation>& own_animation,
-           std::uint64_t server_now_us);
+           std::uint64_t server_now_us, const std::function<bool()>& owns_epona = {});
 void OnEvent(const coop::net::Event& event);
 
 } // namespace CoopRide

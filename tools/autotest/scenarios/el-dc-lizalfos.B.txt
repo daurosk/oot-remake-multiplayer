@@ -1,0 +1,29 @@
+# el-dc-lizalfos B (proof-0116): outside the arena, looking in.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp DodongoCavern EntrancePos
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+place 78.0 100.6 -38.0
+wait 30
+toward 93.0 -50.0 6
+wait 570
+mark b-fight
+wait 600
+mark b-fight2
+wait 600
+mark b-pair2
+wait 300
+mark end

@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <string>
+#include <vector>
 
 namespace CoopDifficulty {
 namespace {
@@ -177,6 +179,86 @@ std::optional<Choice> ParseChoice(std::string_view text) {
     return c;
 }
 
+namespace {
+
+// One value of /difficulty custom: a whole percent on the slider's marks, within its ends.
+std::optional<std::uint16_t> SliderValue(std::string_view s, std::uint16_t least, std::uint16_t most) {
+    const auto v = Percent(s.size() > 1 && s.back() == '%' ? s.substr(0, s.size() - 1) : s);
+    if (!v || *v < least || *v > most || *v % proto::kDifficultyStep != 0) {
+        return std::nullopt;
+    }
+    return v;
+}
+
+std::string LowerWord(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::optional<Command> ParseCommand(std::string_view text) {
+    constexpr std::string_view kWord = "/difficulty";
+    std::string_view t = Trimmed(text);
+    if (t.size() < kWord.size() || LowerWord(t.substr(0, kWord.size())) != kWord) {
+        return std::nullopt;
+    }
+    t.remove_prefix(kWord.size());
+    if (!t.empty() && t.front() != ' ' && t.front() != '\t') {
+        return std::nullopt;  // "/difficultyx": not ours, sent as chat
+    }
+    std::vector<std::string> words;
+    for (t = Trimmed(t); !t.empty(); t = Trimmed(t)) {
+        const auto space = t.find_first_of(" \t");
+        words.push_back(LowerWord(t.substr(0, space)));
+        t = space == std::string_view::npos ? std::string_view{} : t.substr(space);
+    }
+    Command c;
+    if (words.empty()) {
+        return c;  // show
+    }
+    c.kind = Command::Kind::bad;
+    if (words.size() == 1 && (words[0] == "auto" || words[0] == "automatic")) {
+        c.kind = Command::Kind::change;
+        c.auto_scale = true;
+        return c;
+    }
+    for (std::size_t i = 0; i + 1 < kPresetKeys.size(); ++i) {   // (easy, normal, hard; custom takes values)
+        if (words.size() == 1 && words[0] == kPresetKeys[i]) {
+            c.kind = Command::Kind::change;
+            c.preset = static_cast<Preset>(i);
+            return c;
+        }
+    }
+    if (words.size() == 4 && words[0] == "custom") {
+        const auto hp = SliderValue(words[1], proto::kMinHpPct, proto::kMaxHpPct);
+        const auto damage = SliderValue(words[2], proto::kMinDamagePct, proto::kMaxDamagePct);
+        const auto count = SliderValue(words[3], proto::kMinCountPct, proto::kMaxCountPct);
+        if (hp && damage && count) {
+            c.kind = Command::Kind::change;
+            c.preset = Preset::custom;
+            c.custom = proto::clamp_difficulty({*hp, *damage, *count});
+        }
+    }
+    return c;
+}
+
+Choice Applied(const Choice& now, const Command& change) {
+    if (change.auto_scale) {
+        return WithAuto(now, true);
+    }
+    Choice c = WithPreset(now, change.preset);
+    if (change.preset == Preset::custom) {
+        c.custom = change.custom;
+    }
+    return c;
+}
+
 bool OffersKept(bool hosts, std::uint8_t set_by, const std::optional<Choice>& kept, bool offered) {
     return hosts && set_by == 0 && kept && !kept->auto_scale && !offered;
 }
@@ -209,24 +291,20 @@ std::size_t Kinds::Hash(std::uint64_t address) noexcept {
     return static_cast<std::size_t>(((address >> 4) * 0x9e3779b97f4a7c15ull) >> 54);  // 10 bits: kSlots
 }
 
-bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
-    if (address == 0) {
+bool Kinds::Mark(std::uint64_t address, Kind kind, std::uint64_t fold_key) noexcept {
+    if (address == 0 || address == kFreed) {
         return false;
     }
     const auto k = static_cast<std::uint8_t>(kind);
+    Slot* room = nullptr;  // the first freed or empty slot on the way: a new address goes there
+    std::size_t room_at = 0;
     for (std::size_t i = 0; i < kProbes; ++i) {
-        Slot& s = slots_[(Hash(address) + i) % kSlots];
+        const std::size_t at = (Hash(address) + i) % kSlots;
+        Slot& s = slots_[at];
         const std::uint64_t key = s.key.load(std::memory_order_acquire);
-        if (key == 0) {
-            // (only this writer inserts: no race on the key) The kind goes in
-            // first, so a reader that finds the key reads its kind.
-            s.carry.store(0, std::memory_order_relaxed);
-            s.pass.store(0, std::memory_order_relaxed);
-            s.kind.store(k, std::memory_order_release);
-            s.key.store(address, std::memory_order_release);
-            return true;
-        }
         if (key == address) {
+            marked_[at] = walk_;
+            s.fold_key.store(fold_key, std::memory_order_release);
             if (s.kind.load(std::memory_order_relaxed) != k) {
                 s.carry.store(0, std::memory_order_relaxed);  // another actor at that address now
                 s.pass.store(0, std::memory_order_relaxed);
@@ -234,9 +312,53 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
             }
             return true;
         }
+        if (key == kFreed || key == 0) {
+            if (room == nullptr) {
+                room = &s;
+                room_at = at;
+            }
+            if (key == 0) {
+                break;  // the end of the run: the address is not in the table
+            }
+            // (a freed slot: the address may still be further on)
+        }
     }
-    unmarked_.fetch_add(1, std::memory_order_relaxed);
-    return false;
+    if (room == nullptr) {
+        unmarked_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // (only this writer inserts: no race on the key) The kind goes in first,
+    // so a reader that finds the key reads its kind.
+    marked_[room_at] = walk_;
+    room->carry.store(0, std::memory_order_relaxed);
+    room->pass.store(0, std::memory_order_relaxed);
+    room->fold_key.store(fold_key, std::memory_order_relaxed);
+    room->kind.store(k, std::memory_order_release);
+    room->key.store(address, std::memory_order_release);
+    return true;
+}
+
+void Kinds::Sweep() noexcept {
+    std::uint64_t held = 0;
+    for (std::size_t at = 0; at < kSlots; ++at) {
+        Slot& s = slots_[at];
+        const std::uint64_t key = s.key.load(std::memory_order_relaxed);
+        if (key == 0 || key == kFreed) {
+            continue;
+        }
+        if (walk_ - marked_[at] >= kKeepWalks) {
+            // Its actor is gone. The kind first: a reader that still finds
+            // the key reads no enemy. (A reader inside Step with this slot
+            // can at most leave a carry of under one life point in it.)
+            s.kind.store(0, std::memory_order_release);
+            s.key.store(kFreed, std::memory_order_release);
+        } else {
+            ++held;
+        }
+    }
+    held_.store(held, std::memory_order_relaxed);
+    unmarked_last_.store(unmarked_.exchange(0, std::memory_order_relaxed), std::memory_order_relaxed);
+    ++walk_;
 }
 
 void Kinds::Forget(std::uint64_t address) noexcept {
@@ -274,7 +396,7 @@ std::int32_t Kinds::Passed(Slot& s, std::int32_t sum, std::uint64_t now_ms) noex
 }
 
 const Kinds::Slot* Kinds::Find(std::uint64_t address) const noexcept {
-    if (address == 0) {
+    if (address == 0 || address == kFreed) {  // (a freed slot is passed over, never found)
         return nullptr;
     }
     for (std::size_t i = 0; i < kProbes; ++i) {
@@ -303,13 +425,18 @@ void Kinds::Clear() noexcept {
     for (Slot& s : slots_) {
         s.key.store(0, std::memory_order_release);
         s.kind.store(0, std::memory_order_relaxed);
+        s.fold_key.store(0, std::memory_order_relaxed);
         s.carry.store(0, std::memory_order_relaxed);
         s.pass.store(0, std::memory_order_relaxed);
     }
+    marked_.fill(0);
+    walk_ = 1;
     unmarked_.store(0, std::memory_order_relaxed);
+    unmarked_last_.store(0, std::memory_order_relaxed);
+    held_.store(0, std::memory_order_relaxed);
 }
 
-std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
+std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule, std::int32_t first,
                            std::atomic<std::uint64_t>& hits) noexcept {
     if (pct == 100) {
         return sum;
@@ -317,7 +444,9 @@ std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule ru
     // The game steps each component once a frame, one at a time, so a plain
     // load and store of its carry is enough.
     const std::uint32_t packed = s.carry.load(std::memory_order_relaxed);
-    std::int32_t carry = (packed >> 16) == pct ? static_cast<std::int32_t>(packed & 0xffff) : 0;
+    std::int32_t carry = (packed >> 16) == pct
+                             ? static_cast<std::int32_t>(packed & 0xffff)
+                             : static_cast<std::int32_t>(std::min<std::int64_t>(std::int64_t{first} * sum, 0xffff));
     const std::int32_t taken = rule(sum, pct, carry);
     s.carry.store(static_cast<std::uint32_t>(pct) << 16 | static_cast<std::uint32_t>(carry & 0xffff),
                   std::memory_order_relaxed);
@@ -489,14 +618,51 @@ std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct) {
     return static_cast<std::uint16_t>(std::min<std::uint32_t>(folded, 0xffff));
 }
 
+std::uint16_t FoldCount(std::uint64_t fold_key, std::uint16_t count_pct) {
+    if (fold_key == 0 || count_pct <= 100) {
+        return count_pct;
+    }
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(100u * (1u + ExtraCount(fold_key, count_pct)), 0xffff));
+}
+
+std::uint64_t PackValues(const Values& v) noexcept {
+    const auto field = [](std::uint16_t pct, unsigned at) {
+        return static_cast<std::uint64_t>(std::min<std::uint16_t>(pct, 0xfff)) << at;
+    };
+    return field(v.hp_pct, 0) | field(v.damage_pct, 12) | field(v.count_pct, 24) | field(v.boss_hp_pct, 36) |
+           field(v.boss_damage_pct, 48);
+}
+
+Values UnpackValues(std::uint64_t word) noexcept {
+    const auto field = [word](unsigned at) { return static_cast<std::uint16_t>(word >> at & 0xfff); };
+    Values v;
+    v.hp_pct = field(0);
+    v.damage_pct = field(12);
+    v.count_pct = field(24);
+    v.boss_hp_pct = field(36);
+    v.boss_damage_pct = field(48);
+    return v;
+}
+
 bool ScalesAsBoss(std::string_view name) {
     const KindRule* rule = name.starts_with("Enemy_") ? KindRuleOf(name) : nullptr;
     return rule != nullptr && (rule->why == "boss" || rule->why == "mini-boss");
 }
 
+namespace {
+// A placement hash our baked table does not have: a mod added it (OOTRR Difficulty), so it is never folded by kind
+// either: the mod already scaled it (ootrr-diff-compat D1). Hash 0 and all ones are made actors, not placements.
+bool ModAdded(std::uint64_t hash) {
+    return hash != 0 && hash != ~std::uint64_t{0} && !AreaOf(hash).has_value();
+}
+}  // namespace
+
 Kind AttackerKind(std::string_view name, std::uint64_t hash, bool no_spot) {
     if (ScalesAsBoss(name)) {
         return Kind::boss;
+    }
+    if (ModAdded(hash)) {
+        return Kind::enemy;
     }
     return no_spot || TreatmentOf(name, hash) == Treatment::fold ? Kind::folded_enemy : Kind::enemy;
 }
@@ -504,6 +670,9 @@ Kind AttackerKind(std::string_view name, std::uint64_t hash, bool no_spot) {
 Kind LifeKind(std::string_view name, std::uint64_t hash, bool no_spot) {
     if (ScalesAsBoss(name)) {
         return Kind::boss_life;
+    }
+    if (ModAdded(hash)) {
+        return Kind::enemy_life;
     }
     return no_spot || TreatmentOf(name, hash) == Treatment::fold ? Kind::folded_enemy_life : Kind::enemy_life;
 }
@@ -692,9 +861,8 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
         }
         const std::optional<Area> area = areas_ ? areas_(o.hash) : std::nullopt;
         if (!area) {
-            if (ExtraCount(o.hash, count_pct) > 0) {
-                no_spot_.insert(o.hash);  // no placement data: no ground known
-            }
+            // A placement our baked data lacks was added by a mod (OOTRR Difficulty: more enemies, hordes): its mod
+            // already scaled it, so it keeps its own weight: no copies, no fold (ootrr-diff-compat D1).
             continue;
         }
         auto plan = plans_.find(area->name);

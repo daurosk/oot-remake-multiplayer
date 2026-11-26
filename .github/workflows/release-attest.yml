@@ -50,28 +50,40 @@ jobs:
           cd kit
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "oot-coop-$TAG.zip" --pattern "oot-coop-$TAG.zip.sha256" --pattern "Update.bat" \
-            --pattern "oot-coop-$TAG-windows.zip" --pattern "oot-coop-$TAG-windows.zip.sha256"
+            --pattern "oot-coop-$TAG-windows.zip" --pattern "oot-coop-$TAG-windows.zip.sha256" \
+            --pattern "Squadala-$TAG-windows.zip" --pattern "Squadala-$TAG-windows.zip.sha256"
           ls -l
-          # oot-coop-<tag>.zip is the name kits up to v0.10.1 update from (from v0.11.0 on the same file as -windows.zip).
-          test -f "oot-coop-$TAG.zip" || { echo "::error::release $TAG has no oot-coop-$TAG.zip (kits up to v0.10.1 would not see it)"; exit 1; }
-          sha256sum -c "oot-coop-$TAG.zip.sha256"
-          if [ -f "oot-coop-$TAG-windows.zip" ]; then
-            sha256sum -c "oot-coop-$TAG-windows.zip.sha256"
-            cmp -s "oot-coop-$TAG.zip" "oot-coop-$TAG-windows.zip" || { echo "::error::oot-coop-$TAG.zip and -windows.zip differ"; exit 1; }
-          fi
+          # The Windows kit: Squadala-<tag>-windows.zip from v0.11.3 on, the only name from v0.11.4 on; oot-coop-<tag>.zip
+          # (every release up to v0.11.3) and oot-coop-<tag>-windows.zip (v0.11.0 to v0.11.2) are the same file where a
+          # release has them.
+          test -f "Squadala-$TAG-windows.zip" || test -f "oot-coop-$TAG.zip" ||
+            { echo "::error::release $TAG has no Squadala-$TAG-windows.zip (nor an oot-coop-$TAG.zip of an older release)"; exit 1; }
+          first=''
+          for f in "Squadala-$TAG-windows.zip" "oot-coop-$TAG.zip" "oot-coop-$TAG-windows.zip"; do
+            if [ ! -f "$f" ]; then continue; fi
+            sha256sum -c "$f.sha256"
+            if [ -z "$first" ]; then first=$f; else cmp -s "$first" "$f" || { echo "::error::$first and $f differ"; exit 1; }; fi
+          done
           # The Linux kit (issue 127), when the release has one: its update.sh checks it too.
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "oot-coop-$TAG-linux-*.tar.gz" --pattern "oot-coop-$TAG-linux-*.tar.gz.sha256" || true
-          # The Longshot Linux kit (a zip: tools/release/make_kit_linux.sh), when the release has one.
+          # The Longshot Linux kit (a zip: tools/release/make_kit_linux.sh), when the release has one: Squadala-<tag>-linux.zip
+          # (and up to v0.11.3 the same file as oot-coop-<tag>-linux.zip).
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "oot-coop-$TAG-linux.zip" --pattern "oot-coop-$TAG-linux.zip.sha256" || true
+            --pattern "oot-coop-$TAG-linux.zip" --pattern "oot-coop-$TAG-linux.zip.sha256" \
+            --pattern "Squadala-$TAG-linux.zip" --pattern "Squadala-$TAG-linux.zip.sha256" || true
+          if [ -f "Squadala-$TAG-linux.zip" ] && [ -f "oot-coop-$TAG-linux.zip" ]; then
+            cmp -s "oot-coop-$TAG-linux.zip" "Squadala-$TAG-linux.zip" || { echo "::error::oot-coop-$TAG-linux.zip and Squadala-$TAG-linux.zip differ"; exit 1; }
+          fi
           # Every kit asset is named here, so a kit is never signed by accident or left out: the
           # updaters (update.ps1 + verify_kit.ps1, both Linux update.sh) check a download by its
           # SHA-256 and then by `gh attestation verify` on that same file, so each kit file a
           # release has must be a subject. The .sha256 files are only checked, not signed.
-          subjects=("$PWD/oot-coop-$TAG.zip")
-          if [ -f "oot-coop-$TAG-windows.zip" ]; then subjects+=("$PWD/oot-coop-$TAG-windows.zip"); fi
-          for f in oot-coop-"$TAG"-linux-*.tar.gz "oot-coop-$TAG-linux.zip"; do
+          subjects=()
+          for f in "Squadala-$TAG-windows.zip" "oot-coop-$TAG.zip" "oot-coop-$TAG-windows.zip"; do
+            if [ -f "$f" ]; then subjects+=("$PWD/$f"); fi
+          done
+          for f in oot-coop-"$TAG"-linux-*.tar.gz "oot-coop-$TAG-linux.zip" "Squadala-$TAG-linux.zip"; do
             if [ ! -f "$f" ]; then continue; fi
             # update.sh never takes a Linux kit without its .sha256: sign none without one either.
             if [ ! -f "$f.sha256" ]; then echo "::error::release $TAG has $f but no $f.sha256"; exit 1; fi

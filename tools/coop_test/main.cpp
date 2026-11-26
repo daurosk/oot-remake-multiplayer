@@ -230,6 +230,9 @@ int main(int argc, char** argv) {
     if (!options->connect_host) {
       coop::server::ServerOptions server_options;
       server_options.port = options->port;
+      // Its own clients are on this PC: listen on 127.0.0.1 only (a listener on all addresses makes the Windows
+      // firewall ask). --server-only is for other PCs to join: all addresses.
+      if (!options->server_only) server_options.bind = 0x7F000001u;
       server_options.session.join_password = options->password;
       server_options.session.log = [](const std::string& text) {
         std::printf("server: %s\n", text.c_str());

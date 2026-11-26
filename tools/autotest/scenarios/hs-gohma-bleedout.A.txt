@@ -1,0 +1,102 @@
+# hs-gohma-bleedout (row 227, enemies-01110): "a player who goes down and then fully dies leaves the boss fight bugged:
+# it does not start". Entry and fight as hs-gohma-gameover / hs-gohma-downed (pre-Gohma flags + GoToBossRoom, through
+# the door together, her drop). Two cases, both games logging boss + flags:
+#  Phase 1 (bleed-out): A sets /dbno time 10; B takes a hit of its whole life mid-fight (downed), is NOT revived, bleeds
+#     out (spectate, co-op respawn to the entrance), walks back in through the door.
+#  Phase 2 (wipe): A sets /dbno time 60; B downed again, then A downed too (both down: the wipe, Game Over on both),
+#     both continue, walk back in through the door together.
+# PASS (logs + shots, both games):
+#  1. After phase 1: no "boss beaten" line anywhere; A stays in phase fight; b-back shot: Gohma alive in B's room.
+#  2. After phase 2: both games re-enter, the boss door/intro/fight runs again ("phase fight" again in both logs);
+#     a-fight3/b-fight3 shots: Gohma fighting on both screens. FAIL (row 227): no fight after the re-entry (door
+#     stays open / no intro / Gohma absent or idle), or the two games disagree.
+#  VOID: no fight before the first hurt, or B not downed (no "dbno" downed line).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 1800
+mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+chat /dbno time 10
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door together: both games' own boss trigger
+mark a-in
+wait 600
+mark a-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark a-trigger
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her
+mark a-moved
+wait 1500
+mark a-fight
+wait 600                 # B downed at its b-fight, bleeds out in 10 s (A does not revive it)
+mark a-b-down
+wait 1800                # B spectates, then co-op's respawn (the entrance)
+mark a-b-bled
+wait 2700                # B walks back in through the door
+mark a-b-back
+chat /dbno time 60       # phase 2: B stays downed long enough for the wipe
+wait 900
+mark a-phase2
+wait 300                 # B is downed at its b-phase2 (about now)
+hurt 80                  # A downed too: both down = the wipe
+wait 600
+mark a-wipe
+wait 2400                # the Game Over, the continue
+press A
+wait 300
+press A
+wait 1800
+mark a-continued
+place -12.0 48.5 66.5    # the corridor again (side by side with B)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600    # through the door together again
+mark a-in3
+wait 2400                # the door's event, the intro (again?)
+mark a-after-intro3
+goto 17.0 67.8 1.5 600
+rstick 0 1 60
+press ZL 10
+wait 900
+goto 12.0 67.5 1.5 600
+wait 1500
+mark a-fight3
+wait 1800
+mark a-end

@@ -1,0 +1,90 @@
+# hs-gohma-death (player report #105, branch gohma-death): the HOST's black screen after Gohma's death. A is the
+# host, B the guest. B walks in first and owns Gohma; A walks in ~25 s later with a copy and never hits her (B
+# stays the owner). B's test kill ends the owner's Gohma; A's game is then asked her death setting
+# (InsideTheDekuTree_BossDie, guest-warp) and must play her whole death itself: the cutscene, the fade back,
+# the heart container and the blue warp. A then walks to the room's centre (the warp) and around it.
+# SAVE (else VOID: no Gohma body, B's kill finds "none here with a life"; run 20261115-190406): both lane
+# baselines at quest Get_StoneOfForest = GoToBossRoom, as hs-boss-full: games closed, for lane N A and B, slots
+# 00-02: save_flags.py set <laneN-X>\autotest-save\slot_0*\progress.sav enum:0x7d776b61=0xb5df43cb (old file
+# kept in autotest-save-backup; put it back after). The scenario clears the Deku boss room flags itself.
+# OWNER: either game may own her when the kill comes (LANE1 run 4, 20261116-021330: she went to A 0.1 s after A's
+# "ready to own"; most likely the server's chase handover, A's copy running its own AI in A's own intro; chases are
+# not logged). So BOTH games run `kill` at b-k0: the owner's
+# test kill is a kill (past her life stops, boss-0114-a); the copy's is held at 1 and goes to the owner as a hit.
+# Below, OWNER = the game whose log has "Enemy_DungeonBoss_Gohma: now ours" last before the kill, COPY = the other.
+# PASS (all of):
+#  1. OWNER: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land; check OWNER's
+#     "owners' deaths past a copy's own life stops" / its life line "21 -> 0").
+#  2. COPY: "InsideTheDekuTree_BossDie: player N's boss died; our copy still lives: waiting for it to die here"
+#     (boss-0114-a), then EITHER "our copy of the boss died here: asking its own death" (the setting: her whole
+#     death, container and warp here; expected since boss-0114-a 235eceb4: her life stops are passed, A's
+#     "owners' deaths past a copy's own life stops" > 0) OR, after 1.5 s, "Dm_Deku_BossOut: ... the death flow
+#     alone: our copy of the boss still lives ... one death cutscene here, nothing asked again" (#88 again for A:
+#     note it as a regression of 235eceb4, not a FAIL of #105). Never a second death cutscene in A (one
+#     "our game started"/"playing it here too" per game; later asks "not taken (refused at the request ...)").
+#  3. COPY: "its death has begun: the copy runs all its own" (the fix), and no "the copy takes the owner's state
+#     again" after it; her death ends here: A's "a hit the dying boss's game did not take: N given to its own
+#     Life step (its death has begun)" and/or "N ended in their death" > 0 in A's "coop: bosses:" totals line, and
+#     A's "our event is over" after the death (Revirie's 0.11.2 host log never had it: 'the boss is still
+#     there', then 'a hit the boss's game did not take: its life stays its game's' over and over).
+#  4. A's shots a-d3 and a-walk1 are the boss room, not black; A's "goto" after a-d3 does not time out.
+#  5. A leaves the scene through the blue warp (A's log: the scene changes from InsideTheDekuTree after
+#     a-walk1), or at least A's "heart container: our pickup" / MaxLife +4 in A.
+#  (Checks 4-5 name A; when B is the COPY, read them for B: b-k1/b-k2 not black, B's warp or container.)
+# FAIL (= report #105): the COPY's shots black after the death, its goto timed out, still in InsideTheDekuTree.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-gohma-death
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the host's game drops the death setting as played (run 20261115-191432)
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+wait 1500               # B walks in first and owns her
+place -12.0 48.5 66.5   # the corridor
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: A's own intro, with a copy Gohma
+mark a-in
+wait 2400               # A's intro (the copy runs its own event changes)
+mark a-after-intro
+goto 12.0 67.5 1.5 600  # inside the room by the door, no hits: B stays the owner
+mark a-moved
+wait 3000               # B's kill comes now (b-k0)
+kill Enemy_DungeonBoss_Gohma   # with B's: whichever game owns her kills her (the other's is held at 1)
+mark a-d0
+wait 600
+mark a-d1               # the death cutscene here (asked as InsideTheDekuTree_BossDie)
+wait 1200
+mark a-d2
+wait 1200
+mark a-d3               # past the cutscene: the room again, not black (report #105)
+goto 22.5 68.2 1.5 600  # the room's centre: the blue warp, the heart container near
+mark a-walk1
+wait 600
+goto 18.5 67.8 1.0 300  # under her ceiling spot (where she fell, the container)
+goto 22.5 68.2 1.0 300
+mark a-walk2
+wait 1800               # the warp's own event, the scene change
+mark end

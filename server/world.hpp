@@ -46,6 +46,9 @@ class WorldStore {
 
   std::size_t breaks(const std::string& scene) const;
   std::size_t places(const std::string& scene) const;
+  // Every scene's entries, all told (breaks, places, hits, cuts, kept breaks): for the host's memory line (row 260).
+  std::size_t scenes() const { return scenes_.size() + kept_.size(); }
+  std::size_t entries() const;
 
  private:
   struct Scene {

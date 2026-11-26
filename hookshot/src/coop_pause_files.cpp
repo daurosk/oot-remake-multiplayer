@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_files.h"
+#include "coop_title.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -11,6 +12,9 @@
 #include <sstream>
 #include <system_error>
 
+#include "coop_gold_mode.h"
+#include "coop_race_mode.h"
+#include "coop_switch_stand_mode.h"
 #include "coop_name_privacy.h"
 #include "coop_runtime.h"
 
@@ -221,9 +225,13 @@ void CheckName() {
 
 CoopTitleMenu::Options ReadOptions() {
     CheckName();
-    const auto kit = FindKit();
+    // (the one the game reads at its start, and Save writes: with this game's coop-player.ini over it)
     const std::string coop = ReadText(CoopIni());
-    auto o = CoopTitleMenu::Options::Read(coop, kit ? ReadText(*kit / "coop-options.ini") : std::string());
+    auto o = CoopTitleMenu::Options::Read(coop, CoopTitle::ReadKitOptions());
+    // Row 63: the next Host's Gold Skulltula mode (a Host.bat start too: this is read at the module's start).
+    CoopGoldMode::SetChoice(o.gold_own ? CoopGoldMode::Mode::own : CoopGoldMode::Mode::shared);
+    CoopRaceMode::SetChoice(o.race);   // (race mode, the same way)
+    CoopSwitchStandMode::SetChoice(o.floor_switches);   // (shared floor switches too)
     if (o.name.empty() && !g_fallback_name.empty()) {
         o.name = g_fallback_name;
     }

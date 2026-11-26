@@ -25,13 +25,17 @@ struct Event;
 
 namespace CoopLobby {
 
-// Any thread (the chat box): true when `text` is /kick, /ban, /mute or
-// /unmute, which is then done here and not sent as chat. The host's goes to
-// the server; anyone else's /mute and /unmute are their own mutes, and their
-// /kick and /ban are refused with a line. Takes the session's network lock.
+// Any thread (the chat box): true when `text` is /kick, /ban, /mute,
+// /unmute, /allow or /deny, which is then done here and not sent as chat. The
+// host's goes to the server; anyone else's /mute and /unmute are their own
+// mutes, and their other commands are refused with a line. /allow and /deny
+// answer a player who asks to join (JOIN_ALLOW; docs/protocol.md "Host
+// approval"). Takes the session's network lock.
 bool OnChat(std::string_view text, coop::host::Session& session);
 
 // Network thread, from the session's on_event (the network lock is held).
+// Host approval: a JOIN_KNOCK to the host and our own join waiting for the
+// host (waiting_for_host) become chat lines.
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 
 // Present thread, once per frame (`session` null when not connected): sends
@@ -72,11 +76,32 @@ struct Seen {
     bool connected = false;              // the session took this game in (WELCOME came)
     std::string refused;                 // why the session turned this game away, in full ("" it did not)
     bool banned = false;                 // that reason is the host's ban (joining again cannot work)
+    // How many times the session turned this game away for a reason joining again by itself cannot undo
+    // (StopsRejoin: the host's Kick or ban or no, a wrong password, another version) since co-op started. It only
+    // grows (Forget keeps it), so a caller that looks less often than events come still sees each one: `refused` is
+    // cleared again by the disconnect that follows a kick.
+    std::uint32_t refusals = 0;
+    // How many times the session refused this game's name as in use there, after the client's own retries (the
+    // player's own crashed game holding it) ran out. Only grows, as `refusals`: the module joins again as "<name> (2)".
+    std::uint32_t names_taken = 0;
     std::uint8_t self = 0;
     std::uint8_t host = 0;
     std::vector<PlayerSeen> players;     // by number
+    // Row 208: the session holds our join until the host lets us in (approve_joins: JOIN_KNOCK came); cleared by
+    // the WELCOME, REFUSED or disconnect that ends the wait.
+    bool held = false;
 };
 Seen Now();
+// A refusal auto-rejoin must not try again after (Seen::refusals): the host's own choice (kicked, banned, not let in)
+// or one a retry cannot change (a wrong password, another protocol version or game build). A full server or a name
+// taken may be gone a few seconds later: those still retry.
+inline bool StopsRejoin(coop::protocol::RefuseReason r) {
+    using R = coop::protocol::RefuseReason;
+    return r == R::kicked || r == R::banned || r == R::not_let_in || r == R::bad_password ||
+           r == R::wrong_protocol_version || r == R::wrong_game_build || r == R::wrong_coop_version;
+}
+// Who asks to join this host now (the JOIN_KNOCKs not answered yet), oldest first, by nickname. Any thread.
+std::vector<std::string> Asking();
 // Co-op was left (CoopHook::End sends no last event): nothing is seen any more.
 void Forget();
 

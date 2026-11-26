@@ -1,0 +1,52 @@
+# hs-deku-torch-away (Hookshot, issue #177 / row 91, case 2 of torch-flame-a): hs-deku-torch with the watcher OUTSIDE
+# room E while the event plays. The live case (both in room E) PASSed in 0.11.4's big run (hs-deku-torch: torch lit
+# and web gone in both games, bigrun-0114-triage.md). Not run before: A (the watcher) stays at the Deku Tree entrance
+# (not room E) while B lands on room E's plate, and walks into room E only after B's event is over.
+# Same native path as the live case: the plate's autogen bool 0x0f8f3fa3 is shared, it boots A's plate when room E
+# loads, and the torch's own OneShotChemicalRequestIgnite lights it; RoomE_KillSpiderWave (0x46e8fcf9) burns the web
+# at load. If A's torch stays dark here, the fix is to hold 0x0f8f3fa3 until room E is current (coop_dungeon held
+# flag path, module only): reports/fable-g3-objects.md, objects-next-a-5.
+# Room E (hs-deku-torch.A.txt): plate Obj_StepSwitch_A_05 at -10.2 79.4 -9.0, torch Obj_SwitchCandleStick_A_02
+# 0c29e0a5d05f4426 at -12.9 79.4 -10.5, web Obj_InsideTheDekuTree_SpiderWeb_A_02 at -11.4 79.4 -11.0.
+# SAVE: profile pre-deku, as hs-deku-torch: the owner's checkpoint save '1. Deku Tree' in both pairs' autotest-save
+#   (quest GoInside, all room flags 0, no web keys; no save_flags prep).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-deku-torch-away (groups: hookshot-rc-checks.txt)
+# Pass:
+#  - B "our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others".
+#  - A "bool 0x0f8f3fa3 (entry N) 0 -> 1" (the plate's bool reached A while A was away) and the same for 0x46e8fcf9.
+#  - No "our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb" in A's log: A gets the result only,
+#    no replay (owner 07:40 rule 98(2), gimmick events).
+#  - Shot "away": A at the entrance, not in room E. Shots "lit"/"web"/"late" (A's, after A walked in): the torch
+#    burning and the web gone, as in B's "lit"/"web" shots. FAIL: A's torch dark while B's burns.
+#  - Keep A's "gimmick probe: 0c29e0a5d05f4426 Obj_SwitchCandleStick_A_02" lines for the triage.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+mark away                 # A stays at the entrance while B lands on the plate (B: after + 1100) and its event plays
+wait 3000
+place -14.5 79.6 -6.5     # into room E only now, as hs-deku-torch's watcher spot
+wait 240
+mark placed
+toward -12.9 -10.5 6
+press ZL 10
+wait 300
+mark lit
+wait 600
+mark web
+wait 900
+mark late

@@ -1,0 +1,3 @@
+# save-refresh: A on the title's first button (Continue once the list has a save): the load list opens.
+press A
+wait 180

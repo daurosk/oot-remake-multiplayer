@@ -31,7 +31,7 @@ Out of scope: what a player you let in does inside the shared game (see [What an
 Each release's kit zip and `Update.bat` are signed by this repository's `Release attest` workflow (GitHub artifact attestations, Sigstore) from the files as published. To check a download yourself, with the GitHub CLI:
 
 ```
-gh attestation verify oot-coop-<version>.zip --repo daurosk/oot-remake-multiplayer --signer-workflow daurosk/oot-remake-multiplayer/.github/workflows/release-attest.yml
+gh attestation verify Squadala-<version>-windows.zip --repo daurosk/oot-remake-multiplayer --signer-workflow daurosk/oot-remake-multiplayer/.github/workflows/release-attest.yml
 ```
 
 or run `tools\release\verify_kit.ps1 -Zip <file>` from this repository, which also checks the `.sha256` file. It prints `OK: signed by our release workflow`. The signature proves the file is what our workflow saw at publish time; it does not protect against someone with write access to this repository. Every GitHub Action our workflows use is pinned to a full commit hash (checked by `tools/check_actions.py`). More in [setup.md](docs/setup.md#check-the-download).
@@ -46,12 +46,10 @@ or run `tools\release\verify_kit.ps1 -Zip <file>` from this repository, which al
 
 ## The Linux kit
 
-The Linux kit (`Host.sh`, `Join.sh`, `start-server.sh`, `update.sh`) opens the same one UDP port and follows the same rules: the same join password, UPnP and invite code (only with a password), the same message checks. What differs:
+The Linux kit (`start.sh`, `build.sh`, `update.sh`, `collect-logs.sh`; Longshot, no emulator since 0.11.12) opens the same one UDP port and follows the same rules as the Windows kit: the same join password, UPnP and invite code (only with a password), the same message checks. What differs:
 
-- **The host's server runs in the background**, not in a window: `./start-server.sh --stop` stops it (and the UPnP forward), as does shutting the PC down. Its lines, which hold the session's join password, are in `logs/server-console.txt`, readable only by your user and removed when the server stops; the invite code is in `logs/invite-code.txt` (only your user) while it runs and never in the server log. Answer codes reach the server through `logs/.server-input`, a pipe only your user can write.
-- **A join with an invite code** runs the join helper in the background; it stops when the emulator closes. The join password goes to it in its environment, never on a command line (other users of the PC can see command lines) or in a log.
 - **Nothing changes the firewall** (ufw, firewalld): a port you open by hand stays open until you close it.
-- **`update.sh`** downloads only from this repository's releases, checks the SHA-256, and checks the release signature when the GitHub CLI is installed and logged in (`verify_signature = no` skips only that check). The emulator inside is an AppImage built by our CI from the pinned Fritchii source with our patches; the tools that build it (linuxdeploy) are pinned and SHA-256 checked.
+- **`update.sh`** downloads only from this repository's releases, checks the SHA-256, and checks the release signature when the GitHub CLI is installed and logged in (`verify_signature = no` skips only that check).
 - **`collect-logs.sh`** masks passwords, keys, invite codes, IP and MAC addresses, your user name and PC name, as `collect-logs.cmd` does.
 
 ## What another player can do

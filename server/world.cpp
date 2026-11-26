@@ -97,4 +97,13 @@ std::size_t WorldStore::places(const std::string& scene) const {
   return it == scenes_.end() ? 0 : it->second.places.size();
 }
 
+std::size_t WorldStore::entries() const {
+  std::size_t n = kept_total_;
+  for (const auto& [name, s] : scenes_) {
+    n += s.breaks.size() + s.places.size() + s.cuts.size();
+    for (const auto& [hash, hits] : s.hits) n += hits.size();
+  }
+  return n;
+}
+
 }  // namespace coop::server

@@ -1,0 +1,34 @@
+# hs-dbno-crawl (down-crawl-a, row 113 parts 1-2): B is downed by the Deku Baba at the Deku Tree entrance and must
+# lie in the game's own crawl, shielded and unseen. A (host) stays at the entrance, makes the bleed-out long
+# (/dbno time 240) so the checks fit, and watches.
+# Pass (B's game-out): "Crawl (234) asked and taken"; "invincibility (no reaction) on for our downed Link";
+# "perception emitter off for our downed Link"; no "Crawl (234) refused"; B's shots show the crawl pose/camera;
+# after the down B's life stays at the downed life (no "event 1"/death) while the Baba is beside it.
+# Informational: "let through; crawl again after" (a fall/slope/water while down) then a new "asked and taken".
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-dbno-crawl -Lane 1 -Server <kit-A coop_server.exe>
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+chat /dbno time 240
+wait 3600
+mark watch1
+wait 3600
+mark watch2
+wait 3600
+mark watch3
+wait 3000
+mark late

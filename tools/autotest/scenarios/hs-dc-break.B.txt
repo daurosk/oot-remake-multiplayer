@@ -1,0 +1,44 @@
+# hs-dc-break, B: see hs-dc-break.A.txt. B watches the stairs while A sets the flag, then walks up to A's Armos.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=6e021914
+#! timeout 600
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 2400
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -53.0 111.0 -56.0     # room 10, beside A
+wait 900
+toward -49.0 -43.5 20
+wait 120
+mark stairs-b0
+wait 900                    # A sets the flag in this time
+mark stairs-b1
+wait 600
+mark stairs-b2
+wait 1800                   # A wakes the Armos and leaves
+place -49.0 111.5 -13.5     # 3 m south of the Armos
+wait 120
+toward -49.0 -10.5 20
+mark armos-b1
+wait 120
+mark armos-b2
+wait 120
+mark armos-b3
+wait 120
+mark armos-b4
+wait 120
+mark armos-b5
+wait 120
+mark armos-b6
+wait 600
+mark end

@@ -5,38 +5,49 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "coop/protocol/messages.hpp"
+#include "coop/protocol/scene_place.hpp"
 
 namespace coop::host {
+
+// A view of an optional string (view_of) or of an optional thing's name (name_of), made IN PLACE: never as
+// `x ? std::optional<std::string_view>(...) : std::nullopt`, and the functions below take it by const reference. A
+// disengaged std::optional<std::string_view> holds uninitialized bytes; each conditional optional copied into a
+// by-value parameter is one more copy of them, and once inlined, gcc 13 at -O2 (WSL Ubuntu 24.04's 13.3) loses the
+// engaged flag and reads them as a maybe-uninitialized use (-Werror=maybe-uninitialized in coop_ride.cpp, local-ci-linux
+// 42bfbfe0; GitHub's gcc passed).
+inline std::optional<std::string_view> view_of(const std::optional<std::string>& s) {
+  std::optional<std::string_view> v;
+  if (s) v.emplace(*s);
+  return v;
+}
+template <class T>
+inline std::optional<std::string_view> name_of(const std::optional<T>& t) {
+  std::optional<std::string_view> v;
+  if (t) v.emplace(t->name);
+  return v;
+}
 
 // True when both scenes are known and equal. An unknown scene (the reader
 // refused it, or no sample has carried one yet) is never the same scene, so
 // a player is hidden rather than drawn in the wrong place.
-inline bool same_scene(std::optional<std::string_view> a,
-                       std::optional<std::string_view> b) {
+inline bool same_scene(const std::optional<std::string_view>& a,
+                       const std::optional<std::string_view>& b) {
   return a && b && !a->empty() && *a == *b;
 }
 
-// The place a scene shows, without the era: "Graveyard_Adult" and
-// "Graveyard_Child" are the same graveyard seven years apart. Only a trailing
-// "_Child" or "_Adult" is dropped.
-inline std::string_view place_of(std::string_view scene) {
-  for (const std::string_view era : {std::string_view("_Child"), std::string_view("_Adult")}) {
-    if (scene.size() > era.size() && scene.substr(scene.size() - era.size()) == era) {
-      return scene.substr(0, scene.size() - era.size());
-    }
-  }
-  return scene;
-}
+// The place a scene shows, without the era (coop/protocol/scene_place.hpp, shared with the server).
+inline std::string_view place_of(std::string_view scene) { return protocol::place_of(scene); }
 
 // True when both scenes are known and show the same place, in either era: a
 // child and an adult player in the two Graveyards see each other's puppet.
 // Shared objects and flags still need the same scene (same_scene).
-inline bool same_place(std::optional<std::string_view> a,
-                       std::optional<std::string_view> b) {
-  return a && b && !a->empty() && place_of(*a) == place_of(*b);
+inline bool same_place(const std::optional<std::string_view>& a,
+                       const std::optional<std::string_view>& b) {
+  return a && b && protocol::same_place(*a, *b);
 }
 
 // The "in cutscene" bit of a PLAYER_STATUS flags byte. The sender sets it
@@ -57,7 +68,7 @@ enum class Activity : std::uint8_t {
             // "OcarinaReadyStart", "Ocarina_Adult_B_lp", ...
 };
 
-inline Activity activity_of(std::optional<std::string_view> anim) {
+inline Activity activity_of(const std::optional<std::string_view>& anim) {
   if (!anim) return Activity::none;
   const std::string_view a = *anim;
   // Getting off ends on the ground; walking up to the horse is on foot.
@@ -78,7 +89,7 @@ inline Activity activity_of(std::optional<std::string_view> anim) {
 // Whether our own event hides the other players. Every event does, except
 // the Ocarina played freely: the game runs it as an event (inferred), and
 // nothing is staged there that a puppet could walk into.
-inline bool local_event_hides(bool event_running, std::optional<std::string_view> own_anim) {
+inline bool local_event_hides(bool event_running, const std::optional<std::string_view>& own_anim) {
   return event_running && activity_of(own_anim) != Activity::ocarina;
 }
 
@@ -102,17 +113,26 @@ enum class Visibility : std::uint8_t {
 // - Their cutscene running: hold, since their animation is the event's, which
 //   the puppet may not have; their place is still followed (issue 194). Not while they play the Ocarina: then
 //   they stand and play, and show copies that.
-inline Visibility visibility(std::optional<std::string_view> local_scene,
+inline Visibility visibility(const std::optional<std::string_view>& local_scene,
                              bool local_hides,
-                             std::optional<std::string_view> remote_scene,
+                             const std::optional<std::string_view>& remote_scene,
                              std::uint8_t remote_status_flags,
-                             std::optional<std::string_view> remote_anim = std::nullopt) {
+                             const std::optional<std::string_view>& remote_anim = std::nullopt) {
   if (!same_place(local_scene, remote_scene)) return Visibility::hide;
   if (local_hides) return Visibility::hide;
   const Activity theirs = activity_of(remote_anim);
   if (theirs == Activity::riding) return Visibility::ride;
   if (in_cutscene(remote_status_flags) && theirs != Activity::ocarina) return Visibility::hold;
   return Visibility::show;
+}
+
+// Whether a remote player's voice is heard here (docs/voice.md, "Playback"; tracker row 155): only the place counts,
+// as for the server's relay. No event hides a voice, unlike the puppet: our own (a talk, a sign, a shop, an item get,
+// a cutscene: the puppet hides so it does not walk into the staged shot, but the player still stands there and talks),
+// theirs, a menu, a horse or being downed. Another place, or one not known (a scene loading), is not heard.
+inline bool voice_heard(const std::optional<std::string_view>& local_scene,
+                        const std::optional<std::string_view>& remote_scene) {
+  return same_place(local_scene, remote_scene);
 }
 
 }  // namespace coop::host

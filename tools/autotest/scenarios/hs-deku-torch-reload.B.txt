@@ -1,0 +1,21 @@
+# hs-deku-torch-reload, B: loads the same after-the-event save and walks into room E after A (see the .A.txt).
+# B lands about 3 m from the plate, not on it.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1500
+place -12.0 81.0 -6.5    # room E, beside A's spot and clear of the plate (-10.2 -9.0)
+wait 240
+mark b-in
+wait 900
+mark late

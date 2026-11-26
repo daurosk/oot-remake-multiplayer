@@ -24,7 +24,9 @@ it). Little-endian:
 Read by hookshot/src/coop_look_tunic.cpp.
 
 The gear (docs/puppet.md, "The Link customizer"): `coop_look/gear.bin`, the same format, holds the
-game's own texels of every shield, sword, boots, gauntlets and Goron / Zora tunic texture in GEAR.
+game's own texels of every shield, sword, boots, gauntlets and Goron / Zora tunic texture in GEAR,
+and of the metalness textures of the metal items (look_metal; `coop_look/metal.bin` says which of
+their blocks lie under which part).
 The module paints their parts in the colours the player picks (any colour: hookshot/src/
 coop_look_parts.cpp, whose table names the same textures) and writes them over the game's.
 
@@ -32,6 +34,7 @@ Nothing from the game is in this file: everything is made from the user's own ro
 """
 import struct
 
+from .look_metal import TEXTURES as METAL_TEXTURES
 from .tunic import TunicError, _brti
 
 DIR = "coop_look"
@@ -66,7 +69,9 @@ GEAR = (
     "Mt_Inner_Armor_Adult_Goron_Alb",
     "Mt_Parts_Armor_Adult_Zora_Alb",
     "Mt_Feather_Armor_Adult_Zora_Alb",
-)
+    # The metalness textures of the metal parts (#202, look_metal: a painted metal part's metal is
+    # painted down with it). In gear.bin for the game's own texels; the item copies name their own.
+) + METAL_TEXTURES
 GEAR_FILE = "gear.bin"
 
 

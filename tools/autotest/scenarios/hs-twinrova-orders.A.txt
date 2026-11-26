@@ -1,0 +1,53 @@
+# hs-twinrova-orders (Hookshot, patch 0036, row 222 option A): one battle manager decides for both games
+# (docs/dungeons-boss.md, "Battle manager orders"). A owns the sisters; B's sisters take A's manager's orders
+# through the game's own handler. Then A pauses 9 s (the server hands a paused owner's boss over after 6 s):
+# B's game owns them, its own manager decides, and its skipped orders are put in first.
+# NEEDS a hookshot.exe with patch 0036 (wrap row 10); without it the log says "battle manager orders each
+# game's own" and the run is INCONCLUSIVE for option A.
+# Route: as hs-twinrova-native (boss rush TwinrovaStage); both stand, lock on and swing now and then.
+# PASS (proof lines and shots):
+#  1. Both: "coop: bosses: battle manager orders shared".
+#  2. B: "Enemy_DungeonBoss_Koume: battle orders: the owner's came: our own manager's orders are skipped" (or Kotake).
+#  3. Every 10 s: A "battle orders: ours sent N" growing; B "N owner's put in, M own skipped" growing.
+#  4. Shots a-1 / b-1 and a-2 / b-2 (an attack running): the same sister in the same attack on both screens.
+#  5. After the pause: B "battle orders: ours now: our own manager's orders run" (+ "skipped order(s) of our own
+#     manager put in first"), A "player 2's now: its orders come". Shots a-3 / b-3 (about 2.5 s after the menu
+#     closes) and a-4 / b-4: the sisters moving on both screens, none held in a pose, the same move.
+#  6. Merged Twinrova only if the fight gets there (the script does not win it): then both screens show her and
+#     the native boss sync lines name Enemy_DungeonBoss_Twinrova.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 1800               # the intro, then the fight
+press ZL 10             # lock on
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8             # the sword is Y
+wait 600
+mark a-1
+wait 600
+mark a-2
+press PLUS 12           # the pause menu: A is a paused owner
+wait 540                # 9 s
+press B 12              # back to the game
+wait 150
+mark a-3
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8
+wait 600
+mark a-4
+wait 1200
+mark end

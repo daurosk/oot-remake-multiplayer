@@ -1,3 +1,7 @@
+# room-actor-replay-0116: bigrun-0115 was INCONCLUSIVE. A's 'open' shot still showed the guard's talk ('This is the
+# crest of Hyrule's royal family!'), so the talk never ended and the flag never came; B was 65 m from the gate
+# (the warp lands at -119 96.7 58.7, not on the trail). Now A presses through the talk after show-zr, B is placed
+# on the trail side, and the save prep gives both Get_StoneOfFire = KakarikoVillageNpc (header in kak-gate.A.txt).
 # hs-kak-letter (Hookshot and emulator; #171, the letter part): "We both had the letter from Zelda, but
 # after one player talks to the guard the gate opens for only one player and the letter is gone from both
 # players' inventories." kak-gate proved the gate half with a TEST switch (A:LICHII_COOP_SET_BOOL of the
@@ -66,6 +70,25 @@ wait 120
 press A 12
 wait 240
 mark show-zr
+press A 12                 # the rest of the guard's talk (bigrun-0115 ended inside it)
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 240
+mark talk-over
+toward -42.36 -13.02 10    # face the gate
+press ZL 10
 wait 300
 mark open
 wait 1200                  # B walks through

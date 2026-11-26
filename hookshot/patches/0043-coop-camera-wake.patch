@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Tue, 24 Nov 2026 12:00:00 -0600
+Subject: [PATCH] Co-op camera wake: the player camera's update for a module
+ that turns it
+
+The co-op module's Customize page turns the player camera (patch 0040),
+but left idle the camera's update stops for seconds, so the page's hook
+got no call. hos_mouse_camera now remembers the last camera it ran for.
+The view hook asks the module (hos_coop_turn with no angles, state -1,
+host/hos_coop_turn.h) whether it wants the camera. While it does and the
+update has not run for 50 ms, hos_coop_camera_wake clears bit 2 of the
+node's byte +31 (the node walker f_800e98c0 skips the update while it is
+set) on the game's thread. The node's flag words are logged once per new
+pair (at most 16), which also says when the bit was not the cause.
+A module that does not answer state -1 with 1: nothing changes.
+---
+ host/coop_bridge.c   |  2 ++
+ host/hos_coop_turn.h |  3 +++
+ host/mouse_native.c  | 45 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 50 insertions(+)
+
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index 1f904cd6..e50a1639 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -273,6 +273,8 @@ void hos_coop_title(Ctx *c, uint64_t screen, int event) {
+ 
+ /* hos_main.c hos_oot_free_view: the gameplay camera for the module first (hos_coop_view.h); 1 = eye and target replaced */
+ int hos_coop_view_filter(double eye[3], double target[3]) {
++    void hos_coop_camera_wake(void);   /* (patch 0043, mouse_native.c: the camera's update for a module that turns it) */
++    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_turn_fn) hos_coop_camera_wake();
+     return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_view ? coop_view(eye, target) : 0;
+ }
+ 
+diff --git a/host/hos_coop_turn.h b/host/hos_coop_turn.h
+index f96e73f2..4eb2f741 100644
+--- a/host/hos_coop_turn.h
++++ b/host/hos_coop_turn.h
+@@ -9,6 +9,9 @@
+    state (+0x204: 3 while it follows Link by itself, 4 while the player turns it, others: another camera owns the view).
+    1 = the camera takes the module's yaw and pitch this frame (only in states 3 and 4; the yaw is wrapped into -180..180
+    and the pitch kept in the camera's own limits), 0 = the camera as it is. A module without it: the game's camera always.
++   Asked with yaw and pitch NULL and state -1 (the view hook, each frame the camera's update has not run for 50 ms; our
++   patch 0043): 1 = the module wants to turn the camera, so the host wakes its update (mouse_native.c
++   hos_coop_camera_wake), 0 = leave it. Nothing may change on that call.
+    Generic: any module may turn the camera, with no further Hookshot build.
+    The same file is in Hookshot's host/ through our patch and in our repository (hookshot/src): keep them equal
+    (tests/hookshot/module_test.cpp checks it). Plain C. */
+diff --git a/host/mouse_native.c b/host/mouse_native.c
+index f0ccb09b..dd01c30f 100644
+--- a/host/mouse_native.c
++++ b/host/mouse_native.c
+@@ -140,6 +140,50 @@ static int coop_turns(uint64_t cam) {
+     return 1;
+ }
+ 
++/* (patch 0043) Wake the camera's update for the module. f_80644c80 is the camera node's update (its vtable +344), run by
++   f_80738670 (vtable +64), which the game's node walker f_800e98c0 calls each pass unless bit 2 of the node's byte +31
++   is set. Left idle (no right stick), the camera's update stops for seconds at a time (lane runs of 2026-11-24), and
++   the pause menu's Customize page, which turns this camera, never got a call. So while the module asks for the camera
++   (hos_coop_turn with no angles, hos_coop_turn.h) and its update has not run for 50 ms, the view hook (coop_bridge.c,
++   the game's thread) clears that bit on the last camera the update ran for, and the walker runs it at its next pass.
++   Each new pair of the node's flag words (+0x18, +0x1c) is logged, at most 16 times. */
++#define NODE_FLAGS_AT 0x18
++#define NODE_SKIP_BYTE_AT 0x1f
++#define NODE_SKIP_UPDATE 0x04
++#define WAKE_AFTER_NS 50000000LL
++static volatile LONG64 coop_node, coop_node_class, coop_node_ns;   /* (the last camera hos_mouse_camera ran for) */
++static void coop_node_seen(uint64_t cam) {
++    uint64_t class_;
++    memcpy(&class_, GP(cam), 8);
++    InterlockedExchange64(&coop_node_class, (LONG64)class_);
++    InterlockedExchange64(&coop_node, (LONG64)cam);
++    InterlockedExchange64(&coop_node_ns, (LONG64)hos_now_ns());
++}
++void hos_coop_camera_wake(void) {
++    const uint64_t cam = (uint64_t)InterlockedCompareExchange64(&coop_node, 0, 0);
++    if (!cam || (LONG64)hos_now_ns() - InterlockedCompareExchange64(&coop_node_ns, 0, 0) < WAKE_AFTER_NS) return;
++    uint64_t class_;
++    memcpy(&class_, GP(cam), 8);
++    if ((LONG64)class_ != InterlockedCompareExchange64(&coop_node_class, 0, 0) || !looks_like_camera(cam)) {
++        InterlockedCompareExchange64(&coop_node, 0, (LONG64)cam);   /* (gone, or another object there now) */
++        return;
++    }
++    if (hos_coop_turn_filter(NULL, NULL, -1) != 1) return;
++    static uint32_t said[16][2];
++    static int nsaid;
++    const uint32_t flags[2] = {(uint32_t)geti(cam + NODE_FLAGS_AT), (uint32_t)geti(cam + NODE_FLAGS_AT + 4)};
++    int seen = 0;
++    for (int i = 0; i < nsaid; i++) seen |= said[i][0] == flags[0] && said[i][1] == flags[1];
++    if (!seen && nsaid < 16) {
++        said[nsaid][0] = flags[0], said[nsaid][1] = flags[1], nsaid++;
++        hos_log("coop camera: the update is quiet while the module turns the camera: node %#llx flags %08x %08x, %s",
++                (unsigned long long)cam, flags[0], flags[1],
++                flags[1] >> 24 & NODE_SKIP_UPDATE ? "its update skipped: woken" : "its update not skipped by the node");
++    }
++    volatile char *skip = (volatile char *)GP(cam + NODE_SKIP_BYTE_AT);
++    if (*skip & NODE_SKIP_UPDATE) __atomic_fetch_and(skip, (char)~NODE_SKIP_UPDATE, __ATOMIC_SEQ_CST);
++}
++
+ /* f_80644c80's first line (nx2/oot_patches.py): cam is the player camera, the game's thread.
+    (longshot, issue 1113) An input recording takes each update's decisions down (HOS_INPUT_RECORD: whether the mouse camera was
+    on, whether the game left the camera free, whether a stick turned it, and the degrees the mouse turned it by), and a
+@@ -147,6 +191,7 @@ static int coop_turns(uint64_t cam) {
+    clock: the camera then turns as it did, whatever the mouse and the settings do now */
+ void hos_mouse_camera(uint64_t cam) {
+     if (!cam) return;
++    if (looks_like_camera(cam)) coop_node_seen(cam);   /* (patch 0043: hos_coop_camera_wake) */
+     /* (oot-remake-multiplayer, patch 0040) the co-op module may turn the camera first (hos_coop_turn.h), whatever the
+        Mouse camera row says: its angles go in before the camera's update reads them, so the game's own collision still
+        places the eye. While it does, the mouse does not turn the camera, and its angles start from the camera's again. */
+-- 
+2.56.0.windows.4
+

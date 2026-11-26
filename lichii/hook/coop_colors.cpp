@@ -171,6 +171,62 @@ Applied Apply(CoopPuppet::Guest& guest, std::uint64_t actor, const Rgba& tint) {
     return Applied::written;
 }
 
+std::optional<std::uint32_t> TunicColour(std::string_view suffix) {
+    for (const auto& t : kTunics) {
+        if (!suffix.empty() && t.suffix == suffix) return t.rgb;
+    }
+    return std::nullopt;
+}
+
+namespace {
+// TunicOf's distance (luma and chroma, chroma counted double).
+double TunicDistance(std::uint32_t a, std::uint32_t b) {
+    const auto ycc = [](std::uint32_t c) {
+        const double r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF;
+        const double y = 0.299 * r + 0.587 * g + 0.114 * bl;
+        return std::array<double, 3>{y, 0.564 * (bl - y), 0.713 * (r - y)};
+    };
+    const auto p = ycc(a), q = ycc(b);
+    const double dy = p[0] - q[0], db = p[1] - q[1], dr = p[2] - q[2];
+    return dy * dy + 2.0 * (db * db + dr * dr);
+}
+}  // namespace
+
+std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players,
+                                                   const std::map<std::uint8_t, TunicCopy>& before) {
+    auto sorted = players;
+    std::sort(sorted.begin(), sorted.end());
+    std::map<std::uint8_t, TunicCopy> out;
+    std::vector<std::string_view> taken;
+    // (first, the players who stay keep the exact copy they had)
+    for (const auto& [number, rgb] : sorted) {
+        const auto it = before.find(number);
+        if (it == before.end() || !it->second.exact || it->second.suffix.empty()) continue;
+        const auto known = std::find_if(std::begin(kTunics), std::end(kTunics),
+                                        [&](const Tunic& t) { return !t.suffix.empty() && t.suffix == it->second.suffix; });
+        if (known == std::end(kTunics) || std::find(taken.begin(), taken.end(), known->suffix) != taken.end()) continue;
+        taken.push_back(known->suffix);
+        out[number] = TunicCopy{std::string(known->suffix), true};
+    }
+    for (const auto& [number, rgb] : sorted) {
+        if (out.count(number) != 0) continue;
+        std::string_view best;
+        double best_d = -1.0;
+        for (const auto& t : kTunics) {
+            if (t.suffix.empty() || std::find(taken.begin(), taken.end(), t.suffix) != taken.end()) continue;
+            const double d = TunicDistance(rgb, t.rgb);
+            if (best_d < 0.0 || d < best_d) best_d = d, best = t.suffix;
+        }
+        if (!best.empty()) {
+            taken.push_back(best);
+            out[number] = TunicCopy{std::string(best), true};
+        } else {
+            out[number] = TunicCopy{std::string(TunicOf(rgb)), false};   // (more than nine: the nearest, shared)
+        }
+    }
+    return out;
+}
+
 std::string_view TunicOf(std::uint32_t rgb) {
     // Brightness (luma) and colour (chroma) apart, chroma counted double: a
     // plain RGB distance puts gray (A0A0A0) nearer pink than white.

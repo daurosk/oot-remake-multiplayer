@@ -24,7 +24,7 @@ elseif (Get-Command py.exe -ErrorAction SilentlyContinue) { $python = @('py.exe'
 elseif (Get-Command python.exe -ErrorAction SilentlyContinue) { $python = @('python.exe') }
 if (-not $python) {
     Write-Host 'No Python found. Install Python 3 from python.org, then in a Command Prompt:'
-    Write-Host '  py -m pip install zstandard'
+    Write-Host '  py -m pip install zstandard numpy'
     exit 1
 }
 $exe = $python[0]; $pre = @($python | Select-Object -Skip 1)
@@ -36,6 +36,21 @@ $ErrorActionPreference = 'Stop'
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Python is missing the zstandard package. In a Command Prompt:'
     Write-Host "  $($python -join ' ') -m pip install zstandard"
+    exit 1
+}
+# numpy makes the character voices from your game's own clips (docs/puppet.md). Without it, try pip once; else stop
+# here, so no pack is made whose characters say nothing.
+$ErrorActionPreference = 'Continue'
+& $exe @pre -c 'import numpy' 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Python is missing the numpy package (it makes the character voices). Trying pip ...'
+    & $exe @pre -m pip install --user numpy *>$null
+    & $exe @pre -c 'import numpy' 2>$null
+}
+$ErrorActionPreference = 'Stop'
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Python is missing the numpy package. In a Command Prompt:'
+    Write-Host "  $($python -join ' ') -m pip install numpy"
     exit 1
 }
 
@@ -75,7 +90,7 @@ $loadDir = Get-KitLoadDir $user
 $longest = Join-Path $loadDir '0400486024DEC000\coop-puppet\romfs\System\Resource\ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs.tmp'
 if ($longest.Length -gt 259) {
     Write-Host "The kit folder is too deep for Windows ($($longest.Length) characters in the longest path, 259 at most)."
-    Write-Host 'Move the kit to a shorter folder, for example C:\oot-coop, and run this again.'
+    Write-Host 'Move the kit to a shorter folder, for example C:\Squadala, and run this again.'
     exit 1
 }
 

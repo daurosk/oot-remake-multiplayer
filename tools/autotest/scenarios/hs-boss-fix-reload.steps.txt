@@ -1,0 +1,34 @@
+# hs-boss-fix-reload (branch boss-fix, player report #52): a boss beaten in the session, then the HOST
+# loads a save from before it. The tools have no in-game return to the title, so the host's load is its
+# first one: A (host) boots and stays on the title, B (a guest) loads and beats Gohma alone (shared heart
+# claim, B's fight known), then A loads its pre-boss save -> FLAG_RESET: the group follows it, Gohma is
+# alive again. Then both refight and pick up the container.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-fix-reload -Timeout 1500
+#      -Server <coop-kit\auto-B\server\coop_server.exe>   (needs both baselines before Gohma, as hs-gohma-door)
+# PASS:
+#  1. b-won / b-claim: B "boss beaten" and "heart container claim for boss 0" (the solo win). If she did
+#     not die (a scripted fight may not finish her), the run is INCONCLUSIVE for #52 from here.
+#  2. after A's load: B "the host loaded a save: the fights this session knew are forgotten"; the SERVER log
+#     "the host loaded a save: 1 boss heart container claim(s) forgotten" (check it by hand in the server log).
+#  3. the refight: both games "in the boss room ... Enemy_DungeonBoss_Gohma" and her intro again (B's game
+#     does NOT log "a beaten boss ... not joined"), she dies again (re-won), each pickup: one answer
+#     "heart container: player N took it, everyone's maximum life M" with M = the save's maximum + 4 in
+#     BOTH games, no "may not rise past" line put back below M, no flicker in the shots pickup.
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+start A
+start B
+sleep 40
+load B
+play B hsr-solo.B.txt
+lines b-won B min=1 boss beaten
+lines b-claim B min=1 heart container claim for boss 0
+shot b-solo-end
+load A
+sleep 30
+lines forgotten B min=1 the fights this session knew are forgotten
+shot after-host-load
+play A hsr-fight.A.txt B hsr-fight.B.txt
+lines re-won A min=1 boss beaten
+lines answer-A A min=1 heart container: player [0-9] took it
+lines answer-B B min=2 heart container: player [0-9] took it
+shot end

@@ -1,0 +1,34 @@
+# hs-step-firston (deku-ladder): does a step switch's FirstOn latch when set through the set-bool (as the eye's OnState
+# did, hs-eye-probe PASS), or is it rewritten each frame like a step switch's OnState (hs-step-probe)? The Deku Tree's
+# web room: Obj_StepSwitch_A_05 at -10.2 79.4 -9.0 starts InsideTheDekuTree_Gimmick_CandleAndSpiderWeb through its
+# FirstOn (tools/puppet_pack/eye_switches.py). A steps on it; B waits beside it. Probe on (watches StepSwitch_).
+# Saves: HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb (0x429126ef) 0 in both (2026-11-16).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-step-firston -Lane 1   (~8 min)
+# Latch (PASS): B "eye switch: ...CandleAndSpiderWeb: our Obj_StepSwitch_A_05 ... FirstOn set", then "waiting (... FirstOn
+#   on)" or "an event started after our switch's plug"; probe: B's switch FirstOn plug (Murmur3("FirstOn")^7 = 2d9754fa)
+#   0 -> 1 and staying 1. Rewritten (FAIL): no "waiting/on" note, "asked the old way" after 2 s.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_DEBUG_BOOL=0x429126ef,A:LICHII_COOP_CHEATS=1,LICHII_COOP_EYE_SWITCH=1,LICHII_COOP_LOGIC_PROBE=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place -6.5 81.0 -9.0      # 3.7 m east of the switch, in its room
+wait 900                  # B arrives too
+mark a-before
+place -10.2 81.0 -9.0     # onto the step switch
+wait 1500
+mark a-on-switch
+wait 600
+mark a-end

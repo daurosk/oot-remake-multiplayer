@@ -1,0 +1,28 @@
+# npc-custom-coop (npc-customize-2, LANE1, co-op: run.ps1 -Lane 1 after npc-custom-solo in the same slot, so A's
+# look_char_* settings are set: red hair, yellow eyes, yellow clothing, Equipment hidden). A picks Saria, walks ahead
+# of B and turns back; B (Link) looks at A's puppet. PASS on B's shots: A's puppet is Saria with red hair, yellow
+# eyes, yellow clothing, no sword/shield; B's own Link keeps Link's eyes and hair (A's Link parts are not on it).
+mark start
+wait 300
+press MINUS
+wait 150
+press L
+wait 120
+press L
+wait 120
+press L
+wait 150
+press DRIGHT
+wait 60
+press A
+wait 240
+press B
+wait 300
+mark a-saria
+stick 0 1 70
+wait 120
+stick 0 -1 8
+wait 240
+mark a-turned
+wait 900
+mark end

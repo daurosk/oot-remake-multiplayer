@@ -110,6 +110,8 @@ public:
     struct Out {
         std::vector<coop::protocol::WorldHit> send;
         std::vector<std::string> notes;
+        // Issue 243: the game's own solve flags to set true here now (SolveFlags).
+        std::vector<std::uint32_t> solve;
     };
     // Once per objects walk with the brothers and managers seen.
     void Look(const std::string& scene, const std::vector<Seen>& seen,
@@ -127,6 +129,19 @@ public:
     // here this visit (the last right hit, proven in deku-scrubs-solo):
     // solved; later hits from other games for it are dropped (issue 144).
     bool Solved(std::uint64_t manager) const { return solved_.contains(manager); }
+    // Issue 243 (owner's decision 2026-11-19): the fight ends AT the last right hit in every
+    // game, not at the hitter's talk. The hit (ours, or another player's given to our
+    // manager) solves our manager; then Look puts that manager's own solve flags in
+    // Out::solve, the saved Bools the game's talk would set (Event/EventFlow/Get_StoneOfForest,
+    // Talk_Deku_03_Attacked): InsideTheDekuTree_RoomK_Cleared and
+    // ..._EnemyScrubDekuDestroy_003. The room graph (Logic/InsideTheDekuTree_Level_Room_K_
+    // Prefab_6708) then deletes the brothers and the shutter graph (_52bd) opens the boss
+    // door, the game's own path. They wait while our Link is in an event (SetEvent), so a
+    // talk of ours never loses its scrub (issue 144). The Kokiri Forest grotto's brothers
+    // (HidingHole_Level_Hole_01_Prefab_8f2e) have no saved solve flag: their manager's own
+    // IsSuccessed opens the grotto chest, and the given hit solves each game's manager
+    // already. Only in a session (the objects walk shares nothing without one).
+    static std::span<const std::uint32_t> SolveFlags(std::uint64_t manager);
 
     // CoopSvc::Caller's contract (as CoopLiveEvents::Requester).
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -157,6 +172,8 @@ private:
     std::map<std::uint64_t, std::string> animation_;     // by address: the last AS command
     std::map<std::uint64_t, std::uint64_t> echo_until_;  // by brother hash
     std::set<std::uint64_t> solved_;                     // managers solved here (issue 144)
+    std::set<std::uint64_t> solve_due_;                  // ... whose solve flags are not set yet (issue 243)
+    bool solve_waited_ = false;                          // the wait was logged
     bool in_event_ = false;                              // our Link's event + tail (issue 144)
     std::uint64_t last_event_us_ = 0;
     std::deque<Want> pending_;

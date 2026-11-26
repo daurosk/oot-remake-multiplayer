@@ -1,0 +1,21 @@
+# hs-ocarina-play (Hookshot and emulator, issue 190, tracker rows 93 and 103): can a player who got the
+# ocarina from another player PLAY it? 0.11.2's hs-items-share only proved it arrives: in its run
+# 20261115-140959 B had every flag a real get sets (OOTRR's start kit sets the same ones: StockNum, IsGet,
+# EquipOcarina, HavePreparedToPlayOcarina, plus the three help/get Bools), the HUD showed the ocarina, and
+# D-pad Left took nothing out (shot B-out-1). A player who got it in their own game, or loads a save that
+# holds it, plays it (hs-ocarina). So the game builds something for the ocarina at the save load that the
+# flags written later do not change (docs/items.md, "The ocarina", "Not a flag").
+# BEFORE the run: take the ocarinas out of B's baseline (save_flags.py no-ocarina, as hs-ocarina-given),
+# put it back from autotest-save-backup afterwards.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-ocarina-play
+# Fix (rows 93/103): B logs "coop: items: ocarina 'Item_Ocarina_Fairy' equipped by the game from its flags
+# (slots 13, 16)" before mark start. Pass (from the game's own state, B's log): after mark out-1, "ocarina probe: our Link plays the ocarina"
+# and "coop: ocarina note 11 (Ocarina_A) sent"; after mark lullaby, three notes sent twice (run 20261115-185256: 11, 13, 7; the keys are a guess, so the song itself is not recognised yet).
+# Shots out-1 / note-a / lullaby: the ocarina in B's hands. Also after the Kakariko load (out-2).
+# 0.11.2 FAILed (no probe line, nothing in B's hands); with the game's own equip (0a4bba92) PASS, run 20261115-185256.
+# A part only that it plays at out-2 but not at out-1: a scene load is enough, not a save load.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+# A (who has the ocarina from Saria) only waits.
+mark start
+wait 3000
+mark end

@@ -1,0 +1,38 @@
+# el-water-shellblade B (proof-0116): comes in after A, stays by the Shell Blades and swings, then by the Tektites.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+place 46.0 110.7 -9.0
+wait 30
+toward 46.0 -4.0 6
+wait 570
+mark b-near
+hold ZL+Y 8
+wait 300
+hold ZL+Y 8
+mark b-shell
+wait 600
+mark b-shell2
+place -5.0 99.5 -74.0
+wait 30
+toward -5.0 -80.0 6
+hold ZL+Y 8
+wait 600
+mark b-tek
+wait 300
+mark b-tek2
+mark end

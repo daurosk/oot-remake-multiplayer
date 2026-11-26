@@ -1,5 +1,5 @@
 name: Crash
-description: The game or the co-op build closes, freezes or shows an error.
+description: The game or Squadala! (the co-op mod) closes, freezes or shows an error.
 labels: [bug, crash]
 body:
   - type: markdown
@@ -8,7 +8,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Co-op build and game version
+      label: Squadala! version and game version
       description: The first line of the kit's VERSION.txt, and the game version.
     validations:
       required: true
@@ -17,7 +17,7 @@ body:
     attributes:
       label: Where you played
       options:
-        - The kit's emulator (Lichii / Fritchii)
+        - An old emulator kit (Lichii / Fritchii, retired)
         - Hookshot (experimental)
         - The Linux kit (experimental)
         - Not sure
@@ -45,5 +45,5 @@ body:
     id: log
     attributes:
       label: Log
-      description: Paste the end of the emulator log, or attach the log file.
+      description: Paste the last co-op lines (`coop:`) of the game's log, addresses masked. Send the full log zip from `scripts\collect-logs.cmd` with `/bugreport` on the Squadala! Discord, not here, and give its report number here.
       render: text

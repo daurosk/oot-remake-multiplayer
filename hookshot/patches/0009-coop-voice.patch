@@ -1,4 +1,4 @@
-From f6ad497c65d32292b77f51adf02ff5434ad6a326 Mon Sep 17 00:00:00 2001
+From 837167a0c197ce6d8be5490269aa2c6fddff3995 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
@@ -13,24 +13,28 @@ come in (2 or 6 speakers, as the sink maps them).
 
 nn_audio_in.c: hos_voice_mic_start/read/stop, a stream of the module's own
 on the source the game's input streams use, so the voice and the Ocarina's
-microphone mode are the one microphone the Insert menu chooses.
+microphone mode are the one microphone the Insert menu chooses, until the
+co-op settings' Microphone row chooses one for the voice alone
+(hos_voice_mic_list, hos_voice_mic_choose): the voice's stream then reads a
+source of its own that follows that microphone by its name, as the menu's
+sources do (silence while it is unplugged: no other microphone stands in).
 
 HOS_COOP_VOICE=0 keeps the module unattached. Linux: not yet.
 ---
- host/coop_voice.c     | 117 ++++++++++++++++++++++++++++++++++++++++++
- host/hos_coop_voice.h |  49 ++++++++++++++++++
- host/nn_audio.c       |  12 +++++
- host/nn_audio_in.c    |  61 ++++++++++++++++++++++
- 4 files changed, 239 insertions(+)
+ host/coop_voice.c     | 120 ++++++++++++++++++++++++++++++++++
+ host/hos_coop_voice.h |  58 ++++++++++++++++
+ host/nn_audio.c       |  12 ++++
+ host/nn_audio_in.c    | 149 +++++++++++++++++++++++++++++++++++++++---
+ 4 files changed, 330 insertions(+), 9 deletions(-)
  create mode 100644 host/coop_voice.c
  create mode 100644 host/hos_coop_voice.h
 
 diff --git a/host/coop_voice.c b/host/coop_voice.c
 new file mode 100644
-index 00000000..4996f2e8
+index 00000000..c2c88e80
 --- /dev/null
 +++ b/host/coop_voice.c
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,120 @@
 +/* (oot-remake-multiplayer, patch 0009) Proximity voice chat: the co-op module's voices in the game's own mix.
 +
 +   The co-op module (host/coop_bridge.c loads it) may export hos_coop_voice_attach and hos_coop_voice_render
@@ -54,6 +58,8 @@ index 00000000..4996f2e8
 +int hos_voice_mic_start(void);   /* nn_audio_in.c */
 +int hos_voice_mic_read(int16_t *out, int max);
 +void hos_voice_mic_stop(void);
++int hos_voice_mic_list(char *names, int name_size, int max);
++void hos_voice_mic_choose(const char *name);
 +
 +static void *voice_encoder_new(int bitrate, int loss_percent) {
 +    int err = 0;
@@ -125,6 +131,7 @@ index 00000000..4996f2e8
 +    api.opus_encoder_new = voice_encoder_new, api.opus_encode = voice_encode, api.opus_encoder_free = voice_encoder_free;
 +    api.opus_decoder_new = voice_decoder_new, api.opus_decode = voice_decode, api.opus_decoder_free = voice_decoder_free;
 +    api.now_us = voice_now_us;
++    api.mic_list = hos_voice_mic_list, api.mic_choose = hos_voice_mic_choose;
 +    if (!attach(&api)) {
 +        hos_log("coop voice: the module does not take voice");
 +        tried = 2;
@@ -150,16 +157,17 @@ index 00000000..4996f2e8
 +}
 diff --git a/host/hos_coop_voice.h b/host/hos_coop_voice.h
 new file mode 100644
-index 00000000..7fc2aa9d
+index 00000000..6873d47c
 --- /dev/null
 +++ b/host/hos_coop_voice.h
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,58 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   Proximity voice chat between the co-op module and Hookshot (oot-remake-multiplayer, docs/voice.md).
 +
 +   Hookshot's host/coop_voice.c (our patch 0009) finds the co-op module once it is loaded and, when the module exports
 +   hos_coop_voice_attach, hands it this table: the game's microphone (the one chosen in the Insert menu, shared with the
-+   game's own input streams in host/nn_audio_in.c) and Hookshot's libopus. While attach said 1, the game's mixer
++   game's own input streams in host/nn_audio_in.c, or one the co-op settings choose for the voice alone) and Hookshot's
++   libopus. While attach said 1, the game's mixer
 +   (host/nn_audio.c) calls the module's hos_coop_voice_render every 5 ms with the final mix's buffers, so the voices are
 +   mixed in under the game's own volume, effects and speaker layout. The same file is in Hookshot's host/ through our
 +   patch and in our repository (hookshot/src): keep them equal. Plain C. */
@@ -193,6 +201,14 @@ index 00000000..7fc2aa9d
 +    void (*opus_decoder_free)(void *decoder);
 +    /* Microseconds on the mixer's clock (the one hos_coop_voice_render's frames follow), any thread. */
 +    uint64_t (*now_us)(void);
++    /* (added later: there when size reaches them; a module checks before it calls) The voice's own microphone, any one
++       thread, for the co-op settings' Microphone row. list: the microphones there now (none opened; one plugged in since
++       shows), up to max names of name_size bytes each into names, the number listed. choose: the one the voice records
++       from, by its name (a source of its own: the game's streams keep the Insert menu's); NULL or "": the Insert menu's
++       again. Opens nothing while the voice's stream is stopped; a started one moves to it at once. One not plugged in:
++       silence until it is back (no other microphone stands in for it). */
++    int (*mic_list)(char *names, int name_size, int max);
++    void (*mic_choose)(const char *name);
 +} HosCoopVoiceApi;
 +
 +/* The module's optional exports (extern "C"). attach: any thread, once; 1 = render me. */
@@ -204,10 +220,10 @@ index 00000000..7fc2aa9d
 +
 +#endif
 diff --git a/host/nn_audio.c b/host/nn_audio.c
-index af1ee013..62827c54 100644
+index 93f8498c..9710c721 100644
 --- a/host/nn_audio.c
 +++ b/host/nn_audio.c
-@@ -620,6 +620,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
+@@ -751,6 +751,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
      float out[6][FRAME];
      memset(out, 0, sizeof out);
      if (sink_mix >= 0 && mixes[sink_mix].used) {
@@ -227,19 +243,141 @@ index af1ee013..62827c54 100644
          Mix *f = &mixes[sink_mix];
          const float g = f->volume;
 diff --git a/host/nn_audio_in.c b/host/nn_audio_in.c
-index afd07b14..1c80f30e 100644
+index 7a6e1dc5..b1ae3d49 100644
 --- a/host/nn_audio_in.c
 +++ b/host/nn_audio_in.c
-@@ -506,3 +506,64 @@ HLE(_ZN2nn5audio18GetInputStreamGainEPKNS0_15InputStreamTypeE) {
+@@ -58,6 +58,7 @@ typedef struct {
+     int failures;                /* (in a row, since it last gave sound: logged at the first) */
+     int input_peak, output_peak; /* normalized permille, a short peak-hold window */
+     int64_t level_ns, level_window_ns, clip_until;
++    int own;                     /* (patch 0009) the co-op voice's own microphone: follows voice_name, not the menu */
+ } Source;
+ 
+ typedef struct {
+@@ -84,6 +85,8 @@ static long sel_gen = 1;     /* the menu's choice (hos_mic_select), under list_l
+ static int sel_mode = 1;     /* (before the menu says: the system's default) */
+ static char sel_name[128];
+ static int sel_index = -1;
++static long voice_gen = 1;   /* (patch 0009) the co-op voice's microphone (hos_voice_mic_choose), under list_lock: */
++static char voice_name[128];   /* ("": the menu's, as the game's streams) */
+ static int log_on = -1;
+ 
+ /* ---- the devices, for the menu (gpu/vk/vk_api.h: MkwVkHost mic_count, mic_name) ---- */
+@@ -184,10 +187,22 @@ static int same_name(const char *name, const char *want) {
+ }
+ /* the SDL id of the wanted microphone in a list: the one it was chosen or last opened as while a device of its name has that
+    id, else the first of its name */
++/* (patch 0009) a device's name as the co-op settings keep it: control characters as spaces, none at either end */
++static int same_kept(const char *name, const char *kept) {
++    while (*name && ((unsigned char)*name <= 0x20 || *name == 0x7f)) name++;
++    size_t n = strlen(name);
++    while (n > 0 && ((unsigned char)name[n - 1] <= 0x20 || name[n - 1] == 0x7f)) n--;
++    if (n != strlen(kept)) return 0;
++    for (size_t i = 0; i < n; i++) {
++        const unsigned char c = (unsigned char)name[i];
++        if ((c < 0x20 || c == 0x7f ? ' ' : c) != (unsigned char)kept[i]) return 0;
++    }
++    return 1;
++}
+ static int pick(const uint32_t *ids, char (*names)[128], int n, const Source *src, uint32_t *id) {
+     int first = -1;
+     for (int i = 0; i < n; i++)
+-        if (same_name(names[i], src->want)) {
++        if (src->own ? same_kept(names[i], src->want) : same_name(names[i], src->want)) {
+             if (src->want_id && ids[i] == src->want_id) return *id = ids[i], 1;
+             if (first < 0) first = i;
+         }
+@@ -202,7 +217,11 @@ static int find_device(const Source *src, uint32_t *id) {
+     const int n = hos_sdl_mic_list(ids, names, MAX_DEVICES);
+     return pick(ids, names, n, src, id);
+ }
+-static const char *wanted(const Source *src) { return src->mode == 2 ? src->want : "the default microphone"; }
++/* (patch 0009: the co-op voice's own source by a fixed name: the device's name only in the co-op voice's own log line,
++   which Longshot's crash report leaves out, patch 0027) */
++static const char *wanted(const Source *src) {
++    return src->own ? "the co-op voice's microphone" : src->mode == 2 ? src->want : "the default microphone";
++}
+ static void close_mic(Source *src, int64_t now) {
+     if (src->mic) {
+         hos_sdl_mic_close(src->mic);
+@@ -226,7 +245,8 @@ static void missed(Source *src, int64_t now, const char *why) {
+ }
+ static void stand_in(Source *src, int64_t now) {   /* (the default, while the wanted one cannot be had) */
+     if (src->standin) return;
+-    void *standin = hos_sdl_mic_open(0, src->rate, src->channels, sdl_format(src->format));
++    /* (patch 0009: never for the co-op voice's own source: only the microphone the player chose opens; silence till then) */
++    void *standin = src->own ? NULL : hos_sdl_mic_open(0, src->rate, src->channels, sdl_format(src->format));
+     if (standin) use(src, standin, 1, now);
+     else close_mic(src, now);
+ }
+@@ -260,13 +280,16 @@ static void connect(Source *src) {
+     missed(src, now, found ? "did not open" : "is not plugged in");
+     if (src->failures == 1 && found) hos_log("audio in: (%s)", hos_sdl_error());
+ }
+-/* the menu's choice now: opened again only when it is another microphone */
++/* the menu's choice now: opened again only when it is another microphone (patch 0009: the co-op voice's own source follows
++   voice_name instead; never the system's default) */
+ static void choose(Source *src) {
+     AcquireSRWLockShared(&list_lock);
+-    const long gen = sel_gen;
+-    const int mode = sel_mode, listed = mode == 2 && sel_index >= 0 && sel_index < dev_count && same_name(dev_names[sel_index], sel_name);
++    const int own = src->own;
++    const long gen = own ? voice_gen : sel_gen;
++    const int mode = own ? (voice_name[0] ? 2 : 0) : sel_mode,
++              listed = !own && mode == 2 && sel_index >= 0 && sel_index < dev_count && same_name(dev_names[sel_index], sel_name);
+     char want[128];
+-    snprintf(want, sizeof want, "%s", listed ? dev_names[sel_index] : mode == 2 ? sel_name : "");   /* (the whole name when listed) */
++    snprintf(want, sizeof want, "%s", own ? voice_name : listed ? dev_names[sel_index] : mode == 2 ? sel_name : "");   /* (the whole name when listed) */
+     const uint32_t want_id = listed ? dev_ids[sel_index] : 0;
+     ReleaseSRWLockShared(&list_lock);
+     if (gen == src->gen) return;
+@@ -275,7 +298,7 @@ static void choose(Source *src) {
+     src->gen = gen;
+     if (same) {
+         if (strlen(want) > strlen(src->want)) snprintf(src->want, sizeof src->want, "%s", want);
+-        if (mode == 2 && sel_index < 0 && src->mic && !src->standin) src->check_ns = 0;   /* (the menu sees it unplugged: look now) */
++        if (!own && mode == 2 && sel_index < 0 && src->mic && !src->standin) src->check_ns = 0;   /* (the menu sees it unplugged: look now) */
+         return;
+     }
+     src->mode = mode, src->want_id = want_id;
+@@ -359,7 +382,7 @@ static void attach(InStream *s) {   /* (the source of its format, made when ther
+     int free_at = -1;
+     for (int i = 0; i < MAX_STREAMS + 1; i++) {
+         const Source *src = &sources[i];
+-        if (src->used && src->format == s->format && src->channels == s->channels && src->rate == s->rate) {
++        if (src->used && !src->own && src->format == s->format && src->channels == s->channels && src->rate == s->rate) {
+             /* Drain test-only capture before the first guest joins: old test notes are never delivered later. */
+             if (s != &test_stream && testing && test_stream.source == i && src->users == 1) {
+                 choose(&sources[i]);
+@@ -603,3 +626,111 @@ HLE(_ZN2nn5audio18GetInputStreamGainEPKNS0_15InputStreamTypeE) {
      c->vreg[0][0] = c->vreg[0][1] = 0;
      memcpy(&c->vreg[0][0], &one, 4);
  }
 +
 +/* ---- (oot-remake-multiplayer, patch 0009) co-op voice chat's stream (host/coop_voice.c, hos_coop_voice.h) ----
 +   A stream of its own, not the game's (no handle of the game's names it), on the source the game's streams of the same
-+   format use: the one microphone, the Insert menu's choice, silence when that is off. 48 kHz mono 16-bit, a quarter
-+   second held (older is dropped while nobody reads). Started and read from the module's one thread. */
++   format use: the one microphone, the Insert menu's choice, silence when that is off. Or, once the co-op settings chose a
++   microphone for the voice (hos_voice_mic_choose), on a source of its own that follows that one by its name, opened again
++   once it is back as the menu's are; while it is not plugged in: silence (no stand-in: only the one chosen opens). 48 kHz mono 16-bit, a quarter second held (older is
++   dropped while nobody reads). Started and read from the module's one thread. */
 +static int voice_at = -1;   /* (under lock) its place in streams, -1: none */
++static void voice_attach(InStream *s) {   /* (under lock) onto its own source while a microphone is named, else the game's */
++    AcquireSRWLockShared(&list_lock);
++    const int named = voice_name[0] != 0;
++    ReleaseSRWLockShared(&list_lock);
++    int i = 0;
++    while (named && i < MAX_STREAMS + 1 && sources[i].used) i++;   /* (any free source: the streams' and the microphone test's) */
++    if (!named || i == MAX_STREAMS + 1) {
++        attach(s);
++        return;
++    }
++    Source *src = &sources[i];
++    memset(src, 0, sizeof *src);
++    src->used = 1, src->users = 1, src->own = 1, src->silence_from_ns = hos_now_ns(), src->retry_wait = RETRY_NS;
++    src->format = s->format, src->channels = s->channels, src->rate = s->rate, src->frame_bytes = s->frame_bytes;
++    s->source = i;
++    choose(src);
++}
 +int hos_voice_mic_start(void) {
 +    AcquireSRWLockExclusive(&lock);
 +    int i = voice_at;
@@ -253,7 +391,7 @@ index afd07b14..1c80f30e 100644
 +            s->ring = (uint8_t *)malloc((size_t)s->capacity * s->frame_bytes);
 +            if (s->ring) {
 +                s->used = 1, s->started = 1, s->source = -1;
-+                attach(s);
++                voice_attach(s);
 +                voice_at = i;
 +            } else {
 +                memset(s, 0, sizeof *s);
@@ -294,4 +432,32 @@ index afd07b14..1c80f30e 100644
 +        voice_at = -1;
 +    }
 +    ReleaseSRWLockExclusive(&lock);
++}
++/* The microphones there are now (none opened), for the co-op settings' Microphone row: up to max names of name_size bytes. */
++int hos_voice_mic_list(char *names, int name_size, int max) {
++    uint32_t ids[MAX_DEVICES];
++    char found[MAX_DEVICES][128];
++    const int n = names && name_size > 0 && max > 0 ? hos_sdl_mic_list(ids, found, MAX_DEVICES) : 0;
++    int k = 0;
++    for (; k < n && k < max; k++) snprintf(names + (size_t)k * (size_t)name_size, (size_t)name_size, "%s", found[k]);
++    return k;
++}
++/* The voice's microphone by its name, "" or NULL: the game's again. Opens nothing: a started stream moves to it at once (a
++   source of its own, or back on the game's), a stopped one when it starts. */
++void hos_voice_mic_choose(const char *name) {
++    /* (both under lock, which every read holds: no read sees the new name before the stream is on its new source) */
++    AcquireSRWLockExclusive(&lock);
++    AcquireSRWLockExclusive(&list_lock);
++    const int was = voice_name[0] != 0;
++    snprintf(voice_name, sizeof voice_name, "%s", name ? name : "");
++    const int named = voice_name[0] != 0;
++    voice_gen++;
++    ReleaseSRWLockExclusive(&list_lock);
++    if (was != named && voice_at >= 0) {   /* (another name on its own source: choose() opens that one at the next read) */
++        InStream *s = &streams[voice_at];
++        detach(s);
++        voice_attach(s);
++    }
++    ReleaseSRWLockExclusive(&lock);
++    hos_log("coop voice: microphone: %s", named ? name : "the game's (the Insert menu's)");
 +}

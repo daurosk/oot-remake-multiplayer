@@ -1,0 +1,24 @@
+# hs-scrub-guard (row 177 proof, guard case): a plain shared Enemy_Scrub_Deku in the Deku Tree (-8.9 78.4 27.6). A arrives first and owns it;
+# B stands 8 m from it, faces it and holds ZL+ZR (lock-on + shield) while its nuts come. Expect: B log "sent back by our Link (guard): told its owner",
+# A log "RequestChangeStateReflected took it", the nut flies back to the scrub on both screens. Run: run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-scrub-guard
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark a-waits
+wait 3000
+mark end

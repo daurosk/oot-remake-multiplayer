@@ -4,6 +4,7 @@
     python -I tools/autotest/lanes.py setup   --lane N --from-a <game folder> --from-b <game folder> [--dry-run]
     python -I tools/autotest/lanes.py check   [--lane N]
     python -I tools/autotest/lanes.py install --lane N --dll <hookshot_coop.dll> [--dry-run]
+    python -I tools/autotest/lanes.py restore --lane N   (the lane's own module back after a live.py --dll session)
     python -I tools/autotest/lanes.py lock    status|acquire|release --lane N [--owner WHO] [--wait S]
 
 Lane N has its own game pair (<kit root>\\ls\\laneN-A and -B), server port (27510 + 10*N, with +1 and +2 for
@@ -150,10 +151,9 @@ def running_in(folder):
     """Game processes started from inside folder (Windows only; elsewhere none known)."""
     if not hs.WINDOWS:
         return []
-    import subprocess
-    r = subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-Process %s -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }" % ",".join(GAME_EXES)],
-                       capture_output=True, text=True)
+    r = hs.run_quiet(["powershell", "-NoProfile", "-Command",
+                      "Get-Process %s -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }" % ",".join(GAME_EXES)],
+                     capture_output=True, text=True)
     want = os.path.normcase(os.path.abspath(folder)) + os.sep
     return [p for p in r.stdout.splitlines() if os.path.normcase(p.strip()).startswith(want)]
 
@@ -166,6 +166,10 @@ def setup(n, from_a, from_b, dry=False, say=print, kit=None, busy=running_in):
         fill(os.path.abspath(src), dst, dry, say)
     if not dry:
         os.makedirs(L["shots"], exist_ok=True)
+        for folder in (L["a"], L["b"]):   # (the source's module is the lane's own now)
+            exe = hs.find_exe(folder)
+            if exe:
+                drop_swap(os.path.join(os.path.dirname(exe), MODULE))
     return L
 
 
@@ -179,6 +183,16 @@ def problems(n, kit=None, now=None, busy=running_in):
         if not hs.find_exe(folder):
             out.append("%s: no game (lanes.py setup)" % folder)
             continue
+        try:
+            mismatch = hs.code_mods_mismatch(os.path.dirname(hs.find_exe(folder)))
+        except hs.Fail as e:
+            mismatch = str(e)
+        if mismatch:
+            out.append(mismatch)
+        for m in (LIVE_BACKUP, LIVE_ABSENT):
+            if os.path.exists(os.path.join(os.path.dirname(hs.find_exe(folder)), MODULE + m)) and not busy(folder):
+                out.append("%s: a live session's module was not put back (%s%s, no game running): lanes.py restore "
+                           "--lane %d" % (folder, MODULE, m, n))
         if not os.path.isfile(os.path.join(hs.warm_dir(folder), "longshot_pipelines.bin.built")):
             out.append("%s: not warmed (no longshot_pipelines.bin.built: the first start prepares every shader)" % folder)
         for top, dirs, files in os.walk(folder):
@@ -215,9 +229,101 @@ def install(n, dll, dry=False, say=print, kit=None, busy=running_in):
         dst = os.path.join(os.path.dirname(exe), "hookshot_coop.dll")
         say("copy %s -> %s" % (dll, dst))
         if not dry:
-            if os.path.lexists(dst):
-                os.unlink(dst)   # never write into a file that may be a hard link
-            shutil.copy2(dll, dst)
+            _put(dll, dst)
+            drop_swap(dst)   # this module is the lane's own now: a session's leftover backup must never come back
+
+
+# --- a module for one session (live.py start --dll), and the lane's own back -------------------------------------
+# This file is the one owner of what module a lane runs. `install` and `setup` give the lane its own module (and drop
+# any session swap left beside it); `swap_in` puts a test module in for one session with the lane's own kept beside
+# it (MODULE + LIVE_BACKUP, or an empty MODULE + LIVE_ABSENT when the lane had none); `swap_back` puts it back.
+
+MODULE = "hookshot_coop.dll"
+LIVE_BACKUP = ".live-backup"   # the lane's own module while a session runs another
+LIVE_ABSENT = ".live-absent"   # the lane had no module: the session's is removed at its end
+
+
+def module_paths(n, kit=None):
+    """Where each game of lane n loads its module from."""
+    L = lane(n, kit)
+    out = []
+    for folder in (L["a"], L["b"]):
+        exe = hs.find_exe(folder)
+        if not exe:
+            raise Fail("%s: no game (lanes.py setup)" % folder)
+        out.append(os.path.join(os.path.dirname(exe), MODULE))
+    return out
+
+
+def _put(dll, dst):
+    if os.path.lexists(dst):
+        os.unlink(dst)   # never write into a file that may be a hard link
+    shutil.copy2(dll, dst)
+
+
+def drop_swap(dst):
+    """A plain install or setup: what is there now is the lane's own; a session's leftover markers go."""
+    for m in (dst + LIVE_BACKUP, dst + LIVE_ABSENT):
+        if os.path.lexists(m):
+            os.unlink(m)
+
+
+def swap_in(n, dll, kit=None, busy=running_in):
+    """`dll` into both games of lane n for one session, the lane's own kept beside it. A backup or marker left by a
+    session that could not put it back is still the lane's own (install and setup drop them), so it is kept."""
+    if not os.path.isfile(dll):
+        raise Fail("no %s" % dll)
+    L = lane(n, kit)
+    for folder in (L["a"], L["b"]):
+        if busy(folder):
+            raise Fail("%s: its game is running; close it first" % folder)
+    paths = module_paths(n, kit)
+    for dst in paths:
+        if not (os.path.exists(dst + LIVE_BACKUP) or os.path.exists(dst + LIVE_ABSENT)):
+            if os.path.isfile(dst):
+                shutil.copy2(dst, dst + LIVE_BACKUP)
+            else:
+                open(dst + LIVE_ABSENT, "w").close()
+        _put(dll, dst)
+    return paths
+
+
+def swap_back(n, kit=None, tries=10, wait=0.5, sleep=time.sleep):
+    """The lane's own module back after a session (a killed game can hold the file a moment on Windows: tried again
+    for tries x wait s). One word per game: restored, removed (the lane had none), nothing to put back, or NOT ..."""
+    out = []
+    for dst in module_paths(n, kit):
+        bak, absent = dst + LIVE_BACKUP, dst + LIVE_ABSENT
+        word = "nothing to put back"
+        for i in range(tries):
+            try:
+                if os.path.exists(bak):
+                    if os.path.lexists(dst):
+                        os.unlink(dst)
+                    os.replace(bak, dst)
+                    if os.path.lexists(absent):
+                        os.unlink(absent)
+                    word = "restored"
+                elif os.path.exists(absent):
+                    if os.path.lexists(dst):
+                        os.unlink(dst)
+                    os.unlink(absent)
+                    word = "removed (the lane had none)"
+                break
+            except OSError as e:
+                word = "NOT restored (%s): lanes.py restore --lane %d" % (e, n)
+                if i + 1 < tries:
+                    sleep(wait)
+        out.append(word)
+    return out
+
+
+def swap_left(n, kit=None):
+    """The session swaps still waiting to be put back in lane n (paths of their markers)."""
+    out = []
+    for dst in module_paths(n, kit):
+        out += [m for m in (dst + LIVE_BACKUP, dst + LIVE_ABSENT) if os.path.exists(m)]
+    return out
 
 
 # --- the lane's run lock -----------------------------------------------------------------------------------------
@@ -241,12 +347,30 @@ def blockers(root, alive=hs.pid_alive, now=None):
     return out
 
 
-def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0, check=None):
-    """Takes laneN.lock FIRST, then looks for a game build; blocked: lets it go again and retries. A game build takes
-    build-game.lock first, then looks for lane locks (hs.build), so of the two one always sees the other."""
+def lock_name(n, game=None):
+    """laneN (the pair) or laneN-A / laneN-B (one game of it, a lane of its own)."""
+    return "lane%d" % n if not game else "lane%d-%s" % (n, game)
+
+
+def overlaps(root, n, game=None, alive=hs.pid_alive):
+    """The live locks that share a game with lock_name(n, game): a pair and its games exclude each other, A and B
+    do not."""
+    out = []
+    for name in ([lock_name(n)] if game else [lock_name(n, x) for x in "AB"]):
+        p = os.path.join(root, hs.LOCK_NAMES[name])
+        if os.path.isdir(p) and not hs.lock_stale(p, alive=alive):
+            out.append("%s (%s)" % (hs.LOCK_NAMES[name], hs.lock_info(p).get("owner", "?")))
+    return out
+
+
+def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0, check=None,
+                 game=None):
+    """Takes laneN.lock (laneN-A/B.lock for one game) FIRST, then looks for a game build and for a lock that shares a
+    game; blocked: lets it go again and retries. A game build takes build-game.lock first, then looks for lane locks
+    (hs.build), so of the two one always sees the other; the same holds for a pair and one of its games."""
     root = root or hs.main_root(REPO)
-    check = check or blockers
-    name = "lane%d" % n
+    check = check or (lambda r: blockers(r) + overlaps(r, n, game))
+    name = lock_name(n, game)
     end = clock() + wait
     while True:
         b = []
@@ -257,7 +381,7 @@ def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clo
                 return True
             hs.lock_release(root, name, owner, say=lambda *_: None)
         if clock() >= end:
-            say("lane %d: not free: %s" % (n, "; ".join(b) if b else "lane%d.lock is held" % n))
+            say("lane %d: not free: %s" % (n, "; ".join(b) if b else "%s.lock is held" % name))
             return False
         sleep(min(10.0, max(0.1, end - clock())))
 
@@ -277,6 +401,8 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     c = sub.add_parser("check")
     c.add_argument("--lane", type=int)
+    rs = sub.add_parser("restore", help="put the lane's own module back after a live session that could not")
+    rs.add_argument("--lane", type=int, required=True)
     n = sub.add_parser("install")
     n.add_argument("--lane", type=int, required=True)
     n.add_argument("--dll", required=True)
@@ -315,15 +441,22 @@ def main(argv=None):
         if a.cmd == "install":
             install(a.lane, os.path.abspath(a.dll), a.dry_run)
             return 0
+        if a.cmd == "restore":
+            for p, w in zip(module_paths(a.lane), swap_back(a.lane)):
+                print("%s: %s" % (p, w))
+            return 0
         root = hs.main_root(REPO)
         if a.action == "status":
             b = blockers(root)
             print("blocking every lane: %s" % ("; ".join(b) if b else "nothing"))
             for x in which:
-                p = os.path.join(root, hs.LOCK_NAMES["lane%d" % x])
-                info = hs.lock_info(p) if os.path.isdir(p) else {}
-                print("lane %d: %s" % (x, "held by %s since %s" % (info.get("owner", "?"), hs.fmt_time(info.get("time")))
-                                       if os.path.isdir(p) else "free"))
+                for g in (None, "A", "B"):
+                    p = os.path.join(root, hs.LOCK_NAMES[lock_name(x, g)])
+                    info = hs.lock_info(p) if os.path.isdir(p) else {}
+                    if g and not info:
+                        continue   # (a free game of a lane: the pair's line says it)
+                    print("lane %d%s: %s" % (x, "-" + g if g else "", "held by %s since %s" % (
+                        info.get("owner", "?"), hs.fmt_time(info.get("time"))) if os.path.isdir(p) else "free"))
             return 0
         if not a.lane:
             raise Fail("--lane N")

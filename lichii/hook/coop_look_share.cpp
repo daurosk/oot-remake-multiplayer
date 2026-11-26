@@ -24,6 +24,71 @@ void Share::Set(Parts parts) {
     due_ = true;
 }
 
+void Share::SetCharacter(std::uint16_t number) {
+    if (number > kCharacterMax) {
+        number = 0;
+    }
+    if (character_ == number) {
+        return;
+    }
+    character_ = number;
+    character_said_ = character_said_ || number != 0;
+    due_ = true;
+}
+
+void Share::SetCustom(std::uint32_t options) {
+    options &= 0xFFFFFFu;
+    if (custom_ == options) {
+        return;
+    }
+    custom_ = options;
+    due_ = due_ || character_ != 0;   // (with Link nothing of it is sent)
+}
+
+std::vector<std::size_t> OptionsToHold(const std::array<std::optional<std::int32_t>, 6>& values) {
+    std::vector<std::size_t> out;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (values[i] && *values[i] != 0) out.push_back(i);
+    }
+    return out;
+}
+
+std::uint32_t Share::CustomOf(std::uint8_t number) const {
+    const auto it = their_custom_.find(number);
+    return it == their_custom_.end() ? std::uint32_t{0} : it->second;
+}
+
+std::uint16_t Share::CharacterOf(std::uint8_t number) const {
+    const auto it = their_character_.find(number);
+    return it == their_character_.end() ? std::uint16_t{0} : it->second;
+}
+
+std::uint64_t OwnPick::Update(std::uint64_t read, bool on_host_save, std::uint64_t loads) {
+    if (!on_host_save) {
+        own_ = read;
+        loads_.reset();
+        repicked_ = false;
+        return read;
+    }
+    if (loads_ != loads) {
+        loads_ = loads;
+        at_load_ = read;
+        repicked_ = false;
+    } else if (CharacterIn(read) != CharacterIn(at_load_)) {
+        repicked_ = true;   // (only a new pick: the options are unsaved Ints, 0 after any load, so a change of them
+                            // on the host's save is the guest's own for the character it sees, not a pick of its own)
+    }
+    return repicked_ ? read : own_;
+}
+
+std::optional<std::uint64_t> OwnPick::TakeOwnChange() {
+    if (kept_ == own_) {
+        return std::nullopt;
+    }
+    kept_ = own_;
+    return own_;
+}
+
 bool Share::OnEvent(const coop::net::Event& event) {
     switch (event.kind) {
     case EventKind::welcomed: {
@@ -31,26 +96,55 @@ bool Share::OnEvent(const coop::net::Event& event) {
         // last one are not theirs any more; they send them again.
         const bool had = !theirs_.empty();
         theirs_.clear();
+        their_character_.clear();
+        their_custom_.clear();
         slots_.fill(0);
         for (std::size_t i = 0; i < kSlots; ++i) {
             Forget(i);
         }
-        due_ = ours_.has_value();
+        due_ = ours_.has_value() || character_said_;
         return had;
     }
     case EventKind::reconnected:
     case EventKind::player_joined:
-        due_ = ours_.has_value();   // the newcomer (or a server that lost us) has not got it
+        due_ = ours_.has_value() || character_said_;   // the newcomer (or a server that lost us) has not got it
         return false;
     case EventKind::player_left:
         Free(event.player);
+        their_character_.erase(event.player);
+        their_custom_.erase(event.player);
         return theirs_.erase(event.player) != 0;
     case EventKind::message:
         if (const auto* look = std::get_if<coop::protocol::PlayerLook>(&event.message);
             look != nullptr && look->player_number != coop::protocol::kPlayerSelf) {
+            // The picked character rides along as a part of its own (kCharacterPart): out of the parts.
+            Parts parts = look->parts;
+            std::uint16_t character = 0;
+            std::uint32_t custom = 0;
+            for (auto it = parts.begin(); it != parts.end();) {
+                if (it->part != kCharacterPart && it->part != kCustomPart) {
+                    ++it;
+                    continue;
+                }
+                if (it->part == kCustomPart) {
+                    // (0.11.9, one customizer: a 0.11.8 game still sends its Character Select options; they are taken
+                    // out of the parts and not kept, so no puppet is dressed by the mod's routine with them)
+                    custom = 0;
+                } else if ((it->colour & 0xFF0000u) == kCharacterMark && (it->colour & 0xFFFFu) <= kCharacterMax) {
+                    character = static_cast<std::uint16_t>(it->colour & 0xFFFFu);
+                }
+                it = parts.erase(it);
+            }
+            if (character == 0) {
+                custom = 0;   // (the options are a character's)
+            }
+            auto& theirs = their_character_[look->player_number];
+            auto& their_custom = their_custom_[look->player_number];
             auto& worn = theirs_[look->player_number];
-            const bool changed = worn != look->parts;
-            worn = look->parts;
+            const bool changed = worn != parts || theirs != character || their_custom != custom;
+            worn = std::move(parts);
+            theirs = character;
+            their_custom = custom;
             // Every player gets a slot, gear colours or not (held-sword): a puppet
             // that wears the game's own item shares its model's blade switch with
             // our own Link's, so its sword hid whenever ours was put away. Their
@@ -65,11 +159,18 @@ bool Share::OnEvent(const coop::net::Event& event) {
 }
 
 std::optional<coop::protocol::PlayerLook> Share::TakeSend() {
-    if (!due_ || !ours_) {
+    if (!due_ || (!ours_ && !character_said_)) {
         return std::nullopt;
     }
     due_ = false;
-    return coop::protocol::PlayerLook{coop::protocol::kPlayerSelf, *ours_};
+    Parts parts = ours_ ? *ours_ : Parts{};
+    if (character_ != 0) {
+        parts.push_back({kCharacterPart, kCharacterMark | character_});
+        if (custom_ != 0) {
+            parts.push_back({kCustomPart, custom_});
+        }
+    }
+    return coop::protocol::PlayerLook{coop::protocol::kPlayerSelf, std::move(parts)};
 }
 
 std::optional<Parts> Share::Of(std::uint8_t number) const {
@@ -139,10 +240,14 @@ std::optional<std::size_t> Share::CopyOf(std::uint8_t number) const {
         return std::nullopt;
     }
     const Ready& r = ready_[*slot - 1];
-    if (r.copy == 0 || r.player != number) {
-        return std::nullopt;
+    if (r.copy != 0 && r.player == number) {
+        return r.copy;
     }
-    return r.copy;
+    // (row 198) Not painted for them yet: the copy their first job paints (Jobs: never the one painted last), in
+    // the game's colours or an older look until then, but marked as a copy. Never nothing: the puppet would wear the
+    // game's own item, the very texture your own Link's colour is drawn over.
+    const std::size_t first = kCopiesPerSlot * (*slot - 1) + 1;
+    return r.copy == first ? first + 1 : first;
 }
 
 void Share::EnableSlots(bool on) {
@@ -187,13 +292,38 @@ void Set(Parts parts) {
     g_share.Set(std::move(parts));
 }
 
+void SetCharacter(std::uint16_t number) {
+    std::lock_guard lock(g_mutex);
+    g_share.SetCharacter(number);
+}
+
+std::uint16_t CharacterOf(std::uint8_t number) {
+    std::lock_guard lock(g_mutex);
+    return g_share.CharacterOf(number);
+}
+
+void SetCustom(std::uint32_t options) {
+    std::lock_guard lock(g_mutex);
+    g_share.SetCustom(options);
+}
+
+std::uint32_t CustomOf(std::uint8_t number) {
+    std::lock_guard lock(g_mutex);
+    return g_share.CustomOf(number);
+}
+
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     std::optional<coop::protocol::PlayerLook> send;
     bool changed = false;
+    std::uint16_t character = 0;
     {
         std::lock_guard lock(g_mutex);
         changed = g_share.OnEvent(event);
         send = g_share.TakeSend();
+        if (const auto* look = std::get_if<coop::protocol::PlayerLook>(&event.message);
+            event.kind == EventKind::message && look != nullptr) {
+            character = g_share.CharacterOf(look->player_number);
+        }
     }
     if (send) {
         client.send(*send);   // the network thread: its own client, no lock taken twice
@@ -201,11 +331,12 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
 #ifdef LICHII_COOP
     if (const auto* look = std::get_if<coop::protocol::PlayerLook>(&event.message);
         changed && event.kind == EventKind::message && look != nullptr) {
-        LOG_INFO(Core, "coop: look: P{} wears {} part colour(s) (PLAYER_LOOK)", look->player_number,
-                 look->parts.size());
+        LOG_INFO(Core, "coop: look: P{} wears {} part colour(s), character {} (PLAYER_LOOK)", look->player_number,
+                 look->parts.size() - (character != 0 ? 1 : 0), character);
     }
 #else
     (void)changed;
+    (void)character;
 #endif
 }
 

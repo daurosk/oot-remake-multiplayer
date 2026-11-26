@@ -1,5 +1,6 @@
 #include "enet_server.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,7 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include "bind_host.hpp"
 #include "coop/net/enet_path.hpp"
+#include "coop/net/enet_throttle.hpp"
 #include "coop/net/enet_waiting.hpp"
 
 namespace coop::server {
@@ -54,7 +57,8 @@ ConnectionId id_of(const ENetPeer* peer) {
 EnetServer::EnetServer(ServerOptions options)
     : options_(std::move(options)),
       session_(options_.session),
-      start_(std::chrono::steady_clock::now()) {}
+      start_(std::chrono::steady_clock::now()),
+      delay_(options_.test_delay) {}
 
 EnetServer::~EnetServer() {
   if (host_ != nullptr) enet_host_destroy(host_);
@@ -62,15 +66,8 @@ EnetServer::~EnetServer() {
 
 bool EnetServer::start() {
   if (host_ != nullptr) return true;
-  ENetAddress address{};
-  address.host = ENET_HOST_ANY;
-  if (options_.bind) {
-    const std::uint32_t v = *options_.bind;
-    const unsigned char b[4] = {static_cast<unsigned char>(v >> 24), static_cast<unsigned char>(v >> 16),
-                                static_cast<unsigned char>(v >> 8), static_cast<unsigned char>(v)};
-    std::memcpy(&address.host, b, 4);
-  }
-  address.port = options_.port;
+  if (!net::bind_allowed(options_.bind)) return false;  // (the test guard: no listener on all addresses)
+  const ENetAddress address = local_address(options_.bind, options_.port);
   host_ = enet_host_create(&address, options_.max_connections,
                            protocol::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
@@ -96,6 +93,12 @@ std::uint16_t EnetServer::port() const {
   return bound.port;
 }
 
+std::string EnetServer::admin(std::string_view line) {
+  std::string out = session_.admin(line, now_us());
+  apply_actions();
+  return out;
+}
+
 std::uint64_t EnetServer::now_us() const {
   if (options_.now_us) return options_.now_us();
   auto elapsed = std::chrono::steady_clock::now() - start_;
@@ -113,18 +116,31 @@ void EnetServer::service(std::uint32_t timeout_ms) {
     apply_actions();
     result = enet_host_check_events(host_, &event);
   }
+  release_held();
   session_.tick(now_us());
   apply_actions();
+  release_held();
   // ENet forgets to take a player's lost fragments off its count; past
   // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
   std::vector<ENetPeer*> lost_full;
+  std::vector<ENetPeer*> backlogged;
   for (auto& [id, peer] : peers_) {
     if (net::full_datagrams_lost(path_marks_[id], *peer, host_->serviceTime)) lost_full.push_back(peer);
     mended_bytes_ += net::mend_waiting_data(*peer);
+    const std::size_t outgoing = net::outgoing_bytes(*peer);
     links_[id] = LinkSeen{peer->roundTripTime,
                           static_cast<enet_uint32>(static_cast<std::uint64_t>(peer->packetLoss) * 100 /
                                                    ENET_PEER_PACKET_LOSS_SCALE),
-                          peer->totalWaitingData};
+                          peer->totalWaitingData, outgoing};
+    // Row 260: ENet holds every reliable message for a peer whose window is full, without end.
+    if (outgoing > net::kMaxOutgoingBytes && std::find(lost_full.begin(), lost_full.end(), peer) == lost_full.end()) {
+      backlogged.push_back(peer);
+    }
+  }
+  for (ENetPeer* peer : backlogged) {
+    ++backlog_drops_;
+    drop_now(peer, net::kDisconnectBacklog, "its line took far less than we sent it: " + std::to_string(net::outgoing_bytes(*peer)) +
+                          " bytes waited to go out (at most " + std::to_string(net::kMaxOutgoingBytes) + ")");
   }
   for (ENetPeer* peer : lost_full) {
     const std::uint64_t now = now_us();
@@ -140,8 +156,12 @@ void EnetServer::service(std::uint32_t timeout_ms) {
 }
 
 void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
-  const ConnectionId id = id_of(peer);
   ++small_path_drops_;
+  drop_now(peer, net::kDisconnectSmallDatagrams, why);
+}
+
+void EnetServer::drop_now(ENetPeer* peer, enet_uint32 code, const std::string& why) {
+  const ConnectionId id = id_of(peer);
   std::string link = why;
   if (auto seen = links_.find(id); seen != links_.end()) {
     link += "; round trip " + std::to_string(seen->second.round_trip_ms) + " ms, loss " +
@@ -151,8 +171,11 @@ void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
   peers_.erase(id);
   path_marks_.erase(id);
   ciphers_.erase(id);
+  held_.drop_if([id](const Held& h) { return h.id == id; });
+  delay_.forget(in_lane(id));
+  delay_.forget(out_lane(id));
   peer->data = nullptr;
-  enet_peer_disconnect_now(peer, net::kDisconnectSmallDatagrams);
+  enet_peer_disconnect_now(peer, code);
   session_.disconnected(id, now_us(), link);
   apply_actions();
 }
@@ -184,25 +207,20 @@ void EnetServer::handle(const ENetEvent& event) {
       }
       event.peer->data = reinterpret_cast<void*>(static_cast<std::uintptr_t>(id));
       enet_peer_timeout(event.peer, 0, kPeerTimeoutMs, kPeerTimeoutMs);
+      net::steady_throttle(event.peer);  // report 37: also for a game that does not ask
       peers_[id] = event.peer;
       break;
     }
     case ENET_EVENT_TYPE_RECEIVE: {
       const ConnectionId id = id_of(event.peer);
       std::span<const std::uint8_t> bytes(event.packet->data, event.packet->dataLength);
-      if (auto cipher = ciphers_.find(id); cipher != ciphers_.end()) {
-        // Encrypted: only what opens with its key gets to the session.
-        std::vector<std::uint8_t> plain;
-        if (cipher->second->open(event.channelID, bytes, plain) != protocol::OpenError::none) {
-          ++unsealed_drops_;
-          enet_packet_destroy(event.packet);
-          break;
-        }
-        session_.received(id, event.channelID, plain, now_us());
-        enet_packet_destroy(event.packet);
-        break;
+      if (options_.test_delay.on()) {
+        // Opened when it is let through: the key may come with a packet held before it.
+        held_.push(delay_.due(in_lane(id), now_us()),
+                   Held{Held::Kind::receive, id, event.channelID, {bytes.begin(), bytes.end()}, {}});
+      } else {
+        receive_now(id, event.channelID, bytes);
       }
-      session_.received(id, event.channelID, bytes, now_us());
       enet_packet_destroy(event.packet);
       break;
     }
@@ -210,7 +228,8 @@ void EnetServer::handle(const ENetEvent& event) {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
       path_marks_.erase(id);
-      ciphers_.erase(id);
+      // (delayed: its key opens what it sent before it left, until its leave)
+      if (!options_.test_delay.on()) ciphers_.erase(id);
       // As seen at the end of the last round: ENet has reset the peer by now.
       std::string link;
       if (auto seen = links_.find(id); seen != links_.end()) {
@@ -219,13 +238,34 @@ void EnetServer::handle(const ENetEvent& event) {
                std::to_string(seen->second.waiting_bytes) + " bytes";
         links_.erase(seen);
       }
-      session_.disconnected(id, now_us(), link);
       event.peer->data = nullptr;
+      if (options_.test_delay.on()) {
+        // After what it sent before it left; nothing more goes to it.
+        held_.drop_if([id](const Held& h) { return h.id == id && h.kind >= Held::Kind::send; });
+        delay_.forget(out_lane(id));
+        held_.push((std::max)(now_us(), delay_.last(in_lane(id))), Held{Held::Kind::leave, id, 0, {}, std::move(link)});
+        break;
+      }
+      session_.disconnected(id, now_us(), link);
       break;
     }
     case ENET_EVENT_TYPE_NONE:
       break;
   }
+}
+
+void EnetServer::receive_now(ConnectionId id, std::uint8_t channel, std::span<const std::uint8_t> bytes) {
+  if (auto cipher = ciphers_.find(id); cipher != ciphers_.end()) {
+    // Encrypted: only what opens with its key gets to the session.
+    std::vector<std::uint8_t> plain;
+    if (cipher->second->open(channel, bytes, plain) != protocol::OpenError::none) {
+      ++unsealed_drops_;
+      return;
+    }
+    session_.received(id, channel, plain, now_us());
+    return;
+  }
+  session_.received(id, channel, bytes, now_us());
 }
 
 std::uint32_t packet_flags(std::uint8_t channel) {
@@ -246,10 +286,11 @@ void EnetServer::apply_actions() {
         if (!sealed) continue;
         bytes = &*sealed;
       }
-      ENetPacket* packet =
-          enet_packet_create(bytes->data(), bytes->size(), packet_flags(send->channel));
-      if (packet != nullptr && enet_peer_send(it->second, send->channel, packet) != 0) {
-        enet_packet_destroy(packet);
+      if (options_.test_delay.on()) {
+        held_.push(delay_.due(out_lane(send->to), now_us()),
+                   Held{Held::Kind::send, send->to, send->channel, *bytes, {}});
+      } else {
+        send_now(it->second, send->channel, *bytes);
       }
     } else if (auto* encrypt = std::get_if<EncryptAction>(&action)) {
       if (peers_.count(encrypt->who) != 0) {
@@ -260,7 +301,66 @@ void EnetServer::apply_actions() {
       auto it = peers_.find(drop->who);
       if (it == peers_.end()) continue;
       // After what is queued for it (a REFUSED) has gone out.
-      enet_peer_disconnect_later(it->second, 0);
+      if (options_.test_delay.on()) {
+        held_.push(delay_.due(out_lane(drop->who), now_us()), Held{Held::Kind::drop, drop->who, 0, {}, {}});
+      } else {
+        enet_peer_disconnect_later(it->second, 0);
+      }
+    }
+  }
+}
+
+void EnetServer::send_now(ENetPeer* peer, std::uint8_t channel, const std::vector<std::uint8_t>& bytes) {
+  const std::uint32_t flags = packet_flags(channel);
+  auto seen = links_.find(id_of(peer));
+  // Row 260: to a peer that has a backlog, an unreliable message (the next one replaces it) is not queued at all.
+  if ((flags & ENET_PACKET_FLAG_RELIABLE) == 0 && seen != links_.end() &&
+      seen->second.outgoing_bytes > net::kSlowPeerBytes) {
+    ++unreliable_skipped_;
+    return;
+  }
+  ENetPacket* packet = enet_packet_create(bytes.data(), bytes.size(), flags);
+  if (packet != nullptr && enet_peer_send(peer, channel, packet) != 0) {
+    enet_packet_destroy(packet);
+    return;
+  }
+  if (packet != nullptr && seen != links_.end()) seen->second.outgoing_bytes += bytes.size();
+}
+
+EnetServer::Queues EnetServer::queues() const {
+  Queues q;
+  q.peers = peers_.size();
+  for (const auto& [id, seen] : links_) {
+    if (peers_.count(id) == 0) continue;
+    q.outgoing_bytes += seen.outgoing_bytes;
+    q.largest_outgoing = (std::max)(q.largest_outgoing, seen.outgoing_bytes);
+    q.waiting_bytes += seen.waiting_bytes;
+  }
+  q.unreliable_skipped = unreliable_skipped_;
+  q.backlog_drops = backlog_drops_;
+  return q;
+}
+
+void EnetServer::release_held() {
+  if (held_.size() == 0) return;
+  for (Held& h : held_.take_due(now_us())) {
+    switch (h.kind) {
+      case Held::Kind::receive:
+        receive_now(h.id, h.channel, h.bytes);
+        apply_actions();
+        break;
+      case Held::Kind::leave:
+        delay_.forget(in_lane(h.id));
+        ciphers_.erase(h.id);
+        session_.disconnected(h.id, now_us(), h.link);
+        apply_actions();
+        break;
+      case Held::Kind::send:
+        if (auto it = peers_.find(h.id); it != peers_.end()) send_now(it->second, h.channel, h.bytes);
+        break;
+      case Held::Kind::drop:
+        if (auto it = peers_.find(h.id); it != peers_.end()) enet_peer_disconnect_later(it->second, 0);
+        break;
     }
   }
 }

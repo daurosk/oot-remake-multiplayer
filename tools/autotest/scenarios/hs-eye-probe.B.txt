@@ -1,0 +1,32 @@
+# hs-eye-probe, B (see hs-eye-probe.A.txt): hs-ladder's B: in the slingshot room by its door, facing the ladder;
+# with LICHII_COOP_EYE_SWITCH=1 (A's switches line) B's game sets its own eye's FirstOn when A's event arrives.
+#! noload
+#! start coop: test warp done
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+wait 240
+place -47.5 112.0 9.0    # deku-test: beside A's spot, west of the eye column (behind it, at -33.2, the ladder is hidden)
+wait 240
+mark placed
+toward -35.6 10.7 10     # face the eye column and its ladder
+press ZL 10
+mark b-view
+wait 600
+mark b-early             # A shoots the eye about now
+wait 1500                # the ladder falls (A's eye shot) and B's live event plays
+mark b-ladder
+wait 300
+mark b-end

@@ -24,7 +24,10 @@
 // inside frame(), on the game's thread. Not thread-safe: call both from one
 // thread, or lock around them.
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -47,30 +50,70 @@ enum class FlagRole : std::uint8_t {
 
 struct FlagStats {
   std::uint64_t changes_sent = 0;      // entries in FLAG_SET or own FLAG_STATE
+  std::uint64_t entries_in = 0;        // entries of every flag message that came (forest-temple-b log)
   std::uint64_t answers_sent = 0;      // host: entries answering a FLAG_SET
   std::uint64_t applied = 0;           // entries written into the game
   std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)
   std::uint64_t kept_local = 0;        // snapshot entries skipped over a pending change
+  std::uint64_t snapshot_exact = 0;    // player: join snapshot values written as they are (#96)
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
   std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
+  std::uint64_t container_deltas = 0;  // row 218: a heart container rise of our own sent as a change (share_containers)
+  std::uint64_t container_catch_ups = 0;  // row 218: a rise back up to the group's maximum (not a pickup): not sent
+  std::uint64_t max_caps_left = 0;     // row 181: a capped rise left to the game after kMaxCapTries put-backs (not sent)
+  std::uint64_t reset_holds_kept = 0;  // rows 136/137: the game's write-back of a value the host's save lowered
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
+  // A write the store refused because it holds that key for now (HoldFlagStore: a room gimmick flag held until
+  // our game played its event or we leave the dungeon) or has no room for it in the game's queue now (busy, issue
+  // 175). Waiting by design, so not a write failure: tried again
+  // every frame until the hold lets it, which counted ~60 failures a second (events-next-a-11 probe: named
+  // 0xb3a4fe84 = HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, 5561 of 9235 in 90 s).
+  std::uint64_t held_retries = 0;
+  // The key with the most write failures so far, how many, and where (events-next-a-11: a log said ~60
+  // failures a second after an event without saying which flag). Count 0 = none yet.
+  FlagKey top_write_failure{};
+  std::uint64_t top_write_failure_count = 0;
+  const char* top_write_failure_site = "";
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
+  std::uint64_t title_loads = 0;       // player: a load through the title, fewer flags back than kSaveLoadMin (#96)
+  std::uint64_t native_loads = 0;      // save loads the game's own load nodes said (set_native_loads, patch 0024)
+  std::uint64_t old_sign_loads = 0;    // with native loads on: windows the old signs called a save load (cross-check)
+  std::uint64_t native_timeouts = 0;   // a load node's start with no save in after kNativeLoadMaxFrames
+  std::uint64_t retry_loads = 0;       // of native_loads: Game Over's Try Again (the group's values back, no reset)
+  std::uint64_t offline_loads = 0;     // player: the title was up while not connected, our changes put back (#96)
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
+  std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
+  std::uint64_t up_only_kept = 0;      // a group's 0 not written over our 1 (share_up_only)
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
+  std::uint64_t rewards_guarded = 0;   // row 272: a once-per-save reward got twice, put back (guard_reward)
   std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
   std::uint64_t raced_gains = 0;       // host: a player's guarded gain for a source the group had: not added
   std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
   std::uint64_t event_reads = 0;       // use_events: flags read because the game wrote them
   std::uint64_t event_misses = 0;      // use_events: a change the audit found that no event had named
+  // Rows 106/107: the two states in which a player sends none of its own changes (dungeon-items-next).
+  std::uint64_t holding_frames = 0;    // 1/60 s held for a join snapshot's last part: diff() off, FLAG_STATE held
+  std::uint64_t window_frames = 0;     // 1/60 s in a load window: our own changes not sent (docs/flags.md "Saves")
+  std::uint64_t hold_timeouts = 0;     // a snapshot whose last part never came (kHoldMaxFrames): dropped
+  std::uint64_t pending_now = 0;       // player: own changes sent and not answered yet (now, not a count)
   std::uint64_t full_reads = 0;        // use_events: frames that read the whole list (a load window, the first)
+  // Row 140: a one-way value (a dungeon's floors, a map, a compass) the game lowered again right after our put-back:
+  // the game's own value from then on, until the next load window (kMaxQuickUndos).
+  std::uint64_t one_way_left = 0;
+  // Row 140: of one_way_restores, the values left to the game put back once after a room or scene load (owed_).
+  std::uint64_t one_way_owed = 0;
+  // New Event spam (world-fails-0115): the table is the host's save's, never its title screen's defaults.
+  std::uint64_t table_waits = 0;       // host: a table asked for inside a load window (the title): sent when it ends
+  std::uint64_t table_resets = 0;      // host: of those, sent as the whole table in FLAG_RESET after its save load
+  std::uint64_t own_save_kept = 0;     // player: a save load with no group values known yet: our save's values kept
 };
 
 class FlagWatcher {
@@ -86,7 +129,15 @@ class FlagWatcher {
   bool receive(std::span<const std::uint8_t> bytes);
 
   // Host: send the whole table as FLAG_SNAPSHOT at the next frame (starting
-  // a session, taking over as host).
+  // a session, taking over as host). Only the game's own save is a table:
+  // inside a load window (the title screen, file select, a save loading, a
+  // door) the request waits until the window ends. When a save load ended
+  // it, the whole table goes out as FLAG_RESET, so every player takes the
+  // host's save exactly; else (a door) as FLAG_SNAPSHOT. A table sent from
+  // the title held the game's defaults (quests at 'Ready', no compass): a
+  // guest whose save loaded first had them written back over its own, and
+  // the host's load raised them again, each quest step showing the game's
+  // 'New Event' notice (world-fails-0115).
   void request_snapshot() { snapshot_requested_ = true; }
 
   // One emulated frame: writes what came in, then compares the shared flags
@@ -101,12 +152,52 @@ class FlagWatcher {
   // to 0 through the session (a key that the game resets on a scene change
   // must not put the pickup back for the others). False: already a pickup.
   bool share_pickup(FlagKey key);
+  // These keys stay in this game for the rest of the session: off the shared
+  // list, the pickups and the count guards, never sent, never written from a
+  // message, and never shared again by a later share_* call or by learning
+  // (Gold Skulltulas Not shared, docs/world.md; the mode holds for a whole
+  // session, so there is no way back). Returns how many were shared before.
+  std::size_t keep_local(std::span<const FlagKey> keys);
+  bool kept_local(FlagKey key) const { return local_.contains(key); }
+  // Row 218 (heart containers given to only some players): a max-rule int32
+  // (PlayerStatus.MaxLife) whose rises add up across players as a heart
+  // piece's count does, while the store still merges it by the highest value
+  // (so drops, caps and reset holds stay as they are). A player sends a rise
+  // of its own game past the group's maximum (group_int) as a count delta of
+  // the part above it; the host adds it (add(), ItemFlagStore) and sends its
+  // total. So two containers taken at once in two games give two, not one (an
+  // absolute maximum kept only the higher). A rise up to the group's maximum
+  // is our game catching up (its live copy given the group's hearts again),
+  // not a pickup: not sent. While a cap is set (a beaten boss's area: the
+  // boss's one container is a BOSS_HEART claim) or a reopened chest's gain is
+  // expected (expect_doubled_gain), a rise goes out as its value, as before,
+  // so the max rule makes two pickups of the same container one. A host's own
+  // rise goes out as its total. Must be shared already; false otherwise.
+  bool share_containers(FlagKey key);
+  // The group's maximum of a max-rule int as this game last knew it (written
+  // from the group, sent by us, or the host's save/snapshot), or nothing.
+  std::optional<std::int32_t> group_int(FlagKey key) const;
+  // The boss's one heart container (BOSS_HEART answer, coop_boss_scenes.h):
+  // the hook writes the server's value into our game itself; the group has it,
+  // so our game's rise to it is a catch-up, never a change of ours.
+  void note_group_at_least(FlagKey key, std::int32_t value);
   // A named Bool that the game itself sets back to 0 (a room's own switch
   // state, reset when the room is left: docs/dungeon.md "Live dungeon
   // actions"): shared one way like a pickup (a 1 is sent and written, a 0 is
   // never sent and never written over a 1), and never written back after a
   // load (the room must be able to reset). False: already one way.
   bool share_one_way(FlagKey key);
+  // A named Bool the game only ever lowers (issue 84: Mido's blocker, 1 until
+  // he lets Link by, never set back to 1 by the game): a 1 from the group
+  // (a host's save load, a join snapshot, an answer, a load's write-back) is
+  // never written over our game's 0; our 0 goes to the group instead.
+  // False: already down-only.
+  bool share_down_only(FlagKey key);
+  // The same rule the other way: a named Bool the game only ever raises (a
+  // gate a story scene opens: the Deku Tree's mouth, the royal tomb, the
+  // drained well): a 0 from the group is never written over our game's 1;
+  // our 1 goes to the group instead. False: already up-only (or down-only).
+  bool share_up_only(FlagKey key);
   // The pickup rule for a named Bool (a chest's opened flag,
   // issue 87: the game records a chest opened in a named Bool of its own,
   // not in the placement's 64-bit key). It is also noted in
@@ -133,7 +224,46 @@ class FlagWatcher {
   // One-way Bools (FlagStore::is_one_way) the game dropped to 0 and diff()
   // wrote back to 1 since the last call, for the log (issue 146). Each key
   // only the first time it is put back; stats().one_way_restores counts all.
-  std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
+  // dungeon-sync-b (#63/#76): with the values (a UInt's floors: before, the game's now, what was written), and
+  // `kept` when the game's own value was kept instead: its dungeon's map (game_items map_of_floors) turned on
+  // this frame or the one before, so the drop is the game's own map get writing its floors.
+  struct OneWayRestore {
+    FlagKey key;
+    std::uint32_t before = 0;
+    std::uint32_t now = 0;
+    std::uint32_t put = 0;
+    bool kept = false;
+  };
+  std::vector<OneWayRestore> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
+  // Row 140 (flag-oneway-c): the game itself writes some one-way values from its own copy (the HUD screen's floors,
+  // written back to EnteredFloorBit while Link is in the dungeon), so a put-back the game lowers again on the next
+  // read is a fight we never win (49,223 put-backs in one host's session). Row 183 (a map that flickered "like
+  // equipping and unequipping" after it was picked up): counting only drops within 2 diff passes let a game that
+  // lowers the value a little later than that win forever, each put-back with a HUD refresh. So every drop of a
+  // value we put back counts, however long after, until the next load window (a room or scene load clears the
+  // count: issue 146's drop at a room change is still put back in each room); after kMaxQuickUndos the key is the
+  // game's own until that window (set_loading): not put back, not sent (the group keeps its value), owed after it.
+  static constexpr int kMaxQuickUndos = 2;
+  std::vector<FlagKey> take_one_way_left() { return std::exchange(one_way_left_, {}); }
+  // Row 140 (review of flag-oneway-c): the game lowers these from the HUD screen's own copy, which reads the flag in
+  // only at its init and refresh, so a put-back must reach that copy or it is lowered again. True when a one-way
+  // dungeon value was put back since the last call with a value the HUD was not given yet in this load window (row
+  // 183: the same value again changes nothing for the HUD, and each refresh redraws it: the flicker): the hook asks the
+  // game's own HUD refresh on the same frame (CoopMapRefresh WantNow). A value left to the game is put back once more
+  // when the next room or scene load window ends (not after a save load: another save's floors are not this one's),
+  // with that refresh, so the other player's floors reach the copy after a room load at the latest.
+  bool take_hud_refresh() { return std::exchange(hud_refresh_, false); }
+  // Row 140: a key whose write failed kFailureSayAt times this session (note_write_failure; once per key, for the log).
+  struct KeepsFailing {
+    FlagKey key;
+    const char* site = "";
+    std::uint64_t count = 0;
+  };
+  static constexpr std::uint64_t kFailureSayAt = 60;
+  std::vector<KeepsFailing> take_keeps_failing() { return std::exchange(keeps_failing_, {}); }
+  // Row 140: a max-rule rise past its cap whose put-back the game refused this often in a row is left (not sent,
+  // not fought every frame) until the value changes again. Row 181: put-backs the game undid count too (cap_max).
+  static constexpr int kMaxCapTries = 60;
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The counts (small keys, ...) our game itself lowered since the last call,
@@ -172,6 +302,34 @@ class FlagWatcher {
   // The gains guard_count put back since the last call, for the log.
   std::vector<CountGuarded> take_counts_guarded() { return std::exchange(counts_guarded_, {}); }
 
+  // Row 272: a reward the game gives once per save (a bottle, an upgrade's next tier), got in two games at
+  // once. Each game gives it relative to what it holds (the first empty bottle slot, the tier after the one
+  // it has), so a game that already holds the other player's copy gives a second one somewhere else, and
+  // the share (OR per slot, max per tier) keeps both. `units` are the reward's places, each one or more keys
+  // that are got together (a bottle slot: its StockNum and its IsValid); `sources` are the once-per-save
+  // Bools the reward's own flow sets as it gives it (Anju's MiniGame_CatchCucco_IsCompleted, ...), shared
+  // from now on (share_pickup_named), so a game that hears of one first does not give it at all.
+  // One guard per reward family (bottles; wallets; seed bags; quivers; bomb bags; stick and nut capacity):
+  // each family's sources only ever pay for that family's units. Within it, every sender (each player, and
+  // our own game) is counted apart over the last kRewardFrames: a Bool its flow set (or sent, even when ours
+  // had it already) and a unit that went from empty to got. A sender's units count only up to its own Bools,
+  // so a unit with no reward of its sender (a shop's bottle, a randomizer chest's) never uses another
+  // reward's allowance. Our own gain is the same reward twice when another player's paired copy came and
+  // every Bool on in that time is used up: put back in the same frame (each of its keys, exactly), never
+  // sent. Other players' writes are judged once a frame, each unit and Bool as a whole (judge_rewards), so
+  // the keys' order and a unit that comes a message before its Bool do not change the count; a join or reset
+  // counts nothing. The flow's own give cannot be stopped from here (it read the Bool before the other
+  // player's came, and our hook has no part in the game's pouch write). Co-op idle runs none of this.
+  void guard_reward(std::span<const std::vector<FlagKey>> units, std::span<const FlagKey> sources);
+  static constexpr std::uint64_t kRewardFrames = 60 * 60;  // a get scene's whole length, with room
+  struct RewardGuarded {
+    FlagKey key;  // the unit's first key
+  };
+  // The own gains guard_reward put back since the last call, for the log.
+  std::vector<RewardGuarded> take_rewards_guarded() { return std::exchange(rewards_guarded_, {}); }
+  // Our own player number, so the host's answer to our own reward Bool is not taken for another player's.
+  void set_reward_self(std::uint8_t number) { reward_self_ = number; }
+
   // Issue 195: our Link opened a chest that another player had opened
   // already (the hook shows it open, but its AI still lets it open again).
   // Its content was given in the other game and counted for the group, so
@@ -195,8 +353,63 @@ class FlagWatcher {
   // cannot raise the group through the max rule. Values from the group are
   // written as before, and a rise up to the cap is sent as any change. One
   // cap per key; a new call replaces it.
-  void cap_max(FlagKey key, std::int32_t cap) { max_caps_[key] = cap; }
-  void clear_max_cap(FlagKey key) { max_caps_.erase(key); }
+  // Row 181: MaxLife has a live copy (Link's Life component writes its own
+  // max back into MaxLife), so a put-back alone was undone by the game at
+  // once, put back again, and so on for ever: the container's item get waited
+  // on the hearts and the heart-increase sound played on every pass (a
+  // soft-lock). A put-back now starts a cap hold: held_lower() names the
+  // value, the object walk lowers the live copy to it, and the game keeps it.
+  // Every put-back counts (also one the game undid): after kMaxCapTries in
+  // one hold the rise is left to the game (still never sent). The hold ends
+  // once the game has kept the value for kResetQuietFrames, when the value
+  // moves with no put-back (the group's value came), when the cap goes or
+  // rises past it, and at the end of a load window or the session.
+  void cap_max(FlagKey key, std::int32_t cap) {
+    max_caps_[key] = cap;
+    if (const auto h = cap_holds_.find(key); h != cap_holds_.end() && cap > h->second.low) cap_holds_.erase(h);
+  }
+  void clear_max_cap(FlagKey key) {
+    max_caps_.erase(key);
+    cap_holds_.erase(key);
+  }
+
+  // Rows 136/137 (boss-away-0115): the host's save load (FLAG_RESET) lowered a
+  // max-rule int in our game (PlayerStatus.MaxLife after a boss's heart
+  // container, a magic meter, a bag...). Some of them the game keeps a live
+  // copy of and writes back (Link's Life component writes its own max into
+  // MaxLife while he is in the scene): that rise is the replaced save's, not
+  // progress. While the hold lasts, a rise of our game's value up to what it
+  // had before the reset is put back to the reset value and never sent (else
+  // the max rule raised the whole group again while the container's own
+  // Heart_Container_Obtained went back to 0: the container repeats). A rise
+  // past that is real progress: sent, the hold ends. The hold ends once the
+  // value has stayed at the reset value for kResetQuietFrames (the game took
+  // it), or when a load window ends (the game makes Link from the flags), or
+  // when the session ends. The reset value while a hold lasts, else nothing
+  // (the object walk lowers Link's own max to it).
+  std::optional<std::int32_t> reset_lowered(FlagKey key) const {
+    const auto it = reset_holds_.find(key);
+    return it == reset_holds_.end() ? std::nullopt : std::optional<std::int32_t>(it->second.low);
+  }
+  // What a max-rule int's live copy is to be lowered to now: a reset hold's
+  // value (reset_lowered), else a cap hold's (cap_max, row 181), else nothing
+  // (the usual case, and always with co-op idle: no session, no watcher).
+  std::optional<std::int32_t> held_lower(FlagKey key) const {
+    if (const auto r = reset_lowered(key)) return r;
+    const auto it = cap_holds_.find(key);
+    return it == cap_holds_.end() ? std::nullopt : std::optional<std::int32_t>(it->second.low);
+  }
+  static constexpr int kResetQuietFrames = 60;
+  static constexpr int kLowerWaitFrames = 30 * 60;  // row 238: how long a hold waits for the object walk
+  // Row 238: the object walk saw our Link's own max at or under the hold's value (it lowered it, or it was):
+  // the hold may end by its quiet time now. Emulator thread.
+  // `seen` is Link's own max the walk saw (or lowered it to): only a value at or under THIS hold's counts, so an
+  // answer for an earlier, higher hold (replaced since) does not end the wait of the new one.
+  void lowered_done(FlagKey key, std::int32_t seen) {
+    if (const auto it = reset_holds_.find(key); it != reset_holds_.end() && seen <= it->second.low) {
+      it->second.awaiting_walk = false;
+    }
+  }
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
@@ -250,6 +463,47 @@ class FlagWatcher {
   // load window means the title screen or file select: the only way to a
   // save load (docs/flags.md, "Saves"). Default: loaded.
   void set_scene(bool readable) { scene_readable_ = readable; }
+  // Hookshot's title menu is up (coop_title.cpp TitleUp), every frame, also
+  // while not connected (frame() does not run then). A player's load window
+  // with the title in it is a save load even with no flag back: a guest's own
+  // richer save no longer sends its items into the host's file (player report
+  // #96). A title while not connected puts back, at the next connection's
+  // first frame with Link, what our game changed meanwhile. Never set on the
+  // emulator (the old rule holds there). A host's load window with the title
+  // in it is a save load too (forest-temple-a): its FLAG_RESET goes out.
+  void set_title(bool up) {
+    title_up_ = up;
+    if (up) title_seen_ = true;
+  }
+  // Hookshot's save-load wraps (patch 0024, hos_coop_save_load.h): the game's own sequence nodes that load a save
+  // (SeqExecuteLoadSaveData / SeqExecuteLoadTemporarySave's Enter) and say it is in
+  // (SeqOneShotOnloadGameSaveDataWorldMgr): every save the game loads, from the title, the System menu's Load and
+  // Game Over's Try Again. With them on, a save load is what they say and nothing else: from a start until the
+  // save is in, the game is loading (Link read or not), and the save in is the save load (moved_: a host's
+  // FLAG_RESET, a player's group values back). The old signs (no scene and flags back, the title menu) are only
+  // counted then (stats().old_sign_loads), as a cross-check in the log. Off (the emulator, an older Hookshot): the
+  // old signs decide, as before.
+  void set_native_loads(bool on) { native_loads_ = on; }
+  bool native_loads() const { return native_loads_; }
+  void note_save_load_start() {
+    native_loading_ = true;
+    native_since_ = frames_;
+  }
+  // `retry`: Game Over's Try Again (patch 0024's Game Over mark, no title since). Not a save the player chose: as
+  // host too, the group's values go back into our game and no FLAG_RESET goes out, so a host's death never takes
+  // the group's unsaved progress (coordinator A's decision, 2026-11-16). A guest's load does that anyway.
+  void note_save_loaded(bool retry = false) {
+    native_loaded_ = true;
+    native_retry_ = native_retry_ || retry;
+  }
+  // A start with no save in after this long (a load the game gave up): loading no more.
+  static constexpr std::uint64_t kNativeLoadMaxFrames = 30 * 60;
+  // A join snapshot whose last part has not come after this long is dropped as an out-of-order part is
+  // (rows 106/107): held, a player sends none of its own changes and writes no FLAG_STATE. The server sends
+  // every part at once on the reliable progress channel, so a whole snapshot takes well under a second.
+  static constexpr std::uint64_t kHoldMaxFrames = 10 * 60;
+  // FLAG_STATE messages kept while holding; one more drops the snapshot at once.
+  static constexpr std::size_t kHeldStatesMax = 512;
   static constexpr int kTitleFrames = 30;
   static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
@@ -275,10 +529,13 @@ class FlagWatcher {
   struct SaveLoadSeen {
     int flags = 0;
     int frames = 0;
+    bool native = false;  // the game's own load nodes said it (set_native_loads), not the old signs
+    bool retry = false;   // Game Over's Try Again (the game's own load nodes said so): not a save chosen
   };
   std::optional<SaveLoadSeen> take_save_load() {
-    if (seen_flags_ == 0) return std::nullopt;
-    SaveLoadSeen s{seen_flags_, seen_frames_};
+    if (!seen_) return std::nullopt;
+    seen_ = false;
+    SaveLoadSeen s{seen_flags_, seen_frames_, native_loads_, window_retry_};
     seen_flags_ = 0;
     seen_frames_ = 0;
     return s;
@@ -311,6 +568,11 @@ class FlagWatcher {
 
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
+  // How long (1/60 s) the snapshot has been held, and the load window open; 0 when not.
+  std::uint64_t holding_for() const { return holding_ ? frames_ - holding_since_ : 0; }
+  std::uint64_t window_for() const { return window_ ? frames_ - window_since_ : 0; }
+  // A held snapshot was dropped by kHoldMaxFrames or kHeldStatesMax since the last call (the hook's notice).
+  bool take_hold_timeout() { return std::exchange(hold_timed_out_, false); }
   // Local changes sent and not answered yet.
   std::size_t pending() const { return pending_.size(); }
   const FlagStats& stats() const { return stats_; }
@@ -324,8 +586,13 @@ class FlagWatcher {
   void handle(FlagStore& store, Incoming& message, Table& answers);
   void apply_state(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
   void apply_snapshot(FlagStore& store);
+  // A snapshot that cannot finish: dropped, the game no longer held, what came meanwhile applied.
+  void drop_snapshot(FlagStore& store);
   // The host's save load (FLAG_RESET): every value written exactly.
   void apply_reset(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
+  // The group's value written as it is (no OR, max or mirror rule), except a
+  // one-way flag that keeps our own value (keeps_own). True when written.
+  bool write_exact(FlagStore& store, const protocol::FlagEntry& entry);
   // A load window (settling()) ends. Host: when its save load moved named
   // flags, the flags that moved go out as FLAG_RESET. Player: when its own
   // save load moved them, they go back to what the group had before.
@@ -338,6 +605,8 @@ class FlagWatcher {
   void add(FlagStore& store, const protocol::FlagEntry& delta);
   void diff(FlagStore& store, Table& changes);
   void send_snapshot(FlagStore& store, std::vector<Outgoing>& out);
+  // Host: the whole table as FLAG_RESET at the end of a save load a table was asked for in (request_snapshot).
+  void send_table_reset(FlagStore& store, std::vector<Outgoing>& out);
 
   // True when the entry is for a shared flag and may be applied: a pickup's
   // 0 is not, and an unknown 64-bit key set to 1 is learned first.
@@ -348,10 +617,35 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::set<FlagKey> local_;    // keep_local: never shared again
+  std::set<FlagKey> containers_;  // row 218: max-rule ints whose rises add up (share_containers)
   std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
+  std::set<FlagKey> down_only_;  // share_down_only
+  std::set<FlagKey> up_only_;    // share_up_only
+  // True (and counted) when `entry` would raise a down-only Bool our game
+  // holds at 0, or lower an up-only Bool it holds at 1; the group's value
+  // here becomes ours.
+  bool keeps_own(FlagStore& store, const protocol::FlagEntry& entry);
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
-  std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
+  std::vector<OneWayRestore> one_way_restored_;  // take_one_way_restores
+  std::map<FlagKey, std::uint64_t> map_on_pass_;  // a one-way map Bool's 0 -> 1, by diff pass
+  std::uint64_t diff_pass_ = 0;
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
+  struct PutBack {
+    std::uint64_t pass = 0;  // diff pass of our last put-back
+    int undone = 0;          // drops after it since the load window began (row 183: however long after)
+  };
+  std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
+  std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
+  std::vector<FlagKey> one_way_left_;     // take_one_way_left
+  std::map<FlagKey, protocol::FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
+  bool owed_due_ = false;                 // a room or scene load window ended (no save load): put owed_ back
+  bool hud_refresh_ = false;              // take_hud_refresh
+  std::map<FlagKey, std::uint32_t> hud_given_;  // row 183: the value each HUD item's refresh was asked for, this window
+  void ask_hud(FlagKey key, std::uint32_t value);
+  // Row 140: puts owed_ back (ORed with the game's floors), each once, after a room or scene load window.
+  void put_owed(FlagStore& store);
+  std::vector<KeepsFailing> keeps_failing_;  // row 140: note_write_failure, kFailureSayAt
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
     std::int32_t held = 0;          // own gain not sent yet
@@ -375,9 +669,86 @@ class FlagWatcher {
   // dropped); the rest of `entry`'s value.
   std::int32_t unraced(const protocol::FlagEntry& entry);
   std::map<FlagKey, std::int32_t> max_caps_;  // cap_max
+  struct CapHold {
+    std::int32_t low = 0;      // the value put back (the cap, or our value before when higher)
+    int tries = 0;             // put-backs in this hold (refused or undone by the game)
+    int quiet = 0;             // frames the game has kept `low`
+    std::uint64_t put_at = 0;  // the frame of the last put-back
+    std::uint64_t made_at = 0;  // row 238: the frame the hold began (a load window's end only clears older ones)
+  };
+  std::map<FlagKey, CapHold> cap_holds_;  // cap_max, held_lower (row 181)
+  struct ResetHold {
+    std::int32_t low = 0;    // the host's save's value (FLAG_RESET)
+    std::int32_t high = 0;   // our game's value before it
+    int quiet = 0;           // frames the game has kept `low`
+    int tries = 0;           // put-backs the game refused or undid
+    std::uint64_t put_at = 0;  // the frame of the last put-back
+    // Row 238: a join or a host's save lowered MaxLife and Link's own Life component (the live copy the hearts are
+    // drawn from) has not been seen lowered yet: the hold outlives its quiet time until the object walk says it
+    // saw Link at or under `low` (lowered_done), at most kLowerWaitFrames. Else a game that never wrote its higher
+    // max back (so nothing refreshed the hold) lost it before the walk ran, and showed more hearts than the group.
+    bool awaiting_walk = false;
+    int waited = 0;
+    // Row 238: the frame the hold began. A load window's end clears the holds made BEFORE the window began (the game
+    // made Link again from the flags in it); one made inside it (a reconnect's snapshot, a host's reset arriving
+    // mid-window) came after Link was made, so Link still has the higher max: the hold must outlive the window.
+    std::uint64_t made_at = 0;
+  };
+  // Row 238: a max-rule int the group's value was put back over in a load window (a guest's own save with more than the
+  // group has): the value our game had, made a ResetHold when the window has ended (a window's start clears holds).
+  std::map<FlagKey, std::int32_t> window_lowered_;
+  // The one place that arms the hold for a value lowered from `had` to `low` (join, host save, guest's own load).
+  void hold_lowered(const FlagKey& key, std::int32_t low, std::int32_t had);
+  std::map<FlagKey, ResetHold> reset_holds_;  // reset_lowered
+  // Rows 136/137: a rise of a held key (diff); true when handled (not sent).
+  bool hold_reset(FlagStore& store, FlagKey key, const protocol::FlagEntry& before, const protocol::FlagEntry& now,
+                  protocol::FlagEntry& seen);
+  void age_reset_holds(FlagStore& store, std::uint32_t step);
+  void age_cap_holds(FlagStore& store, std::uint32_t step);
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
+  // guard_reward (row 272).
+  static constexpr std::uint8_t kRewardSelf = 0xff;  // our own game, as a sender
+  struct RewardEvent {
+    std::uint64_t at = 0;      // the frame
+    std::uint8_t sender = 0;   // who: a player number, or kRewardSelf
+    bool gain = false;         // a unit got; else `source` went on (or came, from another player's flow)
+    FlagKey source{};
+  };
+  struct RewardGuard {
+    std::vector<std::vector<FlagKey>> units;
+    std::vector<bool> got;             // each unit as last judged (any key not 0)
+    std::vector<FlagKey> sources;
+    std::vector<bool> source_on;       // each source as last judged
+    std::deque<RewardEvent> events;    // the last kRewardFrames
+    bool ready = false;                // every key read once: the save's own is no reward given now
+  };
+  struct RewardUnit {
+    std::size_t guard = 0;
+    std::size_t unit = 0;
+    std::uint64_t pass = 0;     // the diff pass that decided `put_back`
+    bool put_back = false;
+  };
+  std::vector<RewardGuard> reward_guards_;
+  std::map<FlagKey, std::pair<std::size_t, std::size_t>> reward_source_;  // source -> guard, its index
+  std::map<FlagKey, RewardUnit> reward_key_;      // unit key -> its guard and unit
+  std::map<FlagKey, std::uint8_t> reward_received_;  // unit and source keys other players wrote, by whom
+  bool reward_quiet_ = false;                     // a join or reset state came: judged without counting
+  std::uint8_t reward_self_ = 0;                  // set_reward_self: our player number (0: not known)
+  std::vector<RewardGuarded> rewards_guarded_;    // take_rewards_guarded
+  // Drops what is older than kRewardFrames.
+  void prune_reward(RewardGuard& guard) const;
+  // Whether our own gain of a unit now is a reward got twice (guard_reward).
+  bool reward_twice(RewardGuard& guard) const;
+  // Another player's write of `entry` landed (or is about to): judged at judge_rewards().
+  void note_reward_received(FlagStore& store, const protocol::FlagEntry& entry);
+  // Once a frame, after every received write and before our own changes are read: each source and unit as a
+  // whole, so what other players' writes turned on counts whatever the keys' order or messages.
+  void judge_rewards();
+  // Our own change `before` -> `now` of `key`: true when it was put back (the reward got twice).
+  bool reward_put_back(FlagStore& store, FlagKey key, const protocol::FlagEntry& before,
+                       const protocol::FlagEntry& now);
   std::int32_t doubled_ = 0;                  // expect_doubled_gain: gains still to drop
   std::uint64_t doubled_until_ = 0;           // the frame they lapse
   void settle_guards(FlagStore& store, Table& changes);
@@ -400,6 +771,9 @@ class FlagWatcher {
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again
+  // Row 159: the unwritten_ keys from an exact write (the host's save load, the join snapshot), tried again exact;
+  // through write() the max rule kept our higher value, and the lower one was taken as written.
+  std::set<FlagKey> unwritten_exact_;
   Table unadded_;     // host: count deltas whose write failed; tried again
   Table group_;         // each shared flag as the group last had it (set_loading)
   Table group_before_;  // an Int's value in our game just before group_ took it
@@ -410,20 +784,52 @@ class FlagWatcher {
   bool window_ = false;
   bool moved_ = false;  // a save was loaded in it (the title seen, kSaveLoadMin flags back)
   std::set<FlagKey> back_keys_;  // distinct named flags gone back with no Link in this window
+  bool seen_ = false;            // take_save_load: a save load was seen, not taken yet
   int seen_flags_ = 0;           // take_save_load: the sign was taken with these
   int seen_frames_ = 0;
   int no_scene_frames_ = 0;  // frames in this window with no scene loaded
+  bool native_loads_ = false;    // set_native_loads
+  bool native_loading_ = false;  // note_save_load_start, until the save is in (or kNativeLoadMaxFrames)
+  std::uint64_t native_since_ = 0;
+  bool native_loaded_ = false;   // note_save_loaded, taken by the next frame()
+  bool native_forced_ = false;   // loading_ held true by a load node's load (frame())
+  bool native_retry_ = false;    // note_save_loaded(true), taken with it
+  bool window_retry_ = false;    // this window's save load is Game Over's Try Again
+  bool link_loading_ = false;    // set_loading's last value (no Link), for when that ends
+  bool old_counted_ = false;     // this window's old sign counted in old_sign_loads
   bool scene_readable_ = true;  // set_scene
+  bool title_up_ = false;       // set_title: up now
+  bool title_seen_ = false;     // set_title: up since the last frame() (also while not connected)
+  bool window_title_ = false;   // the title was up in this load window
+  bool check_offline_ = false;  // reset(): a connection's first frame with Link looks at title_seen_
   bool reset_seen_ = false;  // take_reset
+  // Player: what last_ holds is worth putting back after our save load: our game played (Link, no load window)
+  // since this watcher started, or the group's values came (a snapshot or a reset with flags). Neither: last_ is
+  // what our title screen read (the game's defaults), and our save's own values are kept (world-fails-0115).
+  bool played_ = false;
+  bool group_known_ = false;
+  bool table_waiting_ = false;  // host: request_snapshot is waiting for a load window to end (counted once)
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;
   bool holding_ = false;
+  std::uint64_t holding_since_ = 0;  // frames_ at part 0
+  bool hold_timed_out_ = false;      // take_hold_timeout
+  std::uint64_t window_since_ = 0;   // frames_ when window_ opened
   std::uint16_t snapshot_next_part_ = 0;
   std::uint16_t snapshot_part_count_ = 0;
   Table snapshot_;                        // parts so far
   std::vector<protocol::FlagState> held_states_;  // came while holding
   FlagStats stats_;
+  // write_failures per key, for FlagStats::top_write_failure; at most kWriteFailureKeys keys (a new key past
+  // that is counted in write_failures only).
+  static constexpr std::size_t kWriteFailureKeys = 256;
+  std::map<FlagKey, std::uint64_t> write_failure_keys_;
+  // A refused write: held_retries when the store holds the key (and the hold refuses this write: hold_applies) or
+  // is busy, else a write failure named by key and site.
+  void note_write_failure(FlagStore& store, const FlagKey& key, const char* site, bool hold_applies = true);
+  // Row 275: an exact (host's save / join snapshot) value that waits for a hold: group_ and last_ (see the .cpp).
+  void note_waiting(FlagStore& store, const protocol::FlagEntry& entry);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;

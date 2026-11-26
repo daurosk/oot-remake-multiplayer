@@ -29,21 +29,23 @@ public:
         }
         Slot& s = slots_[number - 1];
         const bool dim = !connected;
-        if (!s.shown) {
+        if (!s.seen) {
+            s.seen = true;
             s.shown = dim;
-            s.pending.reset();
+            s.pending = false;
             return dim;
         }
-        if (dim == *s.shown) {
-            s.pending.reset();  // a flip that did not last
+        if (dim == s.shown) {
+            s.pending = false;  // a flip that did not last
         } else if (!s.pending || s.pending_dim != dim) {
-            s.pending = now_us;
+            s.pending = true;
+            s.pending_us = now_us;
             s.pending_dim = dim;
-        } else if (now_us - *s.pending >= kSteadyUs) {
+        } else if (now_us - s.pending_us >= kSteadyUs) {
             s.shown = dim;
-            s.pending.reset();
+            s.pending = false;
         }
-        return *s.shown;
+        return s.shown;
     }
 
     // Player `number` is gone (left, or no longer in the list): the next
@@ -57,9 +59,12 @@ public:
     static constexpr std::uint8_t kSlots = 16;  // coop::protocol::kMaxPlayers (protocol 11)
 
 private:
+    // Plain fields, all initialized (no std::optional: gcc 13 at -O2 calls its value maybe-uninitialized here).
     struct Slot {
-        std::optional<bool> shown;
-        std::optional<std::uint64_t> pending;  // when the other state began
+        bool seen = false;    // a state was taken
+        bool shown = false;   // the look drawn: dim
+        bool pending = false; // the other state began at pending_us
+        std::uint64_t pending_us = 0;
         bool pending_dim = false;
     };
     std::array<Slot, kSlots> slots_{};

@@ -5,14 +5,16 @@
 // (coop/net Client: request_join, accept_join, refuse_join); our Link is
 // moved the way the boss rooms do it (CoopBoss::MoveLink;
 // docs/dungeons-boss.md). Another scene is asked the way the game's Main
-// sequence takes a scene change in free play (docs/scenes.md "Free-play
-// scene change"): Sequence_ReservedNextBanc and its start name, then a short
-// game event (Trip::kSceneEvent through CoopLiveEvents::Requester), since the
-// game takes the request when an event ends, as after a loading zone's event.
+// sequence takes it from a loading zone: the zone's own event
+// Dm_SY_BancChangeGo with the scene, its start point and the entrance's
+// arrival event, started by our Link through CoopLiveEvents::Requester
+// (teleport-direct-0116; LICHII_COOP_TELEPORT_EVENT=0: the request flags
+// instead, taken when a talk or sign of the player's own ends, #197).
 // LICHII_COOP_TELEPORT=0 turns it off: the command says so and requests from
 // the others are refused (declined).
 
 #include "coop_teleport_game.h"
+#include "coop_caller_orders.h"
 
 #include "coop/presence/presence.hpp"
 
@@ -31,7 +33,6 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_boss.h"
-#include "coop_fairy.h"
 #include "coop_flags.h"
 #include "coop_live_events.h"
 #include "coop_svc.h"
@@ -50,24 +51,31 @@ bool OnByEnv() {
     return v == nullptr || std::string_view(v) != "0";
 }
 
-// LICHII_COOP_TELEPORT_EVENT=1: another scene is asked the game's own way, as an entrance does it (read from the
-// game by Hookshot's own teleport, host/hos_main.c "Cross-map teleport"): the event Dm_SY_BancChangeGo with the
-// arguments NextBanc, NextStartPos, BootEventName and IsCheckAir, started by our Link; the event calls the game's
-// ReserveBancChange and the sequence loads the map when it ends. Nothing is written into the request flags then.
-// Off by default until a run has shown it (docs/hookshot.md "World hooks").
+// Another scene is asked the game's own way, as an entrance does it (read from the game by Longshot's own
+// teleport, host/hos_main.c oot_teleport): the event Dm_SY_BancChangeGo with the arguments NextBanc, NextStartPos,
+// BootEventName (the entrance's arrival event) and IsCheckAir, started by our Link; the event calls the game's
+// ReserveBancChange and the sequence loads the map when it ends; the arrival event hands Link back. Nothing is
+// written into the request flags then. On by default since teleport-direct-0116 (it was off and, with
+// Trip::kStartSceneEvent false, never asked at all: the switch did nothing). LICHII_COOP_TELEPORT_EVENT=0 goes
+// back to the request flags taken by the player's own talk or sign (docs/hookshot.md "World hooks").
 bool EventByEnv() {
     const char* v = std::getenv("LICHII_COOP_TELEPORT_EVENT");
-    return v != nullptr && std::string_view(v) == "1";
+    return v == nullptr || std::string_view(v) != "0";
 }
 constexpr const char* kBancChangeEvent = "Dm_SY_BancChangeGo";
-constexpr const char* kBancArriveEvent = "Dm_SY_BancChangeArrive";  // the plain arrival; some entrances have their own
 
 // The map change event's arguments for `scene` at its start point `start`.
 std::vector<CoopLiveEvents::Requester::Arg> BancChangeArgs(std::string_view scene, std::string_view start) {
     using Arg = CoopLiveEvents::Requester::Arg;
     return {Arg{"NextBanc", std::string(scene), false}, Arg{"NextStartPos", std::string(start), false},
-            Arg{"BootEventName", std::string(kBancArriveEvent), false}, Arg{"IsCheckAir", std::nullopt, false}};
+            Arg{"BootEventName", ArrivalEvent(scene, start), false}, Arg{"IsCheckAir", std::nullopt, false}};
 }
+
+// A map-hiding area sets this saved Bool and clears it on its own exit; a teleport skips that exit, so it stays
+// set and the minimap stays hidden in every later scene (Longshot issues 2217, 2588; its teleport clears it the
+// same way). Cleared through the game's Bool setter (queued: live value and the save's copy) when we ask the map
+// change, never during a load (#197).
+const std::uint32_t kMapIconHidden = coop::host::flag_hash("MapIconDeactivateByAreaActor");
 
 // Main.module's native selector (_LocalModule_cf31571495c4, 0x3303ca0) picks
 // its BancChange case (ChangeBancOnMain.module) when this Bool is 1 (read at
@@ -154,16 +162,29 @@ struct Glue {
     // Chat / network threads -> present thread.
     std::optional<std::pair<std::uint8_t, std::string>> want;
     std::vector<Answered> answers;
+    // Down but not out's respawn (Beside, ToEntrance): the trip asked for it,
+    // the entrance asked, and how the move went (taken by TakeRespawnMove).
+    bool want_beside = false;
+    bool want_entrance = false;
+    // MapChange (the play-test bridge's warp): the scene and start point to ask the map change event for.
+    std::optional<std::pair<std::string, std::string>> want_map;
+    int map_frames_left = 0;   // frames a map change that could not start (an event or a load) is kept for
+    std::optional<bool> respawn_moved;
     // Any thread -> the hook's chat box.
     std::vector<std::string> lines;
     // Present thread only.
-    Trip trip;
+    Trip trip{by_event};
+    // The respawn's entrance (ToEntrance, by_event): its map change event may be asked until then (no trip carries
+    // it); 0 none. Ended by a load.
+    std::uint64_t entrance_until_us = 0;
+    static constexpr std::uint64_t kEntranceOpenUs = 5'000'000;
+    std::uint8_t beside_to = 0;  // the respawn's trip under way: to this player; 0 none
     // The start name before the trip's first ask (AskScene, ClearScene).
     std::optional<std::string> saved_start;
     bool saved_read = false;
     Grounded grounded;
 
-    // The scene event (Trip::kSceneEvent): asked on the present thread,
+    // The map change event (Dm_SY_BancChangeGo): asked on the present thread,
     // started from the svc cave on the game's calc thread.
     std::mutex event_mutex;
     CoopLiveEvents::Requester events;
@@ -187,12 +208,17 @@ struct Glue {
                 return call;
             });
         }
-        LOG_INFO(Core, "coop: teleport {}", on ? "on (/teleport <player> in chat)" : "off (LICHII_COOP_TELEPORT=0)");
+        LOG_INFO(Core, "coop: teleport {}",
+             !on        ? "off (LICHII_COOP_TELEPORT=0)"
+             : by_event ? "on (/teleport <player> in chat; another scene by the game's map change event)"
+                        : "on (/teleport <player> in chat; another scene waits for a talk or sign: "
+                          "LICHII_COOP_TELEPORT_EVENT=0)");
     }
 
-    static constexpr int kEventCallerOrder = 61;  // after the live events (60)
+    static constexpr int kEventCallerOrder = CoopCallerOrders::kTeleportEvent;  // after the live events (60)
     std::uint64_t main = 0;  // set by Frame under event_mutex
     bool events_open = false;  // set by Frame under event_mutex: travelling, no load
+    bool underway = false;     // set by Frame under event_mutex: a trip past its answer (Underway)
 
     void Line(std::string text) {  // with the mutex held
         LOG_INFO(Core, "coop: {}", text);
@@ -251,6 +277,64 @@ bool OnChat(std::string_view text, coop::host::Session& session) {
         g.Line(std::move(line));
     }
     return true;
+}
+
+bool Beside(std::uint8_t number, std::string name) {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    if (!g.on || number == 0) {
+        return false;
+    }
+    g.want = std::make_pair(number, std::move(name));
+    g.want_beside = true;
+    g.respawn_moved.reset();
+    return true;
+}
+
+bool Underway() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.event_mutex);
+    return g.underway;
+}
+
+bool ToEntrance() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    if (!g.on || !g.by_event) {
+        // #197: no event of ours may carry it (DefaultParentEvent held Link after the load), and a request left for
+        // a talk would load later, at a bad moment: not moved (the respawn's own fallback then).
+        LOG_INFO(Core, "coop: teleport: respawn at the entrance: off (needs the map change event)");
+        return false;
+    }
+    g.want_entrance = true;
+    g.respawn_moved.reset();
+    return true;
+}
+
+bool MapChange(std::string scene, std::string start) {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    if (!g.on || !g.by_event) {
+        LOG_INFO(Core, "coop: teleport: map change to {}: off (needs the map change event)", scene);
+        return false;
+    }
+    if (start.empty()) {
+        const auto first = DefaultStart(scene);
+        if (!first) {
+            LOG_INFO(Core, "coop: teleport: map change to {}: no start point known", scene);
+            return false;
+        }
+        start = *first;
+    }
+    g.want_map = std::make_pair(std::move(scene), std::move(start));
+    g.map_frames_left = 300;   // about 5 s: an event or a load at this frame lets the next free frame start it
+    return true;
+}
+
+std::optional<bool> TakeRespawnMove() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    return std::exchange(g.respawn_moved, std::nullopt);
 }
 
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
@@ -316,7 +400,7 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         local.position = Vec{reading->position[0], reading->position[1], reading->position[2]};
         local.rotation = reading->rotation;
         local.age = reading->age;
-        local.event = reading->event_running.value_or(false);
+        local.event = reading->event_running.value_or(false);  // G1: any event (the trip is an event of its own; the game takes one at a time)
         local.fighting = CoopBoss::Fighting();
         CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_base);
         coop::host::GameFlags flags(memory);
@@ -327,18 +411,77 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
 
     std::optional<std::pair<std::uint8_t, std::string>> want;
     std::vector<Answered> answers;
+    bool want_beside = false;
+    bool want_entrance = false;
+    std::optional<std::pair<std::string, std::string>> want_map;
     {
         std::lock_guard lock(g.mutex);
+        want_map = g.want_map;   // kept until it starts or its frames run out (below)
         g.answer = AnswerFor(local, g.grounded);
         want = std::exchange(g.want, std::nullopt);
         answers = std::exchange(g.answers, {});
+        want_beside = std::exchange(g.want_beside, false);
+        want_entrance = std::exchange(g.want_entrance, false);
     }
 
+    // Down but not out's respawn: how its move goes (nothing: not known yet).
+    std::optional<bool> respawn_moved;
     std::vector<Trip::Actions> all;
     if (want) {
         all.push_back(g.trip.Start(want->first, want->second, local, now));
+        g.beside_to = want_beside ? want->first : 0;
+        if (g.beside_to != 0 && !all.back().ask) {
+            respawn_moved = false;  // refused at once (an event of ours, a boss fight, not connected)
+            g.beside_to = 0;
+        }
+    }
+    if (want_entrance) {
+        // The game's own respawn point: our scene again, at its entrance nearest us.
+        const auto start = local.scene && local.position ? NearestStart(*local.scene, *local.position)
+                                                         : std::nullopt;
+        if (!start || main_base == 0 || local.loading_banc || local.event) {
+            respawn_moved = false;
+            LOG_INFO(Core, "coop: teleport: respawn at the entrance: no start point known here");
+        } else {
+            Trip::Actions entrance;
+            entrance.scene = *local.scene;
+            entrance.start = *start;
+            entrance.start_event = true;  // the game's map change event: at once (no talk or sign needed)
+            all.push_back(std::move(entrance));
+            g.entrance_until_us = now + Glue::kEntranceOpenUs;
+            respawn_moved = true;
+            LOG_INFO(Core, "coop: teleport: respawn at the entrance {} of {}", *start, *local.scene);
+        }
+    }
+    if (want_map) {
+        // The bridge's warp: the same map change event as the respawn's entrance, with the scene and start asked for.
+        if (main_base == 0 || local.loading_banc || local.event) {
+            std::lock_guard lock(g.mutex);
+            if (--g.map_frames_left <= 0) {
+                g.want_map.reset();
+                LOG_INFO(Core, "coop: teleport: map change to {} at {}: dropped, no free frame for 5 s ({})",
+                         want_map->first, want_map->second,
+                         main_base == 0 ? "no game" : local.loading_banc ? "a load runs" : "an event runs");
+            }
+        } else {
+            {
+                std::lock_guard lock(g.mutex);
+                g.want_map.reset();
+            }
+            Trip::Actions map;
+            map.scene = want_map->first;
+            map.start = want_map->second;
+            map.start_event = true;
+            all.push_back(std::move(map));
+            g.entrance_until_us = now + Glue::kEntranceOpenUs;
+            LOG_INFO(Core, "coop: teleport: map change to {} at {} (play-test warp)", want_map->first, want_map->second);
+        }
     }
     for (const auto& a : answers) {
+        if (g.beside_to != 0 && a.player == g.beside_to && a.kind != Answered::Kind::accepted) {
+            respawn_moved = false;  // refused, no answer, or they left
+            g.beside_to = 0;
+        }
         switch (a.kind) {
         case Answered::Kind::accepted:
         {
@@ -368,12 +511,27 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     {
         std::lock_guard lock(g.event_mutex);
         g.main = main_base;
-        g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
+        if (local.loading_banc || now >= g.entrance_until_us) {
+            g.entrance_until_us = 0;  // the respawn's map change was taken, or not in time
+        }
+        const bool entrance = g.entrance_until_us != 0;
+        g.events_open = (g.trip.phase() == Trip::Phase::travelling || entrance) && local.scene && !local.loading_banc;
+        g.underway = g.trip.phase() == Trip::Phase::travelling || g.trip.phase() == Trip::Phase::settling ||
+                     g.trip.phase() == Trip::Phase::asking_again || entrance;
     }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0 && g.by_event) {
-            // Nothing of ours is in the request flags: the game's own event reserved the scene, and clears it.
+            // Nothing of ours is in the request flags: the game's own event reserved the scene, and clears it after
+            // its arrival. Only a reservation of our scene the game made and never loaded (given up between its
+            // event and its load) is emptied, or a later talk or sign would load it.
+            if (act.release) {
+                LOG_INFO(Core, "coop: teleport: scene change taken (the game's map change event)");
+            }
             if (act.cancel_scene) {
+                if (!local.loading_banc && !g.event_scene.empty() && local.reserved_banc &&
+                    *local.reserved_banc == g.event_scene) {
+                    ClearScene(system, main_base, true, false, std::nullopt);
+                }
                 g.event_scene.clear();
                 g.event_start.clear();
             }
@@ -409,43 +567,30 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                             link == 0 ? "our Link's actor was not found" : "no scene or start point");
             } else {
                 LOG_INFO(Core, "coop: teleport: asking the game's map change event {} for {} at {} (arrival {})",
-                         kBancChangeEvent, g.event_scene, g.event_start, kBancArriveEvent);
+                         kBancChangeEvent, g.event_scene, g.event_start, ArrivalEvent(g.event_scene, g.event_start));
+                if (coop::host::GameFlags(memory).get_bool(kMapIconHidden).value_or(false)) {
+                    const bool cleared = coop::host::GameFlags::set_bool(memory, kMapIconHidden, false);
+                    LOG_INFO(Core, "coop: teleport: the area left had hidden the minimap "
+                             "(MapIconDeactivateByAreaActor): {}", cleared ? "restore queued" : "NOT cleared");
+                }
                 std::lock_guard lock(g.event_mutex);
                 g.events.WantWith(kBancChangeEvent, BancChangeArgs(g.event_scene, g.event_start), link);
             }
-        } else if (act.start_event && main_base != 0) {
-            LOG_INFO(Core, "coop: teleport: starting the event {} so the game takes the scene change",
-                     Trip::kSceneEvent);
-            std::lock_guard lock(g.event_mutex);
-            g.events.Want(Trip::kSceneEvent);
         }
-        if (act.move && local.scene && local.position) {
-            // Issue 197: never into another room of a dungeon right after a load (Link
-            // stays held). Within our scene (no load) any room is fine (door-unlock).
-            // Read once, at the first move: a pack made (again) while the game runs is
-            // seen after a restart; until then no table means short moves only.
-            static const CoopRooms::Table rooms = CoopFairy::RoomTable();
-            const auto check = CheckMove(rooms, *local.scene, *local.position, *act.move, act.after_load);
-            if (check != MoveCheck::ok) {
-                LOG_INFO(Core, "coop: teleport: not moved to {:.1f} {:.1f} {:.1f}: {} (issue 197)", act.move->x,
-                         act.move->y, act.move->z,
-                         check == MoveCheck::other_room ? "another room of this dungeon"
-                                                        : "far, and no room table for this dungeon");
-                bool told = false;
-                for (auto& line : act.lines) {
-                    if (line.rfind("teleport: next to ", 0) == 0) {
-                        line = NotMovedLine(check, line.substr(18), act.after_load);
-                        told = true;
-                    }
-                }
-                if (!told) {
-                    act.lines.push_back(NotMovedLine(check, "", act.after_load));
-                }
-                act.move.reset();
-            }
+        if (g.beside_to != 0 && act.scene) {
+            respawn_moved = true;  // the trip loads their scene: we arrive at its entrance, then beside them
+            g.beside_to = 0;
+        }
+        if (g.beside_to != 0 && act.cancel_scene) {
+            respawn_moved = false;  // the trip was given up before it moved us
+            g.beside_to = 0;
         }
         if (act.move) {
             const bool ok = CoopBoss::MoveLink(system, main_base, CoopBoss::Vec{act.move->x, act.move->y, act.move->z});
+            if (g.beside_to != 0) {
+                respawn_moved = ok;
+                g.beside_to = 0;
+            }
             LOG_INFO(Core, "coop: teleport: move to {:.1f} {:.1f} {:.1f}: {}", act.move->x, act.move->y,
                      act.move->z, ok ? "asked" : "NOT asked (no Link, or LICHII_COOP_BOSS=0)");
             if (!ok) {
@@ -470,6 +615,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         for (auto& line : act.lines) {
             g.Line(std::move(line));
         }
+    }
+    if (respawn_moved) {
+        g.respawn_moved = respawn_moved;
     }
 }
 

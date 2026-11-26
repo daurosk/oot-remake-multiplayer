@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop/host/game_items.hpp"
+
 #ifdef LICHII_COOP
 #include "common/logging.h"
 #endif
@@ -41,9 +43,24 @@ namespace {
 // world: named flags that an overworld placement's `Presence` tests (Banc),
 //   one by one: the Kokiri who blocks the forest exit and the invisible wall
 //   with it (KokiriForest_Npc_Kokiri_007_Child_Blocker_00), Mido's blockers,
-//   Jabu-Jabu's mouth, Kakariko's ladder and well water, Lake Hylia's ice,
+//   Jabu-Jabu's mouth, Zora's River waterfall, Kakariko's ladder and well
+//   water, Lake Hylia's ice,
 //   the royal tomb, the Death Mountain gate guard, Talon and Malon, the
 //   Gerudo carpenters, the light prelude, the owl at Lake Hylia.
+//   The carpenters' rescue (player report 99): each cell's logic
+//   (Logic/GerudoFortress_Common_Level_CarpenterSet_0N_*, cell N holds
+//   Npc_Hylia_01(2+N)_Adult) makes the jail guard only while
+//   AppearGerudoThief && !DestroyGerudoThief, gates the carpenter's thank-you
+//   talk on Destroy and drops the cell key on Destroy && !IsGet_SmallKey0N.
+//   Destroy alone was shared, so a guest whose host beat the guard first had
+//   no guard, the thank-you talk, a free cell key and a carpenter left in the
+//   cell. Now the whole rescue is shared progress: Destroy, the key taken,
+//   Saved_* (the cell opened: Common_Dungeon_OpenDoorChainLockMove; the chain
+//   lock itself is a shared world break), IsAfterHelpCarpenter_* and
+//   WarpPoint0N_ClearEvent (Dm_Gerudo_0020, the carpenter gone; Dm_Gerudo_0025,
+//   the card, reads all four). Each game's own: Found_*, AppearGerudoThief_*,
+//   CloseShutter_* and the carpenter's per-visit state, so a player who gets
+//   there before the guard is beaten still gets the fight in their game.
 //   Left out: minigames, the scarecrow, Gossip Stone fairies, where one
 //   player is (IsEntered, ArriveFrom), weather and age (Sequence_IsChildhood).
 // talk: a talk Alex's play-test asked to be shared (2026-11-12): the Kokiri
@@ -54,11 +71,14 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x00a58feeu, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Fire"},
     {0x01a718c3u, Kind::scene, "HavePlayedEvent.Dm_LonLon_0010"},
     {0x069c4cc7u, Kind::scene, "HavePlayedEvent.Dm_Kakariko_0030"},
+    {0x06d7f245u, Kind::world, "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_014_Adult"},  // player report 99
     {0x079b10a1u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_01"},
     {0x0895a9ffu, Kind::world, "Market_Adult_GetLightPrelude"},
     {0x0b450ae4u, Kind::scene, "HavePlayedEvent.Dm_Goron_0010"},
     {0x0bc9161fu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0080"},
     {0x0bf7ce9du, Kind::world, "KakarikoVillage_LeaveKakariko_Npc_Hylia_Talon_Adult"},
+    {0x0db0556fu, Kind::world, "GerudoFortress_Saved_Npc_Hylia_013_Adult"},  // player report 99
+    {0x0e18ee0du, Kind::world, "GerudoFortress_WarpPoint03_ClearEvent"},  // player report 99
     {0x0fba19e9u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0072"},
     {0x132f347cu, Kind::scene, "HavePlayedEvent.Dm_ZoraFountain_0030"},
     {0x1330a253u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Courage"},
@@ -76,11 +96,15 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x19898d14u, Kind::world, "Npc_Hylia_Soldier_003_GateOpen"},
     {0x1c3ca514u, Kind::scene, "HavePlayedEvent.Dm_LakeHrl_0010"},
     {0x1db3a87eu, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0040"},
+    {0x1ee8e249u, Kind::world, "IsGet_SmallKey_GerudoFortress.SmallKey02"},  // player report 99
     {0x22d6ff6fu, Kind::talk, "HaveTalked.Npc_Kokiri_001_Shop_Child"},  // Alex's play-test 2026-11-12 (issue 173)
+    {0x231f663au, Kind::world, "GerudoFortress_WarpPoint02_ClearEvent"},  // player report 99
     {0x249e026eu, Kind::scene, "HavePlayedEvent.Dm_GerudoValley_0000"},
     {0x26d2802cu, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0035"},
     {0x273a73e9u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0010"},
     {0x27bcb659u, Kind::world, "GerudoFortress_DestroyGerudoThief_Npc_Hylia_015_Adult"},
+    {0x2815a352u, Kind::world, "IsGet_SmallKey_GerudoFortress.SmallKey03"},  // player report 99
+    {0x288291b3u, Kind::world, "GerudoFortress_Saved_Npc_Hylia_015_Adult"},  // player report 99
     {0x29076b06u, Kind::scene, "HavePlayedEvent.Dm_GerudoValley_0010"},
     {0x291f87b2u, Kind::world, "IsMalonAppear_Market"},
     {0x2adcc032u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0160"},
@@ -97,6 +121,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x3690868du, Kind::scene, "HavePlayedEvent.Dm_HrlField_0071"},
     {0x3725522fu, Kind::scene, "HavePlayedEvent.Dm_LakeHrl_0000"},
     {0x38f16559u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0110"},
+    {0x397957cau, Kind::world, "IsGet_SmallKey_GerudoFortress.SmallKey04"},  // player report 99
     {0x3b320c55u, Kind::world, "KokiriForest_Npc_Kokiri_Mido_Adult_Blocker"},
     {0x3cd8eff5u, Kind::scene, "HavePlayedEvent.Dm_Goron_0040"},
     {0x3eac8adau, Kind::world, "GraveYard_RoyalFamilyTomb_Breaked"},
@@ -125,6 +150,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x5ba9783eu, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0020"},
     {0x603cc0d0u, Kind::scene, "HavePlayedEvent.Dm_DeathMtCrater_0000"},
     {0x60992704u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0060"},
+    {0x6127c9cfu, Kind::world, "GerudoFortress_Saved_Npc_Hylia_016_Adult"},  // player report 99
     {0x61960b30u, Kind::world, "KakarikoVillage_Npc_Hylia_009_Child_DeleteWaterPlane"},
     {0x61f46481u, Kind::scene, "HavePlayedEvent.Get_StoneOfWater_DiscoveryStone"},
     {0x6240e02cu, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0040"},
@@ -142,6 +168,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x71fb94e3u, Kind::scene, "HavePlayedEvent.Goto_ZoraDomain"},
     {0x7275f781u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0027"},
     {0x72984c4fu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0050"},  // Alex's play-test 2026-11-12 (issue 173)
+    {0x73dce2fau, Kind::world, "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_016_Adult"},  // player report 99
     {0x754f6228u, Kind::scene, "HavePlayedEvent.Meet_FourCarpenter_ClearEvent"},
     {0x75b6f007u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Nayru"},
     {0x7607c748u, Kind::scene, "HavePlayedEvent.Dm_DesertColossus_0000"},
@@ -160,6 +187,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x880a2efau, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_09"},
     {0x88163dffu, Kind::scene, "HavePlayedEvent.Dm_LonLon_0040"},
     {0x88bb5813u, Kind::world, "GerudoFortress_DestroyGerudoThief_Npc_Hylia_014_Adult"},
+    {0x89c70062u, Kind::world, "GerudoFortress_WarpPoint01_ClearEvent"},  // player report 99
     {0x89fc39f9u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_07"},
     {0x8ab78984u, Kind::scene, "HavePlayedEvent.Dm_Goron_0000"},
     {0x8b591e04u, Kind::scene, "HavePlayedEvent.Goto_KakarikoWells"},
@@ -167,6 +195,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x8c9a392fu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0080"},
     {0x8e15ffd6u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0060"},
     {0x8f02a43bu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0162"},
+    {0x8f360c8cu, Kind::world, "GerudoFortress_Saved_Npc_Hylia_014_Adult"},  // player report 99
     {0x8fa2608eu, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Power"},
     {0x9312137cu, Kind::scene, "HavePlayedEvent.Dm_Gerudo_0030"},
     {0x97137664u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0070"},
@@ -182,7 +211,13 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xa0c96073u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_08"},
     {0xa1d82e4fu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0005"},
     {0xa1eb22e6u, Kind::world, "LostWood_Npc_Kokiri_Blocker"},
+    // Zora's River waterfall, opened by Zelda's Lullaby (issue 61): the flow
+    // StoneOfWater_WaterfallSplit sets it, then plays Dm_ZoraRiver_0010 (a
+    // shared scene); Logic/ZoraRiver_Common_39bb opens the falls from it (and
+    // from its _Adult twin, for the adult river).
+    {0xa426db4bu, Kind::world, "Zorariver_TheWaterfallsplits_Adult"},
     {0xa49cb68cu, Kind::world, "JabJabOpenedMouth"},
+    {0xa4b1efb9u, Kind::world, "GerudoFortress_WarpPoint04_ClearEvent"},  // player report 99
     {0xa5d8b51du, Kind::scene, "HavePlayedEvent.Dm_LonLon_0030"},
     {0xa66e1d49u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0120"},
     {0xa6b0c301u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0070"},
@@ -233,6 +268,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd78d5af7u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0155"},
     {0xdb8433f7u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Epona"},
     {0xdbb40c10u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0050"},
+    {0xdc0010f6u, Kind::world, "IsGet_SmallKey_GerudoFortress.SmallKey01"},  // player report 99
     {0xdcf49939u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_05"},
     {0xe0fc0275u, Kind::scene, "HavePlayedEvent.Dm_LostWood_0025"},
     {0xe2c6b142u, Kind::scene, "HavePlayedEvent.Dm_Kakariko_0040"},
@@ -259,10 +295,13 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xef98d829u, Kind::scene, "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01"},
     {0xf07a3be3u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0030"},
     {0xf0fde374u, Kind::world, "KokiriForest_Npc_Kokiri_007_Child_Blocker"},
+    {0xf16a3d82u, Kind::world, "Zorariver_TheWaterfallsplits"},  // issue 61, above
     {0xf1826d42u, Kind::scene, "HavePlayedEvent.Dm_LonLon_0020"},
+    {0xf1eb5977u, Kind::world, "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_013_Adult"},  // player report 99
     {0xf38be607u, Kind::scene, "HavePlayedEvent.Dm_Kakariko_0000"},
     {0xf5be8a94u, Kind::world, "Npc_Hylia_009_Child_IsStormSongPlayed"},
     {0xf66ceb94u, Kind::scene, "HavePlayedEvent.Dm_Goron_0045"},
+    {0xf717e3dau, Kind::world, "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_015_Adult"},  // player report 99
     {0xf84339cbu, Kind::scene, "HavePlayedEvent.Dm_DeathMtCrater_0010"},
     {0xfd1b310eu, Kind::world, "IsMalonAppear_HyruleCastleSecondTime"},
     {0xfd925132u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0000"},
@@ -312,26 +351,32 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     return shared->size() - before;
 }
 
+namespace {
+
+// Meet_DekuTree's steps in order; 0 for NotReady or a value we do not know.
+int Rank(std::uint32_t v) {
+    switch (v) {
+    case quest::kReady:
+        return 1;
+    case quest::kStep01:
+        return 2;
+    case quest::kStep02:
+        return 3;
+    case quest::kStep03:
+        return 4;
+    case quest::kComplete:
+        return 5;
+    default:
+        return 0;
+    }
+}
+
+} // namespace
+
 std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
                                           std::optional<bool> mido_blocker,
                                           std::optional<bool> met_deku_tree) {
-    const auto rank = [](std::uint32_t v) -> int {
-        switch (v) {
-        case quest::kReady:
-            return 1;
-        case quest::kStep01:
-            return 2;
-        case quest::kStep02:
-            return 3;
-        case quest::kStep03:
-            return 4;
-        case quest::kComplete:
-            return 5;
-        default:
-            return 0;  // NotReady or a value we do not know
-        }
-    };
-    if (!step || rank(*step) == 0) {
+    if (!step || Rank(*step) == 0) {
         return std::nullopt;
     }
     std::uint32_t target = 0;
@@ -342,10 +387,206 @@ std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
     } else {
         return std::nullopt;
     }
-    if (rank(target) <= rank(*step)) {
+    if (Rank(target) <= Rank(*step)) {
         return std::nullopt;
     }
     return target;
+}
+
+bool MidoBlockerMend(std::optional<std::uint32_t> step, std::optional<bool> mido_blocker,
+                     std::optional<bool> met_deku_tree) {
+    if (mido_blocker != true) {
+        return false;  // already out of the way, or unread
+    }
+    return met_deku_tree == true || (step && Rank(*step) >= Rank(quest::kStep03));
+}
+
+bool DekuTreeMouthMend(std::optional<std::uint32_t> step, std::optional<bool> mouth) {
+    return mouth == false && step == quest::kComplete;
+}
+
+namespace {
+
+// Read from the romfs (GameDataList defaults; every EventTriggerSetGameDataBool
+// in Event/EventFlow/*.bfevfl and TriggerGameDataSetBool* in Logic/*.ainb).
+// Only flags that gate a path are here. Left out on purpose: the two
+// IsMalonAppear flags and the Kokiri/Lost Woods blockers the area logic sets
+// both ways; one-way flags that gate no path (the owl, Talon, talks, the light
+// prelude, the Gerudo carpenters); and the scene flags: a "seen" kept over a
+// fresh host save would spread to it and could skip a scene that gives an
+// item there, while a scene seen 0 again only plays again.
+constexpr std::array kOneWays = std::to_array<OneWay>({
+    // Mido at the Deku Tree path (Npc_Kokiri_Mido_Child: his sword and shield talk).
+    {quest::kMidoBlocker, Way::down, "KokiriForest_Npc_Kokiri_Mido_Child_Blocker"},
+    // Adult Mido in the Lost Woods (SageOfForest: Saria's Song for him).
+    {0x3b320c55u, Way::down, "KokiriForest_Npc_Kokiri_Mido_Adult_Blocker"},
+    // The Kokiri at the forest exit (Npc_Kokiri_007_Child, once the Emerald is won).
+    {0xe5dc5674u, Way::down, "KokiriForest_Npc_Kokiri_007_Child_Blocker_00"},
+    // The Deku Tree's mouth (Dm_Kokiri_0075).
+    {quest::kDekuTreeMouth, Way::up, "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth"},
+    // Link's house door (Dm_Kokiri_0045).
+    {0x9b1b27d2u, Way::up, "KokiriForest_LinkHouseDoor_Open"},
+    // The royal tomb (Dm_Graveyard_0010, Zelda's Lullaby on the Triforce).
+    {0xcf7dad5cu, Way::up, "GraveYard_RoyalFamilyTomb_Open"},
+    {0x3eac8adau, Way::up, "GraveYard_RoyalFamilyTomb_Breaked"},
+    // Zora's River waterfall (Dm_ZoraRiver_0010, Get_StoneOfWater); the adult
+    // one has no writer in flows or logic and is only ever read.
+    {0xf16a3d82u, Way::up, "Zorariver_TheWaterfallsplits"},
+    {0xa426db4bu, Way::up, "Zorariver_TheWaterfallsplits_Adult"},
+    // Jabu-Jabu's mouth (no writer in flows or logic; only ever read).
+    {0xa49cb68cu, Way::up, "JabJabOpenedMouth"},
+    // Kakariko's well drained (Dm_Kakariko_0050, the windmill man's talk).
+    {0x61960b30u, Way::up, "KakarikoVillage_Npc_Hylia_009_Child_DeleteWaterPlane"},
+    {0xeecaa92au, Way::up, "KakarikoVillage_DeleteDummyLadder"},
+    {0xf5be8a94u, Way::up, "Npc_Hylia_009_Child_IsStormSongPlayed"},
+    // The Death Mountain gate (Dm_Kakariko_0010, the guard's talk).
+    {0x19898d14u, Way::up, "Npc_Hylia_Soldier_003_GateOpen"},
+    // Lake Hylia after the Water Temple (Dm_SY_BancChange_EscapeDungeon).
+    {0x503a54cfu, Way::up, "SageOfWater_Icedelete"},
+});
+
+bool MidoDue(std::optional<std::uint32_t> step, std::optional<bool> now, std::optional<bool> met_deku_tree) {
+    return MidoBlockerMend(step, now, met_deku_tree);
+}
+
+bool MouthDue(std::optional<std::uint32_t> step, std::optional<bool> now, std::optional<bool>) {
+    return DekuTreeMouthMend(step, now);
+}
+
+constexpr std::array<Mend, kMends> kMendList{{
+    {quest::kMidoBlocker, false, "Mido's blocker was 1 in a game past him", MidoDue},
+    {quest::kDekuTreeMouth, true, "the Deku Tree's mouth was shut in a game whose quest is Complete", MouthDue},
+}};
+
+} // namespace
+
+std::span<const OneWay> OneWays() {
+    return kOneWays;
+}
+
+std::span<const Mend, kMends> Mends() {
+    return kMendList;
+}
+
+namespace {
+
+// Row 145, read from the romfs (coop_story.h StepFloor): Ready to Step06 of
+// Get_StoneOfWater = the letter mends' list of steps King Zora waits at,
+// after NotReady (one list for both, game_items.hpp letters::kKingWaits).
+namespace letters = ::coop::host::letters;
+constexpr auto kZoraBack = std::span<const std::uint32_t>(letters::kKingWaits).subspan(1);
+constexpr std::array<std::uint32_t, 1> kWaterBack{0x21d6fa38u};  // Step06
+constexpr std::array<StepFloor, kStepFloors> kStepFloorList{{
+    {0x5bca02a6u,         // Step_Get_StoneOfWater
+     letters::kKingRead,  // HavePlayedEvent.Dm_Zora_0010: King Zora read Ruto's Letter and stepped aside
+     letters::kKingMoved[0],  // Step07
+     kZoraBack, "King Zora was back in front of the fountain after he read Ruto's Letter"},
+    // SageOfWater: WaterTemple_Arrival writes Step06 only, so that is the one
+    // step raised from. Highest first.
+    {0x560a64afu,  // Step_SageOfWater
+     0x4a9f3392u,  // HavePlayedEvent.Demo_SageOfWater_BossDefeat (SageOfWater_BossDefeat sets Step08)
+     0xa594ed54u,  // Step08
+     kWaterBack, "the Water Temple door set SageOfWater back after Morpha was beaten"},
+    {0x560a64afu,
+     0x713abc8fu,  // HavePlayedEvent.Demo_SageOfWater_BossAppears (SageOfWater_BossAppears sets Step07_2)
+     0xb6355e0cu,  // Step07_2
+     kWaterBack, "the Water Temple door set SageOfWater back after Morpha's intro"},
+    {0x560a64afu,
+     0x8341428au,  // WaterTemple_DarkLink_Death (Room 22's logic sets Step07_1 at his death)
+     0x23c23c52u,  // Step07_1
+     kWaterBack, "the Water Temple door set SageOfWater back after Dark Link (Room 23 shut)"},
+    {0x560a64afu,
+     0xb8226750u,  // HavePlayedEvent.Demo_WaterTemple_MeetAgainRutoEvent (WaterTemple_RutoDemo sets Step07)
+     0xee867c27u,  // Step07
+     kWaterBack, "the Water Temple door set SageOfWater back after Ruto's scene in the temple"},
+}};
+
+} // namespace
+
+std::span<const StepFloor, kStepFloors> StepFloors() {
+    return kStepFloorList;
+}
+
+std::optional<std::uint32_t> StepFloorDue(const StepFloor& floor, std::optional<std::uint32_t> step,
+                                          std::optional<bool> proof) {
+    if (proof != true || !step) return std::nullopt;
+    if (std::find(floor.back.begin(), floor.back.end(), *step) == floor.back.end()) return std::nullopt;
+    return floor.floor;
+}
+
+namespace {
+#include "coop_story_effects.inc"
+} // namespace
+
+std::span<const Effect> Effects() {
+    return kEffects;
+}
+
+namespace {
+// Saria's gift (rows 195/204): the setting and both scenes it plays.
+constexpr std::uint32_t kSariaPlayed[] = {
+    0xd21c4627u,  // HavePlayedEvent.KokiriForest_ArriveLostWood
+    0xd711a296u,  // HavePlayedEvent.Dm_Kokiri_0150
+    0xd78d5af7u,  // HavePlayedEvent.Dm_Kokiri_0155
+};
+constexpr std::uint32_t kOcarinaHeld[] = {
+    0xb7df60f1u,  // PouchData.Item_Ocarina_Fairy.StockNum
+    0x54e2a3d1u,  // PouchData.Item_Ocarina_Time.StockNum
+};
+// The Ocarina of Time (DoorOfTime flow, entry DoorOfTime_GetOcarinaOfTime): its pouch get is in the setting's own
+// flow and the setting is not co-watched, but its played flag is a shared story flag: one that came in before the
+// item (a getter cut off mid-scene) took the scene from a game with no Ocarina of Time.
+constexpr std::uint32_t kTimePlayed[] = {
+    0x78a420f6u,  // HavePlayedEvent.HyruleField_DoorOfTime_GetOcarinaOfTime
+};
+constexpr std::uint32_t kTimeHeld[] = {
+    0x54e2a3d1u,  // PouchData.Item_Ocarina_Time.StockNum
+};
+constexpr Gift kGifts[] = {
+    {kSariaPlayed, 0xb7df60f1u, kOcarinaHeld, "Item_Ocarina_Fairy", "Saria's gift on the bridge", true},
+    {kTimePlayed, 0x54e2a3d1u, kTimeHeld, "Item_Ocarina_Time", "the Ocarina of Time in the moat", false},
+};
+} // namespace
+
+std::span<const Gift> Gifts() {
+    return kGifts;
+}
+
+std::optional<std::size_t> GiftOf(std::uint32_t hash) {
+    for (std::size_t i = 0; i < std::size(kGifts); ++i) {
+        for (const std::uint32_t p : kGifts[i].played) {
+            if (p == hash) return i;
+        }
+    }
+    return std::nullopt;
+}
+
+bool GiftHolds(std::uint32_t hash, const std::array<bool, kGiftsMax>& held) {
+    const auto i = GiftOf(hash);
+    return i && *i < kGiftsMax && !held[*i];
+}
+
+EffectsGiven::Verdict EffectsGiven::Take(const Effect& due) {
+    const auto has = [&](const std::vector<std::uint32_t>& v) {
+        return std::find(v.begin(), v.end(), due.flag) != v.end();
+    };
+    if (!has(given_)) {
+        return Verdict::give;  // recorded by Given() once set
+    }
+    if (has(said_)) {
+        return Verdict::quiet;
+    }
+    said_.push_back(due.flag);
+    return Verdict::set_back;
+}
+
+void EffectsGiven::Given(const Effect& due) {
+    if (std::find(given_.begin(), given_.end(), due.flag) == given_.end()) given_.push_back(due.flag);
+}
+
+void EffectsGiven::NewLoad() {
+    given_.clear();
+    said_.clear();
 }
 
 bool On() {

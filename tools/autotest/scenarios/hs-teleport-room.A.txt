@@ -1,14 +1,14 @@
-# hs-teleport-room (Hookshot, issue 197): teleport-lock with the fix. A /teleports from Kokiri Forest
-# to B in the Deku Tree's slingshot room (another room than the arrival start, Entrance at
-# 0.22 101.00 14.71). The "next to B" move into that room left Link held with a black picture
-# (bigrun4); now it is not made in a dungeon unless both spots are in one room.
-# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-room (and the emulator too).
-# Pass, A's log: "scene change taken", "scene change cleared", then
-# "coop: teleport: not moved to -33.2 ... another room of this dungeon (issue 197)" (or, with an
-# old pack without coop_rooms.txt, "far, and no room table"), no "boss: moved Link" after the load,
-# "test steer at" positions changing during the two gotos near the entrance, no "goto timed out".
-# Chat line: "B is in another room of this dungeon; you are at its entrance: type /teleport again, or walk there".
-# Shots arrived / walked: A in the Deku Tree entrance room, not black.
+# hs-teleport-room (Hookshot, issue 197): A /teleports from Kokiri Forest to B in the Deku Tree's
+# slingshot room on 2F (another room than the arrival start, Entrance at 0.22 101.00 14.71).
+# teleport-197: the map change lands A at the Entrance start; once A has settled the trip asks B
+# again and moves A next to B, into that other room (moving Link loads his room; B's own 'place'
+# below does the same move right after B's load). Until teleport-197 that move was refused.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-room.
+# Pass, A's log: "scene change taken", "teleport: move to -33.2 ...: asked", "boss: moved Link to
+# -33.2 ...", 'mark arrived' with Link at x about -33 (not 0.2: the entrance), no "not moved",
+# "test goto reached" for both gotos (hookshot: the driver logs it; the emulator module logs "test steer at"),
+# no "goto timed out". Chat line: "teleport: next to B".
+# Shots arrived / walked: A on 2F (map 2F) beside B's puppet, not black, A free to walk.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
@@ -45,9 +45,9 @@ wait 600
 mark loaded
 wait 600
 mark arrived
-goto 2.0 14.0 1.0 600      # a few metres from the entrance start: Link must move
+goto -31.6 11.6 1.0 600    # a couple of metres from B's spot (-33.2 10.4): Link must move
 wait 60
-goto 0.5 15.5 1.0 600
+goto -32.6 10.0 1.0 600
 wait 60
 mark walked
 wait 600

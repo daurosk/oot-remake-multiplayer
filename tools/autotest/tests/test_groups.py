@@ -38,7 +38,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([n for n, _ in gs], ["g1", "g2"])
         walk, door = gs[0][1]
         self.assertEqual(walk, {"scenario": "walk", "switches": "", "expects": [], "timeout": None, "label": "",
-                                "password": ""})
+                                "password": "", "see": [], "logonly": "", "never": []})
         self.assertEqual(door["switches"], "LICHII_COOP_CHEATS=1,A:LICHII_COOP_COLOR=red")
         self.assertEqual(door["expects"], [("A", "coop: connected")])
         self.assertEqual(door["label"], "#178 door")
@@ -46,11 +46,36 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(chest["expects"], [("B", r"got item \d+"), ("", "puppet")])
         self.assertEqual(chest["timeout"], 900)
 
+    def test_never(self):
+        run = g.parse_groups("[g1]\nhs-spawn expect='B:spawned' never='B:P1 snap' never=do.not.hold\n")[0][1][0]
+        self.assertEqual(run["never"], [("B", "P1 snap"), ("", "do.not.hold")])
+        with self.assertRaises(g.Fail):
+            g.parse_groups("[g1]\nwalk never=(\n")
+
     def test_errors(self):
         for text in ("walk\n", "[g1]\n", "[g1]\nwalk\n[g1]\nchest\n", "[g1]\nwalk nope\n", "[g1]\nwalk color=red\n",
                      "[g1]\nwalk expect=(\n", "[g1]\nwalk timeout=ten\n", "[g1]\n../x\n", "", "[g1]\nwalk label=\"x\n"):
             with self.assertRaises(g.Fail, msg=text):
                 g.parse_groups(text)
+
+    def test_a_bom_before_the_first_group_is_dropped(self):
+        # integrate-0114-testkit-2: PS 5.1 wrote smoke.txt with a BOM; '[rc5]' was "a scenario before the first [group]".
+        self.assertEqual(g.parse_groups("﻿" + GROUPS), g.parse_groups(GROUPS))
+        self.assertEqual([n for n, _ in g.parse_groups("﻿[g1]\nwalk\n")], ["g1"])
+
+    def test_cli_reads_a_file_with_a_bom(self):
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "smoke.txt")
+            with open(path, "wb") as f:   # as PowerShell 5.1 writes it: BOM + CRLF
+                f.write(b"\xef\xbb\xbf" + GROUPS.replace("\n", "\r\n").encode("utf-8"))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(g.main(["plan", path, "--kit-root", d]), 0)
+            self.assertIn("[g1] pair", out.getvalue())
+            self.assertIn("[g2] pair", out.getvalue())
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class PlanTest(unittest.TestCase):
@@ -88,6 +113,23 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(called, [])
         self.assertEqual(sum(1 for line in out if "run.ps1" in line), 3)
         self.assertTrue(out[0].startswith("[g1] pair"))
+
+    def test_lag_and_jitter_go_to_every_run(self):
+        planned = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe", lane=1, lag=250, jitter=60)
+        for _, _, cmds in planned:
+            for c in cmds:
+                self.assertEqual(c[-4:], ["-Lag", "250", "-Jitter", "60"])
+        plain = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe")
+        self.assertNotIn("-Lag", plain[0][2][0])
+
+    def test_renderer_options_go_to_every_run(self):
+        planned = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe", renderer=(900, 240, 0))
+        for _, _, cmds in planned:
+            for c in cmds:
+                self.assertEqual(c[-4:], ["-RendererWait", "900", "-RendererStall", "240"])
+                self.assertNotIn("-RendererLimit", c)   # 0: run.ps1 / hookshot.py's default
+        plain = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe")
+        self.assertFalse([x for x in plain[0][2][0] if x.startswith("-Renderer")])
 
 
 class RunTest(unittest.TestCase):
@@ -131,6 +173,23 @@ class RunTest(unittest.TestCase):
                            runner=lambda cmd: types.SimpleNamespace(returncode=1, stdout="no server\n", stderr="x"))
         self.assertIsNone(res[0][2])
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "R", "g1", "walk-no-folder.txt")))
+
+    def test_a_run_keeps_run_ps1s_output_in_its_folder(self):
+        # testkit-0116-3 smoke: two runs "run.ps1 exit 1" after "scenario played", no FAILED.txt; hookshot.py's
+        # traceback went to stderr, which was dropped once the folder was found.
+        planned = g.plan(g.parse_groups("[g1]\nwalk\n"), self.tmp, os.path.join(self.tmp, "R"), "S.exe")
+
+        def runner(cmd):
+            folder = os.path.join(cmd[cmd.index("-Shots") + 1], "walk", "t")
+            write(os.path.join(folder, "steps.txt"), "scenario played\n")
+            return types.SimpleNamespace(returncode=1, stdout="hookshot: ...\n%s\n" % folder,
+                                         stderr="Traceback (most recent call last):\nPermissionError: x\n")
+
+        res = g.run_groups(planned, say=lambda *_: None, runner=runner)
+        with open(os.path.join(res[0][2], "run-out.txt"), encoding="utf-8") as f:
+            kept = f.read()
+        self.assertTrue(kept.startswith("exit 1\n"))
+        self.assertIn("PermissionError: x", kept)
 
     def test_runs_without_folder_or_that_raise_are_fail_rows(self):
         # Review must-fix 3: a run that left no run folder, or broke inside the group thread, is FAIL in the table.
@@ -183,6 +242,15 @@ class RunTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "hookshot-A1", "autotest-save", "new.sav")))
         self.assertFalse(g.prepare(planned, self.tmp, dry=True, say=lambda *_: None, restore=lambda f, d: False))
 
+    def test_prepare_has_the_mods_in_place_before_the_game(self):
+        # (charsel-tab-0119: the cached game a folder gets depends on its mods' code patches, so they come first)
+        planned = g.plan(g.parse_groups("[g1]\nwalk\n"), self.tmp, os.path.join(self.tmp, "R"), "S")
+        write(os.path.join(self.tmp, "hookshot-A", "mods", "OoT Character Select", "exefs", "E0.ips"), "PATCH")
+        seen = []
+        g.prepare(planned, self.tmp, say=lambda *_: None, restore=lambda f, dry: seen.append(
+            os.path.isfile(os.path.join(f, "mods", "OoT Character Select", "exefs", "E0.ips"))) or True)
+        self.assertEqual(seen[0], True)
+
 
 class StepsGroupTest(unittest.TestCase):
     """Steps files in a group (hs_steps.py through run.ps1 -Runtime hookshot)."""
@@ -199,9 +267,13 @@ class StepsGroupTest(unittest.TestCase):
         try:
             f = os.path.join(root, "g11", "stray", "t")
             write(os.path.join(f, "steps.txt"), "step 5: start A B\nsteps done: 0 FAIL\n")
+            write(os.path.join(f, "counts.txt"), "PASS keep-number (A: 0 lines match 'x', at most 0)\nPASS b-left\n")
+            write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0,
+                                                           "logonly": "joins and leaves"}))
+            self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS [log only: joins and leaves]"))
+            # an expect step's counts from the log alone (no '[seen:'): UNPROVEN, logonly= does not excuse it
             write(os.path.join(f, "counts.txt"), "PASS both-loaded (want A=1 B=1, after 3 s)\nPASS b-left\n")
-            write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0}))
-            self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS"))
+            self.assertEqual(g.judge(f)[0], "UNPROVEN")
             write(os.path.join(f, "counts.txt"), "PASS both-loaded\nFAIL b-left (want A=0)\n")
             self.assertEqual(g.judge(f)[0], "FAIL")
         finally:
@@ -230,18 +302,28 @@ class MergeTest(unittest.TestCase):
         log_a = "[1.0] coop: module loaded\n[2.0] coop: connected to 127.0.0.1:27560\n"
         log_b = "[3.0] puppet: P1 spawned\n[9.0] got item 42 from the chest\n"
         self.run_folder("g1", "walk", {"expects": [], "exit": 0})
-        self.run_folder("g1", "teleport-same", {"expects": [["A", "coop: connected"]], "exit": 0, "label": "#178"},
-                        {"hookshot_log-A.txt": log_a})
-        self.run_folder("g2", "chest", {"expects": [["B", r"got item \d+"], ["", "puppet"]], "exit": 0},
+        self.run_folder("g1", "teleport-same", {"expects": [["A", "coop: connected"]], "exit": 0, "label": "#178",
+                                                "logonly": "connect"}, {"hookshot_log-A.txt": log_a})
+        self.run_folder("g2", "chest", {"expects": [["B", r"got item \d+"], ["", "puppet"]], "exit": 0,
+                                        "logonly": "item"},
                         {"hookshot_log-A.txt": log_a, "hookshot_log-B.txt": log_b})
         table = g.merge([self.root], rel_to=self.root)
         lines = table.splitlines()
         self.assertEqual(lines[0], "| Run | Result | Evidence |")
         self.assertIn("| g1 teleport-same (#178) | PASS | g1/teleport-same/20261112-120000: A: '[2.0] coop: connected to "
-                      "127.0.0.1:27560' |", lines)
+                      "127.0.0.1:27560' [log only: connect] |", lines)
         self.assertTrue(any(line.startswith("| g1 walk | PLAYED |") for line in lines))
         self.assertTrue(any(line.startswith("| g2 chest | PASS |") and "got item 42" in line for line in lines))
         self.assertEqual(lines[-1], "3 run(s): 2 PASS, 1 PLAYED -> PASS")
+
+    def test_an_expect_reads_game_out_when_the_log_copy_is_missing(self):
+        # hookshot_log-X.txt is only a copy of game-out-X.txt (hookshot.py copy_log): a copy that failed leaves the
+        # original, which is graded (testkit-0116-3 smoke: B's copy missing, B's lines all in game-out-B.txt).
+        self.run_folder("g1", "players", {"exit": 0, "expects": [["A", "coop: connected"], ["B", "coop: connected"]]},
+                        {"hookshot_log-A.txt": "coop: connected\n", "game-out-B.txt": "[hos host] coop: connected\n"})
+        table = g.merge([self.root], rel_to=self.root)
+        self.assertIn("B: '[hos host] coop: connected'", table)   # found, not a missing B line
+        self.assertNotIn("| FAIL |", table)
 
     def test_failures(self):
         self.run_folder("g1", "failed", {"exit": 1}, {"FAILED.txt": "play: A timeout at line 12\n"})
@@ -260,6 +342,89 @@ class MergeTest(unittest.TestCase):
         for row in rows.values():
             self.assertIn("| FAIL |", row)
         self.assertTrue(g.merge([self.root]).endswith("5 run(s): 5 FAIL -> FAIL"))
+
+    def test_a_never_line_found_fails_the_run(self):
+        log_b = "[1.0] coop: puppet: P1 CoopPuppet_Child_Green spawned after 200 ms\n[2.0] coop: puppet: P1 snap 0.835 m (show)\n"
+        meta = {"exit": 0, "expects": [["B", "spawned after"]], "logonly": "x"}
+        self.run_folder("g1", "snapped", dict(meta, never=[["B", "P1 snap"]]), {"hookshot_log-B.txt": log_b})
+        self.run_folder("g1", "clean", dict(meta, never=[["A", "P1 snap"], ["B", "do not hold"]]),
+                        {"hookshot_log-B.txt": log_b})
+        self.run_folder("g1", "both", dict(meta, expects=[["B", "nope"]], never=[["", "snap"]]),
+                        {"hookshot_log-B.txt": log_b})
+        rows = {line.split(" | ")[0][2:]: line for line in g.merge([self.root]).splitlines() if line.startswith("| g")}
+        self.assertIn("| FAIL |", rows["g1 snapped"])
+        self.assertIn("never= found B: '[2.0] coop: puppet: P1 snap 0.835 m (show)'", rows["g1 snapped"])
+        self.assertIn("| PASS |", rows["g1 clean"])
+        self.assertIn("missing B:'nope'; never= found B:", rows["g1 both"])
+
+    def test_a_refused_server_is_a_setup_fail(self):
+        log = ("[1.0] warning: coop: server refused: wrong protocol version: this game and the server are different "
+               "releases; run Update.bat in every kit, the host's too\n[2.0] coop: puppet: P1 spawned after 1 ms\n")
+        self.run_folder("g1", "refused", {"exit": 0, "expects": [["B", "spawned"]], "logonly": "x"},
+                        {"hookshot_log-A.txt": log, "hookshot_log-B.txt": log})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g1 refused")][0]
+        self.assertIn("| FAIL | ", row)
+        self.assertIn("SETUP (no co-op, the run proves nothing): A+B: 'coop: server refused: wrong protocol", row)
+
+    def test_a_refused_steps_run_is_setup_not_its_counts_pass(self):
+        log = "[1.0] warning: coop: server refused: wrong protocol version\n"
+        self.run_folder("g1", "steps", {"exit": 0, "expects": []},
+                        {"counts.txt": "PASS puppet seen\nPASS b\n", "hookshot_log-B.txt": log})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g1 steps")][0]
+        self.assertIn("| FAIL | ", row)
+        self.assertIn("SETUP (no co-op, the run proves nothing): B: 'coop: server refused", row)
+
+    def test_a_refused_run_without_expects_is_setup_not_played(self):
+        log = "[1.0] warning: coop: server refused: wrong protocol version\n"
+        self.run_folder("g1", "look", {"exit": 0, "expects": []}, {"hookshot_log-A.txt": log})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g1 look")][0]
+        self.assertIn("| FAIL | ", row)
+        self.assertIn("SETUP (no co-op", row)
+
+    def test_an_expect_also_reads_the_runners_player_log(self):
+        # hs-crawl: the warp line is written by hookshot.py to player-A.txt, not to the game's log.
+        self.run_folder("g2", "hs-crawl", {"exit": 0, "logonly": "log reading test", "expects": [["A", "coop: test warp done"],
+                                                                 ["B", "P1 plays 'Move'"]]},
+                        {"hookshot_log-A.txt": "coop: connected\n",
+                         "player-A.txt": "[06:55:58] coop: test warp done (map KokiriForest_Child)\n",
+                         "hookshot_log-B.txt": "coop: puppet: P1 plays 'Move'\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-crawl")][0]
+        self.assertIn("| PASS |", row)
+        self.assertIn("test warp done", row)
+        self.run_folder("g2", "hs-other", {"exit": 0, "logonly": "log reading test", "expects": [["B", "coop: test warp done"]]},
+                        {"player-A.txt": "coop: test warp done\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-other")][0]
+        self.assertIn("| FAIL |", row)  # A's runner line is not B's
+
+    def test_an_expect_over_lines_reads_the_game_log_only(self):
+        # hs-voice "nobody heard while away": the game log has a heard line between the marks; the runner's
+        # player-B.txt has the bare marks with nothing between. Must FAIL, not pass on the runner's log.
+        away = r"(?s)test mark away(?:(?!voice: test: P\d+ heard).)*test mark far-end"
+        never = r"(?s)\A(?:(?!microphone opened).)*\Z"
+        runner = "coop: test mark away\ncoop: test mark far-end\n"
+        self.run_folder("g3", "hs-voice", {"exit": 0, "logonly": "log reading test", "expects": [["B", away]]},
+                        {"hookshot_log-B.txt": "coop: test mark away\ncoop: voice: test: P1 heard 3\n"
+                                               "coop: test mark far-end\n",
+                         "player-B.txt": runner})
+        self.run_folder("g3", "hs-mic", {"exit": 0, "logonly": "log reading test", "expects": [["B", never]]},
+                        {"hookshot_log-B.txt": "coop: microphone opened\n", "player-B.txt": runner})
+        self.run_folder("g3", "hs-quiet", {"exit": 0, "logonly": "log reading test", "expects": [["B", away]]},
+                        {"hookshot_log-B.txt": "coop: test mark away\ncoop: test mark far-end\n",
+                         "player-B.txt": runner})
+        rows = {line.split(" | ")[0][2:]: line for line in g.merge([self.root]).splitlines() if line.startswith("| g")}
+        self.assertIn("| FAIL |", rows["g3 hs-voice"])
+        self.assertIn("| FAIL |", rows["g3 hs-mic"])
+        self.assertIn("| PASS |", rows["g3 hs-quiet"])  # the game's own marks with nothing between still pass
+
+    def test_spans_lines(self):
+        self.assertTrue(g.spans_lines(r"(?s)a.*b"))
+        self.assertTrue(g.spans_lines(r"(?is)a.*b"))
+        self.assertTrue(g.spans_lines(r"a(?s:.*)b"))
+        self.assertTrue(g.spans_lines(r"\A(?:(?!x).)*\Z"))
+        self.assertTrue(g.spans_lines(r"a\nb"))
+        self.assertFalse(g.spans_lines("coop: test warp done"))
+        self.assertFalse(g.spans_lines(r"(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"))
+        self.assertFalse(g.spans_lines(r"anim \S+ '[^']+' \(ours\)"))
 
     def test_folders_without_run_json_and_empty(self):
         self.run_folder("g1", "walk")   # a plain run.ps1 -Runtime hookshot folder

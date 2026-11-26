@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the co-op game on this PC from your own copy of the game (start-oot-coop.sh runs it; the
+# Builds the co-op game on this PC from your own copy of the game (start-squadala.sh runs it; the
 # Linux twin of the Windows kit's scripts/hookshot-build.ps1). Longshot (Team MagicBean, GPL-3.0,
 # git.magicbean.dev/MagicBeanDev/Longshot) is a static recompilation of the game: it is compiled
 # here, from your files, and nothing of the game leaves this PC.
@@ -9,6 +9,9 @@
 #   bash scripts/build.sh --rebuild             build again even when nothing changed
 #   bash scripts/build.sh --check-only          get the tools and check your game files; build nothing
 #   bash scripts/build.sh --jobs N              at most N compilers at once
+#   bash scripts/build.sh --dlss                with NVIDIA DLSS: asks you to accept NVIDIA's license once, then every
+#                                               build fetches NVIDIA's DLSS SDK and builds with it (data/dlss.txt)
+#   bash scripts/build.sh --no-dlss             without DLSS again (the game is built again without it)
 #   bash scripts/build.sh --renderer-only DIR   (CI, no game) steps 1 to 3, then compile Longshot's patched
 #                                               Linux renderer and our host files into DIR
 #
@@ -28,13 +31,15 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out=''
+game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out='' dlss=0 no_dlss=0
 while (($#)); do
     case $1 in
         --game) game=$2; shift ;;
         --exefs) exefs=$2; shift ;;
         --rebuild) rebuild=1 ;;
         --check-only) check_only=1 ;;
+        --dlss) dlss=1 ;;
+        --no-dlss) no_dlss=1 ;;
         --jobs) jobs=$2; shift ;;
         --renderer-only) renderer_out=$2; shift ;;
         *) fail "build.sh: unknown option $1" ;;
@@ -108,11 +113,13 @@ tools_env=$(env -u LONGSHOT_TOOLS "$PY" -I "$SRC/builder/linux/linux_tools.py" e
 eval "$tools_env"
 # Longshot's own variables for its build, and nothing of a launcher or test run: LONGSHOT_TOOLS
 # unset keeps the game in one folder (no bin/), LONGSHOT_VK_PREBUILT unset compiles the patched
-# renderer. Its lift key hashes every A64_/OOT_/RX_ variable: co-op's OOT_COOP_* ones go.
+# renderer, LONGSHOT_ROMFS_FROM unset (a launcher's, Longshot rc.6 #360: game files hard-linked from
+# another folder) unpacks the game files the kit names. Co-op's OOT_COOP_* ones go too (Longshot's lift
+# key hashed every A64_/OOT_/RX_ variable before rc.6, and they are no business of the build's).
 language=${OOT_COOP_LANGUAGE:-en-US}   # (read before the OOT_COOP_* variables go below)
 fetch_local=${OOT_COOP_FETCH_LOCAL-}   # (tests: a local OOTRR in step 5, after they go)
 offline=${OOT_COOP_OFFLINE-}           # (tests: 1 = no internet, for step 5)
-unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK
+unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK LONGSHOT_ROMFS_FROM
 while IFS='=' read -r v _; do [[ $v == OOT_COOP_* ]] && unset "$v"; done < <(env)
 export PYTHONIOENCODING=utf-8
 
@@ -140,9 +147,809 @@ make_game() {
     return "${PIPESTATUS[0]}"
 }
 
+# OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt; owner, 0.11.8 and 0.11.9), as kit-paths.ps1's
+# Invoke-KitCharacterSelectStep: every kit gets his Characters page (the default part); his NPC characters (a 145 MB download, 1.1 GB on disk)
+# only on the player's yes (asked once: y is yes; Enter, n, 15 s or no terminal: no; data/coop-options.ini
+# character_select = yes|no|ask wins, data/character-select-answer.txt keeps the answer; every later start in a terminal
+# shows one line and n within 2 s changes it). Snail's own release and his characters.json are downloaded from his GitHub
+# pages onto this PC, SHA-256 checked, his customizer left out of his code patch (co-op's own Customize fills his
+# screen), and the mod's folder goes into data/game/mods, on (the Mods tab switches
+# it off; the list is never written here). The kit carries none of its files. Before the game's stamp
+# below: the build takes in its code patch (patches 0034/0035), the pack its characters.
+CS_HOME=$GAME/mods   # (where 0.11.8 puts it too; C #56: not under contents, where only the pack goes)
+# Before the kit changes <home>/<folder>: what the game was last built with is kept as <home>/_<folder>.prev (the
+# folder) or <home>/_<folder>.none (nothing was there), both skipped by the game and the build ('_'); kept once, so a
+# start that stopped in its build keeps the older state, the one the game has (kit-paths.ps1 Save-KitCharacterSelectPrevious).
+charsel_save_previous() {
+    local dir=$CS_HOME/$1 prev=$CS_HOME/_$1.prev none=$CS_HOME/_$1.none
+    mkdir -p "$CS_HOME"
+    if [[ ! -e $prev && ! -e $none ]]; then
+        if [[ -e $dir ]]; then mv "$dir" "$prev"; else printf 'no %s before the kit'"'"'s change
+' "$1" >"$none"; fi
+    elif [[ -e $dir ]]; then
+        rm -rf "$dir"
+    fi
+}
+charsel_folder() { [[ -f $LS/CHARACTER-SELECT.txt ]] && pin_get "$LS/CHARACTER-SELECT.txt" folder; }
+# The game could not be built with the change (review-geno-0118): the mods folder goes back to what the game was built
+# with, so the game starts as it was. 0 when something was put back. The player's answer stays: the next start tries again.
+charsel_undo() {
+    local folder dir prev none
+    folder=$(charsel_folder) || return 1
+    [[ -n $folder ]] || return 1
+    dir=$CS_HOME/$folder prev=$CS_HOME/_$folder.prev none=$CS_HOME/_$folder.none
+    [[ -e $prev || -e $none ]] || return 1
+    rm -rf "$dir"
+    [[ -e $prev ]] && mv "$prev" "$dir"
+    rm -f "$none"
+    return 0
+}
+# The game was built (or needed no build) with the change: the kept state goes.
+charsel_confirm() {
+    local folder
+    folder=$(charsel_folder) || return 0
+    [[ -n $folder ]] && rm -rf "$CS_HOME/_$folder.prev" "$CS_HOME/_$folder.none"
+    return 0
+}
+# The folder work in Python (kit-paths.ps1's Test-KitCharacterSelectNpcFile, Get-KitCharselStrippedIps,
+# Copy-KitTreeLinked and Complete-KitCharacterSelectFolder, the same rules and regions):
+#   derive <copy there> <new> <part>   the copy's files as hard links (a copy where a link cannot be made), the NPC part left out for ui
+#   complete <new> <part> <characters.json> <newer .ips or ''> <stamp> <release>
+#   strip <his .ips> <out .ips>        (tests) the stripped patch; one line per record left out
+# His customizer (his MIT source, mods/customize.py): cz_head and cz_frame (the places that call it) and the bodies
+# it fills; a record across a region's edge or a region with no record: refused (exit 1, the reason on stderr).
+CHARSEL_PY='
+import os, re, shutil, sys
+CZ = [("cz_head (HEAD_CALL)", 0x804D756C, 0x804D7570), ("cz_frame (FRAME_SITE)", 0x8289D600, 0x8289D604),
+      ("COLOUR_CODE", 0x832E1620, 0x832E19F0), ("COLOUR_DATA", 0x832E39D0, 0x832E3C00),
+      ("COLOUR_MORE", 0x8103AE80, 0x8103B160), ("COLOUR_KEEP", 0x83BCDC10, 0x83BCDDE0),
+      ("COLOUR_TEX", 0x83BCCE70, 0x83BCD000)]
+SHIFT = 0x8001FF00
+# The NPC part, below romfs/: one rule for npc() and for the v0.2.2 tool --exclude (charsel_tool_make reads it with
+# "exclude"). Link own textures in Tex/ (*_Player_*, Angin_Tile_*: named by his kept Link models) are not NPC files
+# (row 242). Same rule as kit-paths.ps1 Test-KitCharacterSelectNpcFile / $KitCharselToolExclude.
+NPC_RULE = (r"^(Phive|Sound)/|^Tex/(?![^/]*_Player_|Angin_Tile_)|^Model/Player_(Adult|Child)_C\d{3}\.|^Model/Player_Dark_"
+            r"|^Pack/Actor/Enemy_MiddleBoss_DarkLink\.pack\.zs$")
+def npc(rel):
+    r = rel.replace("\\", "/")
+    return r[:6].lower() == "romfs/" and bool(re.search(NPC_RULE, r[6:], re.I))
+def voice(rel):
+    # his release voices: Link clips changed by a voice model, never put into a game (kit-paths.ps1 Test-KitCharacterSelectVoiceFile)
+    r = rel.replace("\\", "/")
+    return bool(re.match(r"romfs/Sound/Resource/PlayerVoice_", r) or re.match(r"romfs/Sound/Resource/Stream/V[A-Za-z]{2}Pl(Child|Adult)_", r))
+def records(d):
+    if len(d) < 9 or d[:5] != b"IPS32":
+        raise ValueError("not an IPS32 file")
+    o, out = 5, []
+    while True:
+        if o + 4 > len(d):
+            raise ValueError("no EEOF at its end")
+        if d[o:o + 4] == b"EEOF":
+            break
+        if o + 6 > len(d):
+            raise ValueError("a record is cut short")
+        at, n, f = int.from_bytes(d[o:o + 4], "big"), int.from_bytes(d[o + 4:o + 6], "big"), o
+        if n == 0:
+            if o + 9 > len(d):
+                raise ValueError("a run record is cut short")
+            size, o = int.from_bytes(d[o + 6:o + 8], "big"), o + 9
+        else:
+            if o + 6 + n > len(d):
+                raise ValueError("a record is cut short")
+            size, o = n, o + 6 + n
+        out.append((at, size, f, o))
+    if o + 4 != len(d):
+        raise ValueError("bytes after EEOF")
+    return out
+def strip(d):
+    try:
+        recs = records(d)
+    except ValueError as e:
+        sys.exit(f"his code patch cannot be read ({e})")
+    hit, out, dropped = set(), bytearray(d[:5]), []
+    for at, size, f, t in recs:
+        lo, hi, name = at, at + size, None
+        for g, a, b in CZ:
+            glo, ghi = a - SHIFT, b - SHIFT
+            if lo >= glo and hi <= ghi:
+                name = g
+                break
+            if lo < ghi and glo < hi:
+                sys.exit(f"his code patch changes {lo:08x}-{hi:08x} across the edge of {g}: not the layout his source names")
+        if name:
+            hit.add(name)
+            dropped.append(f"{name} {lo:08x} {size}")
+        else:
+            out += d[f:t]
+    for g, _, _ in CZ:
+        if g not in hit:
+            sys.exit(f"his code patch has nothing at {g}: not the layout his source names")
+    return bytes(out + b"EEOF"), dropped
+def rd(p):
+    with open(p, "rb") as f:
+        return f.read()
+def fresh(p, b):
+    if os.path.lexists(p):
+        os.remove(p)   # (a hard link to the kept copy is never written through)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "wb") as f:
+        f.write(b)
+cmd = sys.argv[1]
+if cmd == "exclude":
+    print(NPC_RULE)
+elif cmd == "run":
+    # run IDLE MAX -- PROGRAM ARGS: the program with a time limit, its output passed on. One that writes nothing for IDLE s
+    # or runs longer than MAX s is stopped with its whole process group (its worker processes too): exit 124, last line
+    # "stopped: ...". (Character Select tool on a damaged game dump: its workers die at start and are started again for good.)
+    import signal, subprocess, threading, time
+    idle, most, argv = float(sys.argv[2]), float(sys.argv[3]), sys.argv[5:]
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    last = [time.monotonic()]
+    def pump():
+        for line in iter(p.stdout.readline, b""):
+            last[0] = time.monotonic()
+            sys.stdout.write(line.decode("utf-8", "replace"))
+            sys.stdout.flush()
+    t = threading.Thread(target=pump, daemon=True)
+    t.start()
+    start, why = time.monotonic(), ""
+    while p.poll() is None:
+        now = time.monotonic()
+        if now - last[0] >= idle:
+            why = "it wrote nothing for %d s" % idle
+        elif now - start >= most:
+            why = "it ran longer than %d s" % most
+        if why:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+            break
+        time.sleep(0.5)
+    t.join(5)
+    if why:
+        print("stopped: " + why)
+        sys.exit(124)
+    sys.exit(p.returncode)
+elif cmd == "derive":
+    src, dst, part = sys.argv[2:5]
+    for r, _, fs in os.walk(src):
+        for n in fs:
+            a = os.path.join(r, n)
+            rel = os.path.relpath(a, src)
+            if (part == "ui" and npc(rel)) or voice(rel):
+                continue
+            b = os.path.join(dst, rel)
+            os.makedirs(os.path.dirname(b), exist_ok=True)
+            try:
+                os.link(a, b)
+            except OSError:
+                shutil.copy2(a, b)
+elif cmd == "complete":
+    new, part, js, ips, want, rel = sys.argv[2:8]
+    romfs = os.path.join(new, "romfs")
+    for r, _, fs in os.walk(os.path.join(romfs, "Sound", "Resource")):
+        for n in fs:
+            p = os.path.join(r, n)
+            if voice(os.path.relpath(p, new)):
+                os.remove(p)
+    if part == "ui":
+        for r, _, fs in os.walk(romfs):
+            for n in fs:
+                p = os.path.join(r, n)
+                if npc(os.path.relpath(p, new)):
+                    os.remove(p)
+        for d in ("Phive", "Sound"):   # (romfs/Tex goes file by file above: Link own textures stay)
+            shutil.rmtree(os.path.join(romfs, d), ignore_errors=True)
+    ex = os.path.join(new, "exefs")
+    code = sorted(n for n in os.listdir(ex) if n.lower().endswith(".ips") and os.path.isfile(os.path.join(ex, n))) if os.path.isdir(ex) else []
+    if len(code) != 1:
+        sys.exit(f"the release has {len(code)} code patches, not one")
+    mine = os.path.join(new, "coop-charsel-code.ips")
+    his = rd(ips) if ips else rd(mine) if os.path.isfile(mine) else rd(os.path.join(ex, code[0]))
+    data, dropped = strip(his)
+    fresh(mine, his)
+    fresh(os.path.join(ex, code[0]), data)
+    fresh(os.path.join(new, "characters.json"), rd(js))
+    fresh(os.path.join(new, "coop-charsel.txt"), (want + "\n").encode())
+    npcs = "with its NPC characters" if part == "full" else "without its NPC characters (character_select = yes in data/coop-options.ini gets them)"
+    fresh(os.path.join(new, "CREDITS-coop.txt"), "\n".join([
+        f"OoT Character Select {rel} by snaildev99 (Snail): https://github.com/snaildev99/OoT-Character-Select",
+        f"Downloaded by the Squadala co-op kit from his own release page onto this PC, {npcs}; the kit carries none of its files.",
+        "His Customize code is left out of its code patch (co-op'"'"'s own Customize fills his Customize screen); the patch as he made it is coop-charsel-code.ips.",
+        "Its code is under the MIT licence (Copyright (c) 2026 snaildev99; LICENSE.txt here when it could be fetched).",
+        "The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.",
+        "Switch it off in the game'"'"'s Mods tab.", ""]).encode())
+elif cmd == "copies":
+    # black-cs-01112, as kit-paths.ps1 Resolve-KitCharacterSelectCopies: every Character Select copy the game loads (a
+    # mod folder, found as host/mods.c finds them, whose romfs has Sequence/CharacterMenu.module.ainb and that has exefs;
+    # never the pack coop-puppet) but the kit own (mods/<folder>) is set aside as _<name> when the kit copy is there and
+    # on: two copies put two code patches into one game. A row "off" in coop-mods.list: left alone.
+    mods, mine = sys.argv[2], sys.argv[3]
+    fold = lambda n: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in n.replace(chr(92), "/"))
+    off, seen, default_off = set(), set(), False   # (default_off: a "default off" line in the list, Original game)
+    try:
+        rows = open(os.path.join(mods, "coop-mods.list"), encoding="utf-8").read().split(chr(10))
+    except OSError:
+        rows = []
+    if rows and rows[0].rstrip(chr(13)) == "coop-mods 1":
+        for row in rows[1:]:
+            default_off = default_off or row.rstrip(chr(13)) == "default off"
+            m = re.match(r"^(on|off) (.+)$", row.rstrip(chr(13)))
+            if m and fold(m.group(2)) not in seen:
+                seen.add(fold(m.group(2)))
+                if m.group(1) == "off":
+                    off.add(fold(m.group(2)))
+    copies = []
+    def walk(d, name, depth):
+        try:
+            entries = sorted(os.listdir(d))
+        except OSError:
+            return
+        for e in entries:
+            p = os.path.join(d, e)
+            if e.startswith((".", "-", "_")) or not os.path.isdir(p):
+                continue
+            rel = name + "/" + e if name else e
+            if any(os.path.isdir(os.path.join(p, x)) for x in ("romfs", "exefs", "cheats")):
+                own_copy = fold(rel) == fold(mine)   # (the kit copy: by its folder, whatever part of his romfs it has)
+                if (e.lower() != "coop-puppet" and (own_copy or os.path.isfile(os.path.join(p, "romfs", "Sequence", "CharacterMenu.module.ainb")))
+                        and os.path.isdir(os.path.join(p, "exefs"))):
+                    copies.append((rel, p, fold(rel) in off or (default_off and fold(rel) not in seen)))
+                continue
+            if depth < 4:
+                walk(p, rel, depth + 1)
+    walk(mods, "", 1)
+    own = [c for c in copies if fold(c[0]) == fold(mine)]
+    others = [c for c in copies if fold(c[0]) != fold(mine) and not c[2]]
+    if others and (not own or own[0][2]):
+        if len(others) > 1:
+            print("Character Select: %d copies are on (%s): their code patches go into one game and can give a black screen "
+                  "or a crash. Switch all but one off in the Mods tab." % (len(others), ", ".join("mods/" + c[0] for c in others)))
+        others = []
+    for rel, p, _ in others:
+        to = os.path.join(os.path.dirname(p), "_" + os.path.basename(p))
+        i = 2
+        while os.path.exists(to):
+            to = os.path.join(os.path.dirname(p), "_%s.%d" % (os.path.basename(p), i))
+            i += 1
+        try:
+            os.rename(p, to)
+            print("Character Select: a second copy, mods/%s, was set aside as %s: two copies put two code patches into one "
+                  "game (a black screen or a crash). The kit copy, mods/%s, stays. To play with yours: switch the kit copy "
+                  "off in the Mods tab, close the game, rename yours back." % (rel, os.path.relpath(to, mods), mine))
+        except OSError as ex:
+            print("Character Select: a second copy, mods/%s, could not be set aside (%s): two code patches go into one game "
+                  "and can give a black screen or a crash. Close the game, then remove one of them." % (rel, ex.strerror or ex))
+elif cmd == "strip":
+    data, dropped = strip(rd(sys.argv[2]))
+    fresh(os.path.abspath(sys.argv[3]), data)
+    print("\n".join(dropped))
+'
+charsel_py() { "$PY" -I -B -c "$CHARSEL_PY" "$@"; }
+
+# Character Select v0.2.2's tool (the zip's build-from-your-game, unpacked into $B/charsel/tool) makes the mod's game-derived
+# files from data/game/romfs: byte patches and colour recipes, each source and result checked by SHA-1; a game of another
+# version is refused file by file. charsel_tool_make <mod folder> <part>: 0, or 1 with the reason in cs_tool_why. Part ui
+# skips the NPC part's files (--exclude: charsel's NPC_RULE, the one npc() uses). Needs numpy, zstandard, astc-encoder-py and texture2ddecoder in $PY.
+cs_tool_why=''
+charsel_tool_make() {
+    local mod=$1 part=$2 tout dl=$B/charsel
+    local -a ex=()
+    cs_tool_why=''
+    if [[ $part != full ]]; then
+        local rule
+        rule=$(charsel_py exclude 2>/dev/null) || rule=''
+        # (an empty rule would exclude nothing: the ui part would get the NPC part's files, so no rule = no install)
+        [[ -n $rule ]] || { cs_tool_why="the kit could not read its own NPC rule (charsel exclude)"; return 1; }
+        ex=(--exclude "$rule")
+    fi
+    say "  making Character Select's files from your game (a minute or two, once) ..."
+    # (the exit code decides: a warning on its stderr is only text. -I drops PYTHON* variables and the current folder; player.py
+    # puts its own folder and lib/ on sys.path itself (checked: it runs under -I from another folder), so nothing else is needed)
+    # (time limits as on Windows: stopped after 15 minutes without a line (it prints one every 100 files, the slowest first) or
+    # 2 hours in all, with its worker processes; -u: each line reaches the watcher at once)
+    local rc=0
+    tout=$(charsel_py run "${CHARSEL_TOOL_IDLE:-900}" "${CHARSEL_TOOL_MAX:-7200}" -- "$PY" -I -B -u "$dl/tool/player.py" --romfs "$GAME/romfs" --mod "$mod" ${ex[@]+"${ex[@]}"} 2>&1) || rc=$?
+    if ((rc == 124)); then
+        cs_tool_why="making its files from your game was stopped ($(printf '%s
+' "$tout" | grep -v '^[[:space:]]*$' | tail -n 1 | sed 's/^stopped: //')): its tool stopped answering. The game files it reads may be damaged (dump the game again)"
+        return 1
+    fi
+    if ((rc != 0)); then
+        # (the reason: its last line that is not a Python warning ('file:N: SomeWarning: ...' and its indented source line))
+        cs_tool_why="making its files from your game failed ($(printf '%s\n' "$tout" | awk '/:[0-9]+: [A-Za-z]*Warning: /{w=1;next} w&&/^[[:space:]]/{next} {w=0} /[^[:space:]]/' | tail -n 1)). Its tool needs the same game the kit builds (a RomFS of another version or dump is refused file by file)"
+        return 1
+    fi
+    return 0
+}
+charsel_step() {
+    local pin=$LS/CHARACTER-SELECT.txt choice='' line rel url zip zsha zfolder folder ourl osha iurl isha want dir new dl why='' part have derive=0 json ips a=''
+    [[ -f $pin ]] || return 0
+    rel=$(pin_get "$pin" release || true) url=$(pin_get "$pin" url || true) zip=$(pin_get "$pin" zip || true)
+    zsha=$(pin_get "$pin" zip_sha256 || true) zfolder=$(pin_get "$pin" zip_folder || true) folder=$(pin_get "$pin" folder || true)
+    ourl=$(pin_get "$pin" overlay_url || true) osha=$(pin_get "$pin" overlay_sha256 || true)
+    iurl=$(pin_get "$pin" ips_url || true) isha=$(pin_get "$pin" ips_sha256 || true)
+    if [[ ! $rel =~ ^[A-Za-z0-9._-]+$ || ! $url =~ ^https:// || ! $zip =~ ^[A-Za-z0-9._-]+$ || ! $zsha =~ ^[0-9a-fA-F]{64}$ ||
+          -z $zfolder || $zfolder == *..* || ! $folder =~ ^[A-Za-z0-9][^/\\:*?\"\<\>\|]*$ || ! $ourl =~ ^https:// || ! $osha =~ ^[0-9a-fA-F]{64}$ ]]; then
+        warn 'data/longshot/CHARACTER-SELECT.txt is incomplete: Character Select is left out.'; return 0
+    fi
+    [[ -n $iurl && ( ! $iurl =~ ^https:// || ! $isha =~ ^[0-9a-fA-F]{64}$ ) ]] && iurl=''
+    zsha=${zsha,,} osha=${osha,,} isha=${isha,,}
+    dir=$CS_HOME/$folder
+    # A first start has no game RomFS yet (the game is built after this step) and the tool needs it: the mod is put in at the
+    # next start (then the game is built again with its code patch, as for any change). Nothing is half-installed.
+    if [[ -n $(pin_get "$pin" tool_folder || true) && ! -d $dir && ! -f $GAME/romfs/Pack/ZsDic.pack.zs ]]; then
+        say 'Character Select (the Characters page) is put in at the next start, once the game is built: its files are made from your game, and that start builds the game again (a few minutes) with its code patch.'
+        return 0
+    fi
+    line=$(sed -n 's/^[[:space:]]*character_select[[:space:]]*=[[:space:]]*\(yes\|no\|ask\)[[:space:]]*\([#;].*\)\{0,1\}$/\1/p' "$DATA/coop-options.ini" 2>/dev/null | head -n1 || true)
+    if [[ -n $line ]]; then choice=$line; [[ $choice == ask ]] && rm -f "$DATA/character-select-answer.txt"
+    else choice=$(head -n1 "$DATA/character-select-answer.txt" 2>/dev/null | tr -d '\r[:space:]' || true); [[ $choice == yes || $choice == no ]] || choice=ask
+    fi
+    if [[ $choice == ask ]]; then
+        say ''
+        say 'The Characters page (in the - menu) comes with the kit: Character Select by Snail (snaildev99).'
+        say "  Its NPC characters (Saria, Sheik, Darunia and over a hundred more) are an extra download from Snail's own"
+        say '  GitHub page (a 145 MB download, about 1.1 GB on disk, made from your game in a few minutes, once). Without them you play as Link, and the page tells you when a character is not'
+        say '  downloaded. The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.'
+        local q='Download the NPC characters for the Characters page? [y/N]' s
+        choice=no
+        if kit_tty; then
+            for ((s = ${OOT_COOP_CHARSEL_WAIT:-15}; s > 0; s--)); do
+                printf '\r%s (no in %d s)  ' "$q" "$s"
+                if IFS= read -r -s -n 1 -t 1 a; then break; fi
+                a=timeout
+            done
+            [[ $a == [yY] ]] && choice=yes
+            printf '%s\n' "${choice:0:1}"
+        else
+            say "$q n (no terminal: no)"
+        fi
+        printf '%s\n' "$choice" >"$DATA/character-select-answer.txt"
+        [[ $choice == no ]] && say '  Not downloaded. To get them later: press n at the next start, while the kit shows the NPC line.'
+    elif kit_tty; then
+        # (row 206: on or off from the kit itself, no file to edit; coop-options.ini's line follows the change)
+        if [[ $choice == yes ]]; then say 'Characters page, NPC characters: on (press n to take them out)'
+        else say 'Characters page, NPC characters: off (press n to make them, a 145 MB download and about 1.1 GB on disk)'; fi
+        if IFS= read -r -s -n 1 -t 2 a && [[ $a == [nN] ]]; then
+            if [[ $choice == yes ]]; then choice=no; else choice=yes; fi
+            say '  changed.'
+            printf '%s\n' "$choice" >"$DATA/character-select-answer.txt"
+            [[ -f $DATA/coop-options.ini ]] && sed -i "s/^[[:space:]]*character_select[[:space:]]*=.*/character_select = $choice/" "$DATA/coop-options.ini"
+        fi
+    fi
+    part=ui
+    [[ $choice == yes ]] && part=full
+    want="$rel $zsha $osha ${isha:--} $part cz2v"   # (cz2, row 242: the default part keeps Link own textures; an older ui copy is never derived from. cz2v: his voice files deleted)
+    local what='the Characters page (NPC characters not downloaded)'
+    [[ $part == full ]] && what='with its NPC characters'
+    if [[ -d $dir && ! -f $dir/coop-charsel.txt ]]; then say "Character Select: your own copy in $dir is used as it is."; return 0; fi
+    have=$(head -n1 "$dir/coop-charsel.txt" 2>/dev/null | tr -d '\r' || true)
+    if [[ -d $dir/romfs && $have == "$want" ]]; then say "Character Select $rel -> $dir, $what (there already)"; return 0; fi
+    # The copy there, of this release (a 0.11.8 stamp, four fields: full): its part decides whether it can give the one wanted.
+    local hf wf
+    read -r -a hf <<<"$have"; read -r -a wf <<<"$want"
+    if [[ -d $dir/romfs && ${#hf[@]} -ge 4 && "${hf[*]:0:4}" == "${wf[*]:0:4}" && ( ${hf[4]:-full} == full || ( $part == ui && ${hf[5]:-} == cz2v ) ) ]]; then derive=1; fi
+    dl=$B/charsel new=$CS_HOME/_$folder.new json=$dl/characters.json ips=''
+    mkdir -p "$dl" "$CS_HOME"
+    rm -rf "$new"
+    if ((derive)); then
+        mkdir -p "$new"
+        charsel_py derive "$dir" "$new" "$part" || why='the copy there could not be linked'
+        json=$dir/characters.json
+    else
+        local free_kb
+        free_kb=$(df -Pk "$CS_HOME" | awk 'NR == 2 { print $4 }')
+        if [[ -n $free_kb && $free_kb -lt $((3 * 1024 * 1024)) && ! ( -f $dl/$zip && $(sha256_of "$dl/$zip") == "$zsha" ) ]]; then
+            why='too little disk space (about 3 GB free needed)'
+        elif [[ ! -f $dl/$zip || $(sha256_of "$dl/$zip") != "$zsha" ]] && kit_offline "$offline"; then
+            why=offline
+        else
+            # (fetch_verified always downloads: a file here already with the pinned SHA-256 is used as it is)
+            charsel_get() { [[ -f $1 && $(sha256_of "$1") == "$2" ]] && return 0; say "  downloading ${1##*/} ..."; fetch_verified "$1" "$2" "$3"; }
+            charsel_get "$dl/$zip" "$zsha" "$url/$zip" || why="the download of Snail's release failed ($KIT_FETCH_WHY)"
+            [[ -z $why ]] && { charsel_get "$dl/characters.json" "$osha" "$ourl" || why="the download of characters.json failed ($KIT_FETCH_WHY)"; }
+            [[ -z $why && -n $iurl ]] && { charsel_get "$dl/code.ips" "$isha" "$iurl" && ips=$dl/code.ips || why="the download of the newer code patch failed ($KIT_FETCH_WHY)"; }
+        fi
+        if [[ -z $why ]]; then
+            mkdir -p "$new"
+            # (the zip: <release>/mods/OoT Character Select/{romfs,exefs}; only that folder is taken, by Python's zipfile:
+            # no unzip on every system. Names with '..' or a leading '/' are refused)
+            if ! "$PY" -I -B -c '
+import os, sys, zipfile, shutil
+z, top, out = sys.argv[1], sys.argv[2].rstrip("/") + "/", sys.argv[3]
+with zipfile.ZipFile(z) as f:
+    for i in f.infolist():
+        if not i.filename.startswith(top) or i.is_dir():
+            continue
+        rel = i.filename[len(top):]
+        if not rel or rel.startswith("/") or ".." in rel.split("/"):
+            sys.exit("bad name in the zip: " + i.filename)
+        dst = os.path.join(out, *rel.split("/"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with f.open(i) as a, open(dst, "wb") as b:
+            shutil.copyfileobj(a, b, 1 << 20)
+' "$dl/$zip" "$zfolder" "$new" || [[ ! -d $new/romfs ]]; then
+                why="unpacking $zip failed"
+            fi
+            # Since Character Select v0.2.2 (snaildev99) the zip's tool folder (the pin's tool_folder) makes the mod's
+            # game-derived files (models, textures, menus, tables) from the game's own RomFS on this PC (charsel_tool_make).
+            # All or nothing, as the Windows kit: a mod without them (its code patch alone) would build into the game and
+            # leave the Characters page with no menus, tables or models. So the mod is only put in when its files can be made
+            # in the same step; a first start (no data/game/romfs yet) waits (see the check before the question).
+            local tfolder
+            tfolder=$(pin_get "$pin" tool_folder || true)
+            if [[ -z $why && -n $tfolder ]]; then
+                if [[ $tfolder == *..* || $tfolder == /* ]]; then why="the pin's tool_folder is not a folder of the zip"
+                else
+                    rm -rf "$dl/tool"
+                    if ! "$PY" -I -B -c '
+import os, sys, zipfile, shutil
+z, top, out = sys.argv[1], sys.argv[2].rstrip("/") + "/", sys.argv[3]
+with zipfile.ZipFile(z) as f:
+    for i in f.infolist():
+        if not i.filename.startswith(top) or i.is_dir():
+            continue
+        rel = i.filename[len(top):]
+        if not rel or rel.startswith("/") or ".." in rel.split("/"):
+            sys.exit("bad name in the zip: " + i.filename)
+        dst = os.path.join(out, *rel.split("/"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with f.open(i) as a, open(dst, "wb") as b:
+            shutil.copyfileobj(a, b, 1 << 20)
+' "$dl/$zip" "$tfolder" "$dl/tool" || [[ ! -f $dl/tool/player.py ]]; then
+                        why="$zip has no $tfolder/player.py"; rm -rf "$dl/tool"
+                    elif [[ ! -f $GAME/romfs/Pack/ZsDic.pack.zs ]]; then why="no game RomFS in $GAME/romfs to make its files from"; rm -rf "$dl/tool"
+                    elif charsel_tool_make "$new" "$part"; then rm -rf "$dl/tool"
+                    else why=$cs_tool_why; rm -rf "$dl/tool"
+                    fi
+                fi
+            fi
+        fi
+    fi
+    if [[ -z $why ]]; then
+        local err
+        if ! err=$(charsel_py complete "$new" "$part" "$json" "$ips" "$want" "$rel" 2>&1 >/dev/null); then why=${err:-the folder could not be made ready}; fi
+    fi
+    if [[ -z $why ]]; then
+        ((derive)) || curl -fsSL --max-time 30 -o "$new/LICENSE.txt" "https://raw.githubusercontent.com/snaildev99/OoT-Character-Select/$rel/LICENSE" 2>/dev/null || rm -f "$new/LICENSE.txt"
+        # (what was there is kept until the game is built with the new one: charsel_undo / charsel_confirm)
+        if charsel_save_previous "$folder" && mv "$new" "$dir"; then
+            ((derive)) || rm -f "$dl/$zip"
+        else
+            charsel_undo
+            why='it could not be put in place: close the game and start again'
+        fi
+    fi
+    rm -rf "$new"
+    if [[ $why == offline ]]; then say 'offline: Character Select is downloaded at the next start with internet; the game starts without it.'
+    elif [[ -n $why ]]; then warn "Character Select was not installed: $why. The game and co-op work without it; start again to retry."
+    else say "Character Select $rel by Snail -> $dir, $what (on; the Mods tab switches it off)"
+    fi
+    return 0
+}
+((check_only)) || charsel_step
+# black-cs-01112: one copy of his mod in the game (a hand copy beside the kit copy is set aside; kit-paths.ps1 Resolve-KitCharacterSelectCopies)
+if ! ((check_only)) && [[ -d $CS_HOME ]] && cs_folder=$(charsel_folder); then
+    while IFS= read -r l; do [[ -n $l ]] && warn "$l"; done < <(charsel_py copies "$CS_HOME" "$cs_folder" || true)
+fi
+
 game_stamp=$GAME/coop-built-from.txt
+# The mods' code patches the game is built with (patches 0034/0035: mods/.../exefs/*.ips and *.pchtxt, folders starting
+# with '-', '_' or '.' left out), with the Mods tab's list (its switches and order decide which go in): a new, changed or
+# switched one builds the game again. No code mods: nothing added, the stamp as before (kit-paths.ps1 Get-KitExefsStampLine).
+exefs_stamp() {
+    local mods=$GAME/mods rows=() f rel
+    local -A code=()
+    [[ -d $mods ]] || return 0
+    while IFS= read -r -d '' f; do
+        rel=${f#"$mods"/}
+        [[ ${rel%/*} == */exefs ]] || continue
+        [[ /${rel%/exefs/*} =~ /[-_.] ]] && continue
+        rows+=("$rel:$(sha256_of "$f")")
+        code[$(mod_fold "${rel%/exefs/*}")]=1
+    done < <(find "$mods" -maxdepth 6 -type f \( -iname '*.ips' -o -iname '*.pchtxt' \) -print0)
+    ((${#rows[@]})) || return 0
+    # The list's rows for these mods only (its first row per name, in its order, as the game reads it): switching or
+    # moving a mod without code patches builds nothing again (kit-paths.ps1 Get-KitCodeModsListHash).
+    local list=none line name fold kept=() first=1 default_off=0
+    local -A seen=()
+    if [[ -f $mods/coop-mods.list ]]; then
+        while IFS= read -r line || [[ -n $line ]]; do
+            line=${line%$'\r'}
+            if ((first)); then first=0; [[ $line == 'coop-mods 1' ]] || break; continue; fi
+            [[ $line == 'default off' ]] && { default_off=1; continue; }
+            case $line in 'on '?*) name=${line#on } ;; 'off '?*) name=${line#off } ;; *) continue ;; esac
+            local sw=${line%% *}
+            fold=$(mod_fold "$name")
+            [[ -n ${seen[$fold]+x} ]] && continue
+            seen[$fold]=1
+            [[ -n ${code[$fold]+x} ]] && kept+=("$sw $fold")
+        done < "$mods/coop-mods.list"
+        # ("default off", Original game: a code mod the list does not name is off too, built out as the game leaves its
+        # files out, player report 266; kit-paths.ps1 Get-KitCodeModsListHash)
+        if ((default_off)); then
+            while IFS= read -r fold; do
+                [[ -n $fold && -z ${seen[$fold]+x} ]] && kept+=("off $fold")
+            done < <(printf '%s\n' "${!code[@]}" | LC_ALL=C sort)
+        fi
+        # (rows that change nothing are no change, player report 210: the game puts the mods the list does not name under
+        # the named ones, by folded name, on; rows all "on" in that same order, as Character Select switched off and on
+        # again leaves, read as no list. kit-paths.ps1 Get-KitCodeModsListHash)
+        if ((${#kept[@]})); then
+            local sorted=() i same=1
+            mapfile -t sorted < <(printf '%s\n' "${!code[@]}" | LC_ALL=C sort)
+            for i in "${!kept[@]}"; do [[ ${kept[$i]} == "on ${sorted[$i]-}" ]] || { same=0; break; }; done
+            ((same)) || list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+        fi
+    fi
+    printf ' exefs=%s;list=%s' "$(printf '%s\n' "${rows[@]}" | LC_ALL=C sort | paste -sd, -)" "$list"
+}
+# A mod's name as patch 0011's host/mods.c compares them: ASCII letters without case, '\' as '/'.
+mod_fold() { local s=${1//\\//}; printf '%s' "$s" | LC_ALL=C tr 'A-Z' 'a-z'; }
+# Co-op's own Characters tab (charsel-native-0119; the owner: "our mod itself should natively include the character tab
+# even without downloading any of Snails mod"): its code patch (Snail's header, page and Customize hooks for Link, from
+# his MIT code: data/tools/puppet_pack/charsel/data/charsel-native.ips) goes into the pack folder's exefs before the
+# stamp, so the build takes it in; out when Character Select's own code is in the mods (his files and code are the
+# tab's then) or the pack said it left the tab out (coop_puppet.json "charsel_native": [], no build loop). The rule is
+# the pack tool's own (build.py charsel_native_wanted), as kit-paths.ps1 Sync-KitCharselNativePatch. Also after
+# charsel_undo below (Character Select put back as the game had it). Out too while the tab's files are parked
+# (merge_tables.py charsel_native_parked: kept in <pack>/_coop-menus because the size table the game reads cannot hold
+# them): the tab's code over the game's own menu files said MsgNotFound on slot 0, lost the Map tab and left L dead.
+# So menus_merge (start.sh's merge, parking or putting back) runs first, and data/charsel-parked.txt keeps what this
+# saw: start.sh builds again when its own merge after the pack step parks or puts back otherwise.
+menus_merge() {
+    [[ -n $(kit_game_exe) && -d $GAME/mods && -x $PY && -f $DATA/tools/puppet_pack/merge_tables.py ]] || return 0
+    "$PY" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
+}
+charsel_native_sync() {
+    menus_merge
+    local src=$DATA/tools/puppet_pack/charsel/data/charsel-native.ips
+    local pack=$GAME/mods/contents/0400486024DEC000/coop-puppet
+    local dst=$pack/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips want=0
+    # (exit 10: ours wanted, 11: his code or the pack said no; anything else is Python failing (a broken pack tool):
+    # said plainly with its error, the code patch left as it is (no guess, no rebuild), the start goes on)
+    if [[ -f $src && -x $PY ]]; then
+        local rc=0
+        "$PY" -I -B -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from puppet_pack.build import charsel_native_wanted
+pack = sys.argv[2]
+want = charsel_native_wanted(pack)
+try:
+    with open(os.path.join(pack, "coop_puppet.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+    if isinstance(doc, dict) and "charsel_native" in doc and not doc["charsel_native"]:
+        want = False
+except (OSError, ValueError):
+    pass
+from puppet_pack.merge_tables import charsel_native_parked
+parked = charsel_native_parked(pack)
+with open(sys.argv[3], "w", encoding="utf-8") as f:
+    f.write("1" if parked else "0")
+sys.exit(10 if want and not parked else 11)' "$DATA/tools" "$pack" "$DATA/charsel-parked.txt" || rc=$?
+        case $rc in
+            10) want=1 ;;
+            11) ;;
+            *) rm -f -- "$DATA/charsel-parked.txt"
+               warn "co-op's Characters tab: could not tell whether its code patch goes into the game (python exit $rc, its error above): left as it was."
+               return 0 ;;
+        esac
+    fi
+    if ((want)); then
+        [[ -f $dst ]] && cmp -s "$src" "$dst" && return 0
+        mkdir -p "${dst%/*}" && cp -- "$src" "$dst"
+    elif [[ -f $dst ]]; then
+        rm -f -- "$dst"
+    fi
+    return 0
+}
+((check_only)) || charsel_native_sync
+game_want="$src_stamp$(exefs_stamp)"
 ready=0
-[[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$src_stamp" ]] && ready=1
+[[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]] && ready=1
+
+# Two guards (kit-harden, as the Windows kit's Get-KitGameBuildMismatch and Get-KitHoldGameText). A game whose build files
+# are not the ones Longshot's own note (.longshot_installed.json, a sha1 for each file it copied in) names has files of
+# two builds (a file copied over from another build): it never starts, is never kept as a build, never built on. And a
+# test kit that has data/hold-game.txt never builds its game for patches or a pin other than the ones the game was built
+# from (the lane kit once built with old patches and left a game half old, half new). Players never need the marker.
+# game_mismatch $1: prints one line for each file of that folder (the game, or a kept build's files/) that is not the one
+# the note names; nothing when all are, or when there is no note or it has no sha1 (a fresh install, an older Longshot).
+game_mismatch() {
+    "$PY" -I -B - "$1" <<'PYEOF2' 2>/dev/null || true
+import hashlib, json, os, sys
+root = sys.argv[1]
+try:
+    with open(os.path.join(root, ".longshot_installed.json"), encoding="utf-8") as f:
+        note = json.load(f)
+except Exception:
+    sys.exit(0)
+if not isinstance(note, dict):
+    sys.exit(0)
+for name, row in note.items():
+    want = str(row.get("sha1", "")).lower() if isinstance(row, dict) else ""
+    if len(want) != 40 or any(c not in "0123456789abcdef" for c in want):
+        continue
+    rel = str(name).replace("\\", "/")
+    if rel.startswith("/") or ".." in rel.split("/"):
+        continue
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print(rel + " is missing (Longshot's note lists it)")
+        continue
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if h.hexdigest() != want:
+        print(rel + " is not the file Longshot put into this game (its note says " + want[:8] + ", the file is " + h.hexdigest()[:8] + ")")
+PYEOF2
+}
+game_mixed_text() {   # $1: the lines of game_mismatch
+    printf "The co-op game's files are not from one build (a file of another build was copied over):\n"
+    while IFS= read -r l; do [[ -n $l ]] && printf '  - %s\n' "$l"; done <<<"$1"
+    printf "Nothing was changed. The game is not started and not kept as a build while it is like this. bash start-squadala.sh --rebuild builds the game again (5 to 60 minutes); your saves and settings stay."
+}
+hold_note=$DATA/hold-game.txt
+game_held_text() {   # prints the reason when this test kit holds its game, nothing otherwise
+    [[ -f $hold_note && -n $(kit_game_exe) && -f $game_stamp ]] || return 0
+    local have want names=''
+    have=$(tr -d '\r' <"$game_stamp"); have=${have%% exefs=*}
+    want=${game_want%% exefs=*}
+    [[ $have == "$want" ]] && return 0
+    [[ ${have%% *} != "${want%% *}" ]] && names='the Longshot release'
+    [[ $(printf '%s' "$have" | cut -d' ' -f2-) != $(printf '%s' "$want" | cut -d' ' -f2-) ]] && names+="${names:+ and }patches"
+    printf 'This kit is a test kit (data/hold-game.txt): its game is never built again for other patches or another Longshot release.\n'
+    printf '  The game was built from other %s than this kit has now.\n' "${names:-patches}"
+    printf "  Nothing was changed. To go on: put the kit's data/longshot (PIN, LINUX.txt, patches) of the build the game came from back, or, to build it again on purpose, delete data/hold-game.txt."
+}
+if ((!check_only)); then
+    held=$(game_held_text)
+    [[ -z $held ]] || fail "$held"
+    mixed=''
+    [[ -n $(kit_game_exe) ]] && mixed=$(game_mismatch "$GAME")
+    if [[ -n $mixed ]]; then
+        ((rebuild)) || fail "$(game_mixed_text "$mixed")"
+        # (--rebuild: the wrong files and the note go first, so the build puts every file in again; with no game and no
+        # stamp left, an interrupted build is a first build at the next start, never a game of two builds)
+        step 'The game: its files are not from one build; taking them out so the build puts every file in again'
+        while IFS= read -r l; do [[ -n $l ]] && say "  - $l"; done <<<"$mixed"
+        while IFS= read -r l; do rm -f -- "$GAME/${l%% *}"; done <<<"$mixed"
+        rm -f "$GAME/.longshot_installed.json" "$game_stamp"
+        ready=0
+    fi
+fi
+
+# NVIDIA DLSS (#234), as hookshot-build.ps1: only in a game built with NVIDIA's DLSS SDK, which nobody may pass on, so
+# each build downloads it once NVIDIA's license is accepted. --dlss asks once and data/dlss.txt keeps the answer (the
+# builds after an update keep DLSS); --no-dlss takes it back. Not in coop-built-from.txt (release, pin and patches).
+# A game with DLSS has its runtime in data/game/ngx (make_game.py's place_ngx_runtime; gone again without the SDK).
+dlss_note=$DATA/dlss.txt
+if ((no_dlss)); then
+    rm -f "$dlss_note"
+elif ((dlss)) && [[ ! -f $dlss_note ]]; then
+    kit_tty || fail 'NVIDIA DLSS needs NVIDIA'"'"'s license accepted: run bash scripts/build.sh --dlss from a terminal.'
+    say ''
+    warn "NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA's DLSS SDK, under NVIDIA's own license:"
+    # (the link as the pinned Longshot's scripts/ngx_sdk.py names it, so a pin that moves NVIDIA's commit moves it too)
+    ngx_commit=$(sed -n 's/^COMMIT *= *"\([0-9a-f]\{40\}\)".*/\1/p' "$SRC/scripts/ngx_sdk.py" 2>/dev/null | head -n 1 || true)
+    say "  https://github.com/NVIDIA/DLSS/blob/${ngx_commit:-main}/LICENSE.txt (the build prints NVIDIA's notice too)."
+    say "  The game folder then holds NVIDIA's files: never share it, and never post builds made with them."
+    read -r -p "  Accept NVIDIA's license and build with DLSS? (y/n) " answer || answer=''
+    [[ ${answer,,} =~ ^(y|yes|j|ja)$ ]] || fail "NVIDIA's license not accepted: nothing changed (the game stays as it is, without DLSS)."
+    printf 'nvidia-license=accepted\n' >"$dlss_note"
+fi
+want_dlss=0
+((!no_dlss)) && [[ -f $dlss_note ]] && want_dlss=1
+game_dlss=0
+compgen -G "$GAME/ngx/libnvidia-ngx-dlss.so.*" >/dev/null && game_dlss=1
+if ((ready && want_dlss != game_dlss && (want_dlss || no_dlss))); then
+    if ((want_dlss)); then say 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).'
+    else say 'NVIDIA DLSS off: the game is built again without it.'; fi
+    ready=0
+fi
+# The game built from another stamp than this start wants (player report 210: a mod with code patches switched on or
+# off on the Mods tab, an update): the build there is kept first (a copy of the files a build makes: the ones Longshot's
+# finish copies in, .longshot_installed.json, and exefs_patches.txt; copies, never hard links), and one of exactly this
+# stamp kept from before is put back instead of a build (seconds where a build is 5 to 60 minutes). The newest 3 stay
+# in data/game-variants. As the Windows kit's Save-KitGameVariant and Restore-KitGameVariant.
+variants=$DATA/game-variants
+variant_files() {
+    if [[ -f $GAME/.longshot_installed.json ]]; then
+        "$PY" -I -B -c 'import json, sys
+for k in sorted(json.load(open(sys.argv[1], encoding="utf-8"))): print(k)' "$GAME/.longshot_installed.json" 2>/dev/null || true
+    else
+        printf '%s\n' longshot longshot_vk.so libSDL2-2.0.so.0 image.bin
+    fi
+    printf 'exefs_patches.txt\n.longshot_installed.json\n'   # (the note too: a build kept after a put back still knows its files)
+}
+variant_text() { printf '%s\ndlss=%s' "$(printf '%s\n' "$1" | tr -d '\r' | sed 's/[[:space:]]*$//')" "$2"; }
+variant_dir() { printf '%s/%s' "$variants" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
+variant_save() {
+    local have text dir part f bytes=0 free_kb bad
+    have=$(cat "$game_stamp" 2>/dev/null) || return 0
+    [[ -n $have && -n $(kit_game_exe) ]] || return 0
+    # (kit-harden: files of two builds are never kept as a build)
+    bad=$(game_mismatch "$GAME")
+    [[ -z $bad ]] || { say "  (this build is not kept for later: its files are not from one build: ${bad%%$'\n'*})"; return 0; }
+    text=$(variant_text "$have" "$game_dlss")
+    dir=$(variant_dir "$text")
+    if [[ -f $dir/stamp.txt && $(cat "$dir/stamp.txt") == "$text" ]]; then touch "$dir/stamp.txt"; return 0; fi
+    while IFS= read -r f; do [[ -n $f && -f $GAME/$f ]] && bytes=$((bytes + $(stat -c %s "$GAME/$f"))); done < <(variant_files)
+    mkdir -p "$variants"
+    free_kb=$(df -Pk "$variants" | awk 'NR == 2 { print $4 }')
+    if [[ -n $free_kb ]] && ((free_kb < bytes / 1024 + 5 * 1024 * 1024)); then
+        say "  (this build is not kept for later: only $((free_kb / 1024 / 1024)) GB free)"; return 0
+    fi
+    part=$dir.part
+    rm -rf "$part"
+    while IFS= read -r f; do
+        [[ -n $f && $f != /* && /$f/ != */../* && -f $GAME/$f ]] || continue
+        { mkdir -p "$part/files/$(dirname -- "$f")" && cp -f -- "$GAME/$f" "$part/files/$f"; } ||
+            { rm -rf "$part"; say '  (this build is not kept for later: the copy failed)'; return 0; }
+    done < <(variant_files)
+    [[ -f $part/files/longshot && -f $part/files/image.bin ]] || { rm -rf "$part"; return 0; }
+    cp -f "$game_stamp" "$part/built-from.txt"
+    printf '%s' "$text" >"$part/stamp.txt"   # (last: a copy stopped half way is a .part folder, never taken)
+    { rm -rf "$dir" && mv "$part" "$dir"; } || return 0
+    rm -rf "$variants"/*.part
+    ls -1t "$variants"/*/stamp.txt 2>/dev/null | tail -n +4 | while IFS= read -r f; do rm -rf "$(dirname -- "$f")"; done
+    say "  The game as it was built ($((bytes / 1024 / 1024)) MB of it) is kept, so going back to these mods takes seconds."
+}
+variant_restore() {   # $1: a kept build: staged as <name>.new, then swapped in; its stamp last
+    local d=$1/files f staged=()
+    [[ -z $(game_mismatch "$d") ]] || return 1   # (kit-harden: a kept build of two builds is never put back)
+    while IFS= read -r f; do
+        { mkdir -p "$GAME/$(dirname -- "$f")" && cp -f -- "$d/$f" "$GAME/$f.new"; } ||
+            { for f in "${staged[@]}"; do rm -f "$GAME/$f.new"; done; return 1; }
+        staged+=("$f")
+    done < <(cd "$d" && find . -type f | sed 's|^\./||')
+    ((${#staged[@]})) || return 1
+    for f in "${staged[@]}"; do mv -f -- "$GAME/$f.new" "$GAME/$f"; done
+    [[ -f $d/exefs_patches.txt ]] || rm -f "$GAME/exefs_patches.txt"
+    # (Longshot's note comes back with them: its file list for the next keep; its stats differ from the copies, so its next
+    # build copies those files again, as after any copy)
+    [[ -f $d/.longshot_installed.json ]] || rm -f "$GAME/.longshot_installed.json"
+    cp -f "$1/built-from.txt" "$game_stamp"
+    touch "$1/stamp.txt"
+}
+if ((!ready && !rebuild && !check_only)) && [[ -n $(kit_game_exe) && -f $game_stamp && $(cat "$game_stamp") != "$game_want" ]]; then
+    say ''
+    say '  Keeping the game as it is built now, for later (about 650 MB, a few seconds) ...'
+    variant_save
+    kept_text=$(variant_text "$game_want" "$want_dlss")
+    kept=$(variant_dir "$kept_text")
+    if ((want_dlss == game_dlss)) && [[ -f $kept/stamp.txt && $(cat "$kept/stamp.txt") == "$kept_text" && -f $kept/built-from.txt && -f $kept/files/image.bin && -z $(game_mismatch "$kept/files") ]]; then
+        step 'The game: putting back the build made before with these mods (seconds, instead of building it again)'
+        if variant_restore "$kept" && [[ $(cat "$game_stamp") == "$game_want" ]]; then
+            ready=1
+            say "  Put back into $GAME."
+        else
+            warn 'the kept build could not be put back: the game is built again instead.'
+        fi
+    fi
+fi
+# Why the game is built now and about how long (player report 210: "a whole long process that takes forever").
+build_why() {
+    local have want
+    have=$(tr -d '\r' <"$game_stamp" 2>/dev/null) || have=''
+    want=$(printf '%s' "$game_want" | tr -d '\r')
+    if [[ -z $have ]]; then
+        printf 'the first build of the co-op game (15 to 60 minutes, once).'
+    elif [[ ${have%% *} != "${want%% *}" ]]; then   # (the first word is the builder's SHA-256, LINUX.txt: the Longshot release)
+        printf 'another Longshot version than the game was built for (about 15 to 45 minutes).'
+    elif [[ $have == "$want" ]]; then
+        printf 'built again as asked (5 to 60 minutes).'
+    elif [[ ${have%% exefs=*} == "${want%% exefs=*}" ]]; then
+        printf "the mods' code patches changed (a mod with an exefs folder, such as Character Select, put in, changed, or switched on the Mods tab), about 5 to 25 minutes. This build is kept: switching back later takes seconds."
+    else
+        printf "this update changes the co-op game's code (about 5 to 20 minutes)."
+    fi
+}
 remembered=$DATA/game-files.txt
 
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
@@ -167,7 +974,7 @@ if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
     fi
 fi
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
-    kit_tty || fail 'The game is not built yet and needs your game file. Start start-oot-coop.sh from a terminal once (Steam Deck: in Desktop Mode, right-click it, "Run in Konsole"), then it starts from anywhere.'
+    kit_tty || fail 'The game is not built yet and needs your game file. Start start-squadala.sh from a terminal once (Steam Deck: in Desktop Mode, right-click it, "Run in Konsole"), then it starts from anywhere.'
     say ''
     say "Drag your game's .nup file (or its romfs folder) into this window and press Enter:"
     read -r game || game=''
@@ -195,26 +1002,49 @@ if [[ -n $game ]]; then
     fi
 fi
 
+# The game's build; game_fail stops it with its reason. After charsel_step changed the mods folder, a build that fails
+# puts that folder back (charsel_undo) and the game starts as it was when that leaves it as built (review-geno-0118);
+# else the start stops as before.
+game_fail() { game_why=$*; return 1; }
+game_build() {
+        ((${#game_args[@]})) || { game_fail 'No game files given.'; return 1; }
+        step 'Checking your game files'
+        make_game "${game_args[@]}" --check ||
+            { game_fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'; return 1; }
+        if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
+        printf '%s\n' "$game" >"$remembered"
+        free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
+        if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
+            warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
+        fi
+        step "Building the game: $(build_why) The PC stays usable."
+        build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
+        [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
+        # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
+        # renderer with it; the license was accepted above, data/dlss.txt)
+        ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
+        mkdir -p "$GAME"
+        ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
+        no_dlss_hint=''
+        ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
+        make_game "${build_args[@]}" || { game_fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"; return 1; }
+        [[ -n $(kit_game_exe) ]] || { game_fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"; return 1; }
+        # (kit-harden: the finished build is checked against Longshot's note before the game counts as built)
+        bad=$(game_mismatch "$GAME")
+        [[ -z $bad ]] || { game_fail "The build finished but its files are not from one build: ${bad%%$'\n'*}. Its log: $LOGS/build.log"; return 1; }
+        printf '%s' "$game_want" >"$game_stamp"
+}
 if ((ready && !rebuild && !check_only)); then
     step 'The game: built already'
+    charsel_confirm
+elif game_build; then
+    charsel_confirm
+elif charsel_undo && charsel_native_sync && game_want="$src_stamp$(exefs_stamp)" && [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]]; then
+    warn "$game_why"
+    warn 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in data/coop-options.ini stops it).'
 else
-    ((${#game_args[@]})) || fail 'No game files given.'
-    step 'Checking your game files'
-    make_game "${game_args[@]}" --check ||
-        fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'
-    if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
-    printf '%s\n' "$game" >"$remembered"
-    free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
-    if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
-        warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
-    fi
-    step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
-    build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
-    [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
-    mkdir -p "$GAME"
-    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log"
-    [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
-    printf '%s' "$src_stamp" >"$game_stamp"
+    fail "$game_why"
 fi
 
 # --- 5: co-op into the game ---------------------------------------------------------------------
@@ -247,21 +1077,60 @@ if [[ -f $ootrr_pin ]]; then
             # (kit-mirror: with retries; a file with another SHA-256 is deleted)
             OOT_COOP_FETCH_LOCAL=$fetch_local fetch_verified "$o_tgz" "$o_sha" "$o_url/$o_file" || o_why="the download failed ($KIT_FETCH_WHY)"
         fi
+        o_had=$(cat "$o_dir/coop-ootrr.txt" 2>/dev/null || true)
+        o_new=$GAME/tools/ootrr.new o_old=$GAME/tools/ootrr.old
+        # (a swap stopped between its two moves: the old folder goes back first)
+        [[ ! -d $o_dir && -f $o_old/ootrr ]] && mv "$o_old" "$o_dir"
         if [[ -z $o_why ]]; then
-            rm -rf "$o_dir" && mkdir -p "$o_dir"
+            # All or nothing (Windows: kit-paths.ps1 Install-KitOotrr): unpacked beside the old one, tried, then swapped,
+            # so a failure keeps the OOTRR that was there; the old way deleted it first (player report 2026-11-19).
+            rm -rf "$o_new" && mkdir -p "$o_new"
             # (one folder, ootrr-<version>-linux-x86_64/: ootrr, LICENSE, NOTICE, README.md, install.sh, ootrr.desktop)
-            if tar -xzf "$o_tgz" -C "$o_dir" --strip-components=1 && [[ -f $o_dir/ootrr ]]; then
-                chmod +x "$o_dir/ootrr"
-                printf '%s\n' "$o_want" >"$o_dir/coop-ootrr.txt"
-            else
+            if ! tar -xzf "$o_tgz" -C "$o_new" --strip-components=1 || [[ ! -f $o_new/ootrr ]]; then
                 o_why="unpacking $o_file failed"
+            else
+                chmod +x "$o_new/ootrr"
+                # ('shuffle 1 1' prints one number at once and touches no file: the program runs on this system)
+                if ! timeout 30 "$o_new/ootrr" shuffle 1 1 >/dev/null 2>&1; then
+                    o_why="ootrr did not run here (a 1-second test failed)"
+                else
+                    printf '%s\n' "$o_want" >"$o_new/coop-ootrr.txt"
+                    rm -rf "$o_old"
+                    if { [[ ! -e $o_dir ]] || mv "$o_dir" "$o_old"; } && mv "$o_new" "$o_dir"; then
+                        rm -rf "$o_old"
+                    else
+                        [[ ! -e $o_dir && -d $o_old ]] && mv "$o_old" "$o_dir"
+                        o_why="it could not be put in place: close the game and start again"
+                    fi
+                fi
+            fi
+            rm -rf "$o_new"
+        fi
+        if [[ -z $o_why ]]; then
+            # Another release than the one before: its seeds are other worlds and the old seed files do not build
+            # with it, so every built seed goes and the game makes it again at its next start
+            # (kit-paths.ps1 Remove-KitRandoSeeds on Windows).
+            if [[ -n $o_had && ${o_had%% *} != "$o_rel" ]]; then
+                for seed_dir in "$GAME"/mods/randomizer-*/; do
+                    [[ -f ${seed_dir}coop-seed.txt ]] || continue
+                    [[ -f ${seed_dir}coop-rando.txt ]] || continue  # (put in by hand: the player's, kept)
+                    seed_name=$(basename "$seed_dir")
+                    rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr" \
+                        "$GAME/mods/oot-remake-randomizer/$seed_name.spoiler.txt"
+                    say "  randomizer: seed $seed_name removed for OOTRR $o_rel: the game makes it again at its next start (another world: start a new save)"
+                done
             fi
         fi
+        # (how it went, for the game's chat and collect-logs: data/game/tools/ootrr-setup.txt, as on Windows)
+        mkdir -p "$GAME/tools"
         if [[ $o_why == offline ]]; then
+            printf 'failed %s: this PC had no internet at the last start\n' "$o_rel" >"$GAME/tools/ootrr-setup.txt"
             say "  offline: using the tools already here (the randomizer, OOTRR $o_rel, is set up at the next start with internet)"
         elif [[ -n $o_why ]]; then
+            printf 'failed %s: %s\n' "$o_rel" "$o_why" >"$GAME/tools/ootrr-setup.txt"
             warn "the randomizer (OOTRR $o_rel) was not set up: $o_why. Co-op works without it; start again to retry."
         else
+            printf 'ok %s\n' "$o_rel" >"$GAME/tools/ootrr-setup.txt"
             say "  randomizer: OOTRR $o_rel -> $o_dir"
         fi
     fi
@@ -277,7 +1146,23 @@ pack_from=$game
 mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
-pack_stamp="$src_stamp tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+# (not Longshot's patches, src_stamp: the pack is made from the game file and the pack tool only, and every update that
+# changed a patch made it again, 1 to 4 minutes; player report 210. The Windows kit never keyed it on them.)
+pack_stamp="pack:2 menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+# (the Character Select mod's characters.json, its NPC models there and its row in the Mods tab's list: the pack's
+# character puppets follow all three (tools/puppet_pack find_characters), so putting the mod in, replacing it, taking
+# its NPC part out or in (charsel_step: ui / full), or switching it in the Mods tab makes the pack again, as the Windows
+# kit's Get-KitCharacterSelectSeen. C #58, lane 051234: a pack made with the NPC models kept them after a UI-only switch)
+for cs_json in "$GAME"/mods/*/characters.json; do
+    [[ -f $cs_json && -d ${cs_json%/*}/romfs/Model ]] || continue
+    cs_name=${cs_json#"$GAME"/mods/}; cs_name=${cs_name%/characters.json}
+    [[ $cs_name == [-_.]* ]] && continue
+    cs_row=$(awk -v n="$cs_name" 'NR == 1 { sub(/\r$/, ""); if ($0 != "coop-mods 1") { done = 1; exit } } NR > 1 { sub(/\r$/, ""); if ($0 == "default off") { d = 1; next }
+        s = $1; r = substr($0, length(s) + 2)
+        if ((s == "on" || s == "off") && tolower(r) == tolower(n)) { print s; done = 1; exit } } END { if (!done && d) print "off" }' "$GAME/mods/coop-mods.list" 2>/dev/null || true)
+    cs_models=$(cd "${cs_json%/*}/romfs/Model" && LC_ALL=C ls -1 | { grep -E '^Player_(Child|Adult)_C[0-9]{3}\.Player_(Child|Adult)\.bfres\.zs$' || true; } | sha256sum | cut -d' ' -f1)
+    pack_stamp+=" characters:$(sha256_of "$cs_json") models:$cs_models list:${cs_row:-on}"; break
+done
 # A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
 # (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).
 pack_gap() {
@@ -314,7 +1199,37 @@ find_pack_game() {
     fi
 }
 # The drag prompt is asked once, not at every start: data/pack-asked.txt keeps what it asked about (the game file named
-# and the pack tool's hash), so a new game file or tool asks again; start-oot-coop.sh --pack removes it and asks.
+# and the pack tool's hash), so a new game file or tool asks again; start-squadala.sh --pack removes it and asks.
+# A pack made before for exactly this stamp (player report 210: Character Select switched off and on again on the Mods
+# tab made the pack twice, 1 to 4 minutes each): kept in data/pack-variants when the pack is made again (pack_save,
+# moved: no copy), and moved back here. The newest 2 stay. start-squadala.sh --pack (OOT_COOP_PACK_FRESH) always makes it.
+pack_keep=$DATA/pack-variants
+pack_keep_dir() { printf '%s/%s' "$pack_keep" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
+pack_saved=''
+pack_save() {
+    local s d
+    [[ -f $mod/coop_puppet.json && -f $mod/.coop-stamp && -z $(pack_gap) ]] || return 0
+    s=$(cat "$mod/.coop-stamp")
+    d=$(pack_keep_dir "$s")
+    rm -rf "$d"
+    { mkdir -p "$d" && mv "$mod" "$d/coop-puppet" && printf '%s' "$s" >"$d/key.txt"; } || { rm -rf "$d"; return 0; }
+    pack_saved=$d
+    ls -1t "$pack_keep"/*/key.txt 2>/dev/null | tail -n +3 | while IFS= read -r s; do rm -rf "$(dirname -- "$s")"; done
+}
+if [[ -z ${OOT_COOP_PACK_FRESH-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
+    kd=$(pack_keep_dir "$pack_stamp")
+    if [[ -f $kd/key.txt && $(cat "$kd/key.txt") == "$pack_stamp" && -f $kd/coop-puppet/coop_puppet.json ]]; then
+        pack_save
+        rm -rf "$mod"
+        mkdir -p "$(dirname -- "$mod")"
+        if mv "$kd/coop-puppet" "$mod" && [[ -z $(pack_gap) ]]; then
+            rm -rf "$kd"
+            # (its size tables dated now: a seed the game built beside another pack's tables is built again below)
+            find "$mod/romfs/System/Resource" -name '*.rsizetable.zs' -type f -exec touch {} + 2>/dev/null || true
+            say '  puppet pack: the one made before for these characters is put back (seconds, instead of making it again)'
+        fi
+    fi
+fi
 pack_asked=$DATA/pack-asked.txt
 ask_key="${pack_from:-}|${pack_stamp##* tool:}"
 if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
@@ -324,7 +1239,7 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         pack_from=$found
         printf '%s\n' "$pack_from" >"$remembered"
     elif [[ $(cat "$pack_asked" 2>/dev/null) == "$ask_key" ]]; then
-        say '  (Not asked again at every start: bash start-oot-coop.sh --pack asks for your game file and makes the pack.)'
+        say '  (Not asked again at every start: bash start-squadala.sh --pack asks for your game file and makes the pack.)'
     elif kit_tty && [[ -z ${CI-} ]]; then
         say "  The puppet pack (how you see the other players) is made from your game file, and the kit cannot find it$([[ -n $pack_from ]] && printf ' (not at %s any more)' "$pack_from")."
         a=''
@@ -341,18 +1256,39 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         fi
     fi
 fi
+# The pack with the title's Host/Join/Co-op Settings rows and the pause menu's Multiplayer tab (--title-rows
+# --pause-tab, as the Windows kit's Get-KitPackArgs). They make the pack replace files the game reads at boot (each
+# language's Mals archive, the Title and Common layout archives) with larger ones; start.sh's merge_tables.py takes
+# them out of play when the size table the game reads cannot hold them (another mod's table wins).
 gap=$(pack_gap)
 if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $gap ]]; then
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
     [[ -n $gap && -f $mod/coop_puppet.json ]] && say "  puppet pack: incomplete ($gap is missing): made again"
-    say '  Making the puppet pack (how you see the other players; about a minute) ...'
-    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
+    if [[ ! -f $mod/coop_puppet.json ]]; then say '  puppet pack: none yet'
+    elif [[ $(cat "$mod/.coop-stamp" 2>/dev/null) != "$pack_stamp" ]]; then say '  puppet pack: made for another pack tool or other Character Select characters'
+    fi
+    say '  Making the puppet pack (how you see the other players; 1 to 4 minutes, about 15 more for Character Select voices) ...'
+    # numpy makes Character Select's voices from the game's own clips (docs/puppet.md); without it they are silent.
+    if ! "$PY" -I -c 'import numpy' 2>/dev/null; then
+        "$PY" -I -m pip install --quiet numpy >/dev/null 2>&1 || true
+        "$PY" -I -c 'import numpy' 2>/dev/null ||
+            say "  numpy could not be installed in Longshot's builder Python: Character Select's characters stay silent"
+    fi
+    [[ -n ${OOT_COOP_PACK_FRESH-} ]] || pack_save   # (kept: switching Character Select back puts it back in seconds)
+    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows --pause-tab 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
         rm -f "$pack_asked"
     else
         rm -f "$mod/.coop-stamp"
-        warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game
+        # had; with its own stamp, another one, so the next start tries again)
+        if [[ -n $pack_saved && -f $pack_saved/coop-puppet/coop_puppet.json ]] && rm -rf "$mod" && mv "$pack_saved/coop-puppet" "$mod"; then
+            rm -rf "$pack_saved"
+            warn 'the puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.'
+        else
+            warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        fi
     fi
 else
     if [[ -n $pack_from ]]; then
@@ -373,11 +1309,27 @@ rando_tables() {   # the size tables of the mods the game loads besides the seed
     done < <(find "$GAME/mods" -mindepth 4 -maxdepth 7 -path '*/romfs/System/Resource/*.rsizetable.zs' -type f 2>/dev/null)
 }
 pack_table=$(ls -t "$mod"/romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
+# What a seed is built beside, by content (data/game/mods/randomizer-*/coop-seed-tables.txt, written below; the Windows
+# kit's Get-KitSeedTablesText): a seed with it is built again only when one of those tables changed (player report 210:
+# a pack put back with an older date, or a table written again with the same entries). One without it: the date rule.
+seed_tables_text() {
+    local t
+    while IFS= read -r t; do
+        [[ -n $t ]] && printf '%s %s\n' "${t#"$GAME/mods/"}" "$(sha256_of "$t")"
+    done < <(rando_tables) | LC_ALL=C sort
+}
+seed_tables_now=''
 for seed_dir in "$GAME"/mods/randomizer-*/; do
-    [[ -n $pack_table && -f ${seed_dir}coop-seed.txt ]] || continue
+    # (only seeds the game built, coop-rando.txt: one put in by hand gets the pack's entries from merge_tables.py)
+    [[ -n $pack_table && -f ${seed_dir}coop-seed.txt && -f ${seed_dir}coop-rando.txt ]] || continue
     seed_name=$(basename "$seed_dir")
     seed_table=$(ls "${seed_dir}"romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
-    [[ -n $seed_table && ! $pack_table -nt $seed_table ]] && continue
+    if [[ -f ${seed_dir}coop-seed-tables.txt ]]; then
+        [[ -n $seed_tables_now ]] || seed_tables_now=$(seed_tables_text)
+        [[ $(cat "${seed_dir}coop-seed-tables.txt") == "$seed_tables_now" ]] && continue
+    elif [[ -n $seed_table && ! $pack_table -nt $seed_table ]]; then
+        continue
+    fi
     control=$GAME/mods/oot-remake-randomizer stage=$GAME/mods/oot-remake-randomizer/_seed-build
     rm -rf "$stage"
     ok=''
@@ -389,7 +1341,13 @@ for seed_dir in "$GAME"/mods/randomizer-*/; do
         done < <(rando_tables)
         if "$GAME/tools/ootrr/ootrr" build "$control/$seed_name.ootrr" "$GAME/romfs" "$stage" "$seed_name" --host hookshot \
             >"$control/last-build.txt" 2>&1 && [[ -f $stage/$seed_name/coop-seed.txt ]]; then
-            [[ -f ${seed_dir}coop-rando.txt ]] && cp "${seed_dir}coop-rando.txt" "$stage/$seed_name/"
+            # the game's own files OOTRR's build does not write: the preset, and the spoiler log and settings
+            # string the players share (the same seed file: the same seed)
+            for keep in coop-rando.txt spoiler.txt settings.txt; do
+                [[ -f ${seed_dir}$keep ]] && cp "${seed_dir}$keep" "$stage/$seed_name/"
+            done
+            [[ -n $seed_tables_now ]] || seed_tables_now=$(seed_tables_text)
+            printf '%s\n' "$seed_tables_now" >"$stage/$seed_name/coop-seed-tables.txt"
             rm -rf "$seed_dir" && mv "$stage/$seed_name" "$GAME/mods/$seed_name" && ok=1
         fi
     fi

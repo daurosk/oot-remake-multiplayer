@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "coop_settings.h"
+#include "../test_temp.h"
 
 using CoopHook::ApplyEnvironment;
 using CoopHook::ApplyIni;
@@ -49,7 +50,7 @@ bool any_coop_env() {
 }
 
 std::filesystem::path write_temp(const std::string& name, const std::string& text) {
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = ModTestDir(name);
   std::ofstream(path, std::ios::binary) << text;
   return path;
 }
@@ -204,7 +205,7 @@ TEST_CASE("settings: LoadSettings reads the file, a missing one is fine") {
     return;
   }
   std::vector<std::string> errors;
-  const auto missing = std::filesystem::temp_directory_path() / "coop_tests_missing_dir" / "coop.ini";
+  const auto missing = ModTestDir("coop_tests_missing_dir") / "coop.ini";
   Settings off = LoadSettings(missing, errors);
   CHECK(errors.empty());
   CHECK_FALSE(off.enabled());
@@ -317,7 +318,7 @@ TEST_CASE("settings: the player key is 32 hex digits, kept in its own file and m
     CHECK((*key)[15] == 0xff);
     CHECK(PlayerKeyText(*key) == "00112233445566778899aabbccddeeff");
 
-    const auto dir = std::filesystem::temp_directory_path() / "coop-player-key-test";
+    const auto dir = ModTestDir("coop-player-key-test");
     std::filesystem::remove_all(dir);
     const auto file = dir / "player-key.txt";
     std::string note;

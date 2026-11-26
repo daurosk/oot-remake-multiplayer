@@ -51,6 +51,11 @@ LifeGuard& TheGuard();
 // step to know it. Any thread.
 void SetOurLifeComponent(std::uint64_t component);
 std::uint64_t OurLifeComponent();
+// The objects walk: our Link's BSA and PerceptionEmitter components (0:
+// none), for the crawl and unseen (coop_dbno_body.h), and whether our Link
+// is Player_Adult (no crawl animations: Body::DownVerb), and our Link itself
+// (the adult's lying pose, Body::kLyingPose; 0: none). Any thread.
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult, std::uint64_t actor = 0);
 
 // The Life step hook (any game thread): the sum to take off `component`,
 // whose life is `life`, when the frame's own sum is `sum`. Our Link's goes
@@ -71,15 +76,40 @@ struct View {
     enum class Kind : std::uint8_t {
         downed,    // we are down: the bleed-out clock, the ring while revived
         reviving,  // we stand beside a downed teammate: hold A, the ring
+        spectating,  // not revived in time: we watch `name` (A: the next one)
     };
     Kind kind = Kind::downed;
-    std::string name;          // downed: who revives us ("" nobody); reviving: whom
+    std::string name;          // downed: who revives us ("" nobody); reviving, spectating: whom
     std::uint64_t left_us = 0; // the bleed-out time left (theirs, when reviving)
     float progress = 0.0f;     // 0 to 1; the ring
     bool holding = false;      // reviving: A is held
+    bool elsewhere = false;    // spectating: the one watched is where our camera cannot follow (another scene or room)
 };
 
 // What to draw now; nothing when there is nothing. Any thread.
 std::optional<View> Shown();
+
+// Any thread: `number`'s DBNO state now (ours from the last frame, the others' from their DBNO_STATE); up when not
+// known or DBNO is off. Row 160: a downed, spectating or out owner cannot play a room event (CoopEventResult).
+State StateOfPlayer(std::uint8_t number);
+
+// --- Spectating ---
+
+// The objects walk (coop_objects.cpp), each walk: whether an enemy of our
+// game (CoopDifficulty::IsEnemy, alive) is within kThreatReachM of our Link.
+// Told to the others as DBNO_THREAT while we are up.
+void NoteEnemiesNear(bool any);
+
+// The hook's frame (coop_hook.cpp), while our Link is in the game: whether one
+// of our bottles holds a fairy (coop::host::bottled_fairy, read with the
+// game's own flag getters). A lethal hit then goes to the game's own death,
+// whose fairy revives us, instead of downing us (tracker row 162).
+void NoteBottledFairy(bool held);
+
+// While we spectate a player in our scene: how far the camera moves from our
+// Link to them (their puppet's feet less our Link's, metres). The game's own
+// camera is shifted by it (hos_coop_view), so it follows them as it follows
+// Link. Nothing otherwise. Any thread.
+std::optional<Vec3> SpectateOffset();
 
 }  // namespace CoopDbno

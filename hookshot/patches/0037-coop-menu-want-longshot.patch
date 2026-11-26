@@ -1,0 +1,46 @@
+From 9718c14d41c06f67063bfed4fa1b3e920052cd12 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Sun, 22 Nov 2026 23:59:42 -0900
+Subject: [PATCH] Co-op menu: the module may ask for Longshot's own menu
+ (HOS_COOP_MENU_WANT_LONGSHOT)
+
+The pause menu's Longshot Settings button posted F1 to the game's window, which the menu takes only while the game's window is the one in front (take_key_press && mine): with the window behind (a pad, a second screen) it did nothing. hos_coop_menu_wanted can now say HOS_COOP_MENU_WANT_LONGSHOT (-3): menu_tick opens the menu on its own tabs as Insert does, with no key and no focus test, on Windows and Linux (common code).
+---
+ gpu/vk/hos_coop_menu.h | 6 +++++-
+ gpu/vk/vk_menu.cpp     | 4 ++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/gpu/vk/hos_coop_menu.h b/gpu/vk/hos_coop_menu.h
+index 6d6bd07e..11818ab5 100644
+--- a/gpu/vk/hos_coop_menu.h
++++ b/gpu/vk/hos_coop_menu.h
+@@ -78,9 +78,13 @@ typedef int (*hos_coop_menu_page_fn)(int tab, HosCoopMenuPage *out);      /* 1:
+ typedef int (*hos_coop_menu_input_fn)(int tab, int event, int arg, int arg2);   /* 1: taken */
+ /* Optional, asked at each menu tick: what the module wants of the menu now (once: the next call says the next thing).
+    HOS_COOP_MENU_WANT_NOTHING, HOS_COOP_MENU_WANT_CLOSE (a join connected at the title: the game takes the pad again),
+-   or a tab (0 and up): the menu opens on it (the title screen's Host, Join and Co-op Settings rows). */
++   or a tab (0 and up): the menu opens on it (the title screen's Host, Join and Co-op Settings rows),
++   or HOS_COOP_MENU_WANT_LONGSHOT: Longshot's OWN menu opens on its own tabs (the pause menu's Longshot Settings button), as
++   Insert or F1 open it, but whichever window is in front and with no key press (the menu's keys are read only while the
++   game's window is in front, so a posted F1 did nothing with the window behind). */
+ #define HOS_COOP_MENU_WANT_NOTHING (-1)
+ #define HOS_COOP_MENU_WANT_CLOSE (-2)
++#define HOS_COOP_MENU_WANT_LONGSHOT (-3)
+ typedef int (*hos_coop_menu_wanted_fn)(void);
+ 
+ #endif
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 491af88c..b83f6b84 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -5447,6 +5447,10 @@ void menu_tick() {
+     } else if (coop_want == HOS_COOP_MENU_WANT_CLOSE && open_now.load()) {
+         open_now = false, page = 0, listening = 0, tune_mode = false, changed = true;
+         press[0] = press[6] = false;
++    } else if (coop_want == HOS_COOP_MENU_WANT_LONGSHOT) {   // (oot-remake-multiplayer) Longshot's own menu, on its own tabs
++        if (!open_now.load()) press[0] = true, press[6] = false;   // (as Insert opens it: no key read, so no focus needed)
++        else page = 0, listening = 0, tune_mode = false;
++        coop_tab = -1, changed = true;
+     }
+     const bool esc_opens = opts.menu_shortcut == 2 && press[5] && !open_now.load();
+     if (esc_opens) press[5] = false;

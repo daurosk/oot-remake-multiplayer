@@ -1,0 +1,14 @@
+# Shared Gohma kill (include hs-gohma-kill.inc.txt), right after the step that makes her drop (Link under her
+# ceiling spot looking up: the scenario's b-trigger / a-trigger). One copy for every Gohma test kill.
+# She drops and WALKS at Link (Walk_Start ~2 s after the trigger, then her attacks) and climbs back up ~12 s later.
+# A test kill lands only while she is on the floor: on the ceiling her life stops at 1 (runs 20261120-124007,
+# hs-boss-reload-159, and 20261120-130744, hs-heart-137: 'life 21 -> 1' in PreSpawn_Loop, never killed). So: kill
+# 2.5 s after the trigger and again at 4.5 s and 6.5 s, all in her floor time (gohma-kill-walk 546af568). A kill of
+# a dead Gohma finds none with a life: harmless. No goto: the kill reaches 21 m, and walking away moved Link out of
+# her path before she landed.
+wait 150
+kill Enemy_DungeonBoss_Gohma
+wait 120
+kill Enemy_DungeonBoss_Gohma
+wait 120
+kill Enemy_DungeonBoss_Gohma

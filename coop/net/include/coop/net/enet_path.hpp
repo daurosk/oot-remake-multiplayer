@@ -75,6 +75,8 @@ inline bool remember_small_path(enet_uint32 host, bool loopback_too = false) {
 }
 // Disconnect data from the server: "connect again with small datagrams".
 inline constexpr std::uint32_t kDisconnectSmallDatagrams = 0x534D4C4Cu;  // "SMLL"
+// Disconnect data from the server: "too much waited to go to you" (enet_waiting.hpp kMaxOutgoingBytes, row 260).
+inline constexpr std::uint32_t kDisconnectBacklog = 0x534C4F57u;  // "SLOW"
 
 // True when a datagram of `command` alone (ENet header, its command header
 // and its data) is larger than kSmallDatagramBytes: resending it at a small

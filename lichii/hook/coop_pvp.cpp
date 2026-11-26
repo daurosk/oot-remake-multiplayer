@@ -4,7 +4,9 @@
 
 #include "coop_pvp.h"
 
+#include "coop/protocol/scene_place.hpp"
 #include <algorithm>
+#include <utility>
 #include <cctype>
 #include <cmath>
 
@@ -50,7 +52,8 @@ bool Touches(const Vec3& p, const Vec3& feet, float reach) {
 
 bool CanBeHit(const Target& t, std::string_view scene, std::uint8_t self_number) {
     return t.number >= 1 && t.number <= proto::kMaxPlayers && t.number != self_number &&
-           t.scene && *t.scene == scene && !Guarded(t.status) && Finite(t.position);
+           t.scene && coop::protocol::same_place(*t.scene, scene) && !Guarded(t.status) &&
+           Finite(t.position);  // either era of one place (row 221)
 }
 
 } // namespace
@@ -90,7 +93,9 @@ std::int32_t AmountOf(proto::DamageCause cause) {
     case proto::DamageCause::hookshot: return 2;
     case proto::DamageCause::hammer: return 4;
     case proto::DamageCause::magic: return 4;
-    case proto::DamageCause::nut:  // a nut stuns, it does not hurt
+    case proto::DamageCause::nut:     // a nut stuns, it does not hurt
+    case proto::DamageCause::killed:  // a lifeless copy's kill report (issue 133), never a PvP hit
+    case proto::DamageCause::reflected:  // row 177: a notice to a shot's owner (amount 0), never a PvP hit
     case proto::DamageCause::unknown: return 0;
     }
     return 0;
@@ -111,10 +116,7 @@ float ReachOf(proto::DamageCause cause) {
 }
 
 bool Guarded(std::uint8_t status_flags) {
-    constexpr std::uint8_t kOut = proto::status::paused | proto::status::loading |
-                                  proto::status::in_cutscene | proto::status::in_menu |
-                                  proto::status::dead;
-    return (status_flags & kOut) != 0;
+    return (status_flags & proto::status::away) != 0;
 }
 
 bool Attacker::Ready(std::uint8_t number, std::uint64_t now_us) {
@@ -197,7 +199,7 @@ std::optional<Decision> Victim::Hit(const proto::PvpHit& hit, bool pvp_on, const
     const bool mercy = last_hurt_us_ && now_us < *last_hurt_us_ + kMercyUs;
     const bool guarded = !local.life || life <= 0 || local.event || Guarded(local.status) ||
                          !local.scene || !attacker.known || Guarded(attacker.status) ||
-                         !attacker.scene || *attacker.scene != *local.scene || mercy;
+                         !attacker.scene || !coop::protocol::same_place(*attacker.scene, *local.scene) || mercy;
     if (guarded) {
         d.hurt.flags = proto::pvp_hurt::guarded;
         return d;
@@ -261,6 +263,75 @@ std::optional<std::string> HurtLine(const proto::PvpHurt& hurt, std::uint8_t sel
         return who + " defeated " + whom;
     }
     return who + " hit " + whom + " (-" + Hearts(hurt.amount) + ")";
+}
+
+namespace {
+void Lower(std::vector<PendingGive>& gives, std::int32_t by) {
+    if (by <= 0) {
+        return;
+    }
+    for (PendingGive& g : gives) {
+        g.expect = std::max<std::int32_t>(0, g.expect - by);
+    }
+}
+} // namespace
+
+bool LinkLifeWatch::Follow(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool own_hit,
+                           bool replay_hit, bool id_read) {
+    if (before < 0 || now < 0 || gives.empty()) {
+        Reset();
+        return false;
+    }
+    std::int32_t takes = 0;
+    for (const PendingGive& g : gives) {
+        takes += g.replayed ? g.take : 0;
+    }
+    const std::int32_t held = std::exchange(held_, 0);
+    const std::int32_t carried = std::exchange(reached_, 0);
+    if (now > before) {
+        // Last read's held fall first (the landing if our replayed id came now, else harm), then the rise.
+        Lower(gives, held - (replay_hit ? std::min(held, takes) : 0));
+        for (PendingGive& g : gives) {
+            g.expect += now - before;
+        }
+        return false;
+    }
+    const std::int32_t fall = before - now;
+    if (replay_hit) {
+        // Our replayed id came now: last read's held fall and this read's fall are one change, our replay's part
+        // first and the rest harm, lowered once. (Was: the held fall took the landing, and this read's fall, with
+        // the replay already used, was held again and lowered next read: the replay's own fall counted as harm.)
+        const std::int32_t moved = held + fall;
+        if (moved == 0) {
+            reached_ = takes;  // its fall may be read next
+            return false;
+        }
+        Lower(gives, moved - std::min(moved, takes));
+        return false;
+    }
+    Lower(gives, held);  // no id came for last read's fall: harm with no hit record
+    if (fall == 0 || !id_read) {
+        return false;  // (id not read: a fall is the landing, life <= expect books it, as before)
+    }
+    // Our replayed id reached last read with no fall: this fall is its landing first.
+    const std::int32_t rest = fall - std::min(fall, carried);
+    if (own_hit) {
+        Lower(gives, rest);  // a monster's hit: its id came with it
+        return false;
+    }
+    if (rest > 0) {
+        held_ = rest;  // no id moved: held one read for it
+        return true;
+    }
+    return false;
+}
+
+std::int32_t NextExpect(const std::vector<PendingGive>& gives, std::int32_t life, std::int32_t take) {
+    std::int32_t after = life;
+    for (const PendingGive& g : gives) {
+        after = std::min(after, g.expect);
+    }
+    return std::max<std::int32_t>(0, after - take);
 }
 
 } // namespace CoopPvp

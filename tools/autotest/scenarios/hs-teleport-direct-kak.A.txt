@@ -1,0 +1,37 @@
+# hs-teleport-direct-kak (teleport-direct-0116): an overworld trip with an entrance's own arrival event.
+# B stands at Kakariko's entrance; A /teleports from Kokiri Forest with no talk or sign.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-direct-kak
+# Pass, A's log: "asking the game's map change event Dm_SY_BancChangeGo for KakarikoVillage_Child at
+# KakarikoVillage_Entrance (arrival Dm_SY_BancChangeArrive_KakarikoVillage_01)" (or another Kakariko start with
+# the plain Dm_SY_BancChangeArrive if B stands nearer to one), one load, "next to B" after the settle,
+# A's position changing during the walk, no second load after the press A.
+# SCREENSHOTS (required): arrived = A in Kakariko, not black; walked = A moved; end = A next to B in Kakariko.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_SCENE_PROBE=1
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1140
+chat /teleport B
+wait 120
+mark asked
+wait 1200
+mark arrived
+wait 600                   # the settle, the second ask, the move next to B
+stick 0 1 60               # walk forward: Link must move (#197; the probe and "test steer at" positions change)
+mark walked
+press A 12
+wait 600
+mark end

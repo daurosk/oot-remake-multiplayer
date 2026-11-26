@@ -1,0 +1,39 @@
+# hs-native-chat (native-chat-01112-2): co-op's chat, notices and the down-but-not-out line on the game's banner
+# (SimpleInfo_00: its frame W_Bg_00 and its line T_Text_00), nothing drawn. A hosts and watches; B says hi, says a
+# 200-character line (the protocol's most) and is downed (see hs-native-chat.B.txt).
+# Checks (log, both games): "coop: native ui: chat on the game's banner (SimpleInfo_00; texts at 0x...)", "first
+# notice|chat line shown on the game's banner"; no "message window" line.
+# Shots (the proof; a log line alone is no PASS):
+#   a-notice: the game's banner (its frame) with the /dbno answer, in the game's own colour.
+#   a-hi, a-hi-2s: the banner, framed, "B: hi" in B's colour; a-hi-6s: closed again (the page's time is 3 s + a bit).
+#   a-long .. a-long-5: B's 200-character line in 5 pages in turn, each "B: " and one line inside the frame, never
+#   cut and never past it (all five pages seen across the shots; a page may show in two shots).
+#   a-own: A's own line "you"/A's name: "hello from A" on A's banner.
+#! timeout 420
+mark start
+wait 200
+chat /dbno                      # the rules, answered as a notice (an in-game notice on the banner)
+wait 30
+mark a-notice
+wait 430
+mark a-hi                       # B's "hi" (B says it at 620)
+wait 120
+mark a-hi-2s
+wait 240
+mark a-hi-6s
+wait 170
+mark a-long                     # B's 200 characters (B says it at 1150): page 1
+wait 340
+mark a-long-2
+wait 340
+mark a-long-3
+wait 340
+mark a-long-4
+wait 340
+mark a-long-5
+wait 400
+chat hello from A
+wait 30
+mark a-own
+wait 1500
+mark a-end

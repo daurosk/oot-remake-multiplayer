@@ -1,0 +1,133 @@
+{
+ "format": "coop-charsel 1",
+ "about": "Link's Characters page, picker and Customize: Snail's OoT Character Select v0.2.1 (MIT), made by charsel/make_data.py; deltas against the game's own files",
+ "files": [
+  {
+   "rel": "Sequence/CharacterMenu.module.ainb",
+   "zs": false,
+   "from": "Sequence/ImportantMenu.module.ainb",
+   "delta": "p00.cdelta"
+  },
+  {
+   "rel": "Sequence/ImportantMenu.module.ainb",
+   "zs": false,
+   "from": "Sequence/ImportantMenu.module.ainb",
+   "delta": "p01.cdelta"
+  },
+  {
+   "rel": "Sequence/MinusMenu.module.ainb",
+   "zs": false,
+   "from": "Sequence/MinusMenu.module.ainb",
+   "delta": "p02.cdelta"
+  },
+  {
+   "rel": "Sequence/MinusMenuToMain.module.ainb",
+   "zs": false,
+   "from": "Sequence/MinusMenuToMain.module.ainb",
+   "delta": "p03.cdelta"
+  },
+  {
+   "rel": "RSDB/UIScreen.Product.111.rstbl.byml.zs",
+   "zs": true,
+   "from": "RSDB/UIScreen.Product.111.rstbl.byml.zs",
+   "delta": "z00.cdelta"
+  },
+  {
+   "rel": "UI/LayoutArchiveCategory.Product.100.byml.zs",
+   "zs": true,
+   "from": "UI/LayoutArchiveCategory.Product.100.byml.zs",
+   "delta": "z01.cdelta"
+  },
+  {
+   "rel": "GameData/GameDataList.Product.110.byml.zs",
+   "zs": true,
+   "from": "GameData/GameDataList.Product.110.byml.zs",
+   "delta": "z02.cdelta"
+  },
+  {
+   "rel": "SLink2/slink2.Product.111.bslnk.zs",
+   "zs": true,
+   "from": "SLink2/slink2.Product.111.bslnk.zs",
+   "delta": "z03.cdelta"
+  },
+  {
+   "rel": "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs",
+   "zs": true,
+   "align": 16,
+   "members": [
+    {
+     "name": "CharacterCustomize_00.buil",
+     "from": "ImportantMenu_01.buil",
+     "delta": "c00.cdelta",
+     "copies": 4
+    },
+    {
+     "name": "CharacterMenu_00.buil",
+     "from": "ImportantMenu_01.buil",
+     "delta": "c01.cdelta",
+     "copies": 4
+    },
+    {
+     "name": "MenuOverlay_00.buil",
+     "from": "MenuOverlay_00.buil",
+     "delta": "c02.cdelta"
+    },
+    {
+     "name": "PaCharacterKey_00.buil",
+     "from": "PaGuideKey_00.buil",
+     "delta": "c03.cdelta",
+     "copies": 4
+    },
+    {
+     "name": "PaCharacterSlot_00.buil",
+     "from": "PaItemMenuBtn_00.buil",
+     "delta": "c04.cdelta",
+     "copies": 4
+    },
+    {
+     "name": "PaMenuCategory_00.buil",
+     "from": "PaMenuCategory_00.buil",
+     "delta": "c05.cdelta"
+    }
+   ]
+  },
+  {
+   "glob": "Mals/*.Product.110.sarc.zs",
+   "zs": true,
+   "align": 16,
+   "members": [
+    {
+     "name": "LayoutMsg/CharacterMenu_00.msbt",
+     "from": null,
+     "delta": "m00.cdelta"
+    },
+    {
+     "name": "LayoutMsg/CharacterCustomize_00.msbt",
+     "from": null,
+     "delta": "m01.cdelta"
+    }
+   ],
+   "strings": [
+    "LayoutMsg/CharacterMenu_00.msbt",
+    "LayoutMsg/CharacterCustomize_00.msbt"
+   ],
+   "labels": {
+    "LayoutMsg/CharacterCustomize_00.msbt": {
+     "Coop_Custom_00": "................................................................",
+     "Coop_Custom_01": "................................................................",
+     "Coop_Custom_02": "................................................................",
+     "Coop_Custom_03": "................................................................",
+     "Coop_Custom_04": "................................................................",
+     "Coop_Custom_05": "................................................................",
+     "Coop_Custom_06": "................................................................",
+     "Coop_Custom_07": "................................................................",
+     "Coop_Custom_08": "................................................................",
+     "Coop_Custom_09": "................................................................",
+     "Coop_Custom_10": "................................................................",
+     "Coop_Custom_11": "................................................................",
+     "Coop_Custom_12": "................................................................"
+    }
+   }
+  }
+ ]
+}

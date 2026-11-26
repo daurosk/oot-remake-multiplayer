@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <ostream>
 #include <optional>
 #include <set>
@@ -49,9 +50,9 @@ std::vector<Request> Took(const char* name) {
 } // namespace
 
 TEST_CASE("boss scenes: ten bosses, every intro and death event known, no mini-boss") {
-    CHECK(CoopBossScenes::Bosses().size() == 10);
+    CHECK(CoopBossScenes::Bosses().size() == 13);  // and three mid-fight stage changes (their own case)
     std::set<std::string_view> names;
-    for (const auto& b : CoopBossScenes::Bosses()) {
+    for (const auto& b : CoopBossScenes::Bosses().first(10)) {
         names.insert(b.intro);
         names.insert(b.outro);
         if (b.room >= 0) {
@@ -267,7 +268,11 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
           std::optional(std::pair{std::uint8_t{4}, CoopBossScenes::Kind::outro}));
     CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_BossDie_2") ==
           std::optional(std::pair{std::uint8_t{9}, CoopBossScenes::Kind::outro}));
-    CHECK_FALSE(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_Boss_GetMasterSword"));  // mid-fight
+    // Mid-fight: never Ganon's death; its own stage change (shared as an intro of its own, entry 11).
+    CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_Boss_GetMasterSword") ==
+          std::optional(std::pair{std::uint8_t{11}, CoopBossScenes::Kind::intro}));
+    CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_BossBind0") ==
+          std::optional(std::pair{std::uint8_t{12}, CoopBossScenes::Kind::intro}));
     CHECK_FALSE(CoopBossScenes::OfEvent(""));
 
     Director a, b;
@@ -326,6 +331,202 @@ TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intr
     CHECK(c.phase(kGohma) == Phase::none);
 }
 
+TEST_CASE("boss scenes: another's death is asked as the boss's own death setting in its dungeon (report 88)") {
+    // The setting's flow entry moves our quest on (Get_StoneOfForest DefeatBoss, GoToWarpPoint): the room makes
+    // the blue warp in our game too. The death flow alone moved nothing, so a guest's warp did nothing.
+    proto::BossScene death = Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom);
+    const auto with_boss = [](Local l) {
+        l.boss_ours = false;  // our walk has the boss (a copy)
+        return l;
+    };
+    SUBCASE("asked as the setting, taken: played with the owner's, no fallback") {
+        Director b;
+        b.Receive(death);
+        CHECK(b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+        Actions out = b.Tick(with_boss(At(kInRoom, 2, true)), Took("InsideTheDekuTree_BossDie"), 1'100'000);
+        CHECK_FALSE(out.play);
+        CHECK(out.send.empty());  // player 1 started it
+        CHECK(b.phase(kGohma) == Phase::outro);
+    }
+    SUBCASE("our copy lives at the death: the setting waits for it to die (report 105, review boss-0113)") {
+        // The real order: the owner's outro_start comes while our copy is held alive (life 1); the glue's
+        // SetDying releases it only after this Tick, so the copy can read dead on a later tick at the earliest.
+        const auto alive = [&with_boss](Local l, std::optional<bool> lives) {
+            l = with_boss(l);
+            l.boss_alive = lives;
+            return l;
+        };
+        const auto said = [](const Actions& out, const char* text) {
+            return std::any_of(out.log.begin(), out.log.end(),
+                               [&](const std::string& l) { return l.find(text) != std::string::npos; });
+        };
+        {
+            // Released, it dies in its own game a few frames later: the setting (quest step and warp here).
+            Director b;
+            b.Receive(death);
+            Actions out = b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            CHECK_FALSE(out.play);  // never the setting while it lives (Revirie's black screen)
+            CHECK(said(out, "our copy still lives: waiting for it to die here"));
+            CHECK(b.phase(kGohma) == Phase::outro);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), true), {}, 1'250'000).play);
+            out = b.Tick(alive(At(kInRoom, 2), false), {}, 1'500'000);
+            CHECK(out.play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+            out = b.Tick(alive(At(kInRoom, 2, true), false), Took("InsideTheDekuTree_BossDie"), 1'600'000);
+            CHECK_FALSE(out.play);
+            // Its end: done, nothing asked again. While the death event runs nothing is refused by us (the
+            // manager refuses the boss logic's asks itself); once it is over, a second death is refused.
+            out = b.Tick(alive(At(kInRoom, 2, true), false), {}, 5'000'000);
+            CHECK(out.refuse_deaths == 0);
+            out = b.Tick(alive(At(kInRoom, 2), std::nullopt), {}, 6'000'000);
+            CHECK_FALSE(out.play);
+            CHECK(b.phase(kGohma) == Phase::done);
+            CHECK(out.refuse_deaths == (1u << kGohma));
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 7'000'000).play);
+        }
+        {
+            // Still alive after kCopyWaitUs (a game built without patch 0007's LIFE_STOPS, a stop holding it): the
+            // death flow alone, and that is its one death cutscene here (review-boss-0114 risk 3): nothing is asked
+            // when the copy dies later, and our game's own late ask of the setting is refused at the request.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            Actions out = b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000 + Director::kCopyWaitUs);
+            CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
+            CHECK(said(out, "nothing asked again"));
+            CHECK(out.refuse_deaths == 0);  // (not played yet)
+            out = b.Tick(alive(At(kInRoom, 2, true), true), Took("Dm_Deku_BossOut"), 2'600'000);
+            CHECK_FALSE(out.play);
+            CHECK(out.refuse_deaths == 0);  // (its event runs)
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2, true), false), {}, 8'000'000).play);  // the flow still runs
+            out = b.Tick(alive(At(kInRoom, 2), false), {}, 9'000'000);  // the flow's end; the copy reads dead
+            CHECK(b.phase(kGohma) == Phase::done);
+            CHECK_FALSE(out.play);  // never the setting after the flow: no second cutscene
+            CHECK(out.refuse_deaths == (1u << kGohma));
+            for (std::uint64_t t = 9'250'000; t < 40'000'000; t += 250'000) {
+                CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, t).play);
+            }
+            // The copy's own death logic asks the setting late: the request refuses it (RefuseAsk), and the
+            // refusal asks no flow either.
+            CoopBossScenes::RefusedDeaths().store(out.refuse_deaths);
+            CHECK(CoopBossScenes::RefuseAsk("InsideTheDekuTree_BossDie"));
+            CHECK(CoopBossScenes::RefuseAsk("Dm_Deku_BossOut"));
+            CHECK_FALSE(CoopBossScenes::RefuseAsk("InsideTheDekuTree_BossAppear"));  // (an intro: never)
+            CHECK_FALSE(CoopBossScenes::RefuseAsk("Dm_Dodongo_BossOut"));             // (another boss's)
+            CoopBossScenes::RefusedDeaths().store(0);
+            CHECK_FALSE(CoopBossScenes::RefuseAsk("InsideTheDekuTree_BossDie"));
+            out = b.Tick(alive(At(kInRoom, 2), false), {Request{"InsideTheDekuTree_BossDie", false}}, 40'000'000);
+            CHECK_FALSE(out.play);
+            CHECK(said(out, "refused at the request"));
+            // Its logic asks again (every frame): said once per fight (review-boss-0114 nit).
+            out = b.Tick(alive(At(kInRoom, 2), false), {Request{"InsideTheDekuTree_BossDie", false}}, 40'100'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(said(out, "refused at the request"));
+            // Out of its area: nothing refused (the bit is only for where its death played).
+            CHECK(b.Tick(alive(At(kFar, 2), false), {}, 41'000'000).refuse_deaths == 0);
+        }
+        {
+            // Our copy's own death logic asks the setting itself while we wait: nothing more asked.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            Actions out = b.Tick(alive(At(kInRoom, 2, true), false), Took("InsideTheDekuTree_BossDie"), 1'250'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2, true), false), {}, 3'000'000).play);
+        }
+        {
+            // Left the area while waiting: nothing asked.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            CHECK_FALSE(b.Tick(alive(At(kFar, 2), false), {}, 1'250'000).play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 1'500'000).play);
+        }
+        // Our copy already dead (or gone from the walk) when the death comes: the setting, as before.
+        Director d;
+        d.Receive(death);
+        CHECK(d.Tick(alive(At(kInRoom, 2), false), {}, 1'000'000).play ==
+              std::optional<std::string>("InsideTheDekuTree_BossDie"));
+        // The owner's own game (boss ours) never comes here with its own death; another's death while we own
+        // the boss (a hand-over in flight) still asks the setting.
+        Director e;
+        e.Receive(death);
+        Local owner = At(kInRoom, 2);
+        owner.boss_ours = true;
+        owner.boss_alive = true;
+        CHECK(e.Tick(owner, {}, 1'000'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+    }
+    SUBCASE("the setting refused: the death flow alone, once") {
+        Director b;
+        b.Receive(death);
+        b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000);
+        Actions out = b.Tick(with_boss(At(kInRoom, 2)), {Request{"InsideTheDekuTree_BossDie", false}}, 1'100'000);
+        CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
+        CHECK(out.refuse_deaths == 0);  // nothing played: nothing refused
+        out = b.Tick(with_boss(At(kInRoom, 2)), {Request{"Dm_Deku_BossOut", false}}, 1'200'000);
+        CHECK_FALSE(out.play);  // the flow refused too: nothing more
+        CHECK(out.refuse_deaths == 0);
+    }
+    SUBCASE("the owner's own death: one cutscene, its later asks refused once its event is over") {
+        Director b;
+        Local owner = At(kInRoom, 1, true);
+        owner.boss_ours = true;
+        Actions out = b.Tick(owner, Took("InsideTheDekuTree_BossDie"), 1'000'000);
+        CHECK(b.phase(kGohma) == Phase::outro);
+        CHECK(out.refuse_deaths == 0);  // its event runs: the boss logic's repeated asks are the manager's to refuse
+        out = b.Tick(owner, {Request{"InsideTheDekuTree_BossDie", false}}, 1'100'000);
+        CHECK_FALSE(out.play);
+        owner.event = false;
+        out = b.Tick(owner, {}, 9'000'000);
+        CHECK(out.refuse_deaths == (1u << kGohma));
+    }
+    SUBCASE("a refusal we did not ask (too late) asks nothing") {
+        Director b;
+        b.Receive(death);
+        b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000);
+        CHECK_FALSE(b.Tick(with_boss(At(kInRoom, 2)), {Request{"InsideTheDekuTree_BossDie", false}},
+                           1'000'000 + Director::kJoinUs + 1).play);
+    }
+    SUBCASE("King Dodongo and Barinade: their quests' own death settings") {
+        const auto boss = [](std::string_view name) {
+            for (std::size_t i = 0; i < CoopBossScenes::Bosses().size(); ++i) {
+                if (CoopBossScenes::Bosses()[i].name == name) {
+                    return static_cast<std::uint8_t>(i);
+                }
+            }
+            return std::uint8_t{0xff};
+        };
+        for (const auto& [name, setting] : {std::pair{"King Dodongo", "Get_StoneOfFire_DefeatBoss"},
+                                            std::pair{"Barinade", "Get_StoneOfWater_DestroyBoss"}}) {
+            const std::uint8_t i = boss(name);
+            REQUIRE(i < CoopBossScenes::Bosses().size());
+            const auto* room = CoopBoss::RoomByIndex(static_cast<std::uint8_t>(CoopBossScenes::Bosses()[i].room));
+            REQUIRE(room != nullptr);
+            const Vec centre{room->centre_x, (room->y_low + room->y_high) / 2.0f, room->centre_z};
+            Director b;
+            b.Receive(Scene(1, i, proto::BossSceneKind::outro_start, centre, std::string(room->scene)));
+            CHECK(b.Tick(with_boss(At(centre, 2, false, std::string(room->scene))), {}, 1'000'000).play ==
+                  std::optional<std::string>(setting));
+        }
+    }
+    SUBCASE("no boss in our walk (our save beat it already, or the copy is gone): the death flow") {
+        // King Dodongo's and Barinade's settings would set a Complete quest back and signal an absent boss.
+        Director b;
+        b.Receive(death);
+        CHECK(b.Tick(At(kInRoom, 2), {}, 1'000'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
+    }
+    SUBCASE("the boss rush and Ganondorf: the death flow, as before") {
+        Director b;
+        const Vec starter{0.0f, 0.0f, 0.0f};
+        b.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, starter, "GohmaStage"));
+        CHECK(b.Tick(with_boss(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage")), {}, 1'000'000).play ==
+              std::optional<std::string>("Dm_Deku_BossOut"));
+        Director g;
+        g.Receive(Scene(1, kGanondorf, proto::BossSceneKind::outro_start, starter, "InsideGanonCastle"));
+        CHECK(g.Tick(with_boss(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "InsideGanonCastle")), {}, 1'000'000).play ==
+              std::optional<std::string>("Dm_InsideGanonCastle_BossOut"));
+    }
+}
+
 TEST_CASE("boss scenes: a copy that dies in its own game starts no death, the owner's does (review boss-intro)") {
     // A's eye hit judged lethal on A's copy while the owner B refused it: A's walk reads its boss gone.
     const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
@@ -368,6 +569,25 @@ TEST_CASE("boss scenes: one heart container for all, never two") {
         l.max_life = max;
         return l;
     };
+    SUBCASE("the players who did not take it get their hearts filled, once, the one who took it does not") {
+        const proto::BossHeart given{1, kGohma, true, 16};
+        a.Receive(given);
+        c.Receive(given);
+        CHECK_FALSE(a.Tick(with(1, 16), {}, 2'000'000).refill);
+        CHECK(c.Tick(with(3, 12), {}, 2'000'000).refill);
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'100'000).refill);   // (once)
+        c.Receive(given);                                         // (the answer again: no second refill)
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'200'000).refill);
+    }
+    SUBCASE("a maximum another game's pickup raised (the shared MaxLife flag) sends no claim") {
+        // Four players, 2026-11-20: every game claimed when the flag raised its maximum, and the first claim to reach
+        // the server named the wrong player.
+        Local l = with(2, 16);
+        l.max_life_from_others = true;
+        CHECK(b.Tick(l, {}, 2'000'000).claims.empty());
+        CHECK(b.Tick(with(2, 16), {}, 2'100'000).claims.empty());   // (once: not claimed later either)
+        CHECK(a.Tick(with(1, 16), {}, 2'000'000).claims.size() == 1);   // the one who took it still claims
+    }
     SUBCASE("A and B grab it together: the server's one answer, one +1 each, C too") {
         Actions oa = a.Tick(with(1, 16), {}, 2'000'000);
         Actions ob = b.Tick(with(2, 16), {}, 2'000'000);
@@ -441,6 +661,29 @@ TEST_CASE("boss scenes: during the intro every joiner is put at its spot, the st
     CHECK_FALSE(c.Tick(At(CoopBoss::ArrivalFor(*room, 3), 3), {}, 1'100'000).move_to);
 }
 
+TEST_CASE("boss scenes: Twinrova's merge plays in every game near the starter, nobody moved") {
+    constexpr std::uint8_t kMerge = 10;
+    const auto& merge = CoopBossScenes::Bosses()[kMerge];
+    CHECK(merge.intro == "SageOfSpirit_BossChange");
+    CHECK(merge.room < 0);
+    CHECK(CoopBossScenes::OfEvent("SageOfSpirit_BossChange") == std::pair{kMerge, CoopBossScenes::Kind::intro});
+    CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_Boss_GetMasterSword") ==
+          std::pair{std::uint8_t{11}, CoopBossScenes::Kind::intro});
+    const Vec at{0.0f, 140.0f, -158.0f};
+    Director a, b;
+    // B's game asks the merge as its sisters die: it starts it.
+    Actions out = b.Tick(At(at, 2, true, "TwinrovaStage"), Took("SageOfSpirit_BossChange"), 1'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].boss == kMerge);
+    proto::BossScene start = out.send[0];
+    start.player_number = 2;
+    // A's game, its sisters dead too but its own logic never asked: asked for it now, not moved.
+    a.Receive(start);
+    out = a.Tick(At(Vec{8.0f, 140.0f, -158.0f}, 1, false, "TwinrovaStage"), {}, 1'100'000);
+    CHECK(out.play == std::optional<std::string>("SageOfSpirit_BossChange"));
+    CHECK_FALSE(out.move_to);
+}
+
 TEST_CASE("boss scenes: in a boss rush stage the area is near the starter, and nobody is moved") {
     const auto& gohma = CoopBossScenes::Bosses()[kGohma];
     const Vec starter{0.0f, 0.0f, 0.0f};
@@ -485,4 +728,114 @@ TEST_CASE("boss scenes: the cap's base is our maximum when the death was heard, 
     Actions out = e.Tick(with(16, kInRoom), {}, 3'000'000);
     CHECK(out.max_life_cap == std::optional<std::int32_t>(16));
     CHECK(out.claims.empty());
+}
+
+TEST_CASE("boss scenes: the boss's own start of the fight is never skipped (player report #30)") {
+    // The 0.11.0 run: our intro (seen without a name) ended, then Gohma's own logic asked
+    // InsideTheDekuTree_BossAppear in our game; it was force-skipped as a late arrival's.
+    Director b;
+    std::vector<Request> seen{Request{"Dm_Deku_BossIn", true, true}};
+    b.Tick(At(kInRoom, 1, true), seen, 1'000'000);
+    b.Tick(At(kInRoom, 1, true), {}, 2'000'000);
+    b.Tick(At(kInRoom, 1, false), {}, 10'000'000);  // ours is over: the fight is on
+    REQUIRE(b.phase(kGohma) == Phase::fight);
+    Actions out = b.Tick(At(kInRoom, 1, true), Took("InsideTheDekuTree_BossAppear"), 11'000'000);
+    CHECK_FALSE(out.skip);
+    CHECK_FALSE(b.Tick(At(kInRoom, 1, true), {}, 11'200'000).skip);
+    // The flow itself, late: still skipped as before.
+    Director late;
+    late.Receive(Scene(2, kGohma, proto::BossSceneKind::intro_start, kInRoom));
+    late.Tick(At(kFar, 1), {}, 1'000'000);
+    late.Receive(Scene(2, kGohma, proto::BossSceneKind::intro_end, kInRoom));
+    late.Tick(At(kFar, 1), {}, 20'000'000);
+    CHECK(late.Tick(At(kInRoom, 1, true), Took("Dm_Deku_BossIn"), 30'000'000).skip);
+}
+
+TEST_CASE("boss scenes: a follower's own BossAppear plays out when the starter's intro ends") {
+    Director b;
+    b.Receive(Scene(2, kGohma, proto::BossSceneKind::intro_start, kInRoom));
+    b.Tick(At(kInRoom, 1), {}, 1'000'000);
+    b.Tick(At(kInRoom, 1, true), Took("InsideTheDekuTree_BossAppear"), 1'500'000);
+    b.Receive(Scene(2, kGohma, proto::BossSceneKind::intro_end, kInRoom));
+    CHECK_FALSE(b.Tick(At(kInRoom, 1, true), {}, 5'000'000).skip);
+    CHECK(b.phase(kGohma) == Phase::fight);
+}
+
+TEST_CASE("boss scenes: DeathMayRun says while our own death of a boss may still run here (row 136)") {
+    const proto::BossScene death = Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom);
+    const auto copy = [](Local l) {
+        l.boss_ours = false;
+        l.boss_alive = false;
+        return l;
+    };
+    SUBCASE("nothing heard, nothing asked: nothing of ours runs it") {
+        Director b;
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        b.Tick(At(kInRoom, 2), {}, 1'000'000);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        CHECK_FALSE(b.DeathMayRun(200));
+    }
+    SUBCASE("an outro_start not yet taken, asked, playing, over") {
+        Director b;
+        b.Receive(death);
+        CHECK(b.DeathMayRun(kGohma));  // the next Tick joins it
+        CHECK_FALSE(b.DeathMayRun(1));  // another boss
+        CHECK(b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000).play);
+        CHECK(b.DeathMayRun(kGohma));  // asked, not taken yet
+        b.Tick(copy(At(kInRoom, 2, true)), Took("InsideTheDekuTree_BossDie"), 1'100'000);
+        CHECK(b.DeathMayRun(kGohma));  // it plays
+        b.Tick(copy(At(kInRoom, 2)), {}, 9'000'000);
+        CHECK(b.phase(kGohma) == Phase::done);
+        CHECK_FALSE(b.DeathMayRun(kGohma));  // over: its beaten set may be given here
+    }
+    SUBCASE("asked but never taken: nothing runs once kJoinUs is past") {
+        Director b;
+        b.Receive(death);
+        CHECK(b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000).play);
+        b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000 + Director::kJoinUs / 2);
+        CHECK(b.DeathMayRun(kGohma));
+        b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000 + Director::kJoinUs + 1);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("our copy still lives: the setting waits for it") {
+        Director b;
+        b.Receive(death);
+        Local alive = At(kInRoom, 2);
+        alive.boss_ours = false;
+        alive.boss_alive = true;
+        CHECK_FALSE(b.Tick(alive, {}, 1'000'000).play);
+        CHECK(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("came into the area after the death (walked in during it, fell in later): nothing asked, nothing runs") {
+        Director b;
+        b.Receive(death);
+        CHECK_FALSE(b.Tick(At(kFar, 2), {}, 1'000'000).play);  // elsewhere in the dungeon at the death: a chat line
+        CHECK(b.phase(kGohma) == Phase::outro);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        CHECK_FALSE(b.Tick(At(kInRoom, 2), {}, 2'000'000).play);  // in the room during the others' death
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("any event of our game: it may be the death (seen with no name)") {
+        Director b;
+        b.Tick(At(kInRoom, 2, true), {}, 1'000'000);
+        CHECK(b.DeathMayRun(kGohma));
+        b.Tick(At(kInRoom, 2), {}, 2'000'000);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+}
+
+TEST_CASE("enemies-dying-01111: a boss's death has begun here in the boss rush's stage too (DeathBegunHere)") {
+    // Run 20261122-092813 (King Dodongo in the boss rush's DodongoStage): the dying list matched only the room's
+    // dungeon scene, so B's copy was never named dying. The director's own area (Here) is the starter's scene there.
+    const Vec starter{0.0f, 0.0f, 0.0f};
+    Local near = At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage");
+    near.boss_ours = false;
+    Director b;
+    CHECK_FALSE(b.DeathBegunHere(kGohma, near));  // no death yet
+    b.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, starter, "GohmaStage"));
+    b.Tick(near, {}, 1'000'000);
+    CHECK(b.DeathBegunHere(kGohma, near));
+    CHECK_FALSE(b.DeathBegunHere(kGohma, At(Vec{40.0f, 0.0f, 0.0f}, 2, false, "GohmaStage")));  // out of its area
+    CHECK_FALSE(b.DeathBegunHere(kGohma, At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "KokiriForest")));  // another scene
+    CHECK_FALSE(b.DeathBegunHere(1, near));  // another boss
 }

@@ -94,6 +94,9 @@ std::vector<Message> Sampling::Frame(coop::host::GameMemory& memory, std::uint64
         reading->scene = own->scene;
         reading->age = own->age;
         reading->event_running = own->event_running;
+        reading->event_whose = own->event_whose;  // G1: the seat's game is ours; whose its event is
+        reading->link_bound = own->link_bound;
+        reading->in_menu = own->in_menu;  // the one screen's menus: the game stops for every seat (sampler.hpp)
         if (reading->equipment && color) reading->equipment->color = color;
     }
     std::vector<Message> out;

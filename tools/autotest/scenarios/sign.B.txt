@@ -14,15 +14,15 @@ wait 2400
 mark after
 place -1.73 101.54 68.8
 wait 60
-toward -7.46 71.12 10   # face it, so the camera looks at it
+toward -7.46 71.12 30   # face it, so the camera looks at it (10 ticks did not turn Link: big-run-0115 watching-B)
 press ZL 10             # nothing to target: the camera swings behind Link, onto the post
 mark watching
 wait 420
-toward -7.46 71.12 6
+toward -7.46 71.12 20
 press ZL 10
 mark framed
 wait 300
-toward -7.46 71.12 6
+toward -7.46 71.12 20
 press ZL 10
 mark b-end
 wait 300

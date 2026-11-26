@@ -1,0 +1,58 @@
+mark start
+warp PhantomGanonStage PhantomGanonStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 2400
+press ZL 10
+wait 600
+mark t1
+wait 1800               # A's three hits (life 24)
+mark t3b
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 150
+mark t4
+hit Enemy_DungeonBoss_PhantomGanon 1   # then 1 every 150 frames x8 (life ~12 -> 4): one lands where he takes it
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 150
+hit Enemy_DungeonBoss_PhantomGanon 1
+wait 300
+mark t5
+wait 900
+mark t6
+wait 900
+mark t7
+wait 900
+mark t8
+kill Enemy_DungeonBoss_PhantomGanon
+wait 900
+mark end

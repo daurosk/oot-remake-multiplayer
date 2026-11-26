@@ -1,0 +1,88 @@
+# hs-event-result (row 98(2) result only, g1-events; owner 07:40 UTC 2026-11-17): another player's room gimmick event
+# gives B's room its RESULT only (B's asker's outputs set with the game's set-bool), never a replay that binds B's Link.
+# Needs a hookshot_coop module built from g1-events (module-only install in the lane; no game rebuild).
+# A plays nothing by hand: A's game sets the played flags with the test command (as if A's events ran), in the order
+# B stands in their rooms; they reach B like any other player's flags. Three class-asker events of the Deku Tree:
+#   1. the slingshot room's ladder (InsideTheDekuTree_Gimmick_FallingLadder, asker -37.5 117.8 12.5; outputs
+#      EventBool+EventFinish; with its result guard InsideTheDekuTree_RoomC_Cleared, which deletes that asker),
+#   2. the compass room's lifts (InsideTheDekuTree_Gimmick_RoomD_PlatformUp, asker -22.6 122.6 -3.8; EventBool),
+#   3. the web room's torch and web (InsideTheDekuTree_Gimmick_CandleAndSpiderWeb, asker -10.0 82.5 -9.5; EventBool).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-event-result -Lane 1   (~8 min)
+# What B's log must show for each event N:
+#   "coop: dungeon: result: <N>: another player played it: setting our asker's result here (no replay)",
+#   "coop: dungeon: result: <N>: our asker 0x..., setting ...", then "result: <N>: set (...)" or
+#   "result: <N>: our asker is gone after our set (its room graph took the result)";
+#   and NONE of: "starting the event <N> here", "live event <N> asked of the game", "eye switch: <N>:".
+# B's shots: b-ladder (ladder DOWN, pillar moved), b-lifts (the compass room's lifts up), b-web (torch lit, web gone).
+# 4. (review-a38-5, trigger guards) the Ice Cavern's room-5 silver rupees (IceCavern_Room05_SilverToken_Unlock, class
+#    asker, counter Obj_silverRupeeCounter_03 key 0xaf0a7a17099f8d19, tokens 0x2d10.., 0x7633.., 0xa6b4.., 0xc066..,
+#    0xffa5..): A's game takes the five tokens and sets the counter's key (setflag key64:, as its pickups write them)
+#    while B stands beside the asker. B: the four smaller tokens land (a split collection), the largest and the
+#    counter's key wait ("coop: dungeon: trigger: in IceCavern 2 shared keys and N flags wait"), so B's counter never
+#    completes from A's rupees and B's asker never asks; then A's played flag comes: "result:
+#    IceCavern_Room05_SilverToken_Unlock: ... set" and the trigger line drops to 0 keys (the last token lands after
+#    our game played it). NONE of "starting the event IceCavern_Room05_SilverToken_Unlock here" or "live event
+#    IceCavern_Room05_SilverToken_Unlock asked"; B's Link is never bound (no "our Link in an event" at b-silver-*).
+#    Shots: b-silver-held (B's room: the blades still turning), b-silver-set (stopped: our result).
+# Not reproduced by our result (note a of review-a38-5): what the event FLOW itself does beyond setting the asker's
+#   outputs (EventTriggerSetEventBool) and flags: a camera, a sound, an actor the flow spawns or moves. The docs found
+#   nothing such for the Deku rooms; for the rest it is unchecked: compare B's shots with A's after each event.
+# If B shows "read 0 after a set on N frames": the waiting asker's AI rewrites EventBool every frame (open risk,
+#   reports/fable-g1-events.md): the event stays held (safe floor), and the outputs need another way in.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,A:LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+setflag InsideTheDekuTree_RoomC_Cleared 0
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp 0
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb 0
+wait 240
+mark placed
+wait 600                 # B stands in the slingshot room by now
+setflag InsideTheDekuTree_RoomC_Cleared 1
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 1
+mark a-ladder
+wait 1800                # B moves to the compass room 600 frames before this ends
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp 1
+mark a-lifts
+wait 1800                # B moves to the web room 600 frames before this ends
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb 1
+mark a-web
+wait 1500
+mark a-end
+warp IceCavern             # 4. the silver rupee room (B is on its way too)
+wait 2400
+setflag HaveEncountered_Token 1
+wait 1800                  # B stands beside the room-5 asker by now
+setflag key64:0x2d106890d9d01132 1
+wait 120
+setflag key64:0x7633db754459d19d 1
+wait 120
+setflag key64:0xa6b41aa8827c975c 1
+wait 120
+setflag key64:0xc066e1f9eb643d09 1
+mark a-tokens4
+wait 600
+setflag key64:0xffa5887336519e97 1
+setflag key64:0xaf0a7a17099f8d19 1
+mark a-silver-last
+wait 1200
+setflag IceCavern_Room05_Unlocked 1
+setflag HavePlayedEvent.IceCavern_Room05_SilverToken_Unlock 1
+mark a-silver-played
+wait 1800
+mark a-silver-end

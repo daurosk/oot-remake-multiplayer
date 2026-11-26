@@ -1,0 +1,23 @@
+# OoT Character Select by snaildev99 (github.com/snaildev99/OoT-Character-Select): play as the game's other
+# characters. The kit carries none of its files. Every kit downloads Snail's own release and his characters.json from
+# his GitHub pages onto this PC, checks each SHA-256 below, and puts the mod into the game's mods folder, switched on
+# (the Mods tab switches it off): his Characters page always; his NPC characters only when the player says yes (asked
+# once, no after 15 s; N at a later start or coop-options.ini character_select changes it). His Customize code is left
+# out of his code patch (co-op's own Customize fills his screen). Snail is the mod's author and distributor: its code is MIT (his LICENSE); The Legend of
+# Zelda: Ocarina of Time and its characters belong to Nintendo.
+# Since v0.2.2 the zip's tool_folder makes the mod's game-derived files from the game's RomFS on this PC
+# (Invoke-KitCharacterSelectTool); a pin without tool_folder installs the zip's folder as it is.
+# Move release= and the lines below together. overlay_*: characters.json (the list the puppet pack reads), from his
+# fork at a fixed commit. ips_*: a newer code patch of his (the puppets' colour routine), left empty until he
+# publishes it: without it everything but the character puppets' colours works.
+release=v0.2.2
+url=https://github.com/snaildev99/OoT-Character-Select/releases/download/v0.2.2
+zip=OoT-Character-Select-v0.2.2.zip
+zip_sha256=75cd9a4c71645d1abcf7151fc074df1922af3f9db0b31a3c383eaf7d2497620b
+zip_folder=OoT-Character-Select-v0.2.2/mods/OoT Character Select
+tool_folder=OoT-Character-Select-v0.2.2/build-from-your-game
+folder=OoT Character Select
+overlay_url=https://raw.githubusercontent.com/snaildev99/oot-remake-multiplayer/5c6f4dfeff389da27fd494637361e5c6b5538ba8/contrib/character-select/mod-overlay/characters.json
+overlay_sha256=1786e236a0514d768e0d8602995f812b69728b06599f20cdd5d70c60c886ad48
+ips_url=
+ips_sha256=

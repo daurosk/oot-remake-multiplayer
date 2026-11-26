@@ -5,12 +5,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "coop/host/save_transfer.hpp"
 #include "coop/protocol/codec.hpp"
+#include "../test_temp.h"
 
 namespace save = coop::host::save;
 namespace proto = coop::protocol;
@@ -33,7 +35,7 @@ save::SaveSlot Slot(std::uint32_t seed) {
 // A fresh folder under the temp folder, removed at the end of the test.
 struct TempDir {
   fs::path path;
-  explicit TempDir(const char* name) : path(fs::temp_directory_path() / name) {
+  explicit TempDir(const char* name) : path(ModTestDir(name)) {
     fs::remove_all(path);
     fs::create_directories(path);
   }
@@ -528,12 +530,133 @@ TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
   CHECK(folder_choice(std::nullopt, true, true, false, false) == FolderChoice::coop);   // a title-menu Join or an invite
   CHECK(folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);     // the host, even with an old
                                                                                          // friend's address in coop.ini
-  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::own);     // joined with a save loaded
+  // a guest that joins with a save loaded (the pause menu's Join) asks for the host's save too: before, it kept its
+  // own saves and never asked, so nothing of the host's unshared state reached it (player reports 107, 120)
+  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::coop_later);
+  CHECK(folder_choice(std::nullopt, true, true, true, true) == FolderChoice::own);      // the host, a save loaded
+  CHECK(folder_choice(std::nullopt, true, false, false, true) == FolderChoice::wait);
+  // the emulator's fixed folder never changes under a game: the variable only
+  CHECK(folder_choice(std::nullopt, false, true, false, true) == FolderChoice::own);
+  CHECK(folder_choice(true, false, true, false, true) == FolderChoice::coop);
+}
+
+TEST_CASE("save transfer: a guest that joins with a file loaded asks and gets the save on the title (reports 107, 120)") {
+  using N = save::GuestNotices;
+  // The folder played from is not touched: the slot that came waits (pending_step) until the title's menu is up.
+  const Bytes packed = save::pack(Slot(4));
+  save::GuestSession s;
+  N n{true};   // (Link is in the game when the session starts)
+  CHECK(n.on_in_game(true).empty());            // the file played was loaded before the ask: never "too early"
+  s.asked = true;
+  const auto parts = save::split(packed, 31, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 1);
+  CHECK(n.on_part(31, parts.size()) == N::kLoading);
+  CHECK(n.on_in_game(true).empty());
+  for (const auto& part : parts) {
+    save::note_part(s, part.transfer_id, 1);
+    if (s.assembler.add(Relayed(part, 1), 1) == save::Assembler::Result::complete) s.unwritten = save::unpack(s.assembler.take());
+  }
+  REQUIRE(s.unwritten);
+  CHECK_FALSE(save::reask_due(s, 1 + save::kGuestReaskUs));   // the save is in: no more asks while it waits
+  using save::PendingStep;
+  CHECK(save::pending_step(true, false, true) == PendingStep::keep);   // in the game: nothing changes
+  CHECK(save::pending_step(true, true, true) == PendingStep::keep);    // (the title's mark with Link still there)
+  CHECK(save::pending_step(true, true, false) == PendingStep::go);     // back on the title: written and switched to
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_ready(false) == N::kSuccessTitle);
+  CHECK(n.on_in_game(true).empty());            // loading the host's save after Success
+  // The line the guest reads when it joins says where the save is taken.
+  CHECK(N::kJoinedPlaying.find("go back to the title") != std::string_view::npos);
+  CHECK(N::kJoinedPlaying.find("Success") != std::string_view::npos);
+  CHECK(N::kTitleAsked.find("Success") != std::string_view::npos);  // the title's own ask (review of #278)
+}
+
+TEST_CASE("save transfer: a new session with a file still loaded chooses again without the title") {
+  using save::rejoined_in_game;
+  // The last session ended during play (decide_again keeps its choice: no switch under a game being played); the
+  // player joins or hosts again from the pause menu. Before, the old choice stayed and the new session had none: a
+  // guest did not ask, and Resync from host said "not a guest in a session".
+  CHECK_FALSE(save::decide_again(true, true, true));
+  CHECK(rejoined_in_game(true, true, true, true));
+  CHECK_FALSE(rejoined_in_game(true, false, true, true));   // the same session (a reconnect is not an end)
+  CHECK_FALSE(rejoined_in_game(true, true, false, true));   // not connected to a host yet
+  CHECK_FALSE(rejoined_in_game(true, true, true, false));   // on the title: decide_again's reset decides
+  CHECK_FALSE(rejoined_in_game(false, true, true, true));   // nothing chosen yet: the first choice decides
+}
+
+TEST_CASE("save transfer: a role change in the same client ends the choice (row 273)") {
+  using save::role_changed;
+  CHECK(role_changed(true, true, false, true));         // a guest hosts now (host migration, or first back)
+  CHECK(role_changed(true, true, true, false));         // the old host came back after another game: a guest now
+  CHECK_FALSE(role_changed(true, true, false, false));  // a reconnect that keeps the role is no end
+  CHECK_FALSE(role_changed(true, true, true, true));
+  CHECK_FALSE(role_changed(true, false, false, true));  // reconnecting (no host known yet): nothing read
+  CHECK_FALSE(role_changed(false, true, false, true));  // nothing chosen yet: the first choice decides
+}
+
+TEST_CASE("save transfer: back on the own folder on the title unless a live session holds it (row 273)") {
+  using save::home_due;
+  CHECK(home_due(true, true, false, false));         // a lone host, or the session ended (Leave, solo)
+  CHECK_FALSE(home_due(true, true, false, true));    // a live guest, or a new host whose group stayed: kept
+  CHECK_FALSE(home_due(true, true, true, false));    // never under a game being played
+  CHECK_FALSE(home_due(true, false, false, false));  // the title's menu not up (a file being picked or loaded)
+  CHECK_FALSE(home_due(false, true, false, false));  // already on its own folder
+}
+
+TEST_CASE("save transfer: a new host keeps the group's save only with others staying (row 273)") {
+  using save::keeps_group_save;
+  CHECK(keeps_group_save(true, true));          // host migration, a guest stays: the group's game goes on
+  CHECK_FALSE(keeps_group_save(true, false));   // alone (a lone rejoiner): its own saves
+  CHECK_FALSE(keeps_group_save(false, true));   // not on the co-op folder: nothing to keep
+}
+
+TEST_CASE("save transfer: row 273's cases end on the folder of the role the game has") {
+  using save::FolderChoice;
+  // What CoopSave's SwitchFrame holds after its choice: a guest of the session (g_use) or a new host that kept the
+  // group's save (g_group_save).
+  const auto held = [](bool decided, bool use, bool group) { return decided && (use || group); };
+  // NS-leave-solo: a guest on the title (co-op folder), the host's game killed and the server restarted; the guest
+  // reconnects ALONE with the same client and is the first back, so it hosts (keeping its number 2). Before, a
+  // reconnect was never an end: it stayed on the co-op folder as a host until the game restarted.
+  bool over = save::role_changed(true, true, false, true);
+  CHECK(over);
+  CHECK(save::decide_again(true, over, false));
+  CHECK(save::folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);
+  bool group = save::keeps_group_save(true, false);
+  CHECK_FALSE(group);
+  CHECK(save::home_due(true, true, false, held(true, false, group)));   // own saves
+  // Host migration on the title, a guest staying: chosen again as the host, but the folder is unchanged (the group's
+  // save), also across later titles in the session.
+  over = save::role_changed(true, true, false, true);
+  CHECK(save::decide_again(true, over, false));
+  group = save::keeps_group_save(true, true);
+  CHECK(group);
+  CHECK_FALSE(save::home_due(true, true, false, held(true, false, group)));
+  // Host migration while the guest plays the host's save, a guest staying: no switch under the game, the session
+  // chooses again at once (DecideInGame), and on the next title the group's save stays.
+  over = save::role_changed(true, true, false, true);
+  CHECK_FALSE(save::decide_again(true, over, true));
+  CHECK(save::rejoined_in_game(true, over, true, true));
+  CHECK_FALSE(save::home_due(true, true, false, held(true, false, save::keeps_group_save(true, true))));
+  // The same with nobody staying: home on the next title.
+  CHECK(save::home_due(true, true, false, held(true, false, save::keeps_group_save(true, false))));
+  // The session ended (Leave, the server gone) on the co-op folder: nothing decided, home on the title (solo).
+  CHECK(save::home_due(true, true, false, held(false, false, false)));
+  // A server restart where another game came back first: the old host is a guest now, on the title it asks for
+  // the new host's save (folder_choice's coop), in the game it asks and switches on the title (coop_later).
+  over = save::role_changed(true, true, true, false);
+  CHECK(save::decide_again(true, over, false));
+  CHECK(save::folder_choice(std::nullopt, true, true, false, false) == FolderChoice::coop);
+  CHECK(save::folder_choice(std::nullopt, true, true, false, true) == FolderChoice::coop_later);
+  // A reconnect to the same server (a timeout) with the same role: the guest keeps the host's save.
+  over = save::role_changed(true, true, false, false);
+  CHECK_FALSE(save::decide_again(true, over, false));
+  CHECK_FALSE(save::home_due(true, true, false, held(true, true, false)));
 }
 
 TEST_CASE("save transfer: a co-op folder is emptied of slots before the host's save comes (issue 167)") {
   namespace fs = std::filesystem;
-  const fs::path base = fs::temp_directory_path() / "coop-clear-slots-test";
+  const fs::path base = ModTestDir("coop-clear-slots-test");
   std::error_code ec;
   fs::remove_all(base, ec);
   const fs::path coop = base / "0123-coop", own = base / "0123";
@@ -662,4 +785,395 @@ TEST_CASE("save transfer: loaded too early, the save still comes and is switched
   CHECK(n.on_in_game(in_game).empty());
   CHECK(pending_step(slot_in, title, in_game) == PendingStep::go);
   CHECK(n.on_ready(in_game) == N::kSuccessTitle);
+}
+
+// Player report 120: the host answered joins with its newest slot on disk by write time, not the slot its game
+// plays. A player who loads an older slot (or saved another one earlier) gave the guests the wrong save
+// (roxas7833's host log: "sending slot_02 ... to player 2", then its game played slot_01).
+TEST_CASE("save transfer: the slot sent is the one the host's game plays, not the newest on disk (report 120)") {
+  TempDir dir("coop_tests_save_played");
+  const fs::path game = dir.path / "5a3c";
+  WriteFile(game / "slot_01" / "progress.sav", {1});
+  WriteFile(game / "slot_02" / "progress.sav", {2});
+  const auto t = fs::last_write_time(game / "slot_01" / "progress.sav");
+  fs::last_write_time(game / "slot_02" / "progress.sav", t + std::chrono::hours(1));  // slot_02 saved last
+  REQUIRE(save::newest_slot(game) == game / "slot_02");
+
+  bool used = true;
+  CHECK(save::slot_to_send(game, std::nullopt, &used) == game / "slot_02");  // not known: the newest, as before
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_01", &used) == game / "slot_01");  // the played one
+  CHECK(used);
+  // Never a folder that is not one of this game's slots, or a slot with no progress.sav: the newest then.
+  CHECK(save::slot_to_send(game, dir.path / "other" / "slot_01", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_04", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_01.part", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+}
+
+namespace {
+// Patch 0025's export as the module sees it: a count of opens and the last one. Marks (the game thread's load
+// window) and polls (once a frame) each read it at their own moment.
+struct Opens {
+  unsigned n = 0;
+  fs::path dir;
+  bool write = false;
+  void open(const fs::path& d, bool w) {
+    ++n;
+    dir = d;
+    write = w;
+  }
+  void mark(save::PlayedSlot& p, bool start) const { p.on_load_window(start, n, dir, write); }
+  void poll(save::PlayedSlot& p, unsigned& seen) const {
+    if (n != seen && !dir.empty()) {
+      seen = n;
+      p.on_open(dir, write, n);
+    }
+  }
+};
+}  // namespace
+
+TEST_CASE("save transfer: the played slot comes only from definite signs (writes, reads in a load window)") {
+  using S = save::PlayedSlot::Source;
+  const fs::path a = "save/slot_00", b = "save/slot_01", c = "save/slot_02";
+  Opens fs_;
+  unsigned seen = 0;
+
+  SUBCASE("a runtime with load windows (patch 0024): the title's reads never count, the load's read does") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(a, false);  // the title's list may read every slot
+    fs_.poll(p, seen);
+    fs_.open(b, false);
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());
+    fs_.mark(p, true);   // Continue on slot_01
+    fs_.open(b, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());  // (only once the save is in)
+    fs_.mark(p, false);
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::load_read);
+    p.on_load_seen();       // the flag watcher's sight of the same load changes nothing
+    CHECK(p.slot() == b);
+    fs_.open(c, false);     // a read outside a load (the System menu's list): not the played slot
+    fs_.poll(p, seen);
+    CHECK(p.slot() == b);
+  }
+  SUBCASE("review: start, the read and the save in all before one poll: the read is not lost") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    fs_.mark(p, true);
+    fs_.open(b, false);
+    fs_.mark(p, false);   // (the marks are applied first at the poll, each with its own count)
+    fs_.poll(p, seen);
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::load_read);
+  }
+  SUBCASE("review: a read just before the load's start, polled after it, is not taken as the load's") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(c, false);   // the title list's last read, not polled yet
+    fs_.mark(p, true);    // the start, applied before the poll's open
+    fs_.poll(p, seen);    // count unchanged since the start: before the window
+    fs_.mark(p, false);   // a load with no read in it
+    CHECK_FALSE(p.slot());
+  }
+  SUBCASE("the game's own start (a load start with no save in) does not make the title's reads a load") {
+    save::PlayedSlot p;
+    fs_.mark(p, true);   // BeforeInitializeCommon's load start
+    p.on_title();
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    p.on_load_seen();
+    CHECK_FALSE(p.slot());
+  }
+  SUBCASE("a save into a slot is the slot played (a new game's first save, a save point, a door's autosave)") {
+    save::PlayedSlot p;
+    p.on_title();
+    CHECK_FALSE(p.new_game(false, true));
+    CHECK_FALSE(p.new_game(true, true));   // no windows on this runtime yet: never guessed
+    fs_.mark(p, true);                     // (a runtime with windows)
+    fs_.mark(p, false);                    // a load with no read in it (a temporary one): slot not known
+    CHECK_FALSE(p.slot());
+    p.on_title();
+    CHECK(p.new_game(true, true));         // New Game: in the game with no load since the title
+    CHECK_FALSE(p.new_game(true, false));  // (the title never seen this run: a load may have come before)
+    fs_.open(c, true);
+    fs_.poll(p, seen);
+    CHECK(p.slot() == c);
+    CHECK(p.source() == S::write);
+    CHECK_FALSE(p.new_game(true, true));
+  }
+  SUBCASE("System > Load, Try Again: a new load's read replaces the slot, a temporary load keeps it") {
+    save::PlayedSlot p;
+    fs_.mark(p, true);
+    fs_.open(a, false);
+    fs_.mark(p, false);
+    CHECK(p.slot() == a);
+    fs_.mark(p, true);   // System > Load of slot_02
+    fs_.open(c, false);
+    fs_.mark(p, false);
+    CHECK(p.slot() == c);
+    fs_.mark(p, true);   // Game Over's Try Again from temporary storage: no slot read
+    fs_.mark(p, false);
+    CHECK(p.slot() == c);
+  }
+  SUBCASE("no load windows (no patch 0024): the last read when the load is seen") {
+    save::PlayedSlot p;
+    fs_.open(a, false);
+    fs_.poll(p, seen);
+    fs_.open(b, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());
+    p.on_load_seen();
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::last_read);
+  }
+  SUBCASE("the title's menu forgets the slot (a new pick follows)") {
+    save::PlayedSlot p;
+    fs_.open(a, true);
+    fs_.poll(p, seen);
+    CHECK(p.slot() == a);
+    p.on_title();
+    CHECK_FALSE(p.slot());
+    p.on_load_seen();  // no read since the title: still not known (never the read from before it)
+    CHECK_FALSE(p.slot());
+  }
+}
+
+TEST_CASE("save transfer: a host load of a known slot goes to every guest at once, not after the next save") {
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  save::Planner p;
+  p.on_host_load(t0 + std::chrono::seconds(30), true);
+  CHECK_FALSE(p.waiting());
+  CHECK(p.due(t0) == std::vector<Send>{{0, proto::SaveReason::host_load}});  // the slot on disk is the one loaded
+  CHECK(p.idle());
+  // Not known: waits for the next save, as before.
+  p.on_host_load(t0 + std::chrono::seconds(30), false);
+  CHECK(p.waiting());
+  CHECK(p.due(t0).empty());
+}
+
+TEST_CASE("save transfer: a guest back on the title after playing asks for the host's save again, only then") {
+  const save::TitleResync go{.title_came = true, .connected_guest = true, .played_in_session = true, .on = true,
+                             .can_switch = true, .plays_hosts_save = true, .ask_waiting = false};
+  CHECK(save::title_resync_due(go));
+  auto t = go;
+  t.title_came = false;  // not a return to the title
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.connected_guest = false;  // the host, a game alone, or a session that just ended
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.played_in_session = false;  // nothing played since joining (asked on joining)
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.on = false;  // LICHII_COOP_TITLE_RESYNC=0
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.can_switch = false;  // the emulator's fixed folder: no line at every title
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.plays_hosts_save = false;  // LICHII_COOP_TEST_OWN_SAVE=1, or a failed folder switch: keeps its own saves
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.ask_waiting = true;  // joined with a file loaded (its ask waits for the title), or a save on its way
+  CHECK_FALSE(save::title_resync_due(t));
+}
+
+TEST_CASE("save transfer: Resync from host goes only for a guest that can switch, and not twice at once") {
+  using save::ResyncCheck;
+  CHECK(save::resync_check(true, true, false) == ResyncCheck::go);
+  CHECK(save::resync_check(false, true, false) == ResyncCheck::not_guest);  // the host, solo, not connected
+  CHECK(save::resync_check(true, false, false) == ResyncCheck::no_switch);  // the emulator's fixed folder
+  CHECK(save::resync_check(true, true, true) == ResyncCheck::coming);       // a transfer on its way
+  // After a go, the guest's session starts again as on joining: it asks at once and the save waits for the title.
+  save::GuestSession g;
+  CHECK_FALSE(g.asked);
+  CHECK(save::pending_step(true, false, true) == save::PendingStep::keep);  // playing: never switched under the game
+  CHECK(save::pending_step(true, true, false) == save::PendingStep::go);     // the title's menu: switched
+}
+
+TEST_CASE("save transfer: the first multiplayer saves are a whole copy, never a half folder") {
+  TempDir t("coop_copy_dir_whole_test");
+  const fs::path solo = t.path / "account";
+  const fs::path mp = t.path / "account-mp";
+  fs::create_directories(solo / "slot_00");
+  { std::ofstream(solo / "slot_00" / "progress.sav", std::ios::binary) << "save"; }
+  { std::ofstream(solo / "option.sav", std::ios::binary) << "opt"; }
+  // A half copy an earlier try left behind is thrown away, not used.
+  fs::create_directories(t.path / "account-mp.part" / "junk");
+  std::string why;
+  REQUIRE(save::copy_dir_whole(solo, mp, &why));
+  CHECK(fs::exists(mp / "slot_00" / "progress.sav"));
+  CHECK(fs::exists(mp / "option.sav"));
+  CHECK_FALSE(fs::exists(mp / "junk"));
+  CHECK_FALSE(fs::exists(t.path / "account-mp.part"));
+  CHECK(fs::exists(solo / "slot_00" / "progress.sav"));  // the solo saves are only read
+  // Once there it is never made again (nothing touched).
+  { std::ofstream(mp / "option.sav", std::ios::binary) << "played"; }
+  CHECK_FALSE(save::copy_dir_whole(solo, mp, &why));
+  std::ifstream kept(mp / "option.sav", std::ios::binary);
+  CHECK(std::string(std::istreambuf_iterator<char>(kept), {}) == "played");
+}
+
+TEST_CASE("save transfer: a copy with nothing to copy from leaves no folder") {
+  TempDir t("coop_copy_dir_whole_missing_test");
+  std::string why;
+  CHECK_FALSE(save::copy_dir_whole(t.path / "none", t.path / "none-mp", &why));
+  CHECK_FALSE(why.empty());
+  CHECK_FALSE(fs::exists(t.path / "none-mp"));
+  CHECK_FALSE(fs::exists(t.path / "none-mp.part"));
+}
+
+TEST_CASE("save transfer: an ask while the host plays a file waits for the save its game is asked for (case 1)") {
+  using Send = save::Planner::Send;
+  constexpr std::uint64_t kLimit = save::Planner::kFreshSaveUs;
+  static_assert(kLimit < save::kGuestReaskUs);   // the guest does not ask again while the host waits
+  const auto t0 = fs::file_time_type::clock::now();
+  const auto ask = t0 + std::chrono::seconds(60);   // the host's last door was a minute before the ask
+  const auto saved = ask + std::chrono::seconds(1);
+
+  SUBCASE("asked and saved in time: the guest gets the save written after the ask") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.round_open());
+    CHECK(p.take_save_request());
+    CHECK_FALSE(p.take_save_request());   // once a round
+    CHECK(p.due(t0, 2'000).empty());       // only the older save on disk: it waits
+    CHECK(p.due(saved, 3'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true}});
+    CHECK_FALSE(p.round_open());
+    CHECK(p.idle());
+  }
+  SUBCASE("asked and the game refused (a cutscene, a boss room, its cooldown): the last save after the limit") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.take_save_request());
+    CHECK(p.due(t0, 1'000 + kLimit - 1).empty());
+    CHECK(p.due(t0, 1'000 + kLimit) == std::vector<Send>{{2, proto::SaveReason::join, false, false}});
+    CHECK(p.idle());
+    CHECK_FALSE(p.take_save_request());
+  }
+  SUBCASE("asked on the title or in a new game never saved: at once, as before (no round, no request)") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000));   // (the hook gives no fresh_after there)
+    CHECK_FALSE(p.round_open());
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(t0, 1'000) == std::vector<Send>{{2, proto::SaveReason::join}});
+    // a new game never saved: the hook passes no newest write, so "no save yet" (player report 120), round or not
+    CHECK(p.on_ask(3, 2'000, ask));
+    CHECK(p.due(std::nullopt, 2'000) == std::vector<Send>{{3, proto::SaveReason::join, true}});
+    CHECK_FALSE(p.round_open());
+  }
+  SUBCASE("two guests asking close together: one request, two sends of the same save") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.take_save_request());
+    CHECK(p.on_ask(3, 500'000, ask + std::chrono::milliseconds(500)));   // joins the open round
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(saved, 600'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true},
+                                                     {3, proto::SaveReason::join, false, true}});
+    // a later ask opens a new round of its own
+    CHECK(p.on_ask(4, 20'000'000, saved + std::chrono::seconds(20)));
+    CHECK(p.take_save_request());
+  }
+  SUBCASE("the host alone: no ask, no round, no request") {
+    save::Planner p;
+    CHECK(p.idle());
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(saved, 1'000).empty());
+  }
+  SUBCASE("the asker left during the round: the round ends with it") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    p.forget(2);
+    CHECK_FALSE(p.round_open());
+    CHECK(p.due(saved, 2'000).empty());
+  }
+  SUBCASE("a fresh send that could not go out stays fresh at its retry") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    const auto sends = p.due(saved, 2'000);
+    REQUIRE(sends.size() == 1);
+    p.retry(sends.front());
+    CHECK(p.due(saved, 3'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true}});
+  }
+  SUBCASE("the host loads a save during the round: the save after the load goes to everyone") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    p.on_host_load(ask);
+    CHECK(p.due(saved, 2'000) == std::vector<Send>{{0, proto::SaveReason::host_load}});
+    CHECK_FALSE(p.round_open());
+    CHECK(p.idle());
+  }
+}
+
+TEST_CASE("save transfer: a rejoin with the game on an earlier host's save goes back to its own folder on the title") {
+  // (AskAtTitle while the co-op folder holds the OLDER host's save: never offered by the title)
+  CHECK(save::old_coop_first(true, true, false, true));
+  CHECK_FALSE(save::old_coop_first(true, false, true, true));   // a file played: nothing under it
+  CHECK_FALSE(save::old_coop_first(true, true, false, false));  // on its own folder already (a first join)
+  CHECK_FALSE(save::old_coop_first(false, true, false, true));  // nothing asked (solo, the host)
+  CHECK_FALSE(save::old_coop_first(true, false, false, true));  // a pick loading (suspended): after it
+}
+
+TEST_CASE("save transfer: a new host's save for the co-op folder already mounted leaves it first (Longshot 3.1)") {
+  // rejoin-host-273-2: Longshot 3.1 stages the mounted folder in a work copy; a remount of the same folder copies
+  // nothing again. So with the new save in, a guest on the co-op folder still goes to its own folder first, and the
+  // switch back to the co-op folder copies the save just written (the host loaded a save, Resync during play).
+  CHECK(save::old_coop_first(true, true, false, true));
+  // ... and still never under a file played, nor during a pick's load: on the title's menu after it
+  CHECK_FALSE(save::old_coop_first(true, false, true, true));
+  CHECK_FALSE(save::old_coop_first(true, false, false, true));
+}
+
+TEST_CASE("save transfer: a failed write or switch ends the ask, so Resync is not 'already on its way' for good") {
+  constexpr std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  CHECK(save::save_coming(g, 5 * s, 10 * s));   // asked, nothing yet: coming
+  g.unwritten = Slot(5);
+  CHECK(save::save_coming(g, 5 * s, 10 * s));   // waiting for the title
+  save::note_write_failed(g);                   // the write or the switch failed
+  CHECK_FALSE(g.unwritten.has_value());
+  CHECK_FALSE(g.ready);
+  CHECK_FALSE(save::save_coming(g, 6 * s, 10 * s));
+  CHECK(save::resync_check(true, true, save::save_coming(g, 6 * s, 10 * s)) == save::ResyncCheck::go);
+  // a fresh session (Resync's go) asks again
+  g = save::GuestSession{};
+  CHECK_FALSE(g.asked);
+}
+
+TEST_CASE("save transfer: every state that ends the ask also ends 'coming'") {
+  constexpr std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  g.no_save = true;   // the host has no save: nothing coming
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  g = save::GuestSession{};
+  g.asked = true;
+  g.gave_up = true;   // gave up after the asks
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  g = save::GuestSession{};
+  g.asked = true;
+  save::note_write_failed(g);   // unreadable slot / failed write / failed switch
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  save::note_part(g, 7, 6 * s);   // a new transfer clears gave_up again
+  CHECK_FALSE(g.gave_up);
+}
+
+TEST_CASE("save transfer: the slot last played is kept through the title (the host asked there sends it)") {
+  save::PlayedSlot p;
+  const fs::path a = "save/slot_00";
+  p.on_open(a, true, 1);   // the game saved into slot_00
+  p.on_title();
+  CHECK_FALSE(p.slot());
+  CHECK(p.last() == a);
 }

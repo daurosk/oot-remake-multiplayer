@@ -1,0 +1,4 @@
+# hs-gerudo phase 4 (A): waits while B's rescue of cell 2 arrives.
+mark a-wait3
+wait 600
+mark a-wait3-done

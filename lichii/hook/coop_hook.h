@@ -47,6 +47,16 @@ void End();
 // others get this player's slot colour. Any thread; works with co-op off.
 void SetColor(std::optional<std::uint32_t> color);
 
+// The hosting game changed its session's join password: its own client proves
+// the new one when it reconnects to its server. Any thread; nothing with co-op
+// off.
+void SetJoinPassword(const std::string& password);
+
+// The game is held now (the play-test bridge's hold, hookshot/src/coop_playtest.h): no frame runs, so the network
+// thread sends our last sample again each keep-alive time (coop::host::Session::set_held), and the others keep a
+// still puppet of us instead of fading us out. Any thread, lock-free; nothing with co-op off.
+void SetHeld(bool held);
+
 // What the co-op window shows: one line of text each. Empty when co-op is
 // off. Any thread.
 struct OverlayLine {

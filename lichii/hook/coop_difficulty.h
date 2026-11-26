@@ -10,6 +10,7 @@
 // (coop_difficulty_game.cpp).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -64,6 +65,11 @@ bool Set(const Choice& choice);
 // Any thread: the values in force now (the game as it is while not in a
 // session or before the server said them).
 Values Now();
+// The values in one word, for Now() on any thread: all five percents (boss
+// life and boss damage too), 12 bits each (kMaxBossHpPct 1600 is the most;
+// a bigger one is kept at 4095).
+std::uint64_t PackValues(const Values& v) noexcept;
+Values UnpackValues(std::uint64_t word) noexcept;
 
 // The menu's rows. A preset or a moved slider turns the automatic scaler
 // off: what the host sets stays, whoever joins or leaves.
@@ -84,6 +90,22 @@ std::string Describe(const Choice& choice, const Values& values, std::size_t pla
 std::string FormatChoice(const Choice& choice);
 std::optional<Choice> ParseChoice(std::string_view text);
 
+// /difficulty in the chat (docs/play-online.md "Difficulty"): alone, the values
+// in force; the host's /difficulty auto|easy|normal|hard, or /difficulty custom
+// <life> <damage> <enemies> (percent, steps of 25 within the sliders' ends).
+// Nothing when the text is not /difficulty ("/difficultyx" is chat).
+struct Command {
+    enum class Kind : std::uint8_t { show, change, bad };
+    Kind kind = Kind::show;
+    bool auto_scale = false;            // change: the automatic scaler on
+    Preset preset = Preset::normal;     // change, not automatic
+    Values custom;                      // change, Preset::custom
+};
+std::optional<Command> ParseCommand(std::string_view text);
+// The host's choice after the command `change` on `now` (a preset keeps the
+// custom values; the automatic scaler keeps the preset for when it goes off).
+Choice Applied(const Choice& now, const Command& change);
+
 // ---------------------------------------------------------------------------
 // The rules the game's side applies
 // ---------------------------------------------------------------------------
@@ -99,6 +121,16 @@ std::optional<Choice> ParseChoice(std::string_view text);
 // the enemy's next hit, so small hits add up to what one big one takes. A
 // heal (0 or less) is passed on as it is.
 std::int32_t EnemyTakes(std::int32_t sum, std::uint16_t hp_pct, std::int32_t& carry);
+// The carry an enemy's first scaled hit starts from, per point of that hit:
+// half the hit (EnemyTakes keeps it below one life point), so with hits of
+// one size its hits to kill are life * hp_pct / 100 / hit rounded to the
+// nearest (a half rounds down) instead of always up, and never fewer than at
+// 100%. From 0 a one-life enemy at 125% or 140% took two sword hits, as at
+// 200% (player report 2026-11-24: 'at 125% mobs took way more hits'): an
+// enemy is hit only a few times, so its first hit's round-up was most of
+// what it gained. Our Link's carry lasts across all his hits, so LinkTakes
+// starts from 0: what he takes adds up to damage_pct.
+inline constexpr std::int32_t kEnemyFirstCarry = 50;
 // Enemy damage: our Link takes damage_pct / 100 of what an enemy dealt him
 // (quarter hearts), the parts of a quarter carried in `carry` (hundredths,
 // below 100) to his next hit from an enemy.
@@ -108,6 +140,14 @@ std::int32_t LinkTakes(std::int32_t sum, std::uint16_t damage_pct, std::int32_t&
 // 200%: twice the life and twice the damage), at most 65535. Never less than
 // `pct`: a count of 100% or less leaves it as it is.
 std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct);
+// The count an enemy folds by. `fold_key` 0: a Treatment::fold enemy (it never
+// gets copies by design): count_pct. Otherwise the placement hash of an enemy
+// whose copies found no ground (no_spot): the copies it would have had,
+// 100 * (1 + ExtraCount(fold_key, count_pct)), so each such enemy is exactly
+// as strong as it and its extras together (player report 111 review: x1.5
+// for every no-spot enemy at 150% left those that would get 1 extra at x1.5
+// instead of x2, and those with none at x1.5 instead of x1).
+std::uint16_t FoldCount(std::uint64_t fold_key, std::uint16_t count_pct);
 
 // What the object walk found, for the Life step on the game's threads.
 enum class Kind : std::uint8_t {
@@ -115,8 +155,9 @@ enum class Kind : std::uint8_t {
     enemy_life = 1,     // an enemy's (or a boss's) Life component
     enemy = 2,          // an enemy actor, or an enemy's shot: an attacker whose hits on Link are scaled
     our_link_life = 3,  // our own Link's Life component
-    // An enemy that gets no extra copies but their weight instead (Treatment::fold):
-    // its life and its hits on Link are scaled by Folded(pct, count_pct).
+    // An enemy that gets no extra copies but their weight instead (Treatment::fold,
+    // or no ground for them: no_spot): its life and its hits on Link are scaled
+    // by Folded(pct, FoldCount(its slot's fold_key, count_pct)).
     folded_enemy_life = 4,
     folded_enemy = 5,
     // A boss or a mini-boss (ScalesAsBoss): its life at boss_hp_pct, its hits
@@ -133,10 +174,17 @@ inline constexpr std::uint64_t kHitAttacker = 0x240;
 
 // Addresses and their Kind, with each Life component's carry. One writer
 // (the object walk, present thread: Mark and Clear), any number of readers
-// (the game's threads: Step and Pass); no lock. A full table marks nothing
-// more (its hits then go through unscaled, counted in Unmarked) until Clear
-// (a new scene). An address that holds another actor now is marked again
-// (Kind::none when it is no enemy).
+// (the game's threads: Step and Pass); no lock. An address that holds another
+// actor now is marked again (Kind::none when it is no enemy).
+//
+// Row 270: a slot is its address's only while the walk keeps marking it. The
+// walk ends with Sweep, and an address no walk marked for kKeepWalks walks
+// (its actor deleted: a night's Stalchildren, a boss's shots) gives its slot
+// back for the next new address. Before, a slot was an address's until Clear
+// (a new scene), so a long stay in one scene with enemies coming and going
+// filled the table and every later enemy went unscaled. A table full of live
+// addresses still marks nothing more (those hits go through unscaled,
+// counted in Unmarked).
 class Kinds {
 public:
     static constexpr std::size_t kSlots = 1024;
@@ -148,14 +196,22 @@ public:
     // kPassMs go through unscaled.
     static constexpr std::uint64_t kPassMs = 1000;
 
-    // False when the table has no room for it.
-    bool Mark(std::uint64_t address, Kind kind) noexcept;
+    // False when the table has no room for it. `fold_key`: for the folded
+    // kinds, FoldCount's key (0: the whole count).
+    bool Mark(std::uint64_t address, Kind kind, std::uint64_t fold_key = 0) noexcept;
     // `address` holds no enemy (actor or Life component) now: marked none if
     // it was marked an enemy one (a reused address), else nothing.
     void Forget(std::uint64_t address) noexcept;
     void Pass(std::uint64_t component, std::int32_t amount, std::uint64_t now_ms) noexcept;
     Kind Of(std::uint64_t address) const noexcept;
     void Clear() noexcept;
+    // The end of one whole walk (the writer's thread): frees the slots of the
+    // addresses no walk marked for kKeepWalks walks, and closes the walk's
+    // count of refused marks (Unmarked).
+    void Sweep() noexcept;
+    // An address no walk marked for this many walks is gone: a few seconds
+    // of walks, so a walk that misses one read frees nothing.
+    static constexpr std::uint64_t kKeepWalks = 120;
 
     // One Life step of `component` with `sum` (the frame's damage): what the
     // game takes at `values`. `attacker()` reads the hit's attacker actor;
@@ -172,19 +228,32 @@ public:
         }
         const Kind kind = static_cast<Kind>(s->kind.load(std::memory_order_acquire));
         if (kind == Kind::enemy_life || kind == Kind::folded_enemy_life || kind == Kind::boss_life) {
-            const std::uint16_t pct = kind == Kind::enemy_life  ? values.hp_pct
-                                      : kind == Kind::boss_life ? values.boss_hp_pct
-                                                                : Folded(values.hp_pct, values.count_pct);
+            const std::uint16_t pct =
+                kind == Kind::enemy_life  ? values.hp_pct
+                : kind == Kind::boss_life ? values.boss_hp_pct
+                                          : Folded(values.hp_pct,
+                                                   FoldCount(s->fold_key.load(std::memory_order_acquire), values.count_pct));
             const std::int32_t passed = Passed(*s, sum, now_ms);
-            return passed == sum ? sum : passed + Scaled(*s, sum - passed, pct, &EnemyTakes, enemy_hits_);
+            const std::int32_t took =
+                passed == sum ? sum : passed + Scaled(*s, sum - passed, pct, &EnemyTakes, kEnemyFirstCarry, enemy_hits_);
+            if (kind == Kind::boss_life) {
+                // (traced apart: does a boss's damage reach this step, and what of it is taken)
+                boss_steps_.fetch_add(1, std::memory_order_relaxed);
+                boss_in_.fetch_add(static_cast<std::uint64_t>(sum), std::memory_order_relaxed);
+                boss_took_.fetch_add(static_cast<std::uint64_t>(std::max(took, 0)), std::memory_order_relaxed);
+            }
+            return took;
         }
         if (kind == Kind::our_link_life) {
-            const Kind by = Of(attacker());
+            const Slot* a = Find(attacker());
+            const Kind by = a == nullptr ? Kind::none : static_cast<Kind>(a->kind.load(std::memory_order_acquire));
             if (by == Kind::enemy || by == Kind::folded_enemy || by == Kind::boss) {
-                const std::uint16_t pct = by == Kind::enemy  ? values.damage_pct
-                                          : by == Kind::boss ? values.boss_damage_pct
-                                                             : Folded(values.damage_pct, values.count_pct);
-                return Scaled(*s, sum, pct, &LinkTakes, link_hits_);  // (100: unchanged)
+                const std::uint16_t pct =
+                    by == Kind::enemy  ? values.damage_pct
+                    : by == Kind::boss ? values.boss_damage_pct
+                                       : Folded(values.damage_pct,
+                                                FoldCount(a->fold_key.load(std::memory_order_acquire), values.count_pct));
+                return Scaled(*s, sum, pct, &LinkTakes, 0, link_hits_);  // (100: unchanged)
             }
         }
         return sum;
@@ -192,13 +261,21 @@ public:
     // How many hits Step changed: on enemies, on our Link (for the log).
     std::uint64_t EnemyHits() const noexcept { return enemy_hits_.load(std::memory_order_relaxed); }
     std::uint64_t LinkHits() const noexcept { return link_hits_.load(std::memory_order_relaxed); }
-    // Marks the full table refused since the last Clear.
-    std::uint64_t Unmarked() const noexcept { return unmarked_.load(std::memory_order_relaxed); }
+    // A boss's Life steps with damage (Kind::boss_life), the damage that came in and what the game took.
+    std::uint64_t BossSteps() const noexcept { return boss_steps_.load(std::memory_order_relaxed); }
+    std::uint64_t BossDamageIn() const noexcept { return boss_in_.load(std::memory_order_relaxed); }
+    std::uint64_t BossDamageTaken() const noexcept { return boss_took_.load(std::memory_order_relaxed); }
+    // Marks the full table refused in the last whole walk (Sweep): that many
+    // actors or Life components are unscaled now.
+    std::uint64_t Unmarked() const noexcept { return unmarked_last_.load(std::memory_order_relaxed); }
+    // Slots that hold an address now, as of the last Sweep.
+    std::uint64_t Held() const noexcept { return held_.load(std::memory_order_relaxed); }
 
 private:
     struct Slot {
         std::atomic<std::uint64_t> key{0};
         std::atomic<std::uint8_t> kind{0};
+        std::atomic<std::uint64_t> fold_key{0};  // FoldCount's key (folded kinds)
         // The carry and the percent it was made at (pct << 16 | carry): a
         // carry from other values is dropped.
         std::atomic<std::uint32_t> carry{0};
@@ -207,16 +284,29 @@ private:
         std::atomic<std::uint64_t> pass_until{0};
     };
     using Rule = std::int32_t (*)(std::int32_t, std::uint16_t, std::int32_t&);
-    static std::int32_t Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
+    // `first`: the carry a hit starts from, per point of it, when the slot has none at `pct`.
+    static std::int32_t Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule, std::int32_t first,
                                std::atomic<std::uint64_t>& hits) noexcept;
     static std::int32_t Passed(Slot& s, std::int32_t sum, std::uint64_t now_ms) noexcept;
     static std::size_t Hash(std::uint64_t address) noexcept;
     Slot* Find(std::uint64_t address) noexcept;
     const Slot* Find(std::uint64_t address) const noexcept;
 
+    // A freed slot's key: no address, and not the end of a probe run (a
+    // reader goes on past it; the writer puts the next new address there).
+    static constexpr std::uint64_t kFreed = 1;
+
     std::array<Slot, kSlots> slots_{};
+    // The writer's own: the walk that last marked each slot, and the walk now.
+    std::array<std::uint64_t, kSlots> marked_{};
+    std::uint64_t walk_ = 1;
+    std::atomic<std::uint64_t> unmarked_last_{0};
+    std::atomic<std::uint64_t> held_{0};
     std::atomic<std::uint64_t> enemy_hits_{0};
     std::atomic<std::uint64_t> link_hits_{0};
+    std::atomic<std::uint64_t> boss_steps_{0};
+    std::atomic<std::uint64_t> boss_in_{0};
+    std::atomic<std::uint64_t> boss_took_{0};
     std::atomic<std::uint64_t> unmarked_{0};
 };
 Kinds& TheKinds();
@@ -364,7 +454,7 @@ public:
     // Where they stand and which get none comes from the original's area's
     // placement data (PlanArea), decided once per area and visit, at the
     // count then: a higher count later in the visit adds none (its next visit
-    // has them). An original the data does not have gets none (NoSpot).
+    // has them). An original the data does not have (a mod's added placement) gets none and no fold.
     std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
                      bool boss_here, std::uint64_t now_ms);
     // The placed enemy with `hash` gets no copies for want of ground: its life and hits are folded instead.
@@ -513,5 +603,8 @@ void Frame(coop::host::Session* session);
 
 // The chat notices since the last call (for the chat box).
 std::vector<std::string> TakeLines();
+// The chat's /difficulty (ParseCommand): true when the text was one, answered
+// in the chat (TakeLines); the host's change goes out as Set does.
+bool OnChat(std::string_view text, coop::host::Session& session);
 
 } // namespace CoopDifficulty

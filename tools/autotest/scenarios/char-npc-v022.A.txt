@@ -1,0 +1,16 @@
+# char-npc-v022 (snail-pr312, Character Select v0.2.2): A picks an NPC character (Int CharacterMenu_SelectedCharacter 7), then Link again.
+# The lane kit has Character Select v0.2.2 installed by the kit's own install (full part, or ui part: no NPC model files).
+# Full part: B's log shows "look: P1 ... character 7" and CoopPuppet_Adult_C007 spawned; ui part: the pick falls back (Link / colour puppet), the world draws, no crash.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario char-npc-v022
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1500
+mark arrived
+setflag CharacterMenu_SelectedCharacter 7
+wait 600
+mark picked-7
+wait 300
+mark picked-7-later
+setflag CharacterMenu_SelectedCharacter 0
+wait 600
+mark back-to-link

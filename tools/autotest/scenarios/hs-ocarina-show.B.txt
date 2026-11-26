@@ -1,0 +1,20 @@
+# hs-ocarina-show, B (#86): B frames A's puppet while A plays. Before this file B had no script and stood
+# on the start spot: A's step left A's puppet straight in front of B, behind B's own Link (big-run-0115
+# hs-ocarina-show-A-playing2-B.png: two Navis, no puppet in view). B now steps back about 2.8 m down the
+# path (-x; A plays at -34.03 98.05 8.44) and faces a point 1.2 m beside A, so the camera behind B shows
+# A's puppet clear of B's Link. Marks at about A's out / playing2 / playing3.
+mark start
+wait 240
+place -38.5 98.05 8.47
+wait 60
+toward -34.03 9.6 10
+press ZL 10             # camera behind B
+mark b-placed
+wait 380
+mark b-out
+wait 250
+mark b-playing2
+wait 260
+mark b-playing3
+wait 300
+mark b-end

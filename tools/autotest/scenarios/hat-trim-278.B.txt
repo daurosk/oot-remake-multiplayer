@@ -1,0 +1,32 @@
+# hat-trim-278 B: child, then adult in Kakariko as A (the same scene, so A's puppet is live), backs off, faces A and
+# watches. Its shots are the partner view (hat-trim-278.A.txt says what to look at).
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the warp lands
+mark after
+wait 200
+stick 0 -0.6 30         # walk back toward the camera
+stick 0 0.3 8           # turn to face up the path
+press ZL                # camera behind B
+wait 60
+mark ready
+wait 400
+mark b-child-kokiri     # after A's child-kokiri
+wait 300
+setflag Sequence_IsChildhood 0  # set AFTER the save is loaded (run.ps1 loads it first): at the title the load put the save's age back
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1500
+stick 0 -0.6 30
+stick 0 0.3 8
+press ZL
+wait 120
+mark b-adult-kokiri
+wait 600
+mark b-adult-goron      # after A's adult-goron
+wait 330
+mark b-adult-zora       # after A's adult-zora
+wait 330
+mark b-adult-kokiri-again
+wait 200
+mark end

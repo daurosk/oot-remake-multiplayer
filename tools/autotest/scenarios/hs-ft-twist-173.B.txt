@@ -1,0 +1,35 @@
+# hs-ft-twist-173 B (tracker row 173, forest-173-0118 b6bc3f6a): turning the Forest Temple's twisted corridor with a
+# player inside broke it: the twist events Dm_ForestTemple_0005/_0007 were shared, so the friend's game ran its own
+# EventTriggerRelocateTwistCorridor round ITS Link and toggled the corridor once more, under him. Now the twist events
+# are kRoomStory (each game's own room turn, never sent or joined); the corridor flag comes by the held flags at the
+# next load.
+# Banc ForestTemple_Static: Obj_ForestTemple_TwistRelief_A_01 (the eye to shoot) -56.5 131.5 -10.1 (room 9),
+# Obj_ForestTemple_TwistedCorridor_A_01 -56.5 126.0 -50.3 (room 10). A stands in room 9 south of the relief (+z),
+# faces it (-z) and shoots arrows up at it (3 tries, rising aim as hs-ft-puzzles); B stands INSIDE corridor A_01.
+# AIM NOT CHECKED IN A GAME: no floor data offline (floor taken as y 126 like the corridor's). If a-place shows Link
+# in a wall or falling, change A's place; if no Dm_ForestTemple_000[57] in A's log the run is VOID (aim), not a FAIL.
+# SAVE: an adult Forest Temple save with the bow (hs-ft-puzzles' lane save). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ft-twist-173
+# PASS (logs + shots):
+#  1. A: the twist event plays (A's log names Dm_ForestTemple_0005 or _0007; a-after: A's corridor turned).
+#  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
+#     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
+#  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+setflag Sequence_IsChildhood 0
+warp ForestTemple
+wait 1200
+mark arrived
+place -56.5 126.5 -30.0  # inside twisted corridor A_01 (centre -50.3), 20 m in
+wait 600
+mark b-before
+wait 1500                # A shoots the relief meanwhile
+mark b-after
+wait 600
+mark b-end
+warp ForestTemple       # out and back in by a reload (run 082048: a place in the same scene loads nothing new)
+wait 1800
+place -56.5 126.5 -30.0  # back in: the corridor as the shared flag says (turned like A's)
+wait 600
+mark b-back

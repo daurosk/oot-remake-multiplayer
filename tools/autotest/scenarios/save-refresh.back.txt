@@ -1,0 +1,3 @@
+# save-refresh: B: the load list closed, the title again.
+press B
+wait 180

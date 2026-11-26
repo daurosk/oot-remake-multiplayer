@@ -67,3 +67,31 @@ TEST_CASE("camera: turning it off forgets the camera") {
   CHECK_FALSE(CoopCamera::Wanted());
   CHECK_FALSE(CoopCamera::Latest());
 }
+
+TEST_CASE("camera: the play-test bridge keeps it wanted when the hook lets go") {
+  // `move` steers by the camera solo or before a session, when the hook (name tags) wants none.
+  CoopCamera::SetToolWanted(true);
+  CHECK(CoopCamera::Wanted());
+  const auto m = filled(4.0f);
+  CoopCamera::Publish(40, m.data(), 1280, 720, false);
+  CoopCamera::Publish(41, m.data(), 1280, 720, false);
+  REQUIRE(CoopCamera::Latest());
+
+  CoopCamera::SetWanted(true);
+  CoopCamera::SetWanted(false);  // the hook's frame at a title or a load: the bridge still wants it
+  CHECK(CoopCamera::Wanted());
+  CHECK(CoopCamera::Latest());
+
+  CoopCamera::SetToolWanted(false);  // neither wants it now: forgotten
+  CHECK_FALSE(CoopCamera::Wanted());
+  CHECK_FALSE(CoopCamera::Latest());
+
+  CoopCamera::SetWanted(true);  // and the other way round
+  CoopCamera::SetToolWanted(true);
+  CoopCamera::Publish(50, m.data(), 1280, 720, false);
+  CoopCamera::Publish(51, m.data(), 1280, 720, false);
+  CoopCamera::SetToolWanted(false);
+  CHECK(CoopCamera::Latest());
+  CoopCamera::SetWanted(false);
+  CHECK_FALSE(CoopCamera::Latest());
+}

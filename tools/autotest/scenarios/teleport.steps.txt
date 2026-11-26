@@ -6,8 +6,8 @@
 # Read in A's log: "coop: teleport:" and "coop: test chat"; B's log: "is coming to you".
 start A B
 load A B
-expect loaded A=1 B=1
+expect loaded A=1 B=1  see=teleport-loaded-A  see=teleport-loaded-B
 play A teleport-same.A.txt B teleport-same.B.txt
-expect same-scene A=1 B=1
+expect same-scene A=1 B=1  see=teleport-same-scene-A  see=teleport-same-scene-B
 play A teleport-other.A.txt
-expect together A=1 B=1
+expect together A=1 B=1  see=teleport-together-A  see=teleport-together-B

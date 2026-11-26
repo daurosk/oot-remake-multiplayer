@@ -2,9 +2,11 @@
 
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -168,7 +170,7 @@ std::uint32_t bits(std::int32_t v) { return static_cast<std::uint32_t>(v); }
 
 TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
   const auto items = item_flags();
-  CHECK(items.size() == 317);  // IsGet.Item_Bottle for the randomizer, 14 dungeons' EnteredFloorBit (issue 146)
+  CHECK(items.size() == 318);  // IsGet.Item_Bottle and IsGet.Item_Bottle_Letter (issue 58), 14 dungeons' EnteredFloorBit (issue 146)
   std::uint32_t last = 0;
   for (const auto& item : items) {
     CAPTURE(item.name);
@@ -232,12 +234,12 @@ TEST_CASE("game items: the shared list") {
   CHECK_FALSE(shared.contains(FlagKey{kBottleAItem, 0}));
   CHECK(shared.contains(FlagKey{kForestKeys, 0}));  // counts travel as deltas
   CHECK(shared.contains(FlagKey{kMaxLife, 0}));
-  CHECK(shared.size() == 317 - 15);  // 15 per player (the Deku Shield and the FairyBless items are shared)
+  CHECK(shared.size() == 318 - 15);  // 15 per player (the Deku Shield and the FairyBless items are shared)
   const auto all = item_shared_flags(true);
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
   CHECK_FALSE(all.contains(FlagKey{kRupees, 0}));
-  CHECK(all.size() == 317 - 15);  // the Deku Shield is shared again (issue 130)
+  CHECK(all.size() == 318 - 15);  // the Deku Shield is shared again (issue 130)
 }
 
 TEST_CASE("game items: merge rules") {
@@ -394,8 +396,9 @@ TEST_CASE("game items: the store adds count deltas") {
   // A total is written as it came: the host's value is the truth.
   CHECK(store.write(i(kForestKeys, 4)));
   CHECK(keys(w) == 4);
-  // A delta on anything but a count, or a count the game lacks, is refused.
-  CHECK_FALSE(store.write(delta(kHookshot, 1)));
+  // A delta on anything but a count, or a count the game lacks, is refused; a max-rule int (the Hookshot's stock)
+  // takes a gain only (row 218, heart containers), never a lowering.
+  CHECK_FALSE(store.write(delta(kHookshot, -1)));
   CHECK_FALSE(store.write(delta(kWorldInt, 1)));
   CHECK_FALSE(store.write(delta(kGoldTokens, 1)));  // not in this fake game
   CHECK(store.stats().refused == 3);
@@ -545,7 +548,7 @@ TEST_CASE("game items: the host adds deltas its client hands over") {
   CHECK(keys(pw) == 2);
 }
 
-TEST_CASE("game items: a late joiner gets the host's items and keeps its own") {
+TEST_CASE("game items: a late joiner gets the host's items, not its own (the host's save decides, #96)") {
   // The host has played on: the Hookshot, 3 Forest Temple keys, a heart
   // container. The joiner comes in with only a bottle the host lacks. The
   // server hands the joiner the host's table as FLAG_SNAPSHOT; here the
@@ -581,23 +584,19 @@ TEST_CASE("game items: a late joiner gets the host's items and keeps its own") {
     CHECK(jf.get_int(kHookshot) == 1);
     CHECK(jf.get_bool(kHookshotGet) == true);
     CHECK(jf.get_int(kForestKeys) == 3);   // the host's total
-    CHECK(jf.get_int(kMaxLife) == 16);     // max
-    CHECK(jf.get_int(kBottleA) == 1);      // its own bottle stays
-    CHECK(jf.get_bool(kBottleAValid) == true);
+    CHECK(jf.get_int(kMaxLife) == 16);
+    // The host's save decides (docs/flags.md, "Saves"; player report #96: a
+    // guest's older save filled the host's new file): the joiner's own
+    // bottle, which the host's save lacks, is not kept and not sent.
+    CHECK(jf.get_int(kBottleA) == 0);
+    CHECK(jf.get_bool(kBottleAValid) == false);
     CHECK(jf.get_int(kRupees) == 10);      // per player, not in the table
+    CHECK(from_joiner.empty());
 
-    // The joiner's bottle goes to the host.
-    const auto sent = decoded(from_joiner);
-    REQUIRE(sent.size() == 1);
-    const auto& set = std::get<protocol::FlagSet>(sent[0]);
-    CHECK(set.flags == std::vector{i(kBottleA, 1), b(kBottleAValid, true)});
-    deliver(host, from_joiner);
-    const auto answer = host.frame(hs);
     GameFlags hf(hw);
-    CHECK(hf.get_int(kBottleA) == 1);
-    CHECK(hf.get_bool(kBottleAValid) == true);
+    CHECK(hf.get_int(kBottleA) == 0);
+    CHECK(hf.get_bool(kBottleAValid) == false);
     CHECK(hf.get_int(kRupees) == 50);
-    deliver(joiner, answer);
     CHECK(joiner.frame(js).empty());
     CHECK(host.frame(hs).empty());
   }
@@ -1137,6 +1136,114 @@ TEST_CASE("ocarina_bools_mend: a shared ocarina gets the Bools a real get sets (
   CHECK(oc::kPrepared == protocol::flag_hash("HavePreparedToPlayOcarina"));
 }
 
+TEST_CASE("OcarinaEquip: the game equips a shared ocarina from its flags once (rows 93, 103)") {
+  using coop::host::OcarinaEquip;
+  namespace oc = coop::host::ocarina;
+  const auto settle = [](OcarinaEquip& e, const std::optional<std::string_view>& live, bool link, bool busy) {
+    for (int i = 0; i < OcarinaEquip::kSettleFrames; ++i) e.arm(live, link, busy);
+  };
+  OcarinaEquip e;
+  CHECK_FALSE(e.step(false));  // nothing wanted: no call
+  e.want("Item_Ocarina_Fairy");
+  CHECK(e.waiting());
+  // The live name not there yet ("" while the String64 waits), unread, or another name: no call.
+  settle(e, std::string_view(""), true, false);
+  CHECK_FALSE(e.step(false));
+  settle(e, std::nullopt, true, false);
+  CHECK_FALSE(e.step(false));
+  // Read for fewer than kSettleFrames frames: not yet (a queued write reads so before the applier wrote it).
+  for (int i = 0; i + 1 < OcarinaEquip::kSettleFrames; ++i) e.arm("Item_Ocarina_Fairy", true, false);
+  CHECK_FALSE(e.step(false));
+  // An event, menu or load, or no Link: not now, and the want stays.
+  e.arm("Item_Ocarina_Fairy", true, true);
+  CHECK_FALSE(e.step(false));
+  e.arm("Item_Ocarina_Fairy", false, false);
+  CHECK_FALSE(e.step(false));
+  CHECK(e.waiting());
+  // Wanted again with the same name: its count goes on (the mend may say so again).
+  e.want("Item_Ocarina_Fairy");
+  e.arm("Item_Ocarina_Fairy", true, false);
+  // Ready: slot 13, then 16 (as the game's own refreshes), then done with a note.
+  auto slot = e.step(false);
+  REQUIRE(slot);
+  CHECK(*slot == 13);
+  slot = e.step(true);
+  REQUIRE(slot);
+  CHECK(*slot == 16);
+  CHECK_FALSE(e.step(true));
+  CHECK_FALSE(e.waiting());
+  const auto notes = e.take_notes();
+  REQUIRE(notes.size() == 1);
+  CHECK(notes[0].find("Item_Ocarina_Fairy") != std::string::npos);
+  CHECK(e.take_notes().empty());
+  // Once only: the next frame asks nothing.
+  settle(e, std::string_view("Item_Ocarina_Fairy"), true, false);
+  CHECK_FALSE(e.step(false));
+  CHECK_FALSE(e.step(true));  // a call that was not ours
+  // The equipment unread: asked again on a later frame, from slot 13.
+  e.want("Item_Ocarina_Time");
+  settle(e, std::string_view("Item_Ocarina_Time"), true, false);
+  REQUIRE(e.step(false) == std::optional<std::uint32_t>(13));
+  e.not_now();
+  CHECK_FALSE(e.step(true));
+  CHECK_FALSE(e.step(false));  // disarmed until the next arm
+  e.arm("Item_Ocarina_Time", true, false);
+  CHECK(e.step(false) == std::optional<std::uint32_t>(13));
+  // Read from the recomp's main (docs/items.md, "The game's own equip").
+  CHECK(oc::kEquipFromGameData == 0x2df6c80);
+  CHECK(oc::kActorEquipment == 0x270);
+  CHECK(oc::kHolderEquipment == 0x200);
+  // A name changed while waiting replaces it, from the start of its count.
+  OcarinaEquip f;
+  f.want("Item_Ocarina_Fairy");
+  settle(f, std::string_view("Item_Ocarina_Fairy"), true, false);
+  f.want("Item_Ocarina_Time");
+  f.arm("Item_Ocarina_Time", true, false);
+  CHECK_FALSE(f.step(false));
+}
+
+TEST_CASE("OcarinaEquip: a held ocarina is asked once per stay of Link, also with no write of ours (row 103)") {
+  using coop::host::OcarinaEquip;
+  using coop::host::ocarina_held;
+  // Held: the best ocarina the flags have, and only when EquipOcarina names it already.
+  CHECK(ocarina_held(1, 0, "Item_Ocarina_Fairy") == "Item_Ocarina_Fairy");
+  CHECK(ocarina_held(1, 1, "Item_Ocarina_Time") == "Item_Ocarina_Time");
+  CHECK(ocarina_held(1, 1, "Item_Ocarina_Fairy").empty());  // the mend writes the Time name and wants it then
+  CHECK(ocarina_held(0, 0, "Item_Ocarina_Fairy").empty());  // a name kept with no ocarina held
+  CHECK(ocarina_held(1, 0, "").empty());
+  const auto ask = [](OcarinaEquip& e, std::string_view name) {
+    for (int i = 0; i < OcarinaEquip::kSettleFrames; ++i) e.arm(name, true, false);
+    const auto first = e.step(false);
+    const auto second = e.step(true);
+    const bool done = !e.step(true);
+    return first == std::optional<std::uint32_t>(13) && second == std::optional<std::uint32_t>(16) && done;
+  };
+  // A save whose flags an earlier co-op mend wrote (0.11.2): nothing to write now, but the stay asks the game.
+  OcarinaEquip e;
+  e.link(true, "Item_Ocarina_Fairy");
+  CHECK(e.waiting());
+  CHECK(ask(e, "Item_Ocarina_Fairy"));
+  // Once per stay: later frames of the same stay ask nothing.
+  for (int i = 0; i < 100; ++i) e.link(true, "Item_Ocarina_Fairy");
+  CHECK_FALSE(e.waiting());
+  // Link gone (a load or a scene change), then back: asked again.
+  e.link(false, {});
+  e.link(true, "Item_Ocarina_Fairy");
+  CHECK(ask(e, "Item_Ocarina_Fairy"));
+  // No ocarina held: nothing asked, and the stay is not spent, so one that arrives held later in it is asked.
+  OcarinaEquip g;
+  g.link(true, {});
+  CHECK_FALSE(g.waiting());
+  g.link(true, "Item_Ocarina_Time");
+  CHECK(ask(g, "Item_Ocarina_Time"));
+  // A want of a write of ours in the same stay is the same ask (one count, one call pair).
+  OcarinaEquip h;
+  h.want("Item_Ocarina_Fairy");
+  h.link(true, "Item_Ocarina_Fairy");
+  CHECK(ask(h, "Item_Ocarina_Fairy"));
+  CHECK_FALSE(h.waiting());
+}
+
 // The randomizer (docs/mods.md, "Items in a randomized seed"): an item from a
 // randomized check is shared like any other, and the one who gets it from
 // another player must be able to use it. One case per dependency.
@@ -1344,4 +1451,484 @@ TEST_CASE("game items: a floor the game drops is put back, a new one still goes 
   CHECK(decoded(player.frame(store)).empty());
   CHECK(GameFlags(w).get_uint(kDekuFloors) == 31u);
   CHECK(player.stats().one_way_restores == 1);
+}
+
+TEST_CASE("items: Zelda's Letter is spent for everyone once the Kakariko gate's Bool is set (issue 58)") {
+  using coop::host::zelda_letter_spent;
+  CHECK(zelda_letter_spent(1, true));
+  CHECK_FALSE(zelda_letter_spent(1, false));
+  CHECK_FALSE(zelda_letter_spent(1, std::nullopt));  // unread: kept
+  CHECK_FALSE(zelda_letter_spent(0, true));           // nothing to take
+  CHECK(coop::host::flag_hash("PouchData.Item_ZeldaLetter.StockNum") == coop::host::letters::kZelda);
+  CHECK(coop::host::flag_hash("Npc_Hylia_Soldier_003_GateOpen") == coop::host::letters::kGateOpen);
+}
+
+TEST_CASE("items: Ruto's Letter goes into the first empty bottle while King Zora has not moved here (issue 58)") {
+  namespace letters = coop::host::letters;
+  using coop::host::ruto_letter_bottle;
+  CHECK(coop::host::flag_hash("IsGet.Item_Bottle_Letter") == letters::kRutoGot);
+  CHECK(coop::host::flag_hash("Letter") == letters::kLetter);
+  CHECK(coop::host::flag_hash("Empty") == letters::kEmpty);
+  CHECK(coop::host::flag_hash("Get_StoneOfWater") == letters::kStoneOfWater);
+  const char* bottles[] = {"BottleA", "BottleB", "BottleC", "BottleD", "BottleE"};
+  for (std::size_t i = 0; i < 5; ++i) {
+    const std::string at = std::string("PlayerStatus.AssignableItem.BottleInfo.") + bottles[i];
+    CHECK(coop::host::flag_hash(at + ".IsValid") == letters::kBottles[i].valid);
+    CHECK(coop::host::flag_hash(at + ".BottleItem") == letters::kBottles[i].item);
+  }
+  // King Zora: the quest's steps before Step07 wait, Step07 and after have moved.
+  CHECK(coop::host::king_zora_moved(coop::host::flag_hash("Step06")) == false);
+  CHECK(coop::host::king_zora_moved(coop::host::flag_hash("NotReady")) == false);
+  CHECK(coop::host::king_zora_moved(coop::host::flag_hash("Step07")) == true);
+  CHECK(coop::host::king_zora_moved(coop::host::flag_hash("Complete")) == true);
+  CHECK_FALSE(coop::host::king_zora_moved(coop::host::flag_hash("KakarikoVillageNpc")).has_value());
+
+  // Bottles A (owned, a fish), B (owned, empty), C (owned, empty), D and E not owned.
+  std::map<std::uint32_t, bool> valid{{letters::kBottles[0].valid, true}, {letters::kBottles[1].valid, true},
+                                      {letters::kBottles[2].valid, true}, {letters::kBottles[3].valid, false},
+                                      {letters::kBottles[4].valid, false}};
+  std::map<std::uint32_t, std::uint32_t> item{{letters::kBottles[0].item, coop::host::flag_hash("Fish")}};
+  for (std::size_t i = 1; i < 5; ++i) item[letters::kBottles[i].item] = letters::kEmpty;
+  const auto v = [&](std::uint32_t h) -> std::optional<bool> {
+    const auto it = valid.find(h);
+    return it == valid.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> {
+    const auto it = item.find(h);
+    return it == item.end() ? std::nullopt : std::optional(it->second);
+  };
+  CHECK(ruto_letter_bottle(true, false, false, v, in) == letters::kBottles[1].item);
+  CHECK_FALSE(ruto_letter_bottle(false, false, false, v, in));         // nobody got it
+  CHECK_FALSE(ruto_letter_bottle(true, false, true, v, in));           // King Zora moved here: not needed
+  CHECK_FALSE(ruto_letter_bottle(true, false, std::nullopt, v, in));   // no manager read: left alone
+  CHECK_FALSE(ruto_letter_bottle(std::nullopt, false, false, v, in));
+  item[letters::kBottles[2].item] = letters::kLetter;            // a bottle holds it already
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));
+  item[letters::kBottles[2].item] = coop::host::flag_hash("Bug");
+  item[letters::kBottles[1].item] = coop::host::flag_hash("Fairy");
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));          // no empty bottle: it waits
+  valid.erase(letters::kBottles[4].valid);                       // a bottle unread: left alone
+  item[letters::kBottles[1].item] = letters::kEmpty;
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));
+}
+
+TEST_CASE("a bottled fairy: an owned bottle holding the Enum value Fairy, unread is none (row 162)") {
+  namespace letters = coop::host::letters;
+  CHECK(coop::host::flag_hash("Fairy") == coop::host::kBottledFairy);
+  std::map<std::uint32_t, bool> valid;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (const auto& b : letters::kBottles) {
+    valid[b.valid] = true;
+    item[b.item] = letters::kEmpty;
+  }
+  const auto v = [&](std::uint32_t h) -> std::optional<bool> {
+    if (auto it = valid.find(h); it != valid.end()) return it->second;
+    return std::nullopt;
+  };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> {
+    if (auto it = item.find(h); it != item.end()) return it->second;
+    return std::nullopt;
+  };
+  CHECK_FALSE(coop::host::bottled_fairy(v, in));
+  item[letters::kBottles[3].item] = coop::host::flag_hash("Fairy");
+  CHECK(coop::host::bottled_fairy(v, in));
+  valid[letters::kBottles[3].valid] = false;  // a bottle not owned holds nothing
+  CHECK_FALSE(coop::host::bottled_fairy(v, in));
+  valid.erase(letters::kBottles[3].valid);  // unread
+  CHECK_FALSE(coop::host::bottled_fairy(v, in));
+  valid[letters::kBottles[3].valid] = true;
+  item[letters::kBottles[3].item] = coop::host::flag_hash("BigPoe");
+  CHECK_FALSE(coop::host::bottled_fairy(v, in));
+}
+
+TEST_CASE("items: Ruto's Letter says why it waits (issue 58, the 0.11.2 big run)") {
+  namespace letters = coop::host::letters;
+  using coop::host::RutoWait;
+  using coop::host::ruto_letter_plan;
+  // The run: B owned BottleA (StockNum 1, IsValid 1, BottleItem the default Empty), the others unowned.
+  std::map<std::uint32_t, bool> valid;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (std::size_t i = 0; i < 5; ++i) {
+    valid[letters::kBottles[i].valid] = i == 0;
+    item[letters::kBottles[i].item] = letters::kEmpty;
+  }
+  const auto v = [&](std::uint32_t h) -> std::optional<bool> {
+    const auto it = valid.find(h);
+    return it == valid.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> {
+    const auto it = item.find(h);
+    return it == item.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto moved = [](const char* step) { return coop::host::king_zora_moved(coop::host::flag_hash(step)); };
+  CHECK(ruto_letter_plan(false, false, moved("Ready"), v, in).why == RutoWait::not_got);
+  CHECK(ruto_letter_plan(std::nullopt, false, moved("Ready"), v, in).why == RutoWait::not_got);
+  CHECK(ruto_letter_plan(true, false, std::nullopt, v, in).why == RutoWait::king_unread);
+  CHECK(ruto_letter_plan(true, false, moved("SomethingElse"), v, in).why == RutoWait::king_unread);
+  CHECK(ruto_letter_plan(true, false, moved("Step07"), v, in).why == RutoWait::king_moved);
+  for (const char* step : {"NotReady", "Ready", "Step06"}) {
+    const auto plan = ruto_letter_plan(true, false, moved(step), v, in);
+    CHECK(plan.why == RutoWait::give);
+    CHECK(plan.bottle == letters::kBottles[0].item);
+  }
+  item[letters::kBottles[0].item] = coop::host::flag_hash("Fish");
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::no_empty);
+  item[letters::kBottles[3].item] = letters::kLetter;
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::has_letter);
+  item.erase(letters::kBottles[2].item);
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::bottle_unread);
+  CHECK_FALSE(ruto_letter_plan(true, false, moved("Ready"), v, in).bottle);
+  CHECK(coop::host::ruto_wait_text(RutoWait::king_unread).find("ChallengeMgr") != std::string_view::npos);
+}
+
+TEST_CASE("items: Ruto's Letter shown to King Zora in one game is spent in every game (row 117)") {
+  namespace letters = coop::host::letters;
+  using coop::host::RutoWait;
+  using coop::host::ruto_letter_plan;
+  CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Zora_0010") == letters::kKingRead);
+  // The report: the host's BottleB still holds the letter (BottleA a fish),
+  // the non-host showed theirs; the host's own King Zora step comes by the
+  // quest catch-up, separately from the scene's Bool.
+  std::map<std::uint32_t, bool> valid;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (std::size_t i = 0; i < 5; ++i) {
+    valid[letters::kBottles[i].valid] = i < 2;
+    item[letters::kBottles[i].item] = letters::kEmpty;
+  }
+  item[letters::kBottles[0].item] = coop::host::flag_hash("Fish");
+  item[letters::kBottles[1].item] = letters::kLetter;
+  const auto v = [&](std::uint32_t h) -> std::optional<bool> {
+    const auto it = valid.find(h);
+    return it == valid.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> {
+    const auto it = item.find(h);
+    return it == item.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto moved = [](const char* step) { return coop::host::king_zora_moved(coop::host::flag_hash(step)); };
+  for (const char* step : {"Step07", "Complete"}) {
+    const auto plan = ruto_letter_plan(true, true, moved(step), v, in);
+    CHECK(plan.why == RutoWait::shown);
+    CHECK(plan.spent == letters::kBottles[1].item);  // emptied here, as the scene emptied the shower's
+    CHECK_FALSE(plan.bottle);
+  }
+  // Shown elsewhere, but our King Zora has not moved (the catch-up has not
+  // reached Step07, or his step is unread): the letter is the only way past
+  // him, so it is kept; the next tick spends it once he has moved.
+  for (const auto king : {moved("Ready"), moved("Step06"), std::optional<bool>{}}) {
+    const auto plan = ruto_letter_plan(true, true, king, v, in);
+    CHECK(plan.why == RutoWait::shown_king_waits);
+    CHECK_FALSE(plan.spent);
+    CHECK_FALSE(plan.bottle);
+  }
+  // Not shown yet: the held letter stays (King Zora still needs it here).
+  const auto kept = ruto_letter_plan(true, false, moved("Ready"), v, in);
+  CHECK(kept.why == RutoWait::has_letter);
+  CHECK_FALSE(kept.spent);
+  // The scene's flag unread: neither taken nor given.
+  const auto unread = ruto_letter_plan(true, std::nullopt, moved("Ready"), v, in);
+  CHECK(unread.why == RutoWait::shown_unread);
+  CHECK_FALSE(unread.spent);
+  CHECK_FALSE(unread.bottle);
+  // Shown and no letter held (the shower, or emptied already): nothing to do,
+  // and an empty bottle never gets the letter back (the ChallengeMgr lag must
+  // not give it again).
+  item[letters::kBottles[1].item] = letters::kEmpty;
+  const auto done = ruto_letter_plan(true, true, moved("Ready"), v, in);
+  CHECK(done.why == RutoWait::shown);
+  CHECK_FALSE(done.spent);
+  CHECK_FALSE(done.bottle);
+  CHECK_FALSE(coop::host::ruto_letter_bottle(true, true, moved("Ready"), v, in));
+  // Every other bottle content stays: only the letter is spent.
+  item[letters::kBottles[1].item] = coop::host::flag_hash("Fairy");
+  CHECK_FALSE(ruto_letter_plan(true, true, moved("Ready"), v, in).spent);
+  CHECK(coop::host::ruto_wait_text(RutoWait::shown).find("Dm_Zora_0010") != std::string_view::npos);
+}
+
+TEST_CASE("game items: every dungeon's map, compass, boss key and floors ask the HUD refresh (rows 63/76, #146)") {
+  // docs/items.md, "Dungeon items": IsGetMap, IsGetCompass, IsGetBossKey, SmallKeyNum, EnteredFloorBit of all 14.
+  struct Row {
+    std::uint32_t map, compass, boss_key, small_keys, floors;
+  };
+  const Row rows[] = {
+      {0x89787395, 0x06c51ff2, 0xf6995cee, 0x0914ba07, 0x5c6c21c1}, {0xa52c3a19, 0x8b93edf9, 0xfaabc084, 0x3fdbc3d0, 0x46913e20},
+      {0xfcadd210, 0x9a2218db, 0x656bd5ee, 0x1470a816, 0x7d59d22a}, {0xe704f9b4, 0xf240eeb2, 0x427333a0, 0x90237092, 0x4321ac04},
+      {0x5b3ac0ba, 0x0aa068b6, 0xb72d73df, 0x1df11487, 0x3a014bac}, {0x4a4402ab, 0x2e82c8fe, 0x79daf80a, 0x877bdcee, 0x45408bef},
+      {0xf6177b93, 0x1e2feec5, 0xc33c66cf, 0x5edda9e3, 0x445aeb73}, {0xb85002ba, 0x9bd1181c, 0x1984c03f, 0x79eeec8e, 0x36346d00},
+      {0x77c47ec9, 0x9d6efaac, 0x9402715c, 0x7dd79d10, 0x7f9b6ea4}, {0x322f2a94, 0xea1846e6, 0x275f4512, 0xfa5d133d, 0x70446601},
+      {0x4b36041e, 0x3d9a2750, 0x6d155841, 0xea9786f5, 0xf464c91f}, {0x9bbc0c4a, 0xc4d4734e, 0x2fd59293, 0xfbfd2910, 0xbe80d86d},
+      {0xb3b65c1a, 0x874493ce, 0x6d0fea11, 0xa04bfd48, 0xb71065f6}, {0xbcaad6ce, 0x5eb80679, 0x95fbcb7c, 0x3a28b6a4, 0x843ae593},
+  };
+  for (const Row& r : rows) {
+    for (const std::uint32_t h : {r.map, r.compass, r.boss_key, r.floors}) {
+      CAPTURE(h);
+      REQUIRE(find_item(h) != nullptr);
+      CHECK(coop::host::is_hud_dungeon_item(FlagKey{h, 0}));
+      CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey::key64_flag(h)));  // a placement key, not the item
+    }
+    CAPTURE(r.small_keys);
+    CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey{r.small_keys, 0}));  // a count the HUD does not copy
+  }
+  CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey{0x405d8a0f, 0}));  // Weapon_Sword_Kokiri: not a dungeon item
+}
+
+TEST_CASE("items: Ruto's Letter on an open-fountain seed becomes an empty bottle in a session (row 117)") {
+  // OOTRR's open Zora's Fountain (start_state.rs FOUNTAIN_STEPS/FOUNTAIN_FLAGS)
+  // starts with Get_StoneOfWater at Step07 and HavePlayedEvent.Dm_Zora_0010 set.
+  // The letter found in a chest then has no use: the hook (only while co-op
+  // shares items, never solo) empties its bottle, which stays owned.
+  namespace letters = coop::host::letters;
+  using coop::host::RutoWait;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (const auto& b : letters::kBottles) item[b.item] = letters::kEmpty;
+  item[letters::kBottles[0].item] = letters::kLetter;  // the chest's letter, in BottleA
+  const auto v = [](std::uint32_t) -> std::optional<bool> { return true; };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> { return item.at(h); };
+  const auto step07 = coop::host::king_zora_moved(coop::host::flag_hash("Step07"));
+  REQUIRE(step07 == true);
+  const auto plan = coop::host::ruto_letter_plan(true, true, step07, v, in);
+  CHECK(plan.why == RutoWait::shown);
+  CHECK(plan.spent == letters::kBottles[0].item);
+  CHECK_FALSE(plan.bottle);
+  // Emptied: nothing more to do, and it is not given back.
+  item[letters::kBottles[0].item] = letters::kEmpty;
+  const auto after = coop::host::ruto_letter_plan(true, true, step07, v, in);
+  CHECK_FALSE(after.spent);
+  CHECK_FALSE(after.bottle);
+}
+
+namespace {
+// A trade quest view: our step and the trade items held (StockNum), by name.
+struct TradeGame {
+  std::map<std::uint32_t, std::int32_t> stock;
+  TradeGame() {
+    for (const auto& h : coop::host::trade::kHolds) stock[h.item] = 0;
+  }
+  void hold(const char* name, std::int32_t n = 1) {
+    stock.at(coop::host::flag_hash(std::string("PouchData.") + name + ".StockNum")) = n;
+  }
+  std::optional<std::uint32_t> raise(const char* step) const {
+    return raise_from(coop::host::flag_hash(step));
+  }
+  std::optional<std::uint32_t> raise_from(std::optional<std::uint32_t> step) const {
+    return coop::host::trade_step_raise(step, [this](std::uint32_t h) -> std::optional<std::int32_t> {
+      const auto it = stock.find(h);
+      return it == stock.end() ? std::nullopt : std::optional(it->second);
+    });
+  }
+};
+std::uint32_t step_hash(const char* name) { return coop::host::flag_hash(name); }
+}  // namespace
+
+TEST_CASE("items: the adult trade's tables are the game's names, in its order (row 117)") {
+  namespace trade = coop::host::trade;
+  CHECK(coop::host::flag_hash("Step_SubEvent_GetSwordBigGoron") == trade::kQuest);
+  CHECK(coop::host::flag_hash("SubEvent_GetSwordBigGoron") == trade::kChallenge);
+  const char* steps[] = {"NotReady", "Ready", "StartSubEvent", "WaitEggHatch", "EggHatched", "Step01", "Step01_01",
+                         "Step02", "Step03", "Step03_01", "Step03_02", "Step03_03", "Step04", "Step05",
+                         "Step05_01", "Step06", "Step06_01", "Step06_02", "Step06_03", "Step07", "Step08",
+                         "Step08_01", "Step09", "Step09_01", "Step10", "Step11", "Complete"};
+  REQUIRE(std::size(steps) == trade::kSteps.size());
+  for (std::size_t i = 0; i < trade::kSteps.size(); ++i) {
+    CAPTURE(steps[i]);
+    CHECK(coop::host::flag_hash(steps[i]) == trade::kSteps[i]);
+  }
+  const std::pair<const char*, const char*> holds[] = {
+      {"Item_PocketEgg", "StartSubEvent"}, {"Item_PocketCucco", "EggHatched"}, {"Item_CojiroCucco", "Step03"},
+      {"Item_OddMushroom", "Step04"},      {"Item_OddPowder", "Step05"},       {"Item_PoacherSaw", "Step06"},
+      {"Item_BrokenSword", "Step07"},      {"Item_Prescription", "Step08"},    {"Item_EyeballFrog", "Step09"},
+      {"Item_EyeDrop", "Step10"},          {"Item_ClaimCheck", "Step11"}};
+  REQUIRE(std::size(holds) == trade::kHolds.size());
+  for (std::size_t i = 0; i < trade::kHolds.size(); ++i) {
+    CAPTURE(holds[i].first);
+    CHECK(std::string_view(trade::kHolds[i].name) == holds[i].first);
+    const std::uint32_t item = coop::host::flag_hash(std::string("PouchData.") + holds[i].first + ".StockNum");
+    CHECK(trade::kHolds[i].item == item);
+    CHECK(trade::kHolds[i].step == coop::host::flag_hash(holds[i].second));
+    const auto* flag = find_item(item);
+    REQUIRE(flag != nullptr);
+    CHECK(flag->rule == coop::host::ItemRule::mirror);  // the item crosses; its step must follow
+    if (i > 0) {  // the chain goes forward
+      CHECK(*coop::host::trade_step_rank(trade::kHolds[i].step) >
+            *coop::host::trade_step_rank(trade::kHolds[i - 1].step));
+    }
+  }
+}
+
+TEST_CASE("items: a trade item another player handed on brings our trade step to it (row 117)") {
+  namespace trade = coop::host::trade;
+  // The chain: a player who never traded (Ready) holds whatever the mirror
+  // brought; the step becomes the one the item's own hand-over sets.
+  for (const auto& h : trade::kHolds) {
+    TradeGame g;
+    g.hold(h.name);
+    CAPTURE(h.name);
+    CHECK(g.raise("Ready") == h.step);
+    CHECK_FALSE(g.raise_from(h.step));  // there already
+  }
+  // A step at a time: B is one trade behind A when A trades the saw for the
+  // Broken Sword; B's carpenter (Step06) gave nothing, B's Biggoron needs Step07.
+  TradeGame b;
+  b.hold("Item_BrokenSword");
+  CHECK(b.raise("Step06") == step_hash("Step07"));
+  CHECK(b.raise("Step06_03") == step_hash("Step07"));
+}
+
+TEST_CASE("items: the trade step only goes forward, from Ready, never to Complete (row 117)") {
+  TradeGame g;
+  g.hold("Item_OddMushroom");
+  CHECK_FALSE(g.raise("Step05"));    // ours is further: kept
+  CHECK_FALSE(g.raise("Complete"));  // done here: kept
+  CHECK_FALSE(g.raise("NotReady"));  // the manager readies the quest (a child, or before it): left alone
+  CHECK_FALSE(g.raise_from(std::nullopt));                       // unread
+  CHECK_FALSE(g.raise_from(step_hash("SomethingElse")));        // not in the list
+  TradeGame none;
+  CHECK_FALSE(none.raise("Ready"));  // nothing held: nothing to follow
+  // Biggoron took the Claim Check (mirror: gone everywhere): nothing raises
+  // to Complete; Biggoron's Sword is a shared item of its own.
+  CHECK_FALSE(none.raise("Step11"));
+  // An unread item: left alone.
+  TradeGame unread;
+  unread.hold("Item_EyeDrop");
+  unread.stock.erase(coop::host::trade::kHolds[0].item);
+  CHECK_FALSE(unread.raise("Ready"));
+  // Two held at once (a mirror between two hand-overs): the furthest wins.
+  TradeGame two;
+  two.hold("Item_PoacherSaw");
+  two.hold("Item_BrokenSword");
+  CHECK(two.raise("Ready") == step_hash("Step07"));
+}
+
+TEST_CASE("items: the egg and its hatch follow the item too (row 117)") {
+  TradeGame egg;
+  egg.hold("Item_PocketEgg");
+  CHECK(egg.raise("Ready") == step_hash("StartSubEvent"));
+  CHECK_FALSE(egg.raise("WaitEggHatch"));  // our own egg is waiting to hatch: kept
+  TradeGame chick;
+  chick.hold("Item_PocketCucco");  // another player's egg hatched: the mirror brought the cucco
+  CHECK(chick.raise("WaitEggHatch") == step_hash("EggHatched"));
+  CHECK(chick.raise("StartSubEvent") == step_hash("EggHatched"));
+  CHECK_FALSE(chick.raise("Step01_01"));  // waking Talon with it: ours already further
+}
+
+TEST_CASE("items: a spoiled trade item's retry and the timers follow the item (row 117)") {
+  // Each spoiling item has a spoiled step before its own (Step03_03,
+  // Step08_01, Step09_01): the game sets it when the timer runs out and the
+  // giver hands a new one over, setting the item's step again. A new item
+  // another player got that way brings ours back to the timed step.
+  const std::tuple<const char*, const char*, const char*> retries[] = {
+      {"Item_OddMushroom", "Step03_03", "Step04"},
+      {"Item_EyeballFrog", "Step08_01", "Step09"},
+      {"Item_EyeDrop", "Step09_01", "Step10"},
+  };
+  for (const auto& r : retries) {
+    const char* item = std::get<0>(r);
+    const char* spoiled = std::get<1>(r);
+    const char* step = std::get<2>(r);
+    CAPTURE(item);
+    TradeGame g;
+    g.hold(item);
+    CHECK(g.raise(spoiled) == step_hash(step));
+    // Spoiled here and gone (the mirror took it everywhere): nothing to follow.
+    TradeGame gone;
+    CHECK_FALSE(gone.raise(spoiled));
+  }
+  // The Claim Check: Biggoron's wait (Step11) is reached as the item's own.
+  TradeGame claim;
+  claim.hold("Item_ClaimCheck");
+  CHECK(claim.raise("Step10") == step_hash("Step11"));
+  CHECK(claim.raise("Step09_01") == step_hash("Step11"));
+}
+
+namespace rewards = coop::host::rewards;
+namespace letters = coop::host::letters;
+
+TEST_CASE("rewards: each once-per-save reward's Bool is its name's hash (row 272)") {
+  const auto check = [](const auto& sources) {
+    for (const rewards::Source& s : sources) {
+      INFO(s.name);
+      CHECK(coop::protocol::flag_hash(s.name) == s.hash);
+    }
+  };
+  check(rewards::kGuarded);
+  check(rewards::kOther);
+  for (const rewards::Source& s : rewards::kGuarded) CHECK(s.family != rewards::Family::none);
+  for (const rewards::Source& s : rewards::kOther) CHECK(s.family == rewards::Family::none);
+}
+
+TEST_CASE("gold race flags: every Skulltula House reward and what only they give, each a known flag (review-01112-h)") {
+  const auto race = coop::host::gold_race_flags();
+  const std::set<std::uint32_t> flags(race.begin(), race.end());
+  CHECK(flags.size() == race.size());
+  // Every reward of the Skulltula House (its Bools are named KakarikoVillage_GatheringTokenGold_GetReward<N>).
+  std::size_t house = 0;
+  const auto each = [&](const auto& sources) {
+    for (const rewards::Source& s : sources) {
+      if (s.name.find("GatheringTokenGold_GetReward") == std::string_view::npos) continue;
+      INFO(s.name);
+      CHECK(flags.contains(s.hash));
+      ++house;
+    }
+  };
+  each(rewards::kGuarded);
+  each(rewards::kOther);
+  CHECK(house == 5);
+  // The wallet tiers: given only by the House (the wallet family's Bools are the House's).
+  for (const FlagKey s : rewards::sources(rewards::Family::wallet)) {
+    bool is_house = false;
+    for (const rewards::Source& g : rewards::kGuarded) {
+      is_house = is_house || (g.hash == s.hash && g.name.find("GatheringTokenGold") != std::string_view::npos);
+    }
+    CHECK(is_house);
+  }
+  for (const auto& unit : rewards::units(rewards::Family::wallet)) {
+    for (const FlagKey key : unit) CHECK(flags.contains(key.hash));
+  }
+  // The Stone of Agony (reward 20), by name.
+  CHECK(flags.contains(coop::protocol::flag_hash("IsGet.Item_AgonyStone")));
+  CHECK(flags.contains(coop::protocol::flag_hash("PouchData.Item_AgonyStone.StockNum")));
+  // Each one a flag of the game's item list or a reward Bool; never the count or IsGet the race keeps already.
+  for (const std::uint32_t h : race) {
+    INFO(h);
+    CHECK(h != coop::host::kGoldTokenCount);
+    CHECK(h != coop::host::kGoldTokenGet);
+  }
+  CHECK(race.size() == 5 + 6 + 2);
+}
+
+TEST_CASE("rewards: every family has its units and its Bools, each key in one unit (row 272)") {
+  std::set<std::uint32_t> seen;
+  std::size_t bools = 0;
+  for (const rewards::Family family : rewards::kFamilies) {
+    const auto units = rewards::units(family);
+    CHECK(units.size() == (family == rewards::Family::bottle ? 5U : 3U));
+    for (const auto& unit : units) {
+      CHECK(unit.size() == 2);
+      for (const FlagKey key : unit) {
+        INFO(key.hash);
+        CHECK(find_item(key.hash) != nullptr);
+        CHECK(seen.insert(key.hash).second);
+      }
+    }
+    const auto sources = rewards::sources(family);
+    CHECK_FALSE(sources.empty());
+    bools += sources.size();
+  }
+  CHECK(bools == rewards::kGuarded.size());
+  CHECK(rewards::units(rewards::Family::none).empty());
+  // A bottle slot is its StockNum and its IsValid, A to E; a tier its StockNum and its IsGet.
+  const auto bottles = rewards::units(rewards::Family::bottle);
+  for (std::size_t i = 0; i < letters::kBottles.size(); ++i) {
+    CHECK(bottles[i][1].hash == letters::kBottles[i].valid);
+    CHECK(find_item(bottles[i][0].hash)->name.starts_with("PouchData.Bottle"));
+  }
+  for (const auto family : {rewards::Family::wallet, rewards::Family::quiver, rewards::Family::bomb_bag}) {
+    for (const auto& unit : rewards::units(family)) {
+      const std::string_view stock = find_item(unit[0].hash)->name;
+      const std::string_view got = find_item(unit[1].hash)->name;
+      CHECK(stock.starts_with("PouchData."));
+      CHECK(got.starts_with("IsGet."));
+      CHECK(stock.substr(10, stock.size() - 19) == got.substr(6));  // PouchData.<tier>.StockNum / IsGet.<tier>
+    }
+  }
 }

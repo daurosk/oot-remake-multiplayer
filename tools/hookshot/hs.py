@@ -40,13 +40,38 @@ import sys
 import time
 
 WINDOWS = os.name == "nt"
+CREATE_NO_WINDOW = 0x08000000   # a console program started with this gets no window, and its own children none either
+
+
+def no_window(kw=None):
+    """Popen keywords with CREATE_NO_WINDOW added on Windows (other keywords and other creation flags kept).
+    Why: a console program (powershell, tasklist, cmd, git, ninja, a python helper) started by a process that has no
+    console of its own, such as the lane watchdog or a harness's shell, gets a NEW visible console window; started from
+    a long run, they flash on the screen in a chain. Use run_quiet and popen_quiet for every such child. NEVER for a
+    game (Longshot's exe): its window is the game's own and a hidden console would change how it starts."""
+    kw = dict(kw or {})
+    if WINDOWS:
+        kw["creationflags"] = kw.get("creationflags", 0) | CREATE_NO_WINDOW
+    return kw
+
+
+def run_quiet(cmd, **kw):
+    """subprocess.run of a console program with no window on Windows (see no_window)."""
+    return subprocess.run(cmd, **no_window(kw))
+
+
+def popen_quiet(cmd, **kw):
+    """subprocess.Popen of a console program with no window on Windows (see no_window)."""
+    return subprocess.Popen(cmd, **no_window(kw))
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 # build-game.lock: a game build (a cache miss) is running; it stops both test lanes (tools/autotest/lanes.py), whose
 # runs hold lane1.lock / lane2.lock. A module build (build-hs.lock alone) stops no lane.
 LOCK_NAMES = {"emu": "build-emu.lock", "hs": "build-hs.lock", "game": "build-game.lock", "lane1": "lane1.lock",
               "lane2": "lane2.lock"}
-LANE_LOCKS = ("lane1", "lane2")
+# Each game of a lane is a lane of its own too (a one-game live session): laneN-A.lock, laneN-B.lock.
+LOCK_NAMES.update({"lane%d-%s" % (n, x): "lane%d-%s.lock" % (n, x) for n in (1, 2) for x in "AB"})
+LANE_LOCKS = tuple(k for k in LOCK_NAMES if k.startswith("lane"))
 OLD_LOCK = "build.lock"
 # What is per player or per run in a game folder: never cached, never overwritten in a pair.
 PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save", "autotest-save", "mods",
@@ -55,15 +80,27 @@ CACHE_GAME = "game"
 CACHE_NAME = re.compile(r"^[0-9a-f]{20}(\.part|\.build)?$")
 # Caches the game writes while it runs (shaders, pipelines): copied into a pair that has none, never overwritten,
 # except when the pair's game was built from another stamp (cache_restore): then they are another build's.
+# Longshot rc.4 keeps them in a cache\ folder beside longshot.exe (CACHE_DIR), with its own names for some
+# (longshot_vk_pipelines*, longshot_compute_variants, longshot_module_ids); the game build already fills part of it.
 RUNTIME_CACHE = re.compile(r"^(longshot_(pipelines|pipeline_states|programs|shaders|computes|prepared)\.(bin|idx)"
                            r"|longshot_pipelines\.bin\.(built|predicted)|longshot_damaged_files\.txt"
-                           r"|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+                           r"|longshot_(compute_variants|module_ids)\.bin|longshot_vk_pipelines(_play_\d+)?\.bin"
+                           r"|longshot_vk_pipelines\.stamp|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+CACHE_DIR = "cache"
 # What one start's shader preparation leaves (warmup): the noted pipelines built into the pipeline cache. The game build
 # prepares in a separate process that does not write longshot_pipelines.bin.built (on NVIDIA that process's pipeline
 # cache does not answer the game's), so each new game folder's first start builds every noted pipeline (35269, about
 # 18 min; six at once took 9+ min per load in wave 1). One pair warmed, these files go to the others and the cache.
+# LIMIT (Windows + NVIDIA, Longshot rc.7, big-run-fix-a 2026-11-17): the copies do not warm the other folders there. Every
+# longshot.exe shares the driver's one shader cache (%LOCALAPPDATA%\NVIDIA\GLCache) and only the first game running is
+# served by it; a game started beside it logs "the driver's shader cache has 0 of 48 noted pipelines asked", drops
+# longshot_pipelines.bin.built and compiles every pipeline again at each start (~440 s), copied files or not
+# (__GL_SHADER_DISK_CACHE_PATH is ignored there). The harness's renderer wait follows that compile's progress instead
+# (tools/autotest/hookshot.py wait_renderer).
 WARM_FILES = re.compile(r"^(longshot_pipelines\.bin(\.built|\.predicted)?|longshot_(pipeline_states|computes|prepared)\.bin"
-                        r"|longshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+                        r"|longshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin"
+                        r"|longshot_(compute_variants|module_ids)\.bin|longshot_vk_pipelines(_play_\d+)?\.bin"
+                        r"|longshot_vk_pipelines\.stamp)$", re.I)
 WARM_DONE = "vk: start-up: the shaders took"
 
 
@@ -111,6 +148,104 @@ def stamp(repo=REPO):
     return "release=%s\ncommit=%s\npatches=%s" % (tools["release"], pin["commit"], hashes)
 
 
+# --- the mods' code patches (patches 0034/0035) -------------------------------------------------------------------
+# A mod with code patches (an exefs folder of .ips / .pchtxt: OoT Character Select) is compiled into the game when it is
+# built, from the game folder's mods (or HOS_MODS, the game's own name for that folder: nx2/exefs_patches.py). A test
+# pair's game is built in the pin's shared folder, which has none of the pairs' mods: before charsel-tab-0119 every pair
+# got a game without them (0.11.9 test kit: no Characters tab, his code not in the game, while B1 kept an older build's
+# exefs_patches.txt saying it was). Now the pairs' code mods go into the build (HOS_MODS) and into its key, by the kit's
+# own rule (kit-paths.ps1 Get-KitExefsStampLine, the line hookshot-build.ps1 writes into coop-built-from.txt).
+KIT_PATHS = os.path.join("tools", "release", "kit", "scripts", "kit-paths.ps1")
+EXEFS_LIST = "exefs_patches.txt"   # (the game folder's list of the code patches it was built with: host/mods.c reads it)
+
+
+def has_code_patches(mods):
+    """Whether a mods folder holds a code patch the kit's rule counts: <mod>/exefs/*.ips or *.pchtxt, at most five
+    folders down, no folder before exefs named with '-', '_' or '.' first (a mod kept aside: '_OoT Character Select.prev')."""
+    if not mods or not os.path.isdir(mods):
+        return False
+    base = os.path.abspath(mods)
+    for top, dirs, files in os.walk(base):
+        rel = os.path.relpath(top, base)
+        parts = [] if rel == "." else rel.split(os.sep)
+        if len(parts) > 5:
+            dirs[:] = []
+            continue
+        if len(parts) >= 2 and parts[-1].lower() == "exefs" and not any(x[:1] in "-_." for x in parts[:-1]):
+            if any(f.lower().endswith((".ips", ".pchtxt")) for f in files):
+                return True
+    return False
+
+
+def code_mods_line(mods, repo=REPO, run=run_quiet):
+    """The code patches' part of a game's stamp for a mods folder: '' without code patches, else the kit's own line
+    (Get-KitExefsStampLine: each patch file's path and SHA-256, and those mods' on/off rows in coop-mods.list)."""
+    if not has_code_patches(mods):
+        return ""
+    q = lambda t: "'" + t.replace("'", "''") + "'"
+    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+           ". %s; [Console]::Out.Write((Get-KitExefsStampLine -Game '' -Mods %s))"
+           % (q(os.path.join(repo, KIT_PATHS)), q(os.path.abspath(mods)))]
+    r = run(cmd, capture_output=True, text=True, errors="replace")
+    if r.returncode or not r.stdout.strip():
+        raise Fail("the mods' code patches in %s could not be read (kit-paths.ps1 Get-KitExefsStampLine): %s"
+                   % (mods, (r.stdout + r.stderr).strip()[-300:]))
+    return r.stdout.replace("\r", "")
+
+
+def code_mods_mismatch(game, repo=REPO, run=run_quiet):
+    """None when a game folder's mods have the code patches its game was built with (coop-built-from.txt's exefs= line,
+    none without), else why not. A code mod put into a pair after its build (lane-0119 2026-11-21: Character Select
+    copied into lane1's mods) shows his menus without his code: no Characters tab, a pick does nothing."""
+    try:
+        with open(os.path.join(game, "coop-built-from.txt"), encoding="utf-8") as f:
+            built = [l.strip() for l in f.read().splitlines() if l.strip().startswith("exefs=")]
+    except OSError:
+        return None   # (no build of ours there)
+    want = code_mods_line(os.path.join(game, "mods"), repo, run).strip()
+    have = built[0] if built else ""
+    if want == have:
+        return None
+    return ("%s: its mods' code patches are not the ones its game was built with (game: %s; mods: %s): build it again"
+            " (hs.py build --pair, or the kit's start)" % (game, have or "none", want or "none"))
+
+
+PACK_DIR = os.path.join("mods", "contents", "0400486024DEC000", "coop-puppet")
+
+
+def sync_charsel_native(pairs, repo=REPO, run=run_quiet):
+    """Co-op's own Characters tab's code patch (charsel/data/charsel-native.ips) put into or taken out of each pair's
+    pack folder before the pairs' code patches are read, by the kit's own rule (kit-paths.ps1
+    Sync-KitCharselNativePatch, what hookshot-build.ps1 does before its stamp): a pair without Character Select's code
+    gets ours in its game, a pair with his gets his only. Pairs without a pack folder: nothing to do (no call).
+    Returns {pair: 'in' | 'out' | ''}."""
+    packs = [(p, os.path.join(p, PACK_DIR)) for p in pairs if os.path.isdir(os.path.join(p, PACK_DIR))]
+    if not packs:
+        return {}
+    q = lambda t: "'" + t.replace("'", "''") + "'"
+    body = "; ".join("[Console]::Out.WriteLine('r=' + (Sync-KitCharselNativePatch %s %s))" % (q(os.path.abspath(repo)),
+                                                                                       q(os.path.abspath(m)))
+                     for _, m in packs)
+    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+           ". %s; %s" % (q(os.path.join(repo, KIT_PATHS)), body)]
+    r = run(cmd, capture_output=True, text=True, errors="replace")
+    got = [l[2:].strip() for l in (r.stdout or "").replace("\r", "").split("\n") if l.startswith("r=")]
+    if r.returncode or len(got) != len(packs):
+        raise Fail("co-op's Characters tab's code patch could not be put into the pairs' packs (kit-paths.ps1"
+                   " Sync-KitCharselNativePatch): %s" % ((r.stdout or "") + (r.stderr or "")).strip()[-300:])
+    return {p: g for (p, _), g in zip(packs, got)}
+
+
+def pairs_code_mods(pairs, repo=REPO, run=run_quiet):
+    """(line, mods folder) of the pairs' code patches; ('', None) when no pair has any. One game serves every pair,
+    so pairs with different code patches cannot be built together (Fail)."""
+    found = [(code_mods_line(os.path.join(p, "mods"), repo, run), os.path.join(p, "mods")) for p in pairs]
+    if len({line for line, _ in found}) > 1:
+        raise Fail("the pairs have different mods with code patches (one game serves them all): %s"
+                   % "; ".join("%s: %s" % (m, line.strip() or "none") for line, m in found))
+    return (found[0][0], found[0][1]) if found and found[0][0] else ("", None)
+
+
 def pin_of(stamp_text):
     """'<release>-<commit 12>' of a stamp: what one shared tools and work folder serves (hs-build-speed)."""
     keys = dict(line.split("=", 1) for line in stamp_text.replace("\r", "").split("\n") if "=" in line)
@@ -123,8 +258,8 @@ def pin_dir(stamp_text):
     """The shared folder of a pin: tools/ (Hookshot's tools and patched source), work/ (its build files and object
     cache) and game/ (THE game folder of the pin, built again in place). Every build of that pin, whatever the patches,
     goes through it: Hookshot's own lift key and object cache decide what is done again. The game folder must stay the
-    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .longshot_exefs and the prepared
-    shaders. Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
+    same path: it keeps .longshot_exefs and the prepared shaders (and before Longshot rc.6 the lift key hashed it, make_game.py:
+    OOT_DUMP, OOT_ROMFS; rc.6 keys the contents only). Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
     return os.path.join(cache_root(), "pins", pin_of(stamp_text))
 
 
@@ -136,17 +271,45 @@ def key_of(stamp_text):
 
 # --- the cache ---------------------------------------------------------------------------------------------------
 
+_packaged_warned = set()
+
+
+def packaged(path):
+    """Whether a path resolves into a packaged (MSIX) app's own copy of AppData (<...>/AppData/Local/Packages/):
+    a process started from such an app writes its %LOCALAPPDATA% files there, where no other process sees them."""
+    p = os.path.realpath(path).replace("\\", "/").lower()
+    return "/appdata/local/packages/" in p
+
+
 def cache_root():
     root = os.environ.get("OOT_COOP_HS_CACHE")
     if not root:
         base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
         root = os.path.join(base, "oot-coop", "hs-cache")
+    if root not in _packaged_warned and packaged(root):
+        _packaged_warned.add(root)
+        sys.stderr.write("hs.py: WARNING: the cache %s resolves into a packaged app's own AppData (%s): its files are"
+                         " invisible to processes started outside that app (the kit's start, Explorer) and go with"
+                         " the app. Set OOT_COOP_HS_CACHE to a folder outside AppData (docs/testing.md).\n"
+                         % (root, os.path.realpath(root)))
     return root
+
+
+IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003   # (a junction's reparse tag: stat.IO_REPARSE_TAG_MOUNT_POINT, Windows)
 
 
 def is_link(path):
     """A symlink or (Windows) a junction: the game folders link romfs to a shared copy."""
-    return os.path.islink(path) or (hasattr(os.path, "isjunction") and os.path.isjunction(path))
+    if os.path.islink(path):
+        return True
+    if hasattr(os.path, "isjunction"):   # (Python 3.12+)
+        return os.path.isjunction(path)
+    # Before 3.12 (CI's 3.10): the junction's reparse tag. Without this a junction looked like a real folder, and
+    # remove_tree / cache_prune went into it and deleted the shared romfs it points to.
+    try:
+        return os.lstat(path).st_reparse_tag == IO_REPARSE_TAG_MOUNT_POINT
+    except (OSError, AttributeError):   # (missing, or not Windows: no st_reparse_tag)
+        return False
 
 
 def entries(root=None):
@@ -180,10 +343,47 @@ def find_exe(folder):
     return None
 
 
-def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=False):
+SHARED_TOP = {"romfs"}   # (the game files, ~26 GB: never written by the game or by us; hard links, as lanes.py's)
+
+
+def same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+NTFS_MAX_LINKS = 1023
+LINKS_REFUSED = set()   # ((source drive, destination drive)): a link was refused there in this run (link_or_copy)
+
+
+def can_link(a, b):
+    """Whether a hard link to the file of stat a could replace the file of stat b: the same drive, a below the file
+    system's limit of names (NTFS: 1023), and no link refused between those drives in this run"""
+    return a.st_dev == b.st_dev and a.st_nlink < NTFS_MAX_LINKS and (a.st_dev, b.st_dev) not in LINKS_REFUSED
+
+
+def link_or_copy(s, d):
+    """d becomes a hard link to s (no new disk space); its own copy where a link can't be made (another drive, FAT).
+    An old d is unlinked first, never written into: it may be shared with other folders. Returns True for a link."""
+    if os.path.lexists(d):
+        os.unlink(d)
+    try:
+        os.link(s, d)
+        return True
+    except OSError:
+        shutil.copy2(s, d)
+        LINKS_REFUSED.add((os.stat(s).st_dev, os.stat(d).st_dev))   # (the rest of this run keeps its copies as they are)
+        return False
+
+
+def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=False, in_cache=False, share=False):
     """Copies src into dst: new or changed files (size or mtime) only, links recreated as links (never followed),
-    the top-level names in skip_top left alone on both sides; dst's runtime caches kept unless runtime_too.
-    Returns (files copied, links made)."""
+    the top-level names in skip_top left alone on both sides; dst's runtime caches (at the top, or in the top's
+    cache folder: in_cache) kept unless runtime_too. Returns (files copied, links made).
+    A top-level folder in SHARED_TOP (romfs: the game files) is hard-linked file by file, not copied (share): every
+    game folder made from one (a pin, the cache's entries, the test pairs) shares one copy of its ~26 GB. Copied in
+    full to every one of them, they filled the disk (longshot-rc6-a's offline run 2: no space left for the next pin)."""
     copied = links = 0
     for name in sorted(os.listdir(src)):
         if name.lower() in skip_top:
@@ -200,18 +400,27 @@ def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=F
         elif os.path.isdir(s):
             if not dry:
                 os.makedirs(d, exist_ok=True)
-            c, n = copy_tree(s, d, set(), dry, say, runtime_too)
+            c, n = copy_tree(s, d, set(), dry, say, runtime_too,
+                             in_cache=skip_top is PER_PLAYER and name.lower() == CACHE_DIR,
+                             share=share or (skip_top is PER_PLAYER and name.lower() in SHARED_TOP))
             copied, links = copied + c, links + n
         else:
             if os.path.isfile(d) and not is_link(d):
-                if skip_top is PER_PLAYER and RUNTIME_CACHE.match(name) and not runtime_too:
+                if (skip_top is PER_PLAYER or in_cache) and RUNTIME_CACHE.match(name) and not runtime_too:
                     continue
+                if share and same_file(s, d):
+                    continue   # (already the same file)
                 a, b = os.stat(s), os.stat(d)
-                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
+                # (a separate copy of the same file: left as it is unless a link can take its place, so a cache on
+                # another drive, a FAT disk or a file at NTFS's 1023 links is not copied again on every run)
+                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime) and not (share and can_link(a, b)):
                     continue
             copied += 1
             if not dry:
                 os.makedirs(dst, exist_ok=True)
+                if share:
+                    link_or_copy(s, d)
+                    continue
                 if os.path.isfile(d) and os.stat(d).st_nlink > 1:
                     os.unlink(d)   # a hard link shared with another folder (a test lane): never written into
                 shutil.copy2(s, d)
@@ -225,16 +434,21 @@ def make_link(path, target):
         else:
             raise Fail("%s is a real folder; will not replace it with a link to %s" % (path, target))
     if WINDOWS and os.path.isdir(target):
-        r = subprocess.run(["cmd", "/c", "mklink", "/J", path, target], capture_output=True, text=True)
+        r = run_quiet(["cmd", "/c", "mklink", "/J", path, target], capture_output=True, text=True)
         if r.returncode:
             raise Fail("mklink /J %s failed: %s" % (path, r.stdout + r.stderr))
     else:
         os.symlink(target, path, target_is_directory=os.path.isdir(target))
 
 
-def cache_store(src, repo=REPO, force=False, dry=False, say=print):
-    """Stores a built game folder under the current key. The folder's coop-built-from.txt must match the stamp."""
-    want = stamp(repo)
+def cache_store(src, repo=REPO, force=False, dry=False, say=print, want=None):
+    """Stores a built game folder under the current key (want: the stamp; default the repo's with the folder's own
+    mods' code patches). The folder's coop-built-from.txt must match the stamp. A pin's game folder has no mods of a
+    player (its mods hold the last kit build's puppet pack): its want must be given (the pairs': cache store --pair)."""
+    if not want and in_pins(src):
+        raise Fail("%s is a pin's game folder: its mods are the last kit build's, not a pair's; name the pairs whose"
+                   " game it is (cache store --pair <pair>)" % src)
+    want = want or stamp(repo) + code_mods_line(os.path.join(src, "mods"), repo)
     k = key_of(want)
     if not find_exe(src):
         raise Fail("no longshot.exe in %s" % src)
@@ -268,9 +482,10 @@ def cache_store(src, repo=REPO, force=False, dry=False, say=print):
     return k
 
 
-def cache_restore(dst, repo=REPO, dry=False, say=print):
-    """Copies the cached game for the current key into a pair folder (its per-player files kept). False on a miss."""
-    k = key_of(stamp(repo))
+def cache_restore(dst, repo=REPO, dry=False, say=print, want=None):
+    """Copies the cached game for the current key into a pair folder (its per-player files kept). False on a miss.
+    want: the stamp (default the repo's with the pair's own mods' code patches)."""
+    k = key_of(want or stamp(repo) + code_mods_line(os.path.join(dst, "mods"), repo))
     folder = os.path.join(cache_root(), k)
     if not os.path.isfile(os.path.join(folder, "stamp.txt")):
         say("cache: miss for %s" % k)
@@ -287,15 +502,23 @@ def cache_restore(dst, repo=REPO, dry=False, say=print):
         say("cache: %s held another build (%s): its runtime caches are replaced" % (dst, key_of(have)))
     c, n = copy_tree(os.path.join(folder, CACHE_GAME), dst, dry=dry, say=lambda *_: None, runtime_too=other)
     say("cache: %s -> %s: %d file(s) %s, %d link(s)" % (k, dst, c, "to copy" if dry else "copied", n))
+    # (a build without code patches has no list; an older build's would say the game holds patches it does not: the
+    # kit's own restore takes it away too, kit-paths.ps1 Restore-KitGameVariant)
+    stale = os.path.join(dst, EXEFS_LIST)
+    if not os.path.isfile(os.path.join(folder, CACHE_GAME, EXEFS_LIST)) and os.path.isfile(stale):
+        say("cache: %s: an older build's %s removed (this game has no mods' code patches)" % (dst, EXEFS_LIST))
+        if not dry:
+            os.remove(stale)
     if not dry:
         touch_used(folder)
     return True
 
 
 def warm_dir(folder):
-    """Where a game folder's caches are: beside its longshot.exe."""
+    """Where a game folder's caches are: beside its longshot.exe, or in the cache folder there (Longshot rc.4)."""
     exe = find_exe(folder)
-    return os.path.dirname(exe) if exe else folder
+    d = os.path.dirname(exe) if exe else folder
+    return os.path.join(d, CACHE_DIR) if os.path.isdir(os.path.join(d, CACHE_DIR)) else d
 
 
 def warm_files(folder):
@@ -390,7 +613,7 @@ def warm_start(game, out, timeout, say=print, popen=subprocess.Popen, connect=No
 def warmup(pair, to=(), timeout=3600, out=None, repo=REPO, dry=False, say=print, start=warm_start):
     """One pair's first start prepares the shaders; its warm files then go into the cache entry and the other pairs.
     A game run, not a build: no build lock (whoever runs it holds the test turn)."""
-    k = key_of(stamp(repo))
+    k = key_of(stamp(repo) + code_mods_line(os.path.join(pair, "mods"), repo))
     sf = os.path.join(pair, "coop-built-from.txt")
     have = ""
     if os.path.isfile(sf):
@@ -454,24 +677,59 @@ def remove_tree(path):
 def main_root(repo=REPO):
     """The main checkout's root (locks are shared by all worktrees)."""
     try:
-        common = subprocess.run(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        common = run_quiet(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
                                 capture_output=True, text=True, check=True).stdout.strip()
         return os.path.dirname(common)
     except (OSError, subprocess.CalledProcessError):
         return repo
 
 
-def pid_alive(pid):
-    if pid <= 0:
-        return False
-    if WINDOWS:
-        r = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/NH", "/FO", "CSV"], capture_output=True, text=True)
-        return ('"%d"' % pid) in r.stdout
+def _win_pid_probe(pid):
+    """'alive', 'gone' or 'unknown' for a pid, from the process itself (OpenProcess and a zero wait on its handle).
+    Gone only when Windows says so: no such process (ERROR_INVALID_PARAMETER) or its handle is signalled (exited).
+    Anything else (access denied, an API error) is 'unknown'."""
+    import ctypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.restype = ctypes.c_void_p
+    k.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+    k.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_ulong)
+    k.WaitForSingleObject.restype = ctypes.c_ulong
+    k.CloseHandle.argtypes = (ctypes.c_void_p,)
+    h = k.OpenProcess(0x00100000 | 0x1000, False, pid)   # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        err = ctypes.get_last_error()
+        return "gone" if err == 87 else ("alive" if err == 5 else "unknown")   # 87 no such pid, 5 exists but denied
+    try:
+        w = k.WaitForSingleObject(h, 0)
+        return "gone" if w == 0 else ("alive" if w == 0x102 else "unknown")   # WAIT_OBJECT_0: exited; WAIT_TIMEOUT
+    finally:
+        k.CloseHandle(h)
+
+
+def _posix_pid_probe(pid):
     try:
         os.kill(pid, 0)
-        return True
+        return "alive"
+    except PermissionError:
+        return "alive"      # (exists, someone else's)
+    except ProcessLookupError:
+        return "gone"
     except OSError:
+        return "unknown"
+
+
+def pid_alive(pid, probe=None):
+    """False only when the process is known to be gone. A probe that cannot tell (an API error, a busy PC) counts as
+    alive: every caller ends a session, kills or takes a lock on False, so a wrong False is the harmful one (a live game
+    once had its session closed under it when one tasklist call came back empty). The lock's age limit still frees a
+    lock whose owner can never be probed."""
+    if pid <= 0:
         return False
+    probe = probe or (_win_pid_probe if WINDOWS else _posix_pid_probe)
+    try:
+        return probe(pid) != "gone"
+    except Exception:
+        return True
 
 
 def host_id():
@@ -593,7 +851,7 @@ def msvc_prefix():
                            "Microsoft Visual Studio", "Installer", "vswhere.exe")
     if not os.path.isfile(vswhere):
         raise Fail("no cl.exe on PATH and no vswhere.exe: run from a VS developer prompt")
-    inst = subprocess.run([vswhere, "-latest", "-products", "*", "-requires",
+    inst = run_quiet([vswhere, "-latest", "-products", "*", "-requires",
                            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
                           capture_output=True, text=True).stdout.strip()
     bat = os.path.join(inst, "VC", "Auxiliary", "Build", "vcvars64.bat")
@@ -627,13 +885,13 @@ def hook_objects(ninja_targets):
     return sorted(set(HOOK_OBJ.findall(ninja_targets)))
 
 
-def run_steps(steps, prefix, dry, say=print, cwd=None):
+def run_steps(steps, prefix, dry, say=print, cwd=None, env=None):
     for s in steps:
         cmd = prefix + s
         say("$ " + " ".join('"%s"' % c if " " in c else c for c in s))
         if dry:
             continue
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
+        r = run_quiet(cmd, cwd=cwd, env=env, capture_output=True, text=True, errors="replace")
         if r.returncode:
             tail = (r.stdout + r.stderr).strip().splitlines()[-25:]
             say("\n".join(tail))
@@ -663,7 +921,7 @@ def compile_all(build, emu_build=None, jobs=8, repo=REPO, dry=False, say=print, 
                 say("$ ninja -C %s -t targets all  (then: ninja -C %s -j %d <lichii/hook objects>)"
                     % (emu_build, emu_build, jobs))
             else:
-                r = subprocess.run(prefix + ["ninja", "-C", emu_build, "-t", "targets", "all"],
+                r = run_quiet(prefix + ["ninja", "-C", emu_build, "-t", "targets", "all"],
                                    capture_output=True, text=True, errors="replace")
                 objs = hook_objects(r.stdout)
                 if not objs:
@@ -697,15 +955,61 @@ def build_script_args(script):
             text = f.read()
     except OSError:
         return set()
-    return {a for a in ("Tools", "Work") if re.search(r"\[string\]\$%s\b" % a, text)}
+    return {a for a in ("Tools", "Work", "RomfsFrom") if re.search(r"\[string\]\$%s\b" % a, text)}
+
+
+def romfs_source(out, root=None):
+    """For a pin's game folder with no game files of its own yet: the newest other pin's game folder that unpacked its
+    own (romfs/ and Longshot's .longshot_romfs stamp), for Longshot's --romfs-from (rc.6, #360): it hard-links that
+    folder's files when its stamp is this .nup's and they are on one drive, else reads the .nup as before. None when
+    out has its own, or there is no other."""
+    if os.path.isfile(os.path.join(out, ".longshot_romfs")):
+        return None
+    pins = os.path.join(root or cache_root(), "pins")
+    found = []
+    for name in os.listdir(pins) if os.path.isdir(pins) else ():
+        game = os.path.join(pins, name, "game")
+        stamp_file = os.path.join(game, ".longshot_romfs")
+        if same_file(game, out) or not (os.path.isdir(os.path.join(game, "romfs")) and os.path.isfile(stamp_file)):
+            continue
+        found.append((os.path.getmtime(stamp_file), game))
+    return max(found)[1] if found else None
+
+
+NO_MODS = "no-mods"   # (in the cache root: an empty mods folder for builds whose pairs have no code mods)
+
+
+def no_mods_dir(dry=False):
+    """The empty folder a game build gets as HOS_MODS when the pairs have no mods with code patches (made empty again
+    if anything was put into it: it must never decide what goes into a build)."""
+    d = os.path.join(cache_root(), NO_MODS)
+    if not dry:
+        if os.path.isdir(d) and os.listdir(d):
+            remove_tree(d)
+        os.makedirs(d, exist_ok=True)
+    return os.path.abspath(d)
+
+
+def in_pins(folder):
+    """Whether a folder is (in) a pin's shared folder of the cache: its game folder's mods are the last kit build's."""
+    pins = os.path.normcase(os.path.realpath(os.path.join(cache_root(), "pins")))
+    f = os.path.normcase(os.path.realpath(folder))
+    return f.startswith(pins + os.sep)
 
 
 def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=False, say=print, root=None,
           owner="hs-build"):
     """Game from the cache (or built once through a kit and stored), hookshot_coop.dll rebuilt, both into each pair."""
     root = root or main_root(repo)
-    st = stamp(repo)
+    for p, how in sync_charsel_native(pairs, repo).items():
+        if how:
+            say("co-op's Characters tab's code patch %s of %s's pack (kit-paths.ps1 Sync-KitCharselNativePatch)"
+                % ("put into" if how == "in" else "taken out", p))
+    mods_line, mods = pairs_code_mods(pairs, repo)
+    st = stamp(repo) + mods_line
     k = key_of(st)
+    if mods:
+        say("mods' code patches: the pairs' (%s) go into the game (HOS_MODS)" % mods)
     say("key %s (%s)" % (k, st.replace("\n", "; ")[:160]))
     hit = os.path.isfile(os.path.join(cache_root(), k, "stamp.txt"))
     if not dry and not lock_acquire(root, "hs", owner, wait=1800, say=say):
@@ -725,7 +1029,8 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
                 raise Fail("cache miss for %s: pass --kit <a made kit> --game <your .nup/.xci> to build the game once,"
                            " or `cache store --from <a game folder built from this stamp>`" % k)
             script = os.path.join(kit, "scripts", "hookshot-build.ps1")
-            shared = pin_dir(st) if build_script_args(script) >= {"Tools", "Work"} else None
+            takes = build_script_args(script)
+            shared = pin_dir(st) if takes >= {"Tools", "Work"} else None
             # (the pin's one game folder, built again in place and kept; an old kit: a new folder, removed after)
             out = os.path.join(shared, "game") if shared else os.path.join(cache_root(), k + ".build")
             cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", out]
@@ -735,17 +1040,28 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
                 cmd += ["-Game", game]
             if shared:
                 cmd += ["-Tools", os.path.join(shared, "tools"), "-Work", os.path.join(shared, "work")]
+                # (a new pin: the game files hard-linked from an older pin's, not the .nup's ~26 GB again)
+                other = romfs_source(out) if "RomfsFrom" in takes and game and game.lower().endswith(".nup") else None
+                if other:
+                    cmd += ["-RomfsFrom", other]
+                    say("cache: the new pin's game files come from %s (hard links where the drive allows)" % other)
                 say("cache: miss; building the pin's game folder %s again in place (only what changed since its last"
                     " build)" % out)
             else:
                 say("cache: miss; this kit's hookshot-build.ps1 has no -Tools/-Work (a kit from before hs-build-speed):"
                     " a full build in the kit's own folders")
-            if not run_steps([cmd], [], dry, say):
+            # HOS_MODS always set (nx2/exefs_patches.py and Get-KitExefsStampLine read it): the pairs' mods, or an
+            # empty folder. Unset, both fall back to the OUTPUT folder's own mods: the pin's game folder keeps the
+            # puppet pack of its last kit build, with whatever code patch that build had (rejoin-host-273: a pair
+            # without code mods got a game with co-op's Characters-tab patch from it, and the store was refused).
+            env = dict(os.environ)
+            env["HOS_MODS"] = os.path.abspath(mods) if mods else no_mods_dir(dry)
+            if not run_steps([cmd], [], dry, say, env=env):
                 raise Fail("hookshot-build.ps1 failed")
             if dry:
                 say("cache: would store %s as %s" % (out, k))
             else:
-                cache_store(out, repo, say=say)
+                cache_store(out, repo, say=say, want=st)
                 if not shared:
                     remove_tree(out)
         else:
@@ -759,7 +1075,7 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
             if not dry:
                 os.makedirs(p, exist_ok=True)
             if hit or not dry:
-                cache_restore(p, repo, dry=dry, say=say)
+                cache_restore(p, repo, dry=dry, say=say, want=st)
             else:
                 say("cache: would copy the new game into %s" % p)
             exe = find_exe(p) if not dry else os.path.join(p, "bin", "longshot.exe")
@@ -791,6 +1107,8 @@ def main(argv=None):
     c = sub.add_parser("cache")
     c.add_argument("action", choices=["list", "status", "store", "restore", "prune"])
     c.add_argument("--from", dest="src")
+    c.add_argument("--pair", action="append", default=[],
+                   help="store: the pairs whose game it is (their mods' code patches are in its key; repeat)")
     c.add_argument("--to")
     c.add_argument("--keep", type=int, default=3)
     c.add_argument("--force", action="store_true")
@@ -847,7 +1165,10 @@ def main(argv=None):
             if a.action == "store":
                 if not a.src:
                     raise Fail("--from <game folder>")
-                cache_store(os.path.abspath(a.src), repo, a.force, a.dry_run)
+                want = None
+                if a.pair:
+                    want = stamp(repo) + pairs_code_mods([os.path.abspath(p) for p in a.pair], repo)[0]
+                cache_store(os.path.abspath(a.src), repo, a.force, a.dry_run, want=want)
                 return 0
             if a.action == "restore":
                 if not a.to:

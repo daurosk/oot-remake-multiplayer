@@ -1,0 +1,203 @@
+From f3d1aa38239e29763997c07a16c04258b3c9f648 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 23 Nov 2026 02:42:08 -0900
+Subject: [PATCH] Co-op menu: the Insert menu takes the pads the game would,
+ whichever window is in front
+
+Patch 0037 let the co-op module open Longshot's own menu with no key (HOS_COOP_MENU_WANT_LONGSHOT), so the pause menu's Longshot Settings works with the game's window behind. The menu then took no input: vk_menu.cpp read the pads only while the game's window was the foreground one (mine && host->pad_raw), while host/nn_hid.c, behind other windows with Controller in background or a picked pad, gave those pads to the game even with the menu open. The pad's B closed the game's pause under the menu.
+
+nn_hid.c: one pad path in front and behind (pads_to_game): while the menu is open the pads are its own and each waits until let go after it closes; behind with the pads not the game's, pad_raw_now is 0. A test's presses (HOS_INPUT_SCRIPT, the control bridge) while the menu is open are the menu's too, as the pad inputs bound to them, and kept from the game (test_presses_to_menu). hos_pad_raw gives both.
+vk_menu.cpp: the pads with no focus test of the menu's (the host decides); Restart/Quit's second press and the Controls page's confirmation take the player's pad behind other windows (mine || pad_last).
+(Longshot's tests/ is not in the Linux AppImage the kit patches: the behaviour test is oot-remake-multiplayer's tools/hookshot/menu_pads_behind_test.py, on the patched source. tests/test_pads_after_menu.py, test_input_background.py and test_menu_text_field.py still cut the old blocks.)
+---
+ gpu/vk/vk_menu.cpp | 15 ++++++--
+ host/nn_hid.c      | 96 +++++++++++++++++++++++++++++++++-------------
+ 2 files changed, 81 insertions(+), 30 deletions(-)
+
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index b83f6b84..b8ada9b4 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -5277,8 +5277,12 @@ void menu_tick() {
+     // (longshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows; the
+     // buttons the Switch's A and B are bound to as Enter and Esc, as in the game (vk_menu_keys.h; with the Nintendo layout A
+     // is the right face button), not while a binding waits for its button
++    // (oot-remake-multiplayer, patch 0039) the pads the host says are this game's now (host/nn_hid.c hos_pad_raw: in front,
++    // or behind other windows as Controller in background or a picked pad lets the game have them; a test's presses while
++    // the menu is open), with no focus test here: a menu the co-op module opened with the window behind
++    // (HOS_COOP_MENU_WANT_LONGSHOT, a tab of its own) took no pad, and the pad's B went to the game under it
+     static uint32_t pad_held = 0;
+-    const uint32_t raw = mine && host && host->pad_raw ? host->pad_raw() : 0, pad_press = raw & ~pad_held;
++    const uint32_t raw = host && host->pad_raw ? host->pad_raw() : 0, pad_press = raw & ~pad_held;
+     const uint32_t chord = 1u << HOS_PAD_BACK | 1u << HOS_PAD_START;
+     const bool chord_now = (raw & chord) == chord && (pad_held & chord) != chord;
+     pad_held = raw;
+@@ -5503,7 +5507,10 @@ void menu_tick() {
+         if (open_now.load()) refresh_monitors();
+         if (open_now.load()) refresh_nfc();    // (and the NFC tags of the player's folder)
+     }
+-    if (control_confirmation.action != ControlAction::None && (!open_now.load() || page != 1 || !mine)) {
++    // (patch 0039) the player's input: the keyboard's with the window in front, or the pads the host gives (pad_last: the
++    // last input was a pad's, which comes only while the pads are this game's)
++    const bool input_ours = mine || pad_last;
++    if (control_confirmation.action != ControlAction::None && (!open_now.load() || page != 1 || !input_ours)) {
+         control_confirmation = {};
+         changed = true;
+     }
+@@ -5876,9 +5883,9 @@ void menu_tick() {
+             }
+             Row& r = rows[tab_row_to_global(cur_tab, selected)];
+             const bool confirm_selected = r.setting && r.setting->confirm;   // (#1633: Restart, Quit: gpu/vk/menu/session.cpp)
+-            if (pending && (pending != &r || !mine)) pending = nullptr, changed = true;
++            if (pending && (pending != &r || !input_ours)) pending = nullptr, changed = true;
+             if (press[7] && confirm_selected) {
+-                if (mine && !press[5]) {
++                if (input_ours && !press[5]) {
+                     if (pending != &r) {
+                         pending = &r, changed = true;
+                     } else {   // (as Restart now: saved first, as the window's own close does not force the pipeline cache)
+diff --git a/host/nn_hid.c b/host/nn_hid.c
+index e88d350f..ede74943 100644
+--- a/host/nn_hid.c
++++ b/host/nn_hid.c
+@@ -996,7 +996,14 @@ int hos_sdl_pad_npad(int npad, uint64_t *raw, int32_t stick[4]);   /* (pad_sdl.c
+ static volatile LONG pad_raw_now;   /* the gamepads' inputs at the last read, 1 << HOS_PAD_* */
+ static uint64_t pad_after_menu;     /* (the pads' inputs the Insert menu had, 1 << HOS_PAD_*: each waits until let go) */
+ static uint64_t pad_raw_game;       /* (pads_read: the last read's inputs without the menu's Back+Start chord) */
+-uint32_t hos_pad_raw(void) { return (uint32_t)pad_raw_now; }
++/* (oot-remake-multiplayer, patch 0039) a test's presses (HOS_INPUT_SCRIPT, the control bridge) while the Insert menu is
++   open, as the pad inputs bound to them: the menu's, as a controller's are (test_presses_to_menu) */
++static volatile LONG pad_raw_test;
++/* The Insert menu's pads (gpu/vk/vk_menu.cpp): the inputs that are this game's now, whichever window is in front. The
++   pads count as the game's own do (in front; behind other windows with Controller in background on or a pad picked for
++   this game), and pad_raw_now is 0 while they do not (read_input), so the menu needs no focus test of its own: one
++   opened by the co-op module (hos_coop_menu_wanted) with the window behind takes the same pad that opened it */
++uint32_t hos_pad_raw(void) { return (uint32_t)pad_raw_now | (uint32_t)pad_raw_test; }
+ 
+ /* Apply the Insert menu's Stick dead zone to each stick as a pair, for XInput and SDL.
+    Keep both components outside the circle so the filter does not snap toward an axis. */
+@@ -1440,6 +1447,60 @@ static void keys_behind(uint64_t *buttons, int32_t stick[4]) {
+     stick_max(stick, keys);
+ }
+ 
++/* (oot-remake-multiplayer, patch 0039) The player's pads, read: while the Insert menu is open they are its own (hos_pad_raw)
++   and after it closed each input it had waits until it is let go (the press that closed it never reaches the game); the
++   others and the sticks count again at once, so one input that stays down (a worn trigger, a second pad) no longer keeps
++   the rest from the game. The same in front and behind other windows (with Controller in background or a picked pad):
++   behind, the pads used to go to the game with the menu open, which took none of them (patch 0037's Longshot Settings
++   with the window behind: the menu opened and B closed the game's pause under it). Returns the pads' buttons */
++static uint64_t pads_to_game(uint64_t *buttons, int32_t stick[4], int *deck_builtin_input, int front) {
++    uint64_t pb = 0;
++    int32_t ps[4] = {0};
++    pads_read(&pb, ps, deck_builtin_input);
++    static int menu_was;
++    const int menu = rx_option(1, 0);
++    if (menu || menu_was) pad_after_menu |= (uint32_t)pad_raw_now;   /* (the first read after the close too) */
++    else pad_after_menu &= (uint32_t)pad_raw_now;
++    menu_was = menu;
++    if (!menu) {
++        *buttons |= pad_after_menu ? bound_pad_buttons(pad_raw_game & ~pad_after_menu) : pb;
++        stick_max(stick, ps);
++        sprint_now = pad_sprint_down();
++    }
++    if (front && (ps[0] > 12000 || ps[0] < -12000 || ps[1] > 12000 || ps[1] < -12000 || ps[2] > 12000 || ps[2] < -12000 ||
++                  ps[3] > 12000 || ps[3] < -12000))
++        player_used();
++    return pb;
++}
++
++/* (oot-remake-multiplayer, patch 0039) A test's presses (HOS_INPUT_SCRIPT, the control bridge: "anything the player can
++   do with a controller") while the Insert menu is open are the menu's, as a controller's are: given to it as the pad
++   inputs bound to those buttons (hos_pad_raw), and kept from the game, the sticks too; after it closed each one waits
++   until it is let go, as pad_after_menu. They used to reach the game under the open menu */
++static void test_presses_to_menu(uint64_t *buttons, int32_t stick[4]) {
++    static uint64_t test_after_menu;
++    static int menu_was;
++    const int menu = rx_option(1, 0);
++    uint32_t raw = 0;
++    if (menu && *buttons) {
++        AcquireSRWLockShared(&pad_bind_lock);
++        for (int i = 0; i < HOS_SW_N; i++) {
++            if (!(*buttons >> i & 1)) continue;
++            const int a = sampled_pad(i, 0);
++            if (a >= 0 && a < 32) raw |= 1u << a;
++        }
++        ReleaseSRWLockShared(&pad_bind_lock);
++    }
++    InterlockedExchange(&pad_raw_test, (LONG)raw);
++    if (menu || menu_was) test_after_menu |= *buttons;
++    else test_after_menu &= *buttons;
++    menu_was = menu;
++    if (menu) {
++        *buttons = 0;
++        memset(stick, 0, 4 * sizeof *stick);
++    } else *buttons &= ~test_after_menu;
++}
++
+ /* *taps: the host's own presses (hos_hid_tap), apart from the rest */
+ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+     *buttons = *taps = 0;
+@@ -1462,6 +1523,7 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+     /* (longshot) HOS_CONTROL: the control bridge's presses (host/control.c); one that asked to be exclusive keeps the
+        player's devices out while it lasts */
+     const int control_exclusive = hos_control_input(buttons, stick);
++    test_presses_to_menu(buttons, stick);   /* (patch 0039: the script's and the bridge's, the Insert menu's while open) */
+     if (control_exclusive) {
+         sprint_excluded = 1;
+         hud_shortcut(0, 0);
+@@ -1501,7 +1563,8 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+         if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");
+         /* (patch 0015) a pad chosen for this game is its own, in front or not; the keys too when asked */
+         if (pads_in_background(env, rx_option(4, 0)) || hos_input_pad_pick() > 0)
+-            pads_read(buttons, stick, NULL), sprint_now = pad_sprint_down();
++            pads_to_game(buttons, stick, NULL, 0);   /* (patch 0039: the Insert menu's while it is open, as in front) */
++        else InterlockedExchange(&pad_raw_now, 0);   /* (the pads are not this game's: not the Insert menu's either) */
+         hud_shortcut(0, 0);
+         if (hos_input_keyboard_mode() == 1) keys_behind(buttons, stick);
+         /* (patch 0015) behind other windows the mouse is never this game's, in any keyboard mode: the camera is the
+@@ -1512,28 +1575,9 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+     }
+     int deck_builtin_input = 0;   /* (longshot) the Deck's built-in controls give gameplay input: its mouse must not */
+     uint64_t down = 0;   /* (the pads' buttons and the bound keys down at this read) */
+-    {   /* (longshot) while the Insert menu is open the pads are its own, as the keyboard is (key()), and after it
+-           closed each input it had waits until it is let go (the press that closed it never reaches the game); the
+-           others and the sticks count again at once, so one input that stays down (a worn trigger, a second pad)
+-           no longer keeps the rest from the game */
+-        uint64_t pb = 0;
+-        int32_t ps[4] = {0};
+-        pads_read(&pb, ps, &deck_builtin_input);
+-        down = pb;
+-        static int menu_was;
+-        const int menu = rx_option(1, 0);
+-        if (menu || menu_was) pad_after_menu |= (uint32_t)pad_raw_now;   /* (the first read after the close too) */
+-        else pad_after_menu &= (uint32_t)pad_raw_now;
+-        menu_was = menu;
+-        if (!menu) {
+-            *buttons |= pad_after_menu ? bound_pad_buttons(pad_raw_game & ~pad_after_menu) : pb;
+-            stick_max(stick, ps);
+-            sprint_now = pad_sprint_down();
+-        }
+-        if (ps[0] > 12000 || ps[0] < -12000 || ps[1] > 12000 || ps[1] < -12000 || ps[2] > 12000 || ps[2] < -12000 ||
+-            ps[3] > 12000 || ps[3] < -12000)
+-            player_used();
+-    }
++    /* (longshot) while the Insert menu is open the pads are its own, as the keyboard is (key()): pads_to_game, the same
++       behind other windows (patch 0039) */
++    down = pads_to_game(buttons, stick, &deck_builtin_input, 1);
+     if (hos_input_keyboard_mode() == 2) {   /* (patch 0015) no keyboard or mouse in this game (display.c lets the mouse
+                                                go): the camera is the game's and its pad's, its own follow included */
+         hos_mouse_native_stick(1);
+@@ -1686,11 +1730,11 @@ static void npad_states(Ctx *c) {
+         static const char *env;
+         static int looked;
+         if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");
+-        if (game_in_front() || pads_in_background(env, rx_option(4, 0))) {
++        if (game_in_front() || pads_in_background(env, rx_option(4, 0)) || hos_input_pad_pick() > 0) {   /* (patch 0039: as read_input) */
+             uint64_t menu_buttons = 0;
+             int32_t menu_stick[4] = {0, 0, 0, 0};
+             pads_read(&menu_buttons, menu_stick, NULL);
+-        }
++        } else InterlockedExchange(&pad_raw_now, 0);   /* (patch 0039: not this game's pads, not the Insert menu's) */
+     }
+     if (connected && !played) {
+         read_input(&buttons, &taps, stick);

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_platforms.h"
 
+#include "coop_room_objects.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <utility>
 
 namespace CoopPlatforms {
@@ -44,6 +47,9 @@ bool ClockLike(float rate) {
 }  // namespace
 
 std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, float rate) {
+    if (const std::uint64_t region = key >> 32; region == kRegionWaveNode || region == kRegionRotateNode) {
+        return NodePhaseCycle(floats, key);  // known from the node's code, whatever the frame time's unit
+    }
     if ((key & 0xffffffffULL) < kWavePhaseFromCycle) {
         return std::nullopt;  // no cycle word before it in the same region
     }
@@ -57,6 +63,143 @@ std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, flo
     }
     return kTwoPi;
 }
+
+std::optional<float> NodePhaseCycle(const Floats& floats, std::uint64_t key) {
+    const std::uint64_t region = key >> 32;
+    const std::uint64_t offset = key & 0xffffffffu;
+    const auto word = [&floats, region](std::uint64_t at) -> std::optional<float> {
+        const auto i = floats.find(Key(region, at));
+        if (i == floats.end() || !std::isfinite(i->second)) {
+            return std::nullopt;
+        }
+        return i->second;
+    };
+    if (region == kRegionWaveNode && offset >= GroundNode::kWavePhaseFirst && offset <= GroundNode::kWavePhaseLast) {
+        const std::uint64_t cycle_at = offset - (offset < GroundNode::kWaveAngularFirst ? 48 : 36);
+        const auto cycle = word(cycle_at);
+        return cycle && *cycle > 0.0f ? std::optional<float>(kTwoPi) : std::nullopt;
+    }
+    if (region == kRegionRotateNode && offset == GroundNode::kRotateAngle) {
+        const auto speed = word(GroundNode::kRotateSpeed);
+        return speed && *speed != 0.0f ? std::optional<float>(kTwoPi) : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+namespace GroundNode {
+
+std::uint64_t RegionOf(const ReadWord& read, std::uint64_t node, std::uint64_t actor, std::uint64_t main) {
+    if (node == 0 || actor == 0 || main == 0) {
+        return 0;
+    }
+    const auto vtable = read(node);
+    const auto owner = read(node + kActor);
+    if (!vtable || !owner || *owner != actor) {
+        return 0;
+    }
+    if (*vtable == main + kWaveVtable) {
+        return kRegionWaveNode;
+    }
+    if (*vtable == main + kRotateVtable) {
+        return kRegionRotateNode;
+    }
+    return 0;
+}
+
+Search::Search(std::uint64_t actor, std::uint64_t main) : actor_(actor), main_(main) {
+    objects_.push_back({actor, 0, 0, 0});
+    seen_.insert(actor);
+}
+
+std::string Search::PathOf(std::size_t i) const {
+    std::vector<std::uint64_t> vias;
+    for (; i != 0; i = objects_[i].parent) {
+        vias.push_back(objects_[i].via);
+    }
+    std::string text = "actor";
+    for (auto v = vias.rbegin(); v != vias.rend(); ++v) {
+        char part[24];
+        std::snprintf(part, sizeof part, "%s+0x%llx", v == vias.rbegin() ? "" : " > ",
+                      static_cast<unsigned long long>(*v));
+        text += part;
+    }
+    return text;
+}
+
+std::optional<Hit> Search::Step(const ReadWord& read, std::size_t budget) {
+    std::size_t used = 0;
+    const ReadWord counted = [&read, &used, this](std::uint64_t a) {
+        ++used;
+        ++reads_;
+        return read(a);
+    };
+    const auto next = [this] {
+        ++i_;
+        j_ = 0;
+        checked_ = false;
+    };
+    while (!done_ && used < budget) {
+        if (i_ >= objects_.size() || i_ >= kMaxObjects) {
+            done_ = true;
+            looked_ = i_;
+            break;
+        }
+        const Object o = objects_[i_];
+        if (!checked_) {
+            checked_ = true;
+            if (i_ != 0) {
+                if (const std::uint64_t region = RegionOf(counted, o.address, actor_, main_); region != 0) {
+                    done_ = true;
+                    looked_ = i_ + 1;
+                    hit_ = Hit{o.address, region, PathOf(i_)};
+                    break;
+                }
+            }
+            if (o.depth >= kMaxDepth) {
+                next();
+            }
+            continue;  // the budget is looked at again before the object's words
+        }
+        if (j_ >= (i_ == 0 ? kActorWords : kObjectWords)) {
+            next();
+            continue;
+        }
+        const auto w = counted(o.address + 8 * j_);
+        if (!w) {
+            next();  // the object's end (unmapped)
+            continue;
+        }
+        if (LooksLikePointer(*w) && seen_.insert(*w).second) {
+            objects_.push_back({*w, o.depth + 1, i_, 8 * j_});
+        }
+        ++j_;
+    }
+    if (!done_) {
+        looked_ = i_;
+    }
+    return hit_;
+}
+
+std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked) {
+    Search search(actor, main);
+    auto hit = search.Step(read, static_cast<std::size_t>(-1));
+    if (looked != nullptr) {
+        *looked = search.Looked();
+    }
+    return hit;
+}
+
+std::map<std::uint64_t, std::uint64_t> Words(const ReadWord& read, const Hit& hit) {
+    std::map<std::uint64_t, std::uint64_t> out;
+    for (std::uint64_t at = kFrom; at < kTo; at += 8) {
+        if (const auto w = read(hit.node + at)) {
+            out[Key(hit.region, at)] = *w;
+        }
+    }
+    return out;
+}
+
+}  // namespace GroundNode
 
 bool IsDriver(std::string_view name) {
     if (name.starts_with("GroundControlActor_") || name.starts_with("GrouondControlActor_")) {
@@ -76,12 +219,37 @@ bool IsDriver(std::string_view name) {
     return false;
 }
 
+bool PlatformSync::OnFootprint(const coop::protocol::Vec3& platform, const coop::protocol::Vec3& who) {
+    const float dx = who[0] - platform[0];
+    const float dz = who[2] - platform[2];
+    const float dy = who[1] - platform[1];
+    return dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM;
+}
+
+bool PlatformSync::OurLinkRides(const Driver& d, const coop::protocol::Vec3& player) {
+    if (d.ride_plug == false) {
+        return false;  // the game says no player is on it
+    }
+    if (d.name.starts_with("GroundControlActor_") || d.name.starts_with("GrouondControlActor_")) {
+        return d.ride_plug.value_or(false);
+    }
+    const bool ours_on = OnFootprint(d.position, player);
+    if (d.ride_plug == true) {
+        return ours_on || !d.other_on;  // only another player's puppet on it is not ours
+    }
+    return ours_on;
+}
+
 std::string Where(std::uint64_t key) {
     const std::uint64_t region = key >> 32;
     const auto offset = static_cast<unsigned long long>(key & 0xffffffffu);
     char text[48];
     if (region == kRegionAsFrame) {
         std::snprintf(text, sizeof text, "as-frame");
+    } else if (region == kRegionWaveNode) {
+        std::snprintf(text, sizeof text, "wave-node+0x%llx", offset);
+    } else if (region == kRegionRotateNode) {
+        std::snprintf(text, sizeof text, "rotate-node+0x%llx", offset);
     } else if (region == kRegionActor) {
         std::snprintf(text, sizeof text, "actor+0x%llx", offset);
     } else {
@@ -135,7 +303,18 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
     const float dt1 = static_cast<float>(b.at_us - a.at_us) / 1e6f;
     const float dt2 = static_cast<float>(c.at_us - b.at_us) / 1e6f;
     std::map<std::uint64_t, Candidate> next;
+    const auto ban = [&](std::uint64_t key, float value, const char* why) {
+        if (banned_.insert(key).second) {
+            dropped_.push_back({key, value, why});
+        }
+        if (chosen_ && *chosen_ == key) {
+            chosen_.reset();
+        }
+    };
     for (const auto& [key, v2] : c.floats) {
+        if (banned_.count(key) != 0) {
+            continue;
+        }
         const auto i0 = a.floats.find(key);
         const auto i1 = b.floats.find(key);
         if (i0 == a.floats.end() || i1 == b.floats.end()) {
@@ -157,6 +336,10 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         Candidate cand = known ? it->second : Candidate{};
         const bool agree = in_range(r1) && in_range(r2) && (r1 > 0) == (r2 > 0) &&
                            std::fabs(r1 - r2) <= kRateSlack * std::max(std::fabs(r1), std::fabs(r2));
+        if (agree && cand.wave && r2 < 0.0f && (key >> 32) != kRegionRotateNode) {
+            ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
+            continue;
+        }
         if (agree) {
             cand.rate = r2;
             cand.good = std::min(cand.good + 1, 1000);
@@ -164,6 +347,10 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
             cand.stalled = 0;
             cand.top = std::max(cand.top, std::max(v1, v2));
             if (const auto loop = WavePhaseCycle(c.floats, key, r2)) {
+                if (!InLoop(v0, *loop) || !InLoop(v1, *loop) || !InLoop(v2, *loop)) {
+                    ban(key, v2, "outside [0, 2 pi): worked out from another word, not the wave's phase");
+                    continue;
+                }
                 cand.wave = true;
                 cand.cycle = *loop;  // known from the game's code: no loop needs to be seen first
             }
@@ -180,6 +367,18 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         // jump to send; the finder lets go of it if it lasts.
         const bool backwards = cand.rate > 0 ? v2 < v1 : v2 > v1;
         const bool stalled = std::fabs(r2) < kMinRate;
+        // #196: a wave phase goes back only by looping (from near 2 pi to near 0); any other step back is an offset
+        // that swings (sin of the phase), not the phase. A step back to its start (a switch or a reload setting the
+        // phase to 0 again, review-platform-phase-r1) is a jump, not a swing.
+        const bool to_start = cand.rate > 0 ? v2 < kWaveResetSlack : v2 > cand.cycle - kWaveResetSlack;
+        if (cand.wave && !stalled &&
+            (!InLoop(v2, cand.cycle) ||
+             (backwards && !to_start &&
+              !(cand.rate > 0 ? v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle
+                              : v1 < 0.5f * cand.cycle && v2 > 0.5f * cand.cycle)))) {
+            ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
+            continue;
+        }
         if (stalled) {
             // Held as it is (not a bad step) while the game stands still,
             // but not Found(): nothing frozen is sent.
@@ -213,8 +412,8 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
     if (!chosen_) {
         std::optional<std::uint64_t> best;
         for (const auto& [key, cand] : candidates_) {
-            if (cand.good < kKeepAfter || cand.bad != 0) {
-                continue;
+            if (cand.good < kKeepAfter || cand.bad != 0 || !Trusted(key, cand.wave)) {
+                continue;  // room-objects: a guessed word is never the clock (it was a place or a frame counter)
             }
             if (!best) {
                 best = key;
@@ -239,6 +438,20 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         }
         chosen_ = best;
     }
+}
+
+bool ClockFinder::Trusted(std::uint64_t key, bool wave) {
+    return wave || (key >> 32) == kRegionAsFrame;
+}
+
+std::optional<std::string> PlatformSync::OwnLogic(const std::string& scene, const Driver& d) {
+    if (d.ride_plug.has_value()) {
+        return std::string("RideOnPlayer, live");  // a rider lift: CoopLiftRide drives it
+    }
+    if (const auto* p = CoopRoomObjects::Nearest(scene, d.name, d.position); p != nullptr && !p->why.empty()) {
+        return std::string(p->why);
+    }
+    return std::nullopt;
 }
 
 std::optional<std::uint64_t> ClockFinder::StalledKey() const {
@@ -275,6 +488,12 @@ void ClockFinder::Reset() {
     candidates_.clear();
     chosen_.reset();
     jumped_ = false;
+    banned_.clear();
+    dropped_.clear();
+}
+
+bool ClockFinder::InLoop(float value, float cycle) {
+    return cycle <= 0.0f || (value >= -0.01f && value < cycle + 0.01f);
 }
 
 float Advance(float value, float rate, float cycle, std::uint64_t sent_us, std::uint64_t now_us) {
@@ -320,31 +539,21 @@ void PlatformSync::Receive(const coop::protocol::PlatformClock& message) {
 }
 
 std::uint8_t PlatformSync::OwnerOf(std::uint64_t hash, std::uint8_t self, std::uint64_t server_us) const {
-    // The one that has sent the longest without a break keeps it (a game
-    // that comes later follows); two that began together: the lower number.
-    std::uint8_t owner = 0;
-    std::uint64_t owner_since = 0;
-    const auto consider = [&](std::uint8_t player, std::uint64_t since) {
-        constexpr std::uint64_t kTogetherUs = 200'000;
-        const bool earlier = since + kTogetherUs < owner_since;
-        const bool together = !earlier && since <= owner_since + kTogetherUs;
-        if (owner == 0 || earlier || (together && player < owner)) {
-            owner = player;
-            owner_since = since;
-        }
-    };
-    if (const auto it = states_.find(hash); it != states_.end() && it->second.since_us != 0 &&
-                                            server_us <= it->second.last_send_us + kOwnerQuietUs) {
-        consider(self, it->second.since_us);
-    }
+    // The lowest number of the games that send this driver's clock, ourselves included: the same in every game
+    // (as CoopCounters' pause leader, PR 279). The earlier rule (the longest sender keeps it, the lower number only
+    // when two began together) let two games each count themselves the owner when their runs were seen at
+    // different times; in the Deku Tree water room (bigrun-0115) each game gave up following the other and then
+    // sent its own clock, so the other followed it in turn. A game that sends nothing (no clock found, gone quiet
+    // for kOwnerQuietUs) is no candidate, so a lower number with no clock never stops the others.
+    std::uint8_t owner = self;
     if (const auto it = heard_.find(hash); it != heard_.end()) {
         for (const auto& [player, h] : it->second) {
-            if (player != self && server_us <= h.got_us + kOwnerQuietUs) {
-                consider(player, h.since_us);
+            if (player != 0 && player != self && server_us <= h.got_us + kOwnerQuietUs && player < owner) {
+                owner = player;
             }
         }
     }
-    return owner == 0 ? self : owner;
+    return owner;
 }
 
 void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t steady_us,
@@ -367,6 +576,16 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (d.hash == 0 || d.hash == ~std::uint64_t{0} || !IsDriver(d.name)) {
             continue;
         }
+        // room-objects: an object its own logic drives (a switch, a sensor, a rider) is never written from outside.
+        if (const auto why = OwnLogic(scene, d)) {
+            if (told_own_logic_.insert(d.hash).second) {
+                char text[200];
+                std::snprintf(text, sizeof text, "%016llx %s: driven by its own logic (%s): its clock is not shared",
+                              static_cast<unsigned long long>(d.hash), d.name.c_str(), why->c_str());
+                out.notes.emplace_back(text);
+            }
+            continue;
+        }
         const float m = Distance(d.position, *player);
         if (m <= kNearM) {
             near.emplace_back(m, &d);
@@ -382,6 +601,18 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
     message.server_time_us = server_us;
     for (const auto& [m, d] : near) {
         State& s = states_[d->hash];
+        // Issue 194: no clock write moves our Link; a jump on it (the plug 0 in the air) keeps the hold.
+        if (OurLinkRides(*d, *player)) {
+            s.ride_until_us = steady_us + kRideGraceUs;
+        }
+        const bool ridden = steady_us < s.ride_until_us;
+        if (s.held_for_ride && !ridden) {
+            s.held_for_ride = false;
+            char text[160];
+            std::snprintf(text, sizeof text, "%016llx %s: our Link is off it: its clock may be put in step again",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str());
+            out.notes.emplace_back(text);
+        }
         if (s.last_look_us != 0 && steady_us < s.last_look_us + ClockFinder::kLookEveryUs) {
             continue;
         }
@@ -392,6 +623,13 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         s.last_look_us = steady_us;
         const Floats floats = FloatsOf(words);
         s.finder.Add(steady_us, floats);
+        for (const auto& drop : s.finder.TakeDropped()) {
+            char text[240];
+            std::snprintf(text, sizeof text, "%016llx %s: %s (%.3f) is no clock: %s",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str(), Where(drop.key).c_str(),
+                          static_cast<double>(drop.value), drop.why);
+            out.notes.emplace_back(text);
+        }
         const std::uint8_t owner = OwnerOf(d->hash, self, server_us);
         if (owner == self) {
             auto clock = s.finder.Found();
@@ -405,7 +643,7 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
             }
             bool resumed = false;
             if (const auto stood = std::exchange(s.paused_at, std::nullopt);
-                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up &&
+                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up && !ridden &&
                 DriftSeconds(clock->value, *stood, clock->rate, clock->cycle) <= kResumeS) {
                 const float want = Advance(s.sent->value, s.sent->rate, s.sent->cycle, s.sent_us, server_us);
                 if (DriftSeconds(clock->value, want, clock->rate, clock->cycle) > kDriftS) {
@@ -461,6 +699,22 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (mine == floats.end() || !std::isfinite(mine->second)) {
             continue;
         }
+        // #196: our own copy of that word is no clock here (our finder dropped it, or it is a wave phase by the
+        // game's layout and stands outside [0, 2 pi)): a word the game works out again every frame. Writing it only
+        // fights the game. Only a wave's loop is known from the code; any other clock's cycle is an estimate from
+        // the one jump the owner saw (a frame lift's top can lie a step past it), so it is not judged by it.
+        const bool wave = WavePhaseCycle(floats, h.tick.key, h.tick.rate).has_value();
+        if (s.finder.Banned(h.tick.key) || (wave && !ClockFinder::InLoop(mine->second, kTwoPi))) {
+            s.gave_up = true;
+            char text[240];
+            std::snprintf(text, sizeof text,
+                          "%016llx %s: our %s (%.3f) is no clock here (outside the owner's loop %.3f or dropped): "
+                          "not followed",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str(), Where(h.tick.key).c_str(),
+                          static_cast<double>(mine->second), static_cast<double>(h.tick.cycle));
+            out.notes.emplace_back(text);
+            continue;
+        }
         // Our word stands still after it was seen moving: our game is paused (#35). No write (it could not
         // hold) and nothing counted against us; once it moves again the first write puts it in step.
         const bool same_key = s.mine_key == h.tick.key && s.mine_was;
@@ -478,6 +732,21 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (drift <= kDriftS) {
             s.no_hold = 0;
             s.written.reset();
+            continue;
+        }
+        if (ridden) {
+            // Issue 194: written now, the platform would jump with our Link on it. Put in step once he is
+            // off; nothing was written, so the next write is not one the game "took back".
+            s.written.reset();
+            if (!s.held_for_ride) {
+                s.held_for_ride = true;
+                char text[200];
+                std::snprintf(text, sizeof text,
+                              "%016llx %s: our Link rides it (%s): its clock is left %.2f s off until he is off",
+                              static_cast<unsigned long long>(d->hash), d->name.c_str(),
+                              d->ride_plug ? "RideOnPlayer" : "footprint", static_cast<double>(drift));
+                out.notes.emplace_back(text);
+            }
             continue;
         }
         if (s.last_write_us != 0 && steady_us < s.last_write_us + kWriteEveryUs) {
@@ -521,6 +790,7 @@ void PlatformSync::Reset() {
     scene_.clear();
     heard_.clear();
     states_.clear();
+    told_own_logic_.clear();
 }
 
 }  // namespace CoopPlatforms

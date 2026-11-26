@@ -19,14 +19,14 @@ namespace {
 // Names from the actor packs (docs/objects.md, "The projectile actors").
 // Seen live: Shootable_DekuSeed and Item_DekuNut.
 constexpr std::array<Info, 8> kInfos{{
-    {"Item_Bomb", Kind::bomb, false, true, true},
-    {"Item_Bombchu", Kind::bombchu, false, false, true},
-    {"Item_DekuNut", Kind::nut, true, false, false},
-    {"Shootable_DekuSeed", Kind::seed, true, false, false},
-    {"NormalArrow", Kind::arrow, true, false, false},
-    {"Weapon_Boomerang", Kind::boomerang, false, false, false},
-    {"Shootable_Hook", Kind::hook, false, false, false},
-    {"Shootable_HookLong", Kind::hook_long, false, false, false},
+    {"Item_Bomb", Kind::bomb, false, true, true, false},
+    {"Item_Bombchu", Kind::bombchu, false, false, true, false},
+    {"Item_DekuNut", Kind::nut, true, false, false, true},
+    {"Shootable_DekuSeed", Kind::seed, true, false, false, false},
+    {"NormalArrow", Kind::arrow, true, false, false, false},
+    {"Weapon_Boomerang", Kind::boomerang, false, false, false, false},
+    {"Shootable_Hook", Kind::hook, false, false, false, false},
+    {"Shootable_HookLong", Kind::hook_long, false, false, false, false},
 }};
 
 bool Finite(const Vec3& v) {
@@ -141,11 +141,11 @@ bool Track::Add(const Point& p) {
     return true;
 }
 
-Vec3 Track::Shown(std::uint64_t now_us, bool ballistic) const {
+Vec3 Track::Shown(std::uint64_t now_us, bool ballistic, std::uint64_t behind_us) const {
     if (!last_) {
         return {};
     }
-    const std::uint64_t t = now_us - std::min(now_us, kBehindUs);
+    const std::uint64_t t = now_us - std::min(now_us, behind_us);
     if (points_.empty() || t <= points_.front().time_us) {
         return points_.empty() ? last_->position : points_.front().position;
     }
@@ -342,8 +342,12 @@ std::uint64_t LandHoldUs(Kind kind) {
         return 1'500'000;  // sticks where it struck
     case Kind::seed:
         return 200'000;    // seen landing, then gone as on the owner's screen
+    case Kind::nut:
+        return 200'000;    // bursts where it stopped (the effect is asked for as the copy
+                           // gets there; the director's search and emit take a few
+                           // frames), then gone as on the owner's screen
     default:
-        return 0;          // a nut flashes by its own AI; the rest go at once
+        return 0;          // the rest go at once
     }
 }
 
@@ -366,6 +370,29 @@ std::string_view HitEffect(Kind kind) {
     case Kind::arrow:
         // (read from the romfs's ELink2 table: both users have it; docs/spawns.md)
         return "Hit_AdditionalAttacker";
+    case Kind::nut:
+        // The nut's own burst: its AI (Item_DekuNut.root.ainb) emits this key
+        // through OneShotXLinkSearchAndEmit (ELinkCall and SLinkCall) on its
+        // first contact; its ELink user is ExpandLightField, whose table has it
+        // (the flash assets Item_DekuNut_Flash_01 / _LowRes_00). docs/spawns.md.
+        return "Chemical_Light";
+    default:
+        return {};
+    }
+}
+
+std::string_view HitSound(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+        // ReactionHit's (romfs SLink2 table; lava, sand, water and bog
+        // variants by the surface's material are picked by the game).
+        return "Hit_SlingShot_Bullet";
+    case Kind::arrow:
+        return "Hit_Bow_Arrow";
+    case Kind::nut:
+        // The nut's AI plays this key through SLinkCall as well (#248 left
+        // the sound out).
+        return "Chemical_Light";
     default:
         return {};
     }
@@ -388,6 +415,11 @@ proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, floa
         // the game's help-box bomb (docs/spawns.md).
         return lifetime_us >= kExplodeMinUs ? proto::RemoveReason::exploded
                                             : proto::RemoveReason::gone;
+    }
+    if (info.bursts) {
+        // Its own AI burst it where it stopped, slow after its bounce or not
+        // (#248: sent as gone, the copies were deleted without the flash).
+        return proto::RemoveReason::hit;
     }
     if (info.ballistic && speed >= kHitSpeed) {
         return proto::RemoveReason::hit;
@@ -441,6 +473,50 @@ void Blasts::Reset() {
 Blasts& TheBlasts() {
     static Blasts blasts;
     return blasts;
+}
+
+Blasts& TheShotHits() {
+    static Blasts hits;
+    return hits;
+}
+
+void OwnShots::Note(std::uint64_t address, std::uint64_t now_us) {
+    if (address == 0) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    std::erase_if(seen_, [address](const auto& e) { return e.first == address; });
+    seen_.emplace_back(address, now_us);
+    while (seen_.size() > kKeep) {
+        seen_.pop_front();
+    }
+}
+
+bool OwnShots::Was(std::uint64_t address, std::uint64_t now_us) const {
+    if (address == 0) {
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    return std::any_of(seen_.begin(), seen_.end(), [&](const auto& e) {
+        return e.first == address && now_us >= e.second && now_us - e.second <= kKeepUs;
+    });
+}
+
+void OwnShots::Reset() {
+    std::lock_guard lock(mutex_);
+    seen_.clear();
+}
+
+OwnShots& TheOwnShots() {
+    static OwnShots shots;
+    return shots;
+}
+
+bool HitIsOurs(std::uint64_t attacker, std::uint64_t our_link, const OwnShots& shots, std::uint64_t now_us) {
+    if (attacker == 0) {
+        return false;
+    }
+    return attacker == our_link || shots.Was(attacker, now_us);
 }
 
 bool IsLure(std::string_view actor) {

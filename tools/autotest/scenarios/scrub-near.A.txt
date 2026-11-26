@@ -1,0 +1,127 @@
+# scrub-near (#144, scrubs-b): scrub-talk with ONLY the new near guard in A
+# (LICHII_COOP_SCRUB_TALK_HOLD=near: no event hold), so it proves that our copy of a scrub
+# within talking distance of our Link keeps another player's destroy flags waiting, whatever the game's
+# event flag says (coop_scrub_talk.h, Near). Same moves as scrub-talk.A.txt (A solves the
+# Scrub Brothers alone, walks to One, leaves One's text up 60 s while B ends its own talk).
+# Saves: clear 0xd2f46f66 and 0x60c22ed7 in both autotest-save baselines first
+# (tools/autotest/save_flags.py set), and put them back after.
+# Expect (A's log):
+#  - "coop: dungeon: scrub near (the Scrub Brothers): within talking distance of our Link or in our event, its destroy
+#    flags from others wait" before B's talk ends; NO "our Link is in an event" line (off).
+#  - B's two flags (0xd2f46f66, 0x60c22ed7) are not written in A while A's text is up.
+#  - A's talk ends; after "mark talk-end" A walks back to the room centre (goto), then
+#    "... no longer near our Link, its destroy flags from others go through"; both flags 1
+#    in A and One gone in both games. FAIL: A stuck in One's talk at mark end.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_SCRUB_TALK_HOLD=near,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 240
+mark aim-two
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark two
+toward -34.0 39.6 10     # face Three
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark three
+goto -24.0 29.5 0.6 240
+toward -23.7 40.0 10     # face One
+wait 60
+mark aim-one
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One: the talk comes when Link is near
+mark at-one
+mark talk
+press A
+wait 120
+press A
+wait 3600                # the text stays up: B's talk ends and its flags come in meanwhile
+mark hold
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark talk-end
+goto -27.8 20.3 1.0 600  # back to the room centre: A can move, the talk is over
+mark end

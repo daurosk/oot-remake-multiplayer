@@ -11,8 +11,11 @@
 #   and put them back from <pair>\autotest-save-backup afterwards.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gohma-door (emulator: -Scenario gohma-movein)
 # Pass: "+ Enemy_DungeonBoss_Gohma" in both logs; A "coop: boss: in the boss room of InsideTheDekuTree"
-# and "past the door (shut in)"; B "another player is in the boss room of InsideTheDekuTree: moving in
-# (try 1)" only after it. Still no Gohma with the baselines cleared: the trigger needs more (say so on #178).
+# and "past the door (shut in)"; B (placed before the door, in the boss's area) "Queen Gohma: moving in to the
+# room's start (try 1)" and "moved Link to" the room only after it. Still no Gohma with the baselines cleared:
+# the trigger needs more (say so on #178). (boss-fails-0115: since boss-cutscenes only a player in the boss's
+# area is moved in; the older dungeon-wide pull's "another player is in the boss room ... moving in" lines,
+# which big-run-0115 counted as a PASS while B stayed at the entrance, are no longer logged then.)
 # gohma-movein's own notes follow.
 # gohma-movein (was gohma-door on boss-movein-2) (#148, branch boss-movein-2): A loads into the Deku Tree and is put in Gohma's room
 # (loads at the entrance, clears the kit save's Deku boss flags, is put in the corridor and walks

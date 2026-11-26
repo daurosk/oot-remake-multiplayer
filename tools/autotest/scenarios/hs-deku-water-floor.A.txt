@@ -1,3 +1,10 @@
+# fable-g3-objects: the floor is no world object any more (its own GroundControlActor_WaveLoop moves it in
+# every game; the room's ResidentMoveTo lowers the WATER, by the shared flag ..._RoomG_WaterLevel_timing).
+# So NO "world: ... Obj_Deku_MoveFloor_A_01" line may appear in either log, and the lines below that expect
+# one are out of date. Pass now: both logs "bool ... RoomG_WaterLevel 0 -> 1"; the water low in both shots;
+# B (the rider) stays on the floor with no jump; "coop: platforms: ... GroundControlActor_WaveLoop ...: clock"
+# in A and "following" in B puts the two floors at the same x (if no such line: the phase is not found,
+# the floors wave out of step but nothing fights).
 # hs-deku-water-floor (Hookshot and emulator, issue #196): deku-water-floor with the basement's water level and moving floors (event InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop) not yet played.
 # bigrun (2026-11-12): INCONCLUSIVE, both games in the Deku Tree but no "our game started the event" line:
 # the kit saves are past the Deku Tree. The Hookshot pairs' baselines have these set too (save_flags.py get

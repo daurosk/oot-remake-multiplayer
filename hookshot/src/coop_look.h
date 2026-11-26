@@ -13,9 +13,10 @@
 // Co-op need not be running: alone, your Link changes and the look is saved.
 //
 // A look is one colour per part (docs/puppet.md, "The Link customizer"): the
-// tunic, the Goron and Zora tunics' cloth, and the parts of the shields,
-// swords, boots and gauntlets that their textures keep apart. Each part has
-// a number that never changes (the settings and the network use it).
+// tunic, the Goron and Zora tunics' cloth, the cap's trims, and the parts of
+// the shields, swords, boots and gauntlets that their textures keep apart.
+// Each part has a number that never changes (the settings and the network use
+// it); a new part takes the next number, whatever its place on the menu.
 #pragma once
 
 #include <array>
@@ -31,7 +32,7 @@
 namespace CoopLook {
 
 enum class Part : std::uint8_t {
-    tunic = 0,            // the Kokiri tunic and cap (one texture on the adult: the cap is not apart)
+    tunic = 0,            // the Kokiri tunic and cap (the cap's cloth is the tunic's weave texture)
     goron_tunic = 1,      // the Goron Tunic's red cloth
     zora_tunic = 2,       // the Zora Tunic's blue cloth
     hylian_frame = 3,     // the Hylian Shield's metal rim and the cross on its back
@@ -48,8 +49,34 @@ enum class Part : std::uint8_t {
     biggoron_hilt = 14,
     boots = 15,           // the leather of every pair of boots
     gauntlets = 16,       // the metal of the Silver and the Golden Gauntlets
+    cap_trim = 17,        // the cap's own trims: the child's headband and knot, the adult's hood trims
+                          // (unset: as the tunic; on the puppets too since 0.11.9, with their tunic copy)
+    eyes = 18,            // 0.11.9: the eyes' colour (the iris: Mt_Eye_Inner's ns_param_color2, set by the game's own
+                          // model calls on your Link and the puppets, CoopCharColours); a kit before it passes it over
+    hair = 19,            // 0.11.9: the hair's colour (the hair materials' ns_param_color0 / 1 and the brows', as the
+                          // game colours its own characters' hair; Link models only)
+    // npc-customize (owner 2026-11-23): a Character Select character's own parts, one set for every character (a
+    // model without a part leaves it alone), dressed by CoopCharColours with the game's own model calls on your
+    // character, its Customize picture and your puppets. Link's eyes and hair (18, 19) never go on a character.
+    char_hair = 20,       // the hair: its own params in any colour and the mod's nearest hair palette texture
+    char_eyes = 21,       // the iris (Mt_Eye_Inner's ns_param_color2), any colour
+    char_cloth1 = 22,     // Clothing Color 1, 2, 3: the nearest of the mod's seven palette textures (kClothPresets)
+    char_cloth2 = 23,
+    char_cloth3 = 24,
+    char_gear = 25,       // the equipment shown (unset) or hidden (kGearHidden)
 };
-inline constexpr std::size_t kParts = 17;
+inline constexpr std::size_t kParts = 26;
+// char_gear's value when the equipment is hidden (any set value hides it; the settings say "hidden").
+inline constexpr std::uint32_t kGearHidden = 1;
+// A character's part (char_hair .. char_gear): on the Character page only, never on a Link model.
+inline constexpr bool IsCharacterPart(Part p) {
+    return static_cast<std::uint8_t>(p) >= static_cast<std::uint8_t>(Part::char_hair) &&
+           static_cast<std::uint8_t>(p) <= static_cast<std::uint8_t>(Part::char_gear);
+}
+// The clothing rows' colours: the mod's palette entries in their order (OoT Character Select v0.2.1 CLOTH_VALUES,
+// 1 = Green .. 7 = White), as CoopColors names them; a colour chosen is worn as the nearest of them.
+inline constexpr std::array<const char*, 7> kClothPresets = {"green", "red", "blue", "purple", "yellow", "black",
+                                                            "white"};
 
 // A part as the menu and the settings name it.
 struct PartInfo {
@@ -58,7 +85,7 @@ struct PartInfo {
     const char* item;   // the menu's heading: "Hylian Shield"
     const char* name;   // the row: "Frame"
 };
-// Every part, in the menu's order (by item).
+// Every part, in the menu's order (by item; not by number).
 const std::array<PartInfo, kParts>& Parts();
 const PartInfo& InfoOf(Part part);
 // A part by its number; nothing for a number this build does not know.
@@ -115,9 +142,11 @@ std::vector<std::pair<std::uint8_t, std::uint32_t>> Wire(const Look& look);
 // A received look; parts this build does not know are passed over.
 Look FromWire(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& parts);
 
-// The tunic's colour as the puppet pack names it (coop_look/<name>.bin): the
-// pack colour nearest it (CoopColors::TunicOf), lower case; "green", the
-// game's own, when unset.
+// The tunic's colour as the puppet pack names it (coop_look/<name>.bin, the
+// puppets' CoopTunic_<Age>_<Colour> models): the pack colour nearest it
+// (CoopColors::TunicOf), lower case; "green", the game's own, when unset.
+// The other players' puppets of you wear it. Your own Link is painted in the
+// exact colour instead (CoopLookParts::TunicPainting).
 std::string TunicName(const std::optional<std::uint32_t>& colour);
 
 // The tunic colour your own Link wears: the chosen one; with none chosen
@@ -128,9 +157,11 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
 
 // The colour your own Link's tunic files in the puppet pack give it when the
 // game starts (colour-agree): at each start the kit (Set-KitSelfTunic,
-// puppet_pack/self_tunic.py for Linux and the autotest) copies your colour's
-// coop_self/ files in: your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an
-// older pack: over the game's Angin_Tile_A_Alb). A start that skipped it
+// puppet_pack/self_tunic.py for Linux and the autotest) copies coop_self/
+// files in: green's when the pack has coop_look/green.bin (the module paints
+// your colour on them: CoopLookParts::TunicPainted), else your colour's;
+// your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an older pack: over the
+// game's Angin_Tile_A_Alb). A start that skipped it
 // leaves whatever was copied last, and the game draws what is in the pack, so
 // that is the start colour, not LICHII_COOP_SELF_TUNIC: `tile` is the pack's
 // tile (nothing: none, "green", the game's own), `self_tile` a colour's
@@ -140,6 +171,11 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
 using FileFn = std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>;
 std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,
                            const std::string& hint);
+
+// The coop.ini the Nucleus Co-op handler wrote for this game (its first line, tools/nucleus/OoTCoop.js COOP_WRITTEN;
+// row 194). Nucleus starts each game without the kit's launcher, and its instances share the kit's one puppet pack
+// (mods is a link), so the pack's tunic files are never one player's colour there: the wardrobe's repaint is the way.
+bool NucleusWrote(std::string_view coop_ini);
 
 // ---------------------------------------------------------------------------
 // The module's one look. Any thread, but Frame.

@@ -1,0 +1,48 @@
+# hs-map-dc-guest (dungeon-sync-b, #63/#76; Revirie: non-hosts never have a map): hs-map-dc with the roles
+# swapped: B, the GUEST (player 2), opens the Dodongo's Cavern map chest while A, the host, waits in the cavern.
+# A runs hs-map-dc.B's steps (its shots are named b-*). The check is B's own panel* and mini-room* shots.
+# B:LICHII_COOP_TEST_OWN_SAVE=0: B takes the REAL guest path (the host's save copy in its -coop folder, switched to on
+# the title before B loads a file), so the host's FLAG_RESET and B's load write-back happen. Look for "coop: save: now
+# playing from the co-op save folder" in B's log. After the run, take lane1-B's user/save/<id>-coop folder out again.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=a52c3a19,B:LICHII_COOP_TEST_OWN_SAVE=0
+#! timeout 420
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-before
+wait 4200                 # B (later on the title: the host's save) walks to the chest and plays the get scene
+mark b-after
+press MINUS
+wait 120
+mark b-panel
+press R
+wait 90
+mark b-panel-r1
+press R
+wait 90
+mark b-panel-r2
+press B
+wait 240
+place -29 117.6 0         # room 3: a room load (the map is read again)
+wait 900
+mark b-mini-room2
+press MINUS
+wait 120
+mark b-panel2
+press R
+wait 90
+mark b-panel2-r1
+press B
+wait 240
+mark end

@@ -1,0 +1,18 @@
+# live-kakariko-child A (boot for live.py start): the save as a child in Kakariko at the well, past the title (the hs scenarios' Kakariko boot).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark a-in

@@ -332,10 +332,20 @@ std::vector<std::uint8_t> Presence::players_in_scene(std::string_view local_scen
 std::optional<Pose> Presence::shown(std::uint8_t number, std::uint64_t server_now_us) {
   Player* p = find(number);
   if (p == nullptr) return std::nullopt;
-  const std::uint64_t show_us =
-      server_now_us > settings_.show_delay_us ? server_now_us - settings_.show_delay_us : 0;
+  const std::uint64_t delay = p->delay_.step(server_now_us, settings_.show_delay_us);
+  const std::uint64_t show_us = server_now_us > delay ? server_now_us - delay : 0;
   if (!p->last_shown_us_ || show_us > *p->last_shown_us_) p->last_shown_us_ = show_us;
   return p->pose_at(show_us, settings_);
+}
+
+void Presence::seen(std::uint8_t number, std::uint64_t sample_us, std::uint64_t server_now_us) {
+  if (Player* p = find(number)) p->delay_.seen(sample_us, server_now_us);
+}
+
+std::uint64_t Presence::show_delay_us(std::uint8_t number) const {
+  const Player* p = player(number);
+  return p == nullptr ? settings_.show_delay_us
+                      : (std::max)(p->delay_.current_us(), settings_.show_delay_us);
 }
 
 bool Presence::same_scene(std::uint8_t number, std::string_view local_scene) const {

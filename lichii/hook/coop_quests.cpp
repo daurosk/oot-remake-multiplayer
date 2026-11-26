@@ -26,15 +26,30 @@ namespace {
 //     and forth: Ready, Playing, Retry, Finish);
 //   - SubEvent_GetSwordBigGoron (the trading sequence and the egg's timer),
 //     SubEvent_MaskSalesman (the mask rentals): steps of one player's own
-//     items;
+//     items (the trade's step follows the shared trade item held instead:
+//     coop_hook.cpp FollowTradeItem, row 117);
 //   - DoorOfTime (time travel stays each game's own, docs/flags.md), AllSage
 //     (the Chamber of Sages; its Step01_00_01 to _03 are not in an order),
 //     Defeat_Ganon and EscapeFromCrumblingGanonCastle (the final battle).
-//   - for now, Get_StoneOfFire, SageOfShadow, SageOfSpirit and SageOfWater:
-//     their RawValues look out of order or branched (KokiriForestFire before
-//     KokiriForestIn, GotGlassTruth before GetGlassTruth, Step07 before
-//     Step07_pre00, Step07_1_Safety), and with the max rule a wrong order skips
-//     a step. Back in once checked against their event flows.
+//   - for now, SageOfShadow, SageOfSpirit and SageOfWater: their RawValues
+//     look out of order or branched (GotGlassTruth before GetGlassTruth,
+//     Step07 before Step07_pre00, Step07_1_Safety), and with the max rule a
+//     wrong order skips a step. Back in once checked against their event flows.
+//     (Checked for the mid-bosses: the RawValues are the RSDB order, but the
+//     game sets SageOfSpirit Step07_00 at the adult's arrival whenever it
+//     plays, so a max would still move steps the wrong way. The steps a
+//     mid-boss's death gives, Dark Link's SageOfWater Step07_1 and the Iron
+//     Knuckle's SageOfSpirit Step08_01, are raised by CoopQuest from the
+//     shared death records instead: coop_quest.cpp, "Mid-bosses".)
+//
+// Get_StoneOfFire (the Goron Ruby) is shared since issue 60: its RawValues are
+// the RSDB row's steps in the story's order (KokiriForestFire before
+// KokiriForestIn is the story: Darunia sends Link to Saria), set one after the
+// other by its event flows. Left out, a player who was not there for Darunia
+// never got Complete, and Get_StoneOfFire_IsCompleted_Exp is what the Door of
+// Time's DoorOfTime_CheckStoneNum reads (CoopQuest then moves DoorOfTime on).
+// Floor Ready: Ready comes from the game's quest manager, never from a scene,
+// so only a game still at NotReady (a new save's opening) is left alone.
 //
 // Get_Epona (0x92431c55, not listed in the tab) is shared by its end only
 // (Quest::complete_only): its steps are one player's own (the song as a
@@ -42,12 +57,21 @@ namespace {
 // lost), but once one player has won Epona every game's quest is Complete,
 // so every adult can call and ride their own Epona (each game has its own
 // horse: docs/puppet.md, "Riding"). A game in the race itself
-// (GambleRacePlaying, AfterWonGambleRace) is left to finish it.
+// (GambleRacePlaying, AfterWonGambleRace while LonLonRanch_PlayingGambleRace
+// is 1) is left to finish it; row 150: at those steps with no race running it
+// takes the end too.
 //
 // Also writing quest Enums: CoopQuest (coop_quest.cpp, time-story, issue 173)
 // raises DoorOfTime from our Goto_HyruleCastle; both only raise.
 const std::vector<Quest>& Table() {
     static const std::vector<Quest> kQuests = {
+        {0x1002b466u, "Get_StoneOfFire",
+         {"NotReady", "Ready", "KakarikoVillageNpc", "KakarikoVillageLetter", "DeathMtTrailIn",
+          "DeathMtTrailNpc", "GoronCityIn", "GoronCityDarniaroomNpcTalk01", "GoronCityDarniaroomOpen",
+          "GoronCityDarniaTalk", "DarniaRoomKokiriTalk", "KokiriForestNPCTalk", "KokiriForestFire",
+          "KokiriForestIn", "SariaMelodyGet", "SariaMelodyPlay", "DodongoCavernOpne", "DungeonStart",
+          "BossBattle", "EscapeDungeon", "Complete"},
+         1},  // floor: Ready (the manager's own, never a scene's)
         {0x3372689bu, "Meet_DekuTree", {"NotReady", "Ready", "Step01", "Step02", "Step03", "Complete"}},
         {0x44063c4eu, "SubEvent_GetMelodySun", {"NotReady", "Ready", "GetMelodySun", "Complete"}},
         {0x5bca02a6u, "Get_StoneOfWater",
@@ -160,6 +184,27 @@ bool On() {
     return !EnvOff("LICHII_COOP_QUESTS");
 }
 
+std::vector<CoopQuest::StepWant> LiveWants(const CoopQuest::ReadEnum& value) {
+    std::vector<CoopQuest::StepWant> wants;
+    for (const Quest& quest : Table()) {
+        const bool sent = std::any_of(CoopQuest::Quests().begin(), CoopQuest::Quests().end(),
+                                      [&](const CoopQuest::Quest& q) { return q.hash == quest.hash && q.live != 0; });
+        if (sent) continue;
+        const auto now = value(quest.hash);
+        const auto rank = now ? Rank(quest, *now) : std::nullopt;
+        if (!rank || *rank < std::max<std::int32_t>(quest.floor, 2)) continue;
+        if (quest.complete_only && *rank != Last(quest)) continue;
+        CoopQuest::StepWant w{coop::host::flag_hash(quest.name), *now, {}, quest.name};
+        for (const char* step : quest.steps) w.steps.push_back(coop::host::flag_hash(step));
+        wants.push_back(std::move(w));
+    }
+    return wants;
+}
+
+bool LiveOn() {
+    return !EnvOff("LICHII_COOP_QUEST_LIVE");
+}
+
 void AddShared(std::optional<coop::host::SharedFlags>& shared) {
     const bool on = On();
     const std::size_t added = Merge(shared, on);
@@ -191,13 +236,23 @@ std::optional<coop::protocol::FlagEntry> Store::read(coop::host::FlagKey key) {
 
 namespace {
 
-// A complete_only quest our game is finishing itself (its last two steps
-// before the end: GambleRacePlaying, AfterWonGambleRace for Get_Epona).
-bool Racing(const Quest& quest, std::optional<std::int32_t> now) {
-    return quest.complete_only && now && *now != Last(quest) && *now >= Last(quest) - 2;
-}
+// LonLonRanch_PlayingGambleRace (GameDataList Bool): Get_Epona's own flow sets it as a race against Ingo
+// starts (Sub_Get_Epona_GambleRace_Start, Sub_Get_Epona_RambleRace_Ready) and clears it as each race ends
+// (Sub_Get_Epona_RambleRace_Clean, Sub_Get_Epona_GambleRace_End).
+constexpr std::uint32_t kRaceRunning = 0xa253721cu;
 
 } // namespace
+
+// A complete_only quest our game is finishing itself: at one of its last two steps before the end
+// (GambleRacePlaying, AfterWonGambleRace for Get_Epona) while its race runs in our game. Row 150: those
+// steps alone held the group's end for good: Dm_LonLon_0040 (Ingo beaten) joined in another player's
+// ranch left that game at AfterWonGambleRace with no race and no horse, so Complete never came. Unread
+// counts as running (held, tried again).
+bool Store::racing(const Quest& quest, std::optional<std::int32_t> now) const {
+    if (!quest.complete_only || !now || *now == Last(quest) || *now < Last(quest) - 2) return false;
+    if (!get_bool_) return true;
+    return get_bool_(kRaceRunning).value_or(true);
+}
 
 bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact) {
     if (entry.kind != coop::protocol::FlagKind::int32) {
@@ -216,7 +271,7 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
         if (want != Last(quest)) {
             return true;  // only the end is shared: a save load or a lower value leaves ours
         }
-        if (Racing(quest, now)) {
+        if (racing(quest, now)) {
             // In the race, or riding out after winning it: left to finish, and
             // held (busy) so it is tried again: a lost race goes back below.
             return false;
@@ -261,11 +316,16 @@ bool Store::write_exact(const coop::protocol::FlagEntry& entry) {
     return quest != nullptr ? put(*quest, entry, true) : inner_.write_exact(entry);
 }
 
+bool Store::write_load_back(const coop::protocol::FlagEntry& entry) {
+    const Quest* quest = Plain(entry.key) ? Find(entry.key.hash) : nullptr;
+    return quest != nullptr ? put(*quest, entry, true) : inner_.write_load_back(entry);
+}
+
 bool Store::busy(coop::host::FlagKey key) {
     const Quest* quest = Plain(key) ? Find(key.hash) : nullptr;
     if (quest != nullptr && quest->complete_only) {
         const auto value = get_(quest->hash);
-        if (Racing(*quest, value ? Rank(*quest, *value) : std::nullopt)) return true;
+        if (racing(*quest, value ? Rank(*quest, *value) : std::nullopt)) return true;
     }
     return inner_.busy(key);
 }

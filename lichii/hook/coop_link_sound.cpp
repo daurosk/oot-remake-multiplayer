@@ -143,6 +143,14 @@ std::uint64_t OurUser() {
     return g_our_user.load(std::memory_order_relaxed);
 }
 
+bool OwnOnly(std::string_view name) {
+    static constexpr std::array<std::string_view, 9> kOwn{
+        "HeartAlert",        "HeartRecover",     "HeartReduce",
+        "GlassTruth_On",     "GlassTruth_Off",   "GlassTruth_MP_On",
+        "GlassTruth_MP_Off", "GlassTruth_MP_Off_Equip", "GlassTruth_MP_Off_UnEquip"};
+    return std::find(kOwn.begin(), kOwn.end(), name) != kOwn.end();
+}
+
 std::string NameAt(std::uint64_t asset_cell, const Read& read) {
     std::uint64_t asset = 0;
     std::uint64_t text = 0;
@@ -186,8 +194,8 @@ bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read) {
                                    " emits '" + (name.empty() ? std::string("?") : name) + "'");
         }
     }
-    if (user != ours || name.empty()) {
-        return false;
+    if (user != ours || name.empty() || OwnOnly(name)) {
+        return false;  // OwnOnly: only this player hears it (row 163)
     }
     auto& caught = Caught();
     if (caught.size() >= kCaughtMax) {

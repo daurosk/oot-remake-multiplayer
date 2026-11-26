@@ -1,0 +1,46 @@
+mark start
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
+mark t2
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
+mark t3
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
+mark t4
+wait 600
+mark t5
+wait 600
+mark t6
+wait 600
+mark t7
+wait 600
+mark t8
+wait 600
+mark t9
+kill Enemy_DungeonBoss_PhantomGanon
+wait 600
+mark after-turns
+wait 1800               # his death, if it came
+mark d1
+wait 1800
+mark end

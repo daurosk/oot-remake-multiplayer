@@ -1,0 +1,9 @@
+# what: Stand in front of the Deku Tree's map chest, look at it, press A and wait for the item get to start.
+# scene: InsideTheDekuTree
+# start: Link anywhere in the entrance room after a warp to InsideTheDekuTree (the script places him).
+# expect: the A prompt is Open at the chest; within 120 frames of the press event is true (the get scene).
+# kit: 1
+{"server":"oot-p1","tool":"place","args":{"x":5.45,"y":108.9,"z":6.15,"face_x":6.51,"face_z":7.25}}
+{"server":"oot-p1","tool":"step","args":{"frames":30}}
+{"server":"oot-p1","tool":"press","args":{"buttons":["A"],"frames":2}}
+{"server":"oot-p1","tool":"step_until","args":{"condition":"event == true","max_frames":120}}

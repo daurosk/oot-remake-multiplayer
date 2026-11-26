@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "session.hpp"
+#include "test_delay.hpp"
 
 namespace coop::server {
 
@@ -39,10 +40,38 @@ struct CommandLine {
   bool relay = false;
   // --relay-via ADDRESS[:PORT]: host through that relay and get a join code.
   std::string relay_via;
+  // --relay-room NAME: with --relay-via, also hold this room name on the relay
+  // (players join with the name instead of the code).
+  std::string relay_room;
+  // --relay-list [NAME]: with --relay-room, put the room on the relay's public
+  // room list, shown as NAME; without one, as the room name (players, most
+  // players and the protocol version go with it; never the password).
+  std::string relay_list;
+  // --public: a public game (HostServiceConfig::public_game): anyone with the
+  // room name joins without a password, through the relay only, listed. Needs
+  // --relay-via and --relay-room; no --upnp. A --password given is replaced by
+  // the room's (protocol::public_join_password), as the game's Host page does.
+  bool public_game = false;
+  // --dedicated: an always-on server with no hosting game (docs/official-game.md):
+  // it reads moderation commands typed into its console (lines starting '/':
+  // Session::admin). Needs --public.
+  bool dedicated = false;
+  // --bans-file PATH: the bans by player key kept across runs (one key id a
+  // line, read_ban_file); rewritten when a ban is made or lifted.
+  std::string bans_file;
+  // --official-key-file PATH: the official game's private key (64 hex digits; docs/official-game.md): each
+  // listing goes with a signed proof, so kits mark the room official. Needs --public. On Linux the file must
+  // not be readable by group or others (chmod 600).
+  std::string official_key_file;
+  // --official-relay HOST[:PORT]: the relay as the kits reach it (their default relay; docs/official-game.md), signed
+  // into each proof. Needed with --official-key-file (--relay-via is this machine's own way to it, 127.0.0.1).
+  std::string official_relay;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;
   std::string relay_key_env;
+  // --relay-max-per-address N: with --relay, sessions allowed from one address (0: the relay's default, 2).
+  std::size_t relay_max_per_address = 0;
   // --invite: learn this PC's internet address with STUN from the game port,
   // print an invite code (address + join password) and take answer codes
   // typed into the window (punch.hpp). Needs a join password.
@@ -59,6 +88,15 @@ struct CommandLine {
   bool pvp = false;
   // --dbno on|off: down but not out (docs/play-online.md); on by default.
   bool dbno = true;
+  // --approve-joins: the host lets each new player in (docs/protocol.md,
+  // "Host approval"); off by default.
+  bool approve_joins = false;
+  // --same-network-open: players from a private address join without the
+  // join password (docs/protocol.md "Same network").
+  bool same_network_open = false;
+  // --test-delay-ms / --test-jitter-ms: TEST ONLY (test_delay.hpp); main
+  // refuses them unless the environment has OOT_COOP_TEST=1.
+  TestDelay test_delay;
   bool help = false;
 };
 

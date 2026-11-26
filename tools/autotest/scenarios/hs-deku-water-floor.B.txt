@@ -16,7 +16,10 @@ wait 2400
 mark after
 wait 120
 place -30.2 75.7 37.0
-wait 240
+wait 120
+# #196: the floor waves, so its place at load is not where it is now: onto its live place, 0.3 m up
+place Obj_Deku_MoveFloor_A_01 0.3
+wait 120
 mark on-floor
 press ZL 10
 wait 480

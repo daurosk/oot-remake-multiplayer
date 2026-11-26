@@ -1,0 +1,29 @@
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+# custom-help-title (custom-help-01110): Customize screen's title with the A hint; run in en / zh-Hans / zh-Hant.
+mark start
+wait 300
+press MINUS
+wait 150
+press L
+wait 120
+press L
+wait 120
+press L
+wait 120
+press X
+wait 180
+mark title-page1
+press Y
+wait 90
+mark title-page2
+press Y
+wait 90
+press Y
+wait 90
+mark title-page4
+press A
+wait 120
+mark mixer
+press B
+wait 90
+mark end

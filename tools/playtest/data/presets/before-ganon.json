@@ -1,0 +1,44 @@
+{
+  "preset": "before-ganon",
+  "version": 1,
+  "title": "Ganon (the final fight): adult Link at the arena, 8 hearts",
+  "spec": {
+    "items": [
+      "Weapon_Sword_Master",
+      "Weapon_Shield_Hylian",
+      "bow",
+      "Item_Arrow_Light"
+    ],
+    "hearts": 8,
+    "max_hearts": 8,
+    "magic": 1,
+    "age": "adult",
+    "flags": {
+      "0x746f47c0": "Step09",
+      "FinalBattleField_DefeatGanonStart": 0,
+      "HavePlayedEvent.InsideGanonCastle_Dungeon_BossDie_2": 0,
+      "HavePlayedEvent.Dm_FinalBattle_BossIn": 0,
+      "HavePlayedEvent.Dm_FinalBattle_BossOut": 0,
+      "HavePlayedEvent.Dm_SageRoom_0020": 0,
+      "HavePlayedEvent.Dm_SageRoom_0025": 0,
+      "HavePlayedEvent.Dm_SageRoom_0027": 0,
+      "HavePlayedEvent.Dm_Ending_0000": 0,
+      "HavePlayedEvent.Dm_StaffCredit_0000": 0
+    },
+    "warp": {
+      "scene": "FinalBattleField",
+      "entrance": "FinalBattleField_Entrance"
+    },
+    "place": {
+      "x": 11.79,
+      "y": 100.05,
+      "z": -1.07
+    }
+  },
+  "notes": [
+    "Link loads in the final battle field (FinalBattleField), not the boss rush room GanonStage.",
+    "Link is put at the boss room's arrival point (docs/dungeons-boss.md, the eight rooms: the same coordinates as the rush start 11.79 100.05 -1.07). A place skips the door's own trigger, so the intro may not run from here: if no boss comes, walk out of the room through its door and in again (`look` lists the doors). The place before the door is not in the repository; the first lane run records it.",
+    "The age is set before the warp (Sequence_IsChildhood, then 30 frames), so a save of either age works.",
+    "The boss is made alive as docs/dungeons-boss.md (the boss set table) has it: the shared quest Defeat_Ganon is put back to its step Step09, and the boss room's played flags (the intro and the death among them) and Bools to their before values. The ending and credits played flags are cleared too."
+  ]
+}

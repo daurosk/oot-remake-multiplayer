@@ -1,0 +1,81 @@
+# hs-boss-together-gohma (Hookshot/Longshot; tracker row 130, GitHub #173): A and B walk in through Gohma's door
+# at the same moment (the same script, side by side). Player report on 0.11.3: "a softlock with Gohma when we tried
+# entering her chamber at the same time ... He was able to beat her and I wasn't."
+# SAVE: as hs-boss-fix-gohma (a pre-Gohma save in both lanes' baselines; the setflags clear the boss flags again).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-together-gohma [-Lane 1]
+# PASS (proof lines and shots):
+#  1. Both: the intro starts in both games within ~1 s ("Dm_Deku_BossIn: our game started it" in one or both;
+#     the higher number then "started it too: theirs leads (lower number)" or "ours started with player N's").
+#  2. CONTROL: both "test goto ... reached" after a-after-intro / b-after-intro; shots a-moved / b-moved show each
+#     Link at its goto target, free (a Link held in the intro = the softlock, FAIL).
+#  3. Gohma leaves her pre-battle phase in both games ("ready to own the boss" in both, no copy at the intro spot:
+#     no BossAppear asked twice in one game, the 10 s bosses line's brain changes > 0 in the owner).
+#  4. ONE DEATH: after the owner's kill (both scripts send kill; the copy's is held at 1) she dies in both games,
+#     the death cutscene in both (shots a-k2 / b-k2).
+# The job also greps 'coop: boss', 'now ours', 'unready', 'handover' to name where a FAIL comes from.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door together: both games' own boss trigger
+mark a-in
+wait 600
+mark a-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark a-trigger
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her
+mark a-moved
+wait 1200
+mark a-watch
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed
+wait 120
+hold ZL+LSTICK_UP 90    # locked on: walk up to the eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit
+wait 900
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # the owner's dies; a copy's is held at 1 and dies with the owner's
+wait 120
+mark a-k1
+wait 900
+mark a-k2
+wait 1200
+mark end

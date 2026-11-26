@@ -67,19 +67,33 @@ struct Painter {
     const std::vector<Rule>& rules;
     std::vector<double> base;    // each rule's average linear luma in the texture
     std::vector<Rgb> target;
+    int forced = -1;              // the region's rule for this block (Region), -1 none
+    std::uint32_t tones = 0;      // every part's tones (Region::tones): never forced
 
     int Match(const Rgb& c) const {
-        const std::uint32_t tone = ToneOf(c);
+        std::optional<std::uint32_t> tone;   // (worked out once, when a rule asks)
         for (std::size_t i = 0; i < rules.size(); ++i) {
-            if ((rules[i].tones & tone) != 0) {
+            const Rule& r = rules[i];
+            if (r.takes == Takes::all || (r.takes == Takes::green && IsGreen(c))) {
                 return static_cast<int>(i);
+            }
+            if (r.takes == Takes::tones) {
+                if (!tone) {
+                    tone = ToneOf(c);
+                }
+                if ((r.tones & *tone) != 0) {
+                    return static_cast<int>(i);
+                }
             }
         }
         return -1;
     }
     bool Usable(int rule) const { return rule >= 0 && base[static_cast<std::size_t>(rule)] > 0; }
     int Paints(const Rgb& c) const {
-        const int r = Match(c);
+        int r = Match(c);
+        if (r < 0 && forced >= 0 && Forceable(c, tones)) {
+            r = forced;   // row 185: an encoder's end inside the part's region
+        }
         return Usable(r) ? r : -1;
     }
     Rgb Paint(const Rgb& c, int rule) const {
@@ -856,13 +870,31 @@ std::uint32_t ToneOf(const Rgb& c) {
     }
     const double h = Hue(c);
     if (h < 15 || h >= 345) return kRed;
-    if (h < 45) return hi >= 150 ? kGold : kBrown;
-    if (h < 70) return hi >= 150 ? kGold : kYellow;
+    const std::uint32_t gold = hi - lo < 0.25 * hi ? (kGold | kWarmGrey) : kGold;   // row 185
+    if (h < 45) return hi >= 150 ? gold : kBrown;
+    if (h < 70) return hi >= 150 ? gold : kYellow;
     if (h < 160) return kGreen;
     if (h < 200) return kCyan;
     if (h < 260) return kBlue;
     if (h < 300) return kPurple;
     return kPink;
+}
+
+bool Forceable(const Rgb& c, std::uint32_t tones) {
+    if ((ToneOf(c) & tones) != 0) {
+        return false;
+    }
+    const int hi = std::max({c[0], c[1], c[2]}), lo = std::min({c[0], c[1], c[2]});
+    return hi < 25 || hi - lo < 0.35 * hi;
+}
+
+bool IsGreen(const Rgb& c) {
+    const int hi = std::max({c[0], c[1], c[2]}), lo = std::min({c[0], c[1], c[2]});
+    if (hi == lo) {
+        return false;   // (no hue)
+    }
+    const double h = Hue(c);
+    return h >= 40 && h <= 180 && hi >= 6 && hi - lo >= std::max(3.0, 0.08 * hi);
 }
 
 double Luma(const Rgb& c) { return 0.2126 * Lin(c[0]) + 0.7152 * Lin(c[1]) + 0.0722 * Lin(c[2]); }
@@ -915,13 +947,30 @@ std::vector<Rgb> Ends(Format f, std::span<const std::uint8_t> texels) {
     return out;
 }
 
+double AverageLuma(Format f, std::span<const std::uint8_t> texels) {
+    double total = 0;
+    std::size_t n = 0;
+    for (const Rgb& e : Ends(f, texels)) {
+        total += Luma(e);
+        ++n;
+    }
+    return n != 0 ? total / static_cast<double>(n) : 0.0;
+}
+
 std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<std::uint8_t> out,
                      const std::vector<Rule>& rules) {
+    return Recolour(f, texels, out, rules, Region{});
+}
+
+std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<std::uint8_t> out,
+                     const std::vector<Rule>& rules, const Region& region) {
     Painter p{rules, std::vector<double>(rules.size(), 0.0), {}};
+    p.tones = region.tones;
     for (const Rule& r : rules) {
         p.target.push_back(RgbOf(r.colour));
     }
-    {
+    // Each rule's average, unless the rule gives its own (Rule::base).
+    if (std::any_of(rules.begin(), rules.end(), [](const Rule& r) { return r.base <= 0; })) {
         std::vector<std::size_t> n(rules.size(), 0);
         for (const Rgb& e : Ends(f, texels)) {
             if (const int r = p.Match(e); r >= 0) {
@@ -933,6 +982,11 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
             p.base[i] = n[i] != 0 ? p.base[i] / static_cast<double>(n[i]) : 0.0;
         }
     }
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        if (rules[i].base > 0) {
+            p.base[i] = rules[i].base;
+        }
+    }
     const std::size_t size = std::min(texels.size(), out.size());
     if (out.data() != texels.data()) {
         std::memmove(out.data(), texels.data(), size);
@@ -941,6 +995,10 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
     std::size_t changed = 0;
     for (std::size_t at = 0; at + step <= size; at += step) {
         std::uint8_t* o = out.data() + at;
+        // The part whose region this block is in takes its other pale or dark ends (each rule's average
+        // above is the tones' own, as before).
+        const std::size_t block = at / step;
+        p.forced = block < region.rule.size() ? region.rule[block] : -1;
         if (f == Format::astc) {
             if (const auto nv = AstcBlock(Load(texels.data() + at), p)) {
                 Store(*nv, o);

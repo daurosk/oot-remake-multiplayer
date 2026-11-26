@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -161,6 +162,20 @@ class Locks(Base):
         hs.lock_release(self.root, "game", say=q)
         self.assertTrue(lanes.lock_acquire(2, "run", root=self.root, say=q))
 
+    def test_each_game_of_a_lane_is_a_lane_of_its_own(self):
+        """Two workers drive A and B of one lane at once; a pair run and either of its games exclude each other."""
+        q = lambda *a: None
+        self.assertTrue(lanes.lock_acquire(1, "worker A", root=self.root, say=q, game="A"))
+        self.assertTrue(lanes.lock_acquire(1, "worker B", root=self.root, say=q, game="B"))
+        self.assertFalse(lanes.lock_acquire(1, "pair run", root=self.root, say=q))
+        self.assertFalse(lanes.lock_acquire(1, "worker A2", root=self.root, say=q, game="A"))
+        self.assertTrue(lanes.lock_acquire(2, "lane 2 pair", root=self.root, say=q))
+        hs.lock_release(self.root, "lane1-A", say=q)
+        hs.lock_release(self.root, "lane1-B", say=q)
+        self.assertTrue(lanes.lock_acquire(1, "pair run", root=self.root, say=q))
+        self.assertFalse(lanes.lock_acquire(1, "worker B", root=self.root, say=q, game="B"))
+        self.assertIn("lane1-A", hs.LANE_LOCKS)   # a game build waits for one-game sessions too
+
     def test_a_build_starting_between_take_and_check_wins(self):
         """The lane takes its lock, then a game build takes build-game.lock before the lane looks: the lane lets its lock
         go again, so the build (which looks for lane locks after taking its own) and the run never both go."""
@@ -196,6 +211,50 @@ class Locks(Base):
         self.assertFalse(ok)
         hs.lock_release(self.root, "lane1", say=q)
         self.assertTrue(hs.wait_free(os.path.join(self.root, "lane1.lock"), 30, say=q))
+
+
+class PidAlive(unittest.TestCase):
+    def test_a_probe_that_cannot_tell_counts_as_alive(self):
+        # A busy PC once made one tasklist call come back empty: the watchdog read "game B ended" and quit both games.
+        self.assertTrue(hs.pid_alive(1234, probe=lambda pid: "unknown"))
+        def broken(pid):
+            raise OSError("the API failed")
+        self.assertTrue(hs.pid_alive(1234, probe=broken))
+        self.assertTrue(hs.pid_alive(1234, probe=lambda pid: "alive"))
+        self.assertFalse(hs.pid_alive(1234, probe=lambda pid: "gone"))
+        self.assertFalse(hs.pid_alive(0, probe=lambda pid: "alive"))
+
+    def test_the_real_probe(self):
+        self.assertTrue(hs.pid_alive(os.getpid()))
+        p = subprocess.Popen([sys.executable, "-I", "-c", "pass"])
+        p.wait()
+        self.assertFalse(hs.pid_alive(p.pid))       # (exited; Popen still holds its handle on Windows: signalled)
+        p = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertTrue(hs.pid_alive(p.pid))
+        finally:
+            p.kill()
+            p.wait()
+
+    def test_a_busy_probe_does_not_end_a_live_session_or_free_a_live_lock(self):
+        import live
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "session.json"), "w", encoding="utf-8") as f:
+            json.dump({"started": time.time(), "max_s": 0, "booted": True, "idle_s": 0}, f)
+        with open(os.path.join(d, "pids.json"), "w", encoding="utf-8") as f:
+            json.dump({"games": {"A": 11, "B": 22}}, f)
+        looks = []
+        def sleep(_s):
+            looks.append(1)
+            if len(looks) == 3:
+                open(os.path.join(d, "stop-request"), "w").close()
+        alive = lambda pid: hs.pid_alive(pid, probe=lambda p: "unknown")
+        self.assertEqual(live.watch(d, sleep=sleep, alive=alive, every=0), "stop asked")
+        lock = os.path.join(d, "lock")
+        os.makedirs(lock)
+        write(os.path.join(lock, "owner.txt"), json.dumps({"host": hs.host_id(), "pid": 22, "time": time.time()}))
+        self.assertEqual(hs.lock_stale(lock, alive=alive), "")
 
 
 class CopyTreeLinks(Base):

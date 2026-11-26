@@ -6,6 +6,12 @@
 # autosave at night) two rose at about 173 29 and 171 28 when A walked to 186 22, attacked,
 # and sank again 25 s later when no one fought them. A walks there and fights at once:
 # ZL targets the nearest, Y swings (a Stalchild has life 2).
+# misc-fails-0115: on Hookshot the warp's start is not used (Longshot's teleport takes a destination only): in
+# bigrun-0115 both landed at the field's own start (197.5 163.2 309.9, by the Lost Woods bridge) and the goto to
+# 186 22 walked them into the Kokiri woods (A ended at -97 113 -37): no Stalchild could rise (PLAYED, none in view).
+# Now both are placed on the open ground in front of the Market where peahat plays (ground 145.7 at x -88..-110,
+# z 58..76; placed 5 m up, as peahat), A at -88 58.6, B at -95 76 facing A. Stalchildren rise at night near Link
+# anywhere in the field's grass; ZL targets the nearest, so the fight no longer walks to fixed spots.
 #! noload
 #! switches LICHII_COOP_TIME_TEST_SET=72000@90,LICHII_COOP_DEBUG_TIME=1
 #! start coop: test warp done
@@ -29,13 +35,12 @@ press A                 # loads the save, then the warp
 wait 2400               # the save loads, then the warp lands (about 30 s)
 mark field
 wait 1200               # the host sets 20:00 about 15 s after landing
-mark night
-goto 186.0 22.0 1.0 900 # where they rose in grass-sync-2
+place -88.0 151.0 58.6   # the open field in front of the Market (peahat's spot); falls 5 m to 145.7
 wait 60
-goto 179.0 25.5 1.0 600
+mark night
+wait 300
 mark rise
 wait 120                # they rise (PreAppear, Appear)
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -44,7 +49,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight1
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -53,7 +57,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight2
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -62,7 +65,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight3
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -71,7 +73,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight4
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -80,7 +81,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight5
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -89,7 +89,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight6
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -98,7 +97,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight7
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -107,7 +105,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight8
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -116,7 +113,6 @@ hold ZL 16
 hold ZL+Y 8
 hold ZL 30
 mark fight9
-toward 172.5 28.7 6
 hold ZL 20
 hold ZL+Y 8
 hold ZL 16
@@ -128,12 +124,12 @@ mark fight10
 press B 10
 wait 180
 mark drops              # what the dead ones left
-goto 175.0 27.0 0.5 300 # over where they fought: picks up what lies there
-goto 172.5 28.7 0.5 300
-goto 171.0 28.0 0.5 300
-goto 174.0 29.5 0.5 300
+goto -90.0 60.5 0.5 300  # around where it fought: picks up what lies there
+goto -86.0 60.5 0.5 300
+goto -86.0 56.5 0.5 300
+goto -90.0 56.5 0.5 300
 wait 180
 mark picked
-goto 186.0 22.0 1.0 900 # away, so the rest sink and drops blink out
+goto -108.0 58.6 1.5 900  # away (peahat's walk), so the rest sink and drops blink out
 wait 600
 mark end

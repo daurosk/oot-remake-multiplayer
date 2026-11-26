@@ -7,6 +7,7 @@
 #   bash scripts/update.sh --launch   update without asking, for start.sh (exit 3: updated)
 #   bash scripts/update.sh --version v0.11.0   install that release instead of the newest (older ones too)
 #   bash scripts/update.sh --revert   go back to the version this kit had before (revert.sh)
+#   bash scripts/update.sh --tidy     only point the menu and Steam entries at the kit's start file (start.sh, every start)
 # Going back (as update.ps1 on Windows): every update keeps the kit's own files of the version it replaces in
 # previous/<version>/ (the last 2; never data/game, your saves, settings, coop-options.ini or logs); --revert puts
 # the newest older one back (or a backup-<version>/ an update left). This updater (scripts/update.sh, revert.sh)
@@ -14,7 +15,8 @@
 # than the one left is offered, and asked about. An update forward forgets it.
 # As tools/release/kit/linux/update.sh, for the zip: it reads the kit's version from VERSION.txt,
 # asks GitHub for the releases of daurosk/oot-remake-multiplayer and takes the newest with a Linux
-# zip (oot-coop-<version>-linux.zip and its .sha256). If that is newer, it downloads it,
+# zip (Squadala-<version>-linux.zip and its .sha256; oot-coop-<version>-linux.zip up to v0.11.2, and the same file
+# again from v0.11.3 on for the older kits' updaters, which know only that name). If that is newer, it downloads it,
 # checks the SHA-256 (and the release signature when the GitHub CLI is logged in; verify_signature = no in
 # data/coop-options.ini skips that, not the SHA-256), unpacks it to a temp folder and copies the kit's own files (MANIFEST.txt)
 # over this kit. Every file it replaces is first copied to backup-<old version>/; if anything fails,
@@ -36,6 +38,7 @@ while (($#)); do
         --status) action=status ;;
         --launch) action=launch; yes=1 ;;
         --revert) action=revert ;;
+        --tidy) action=tidy ;;
         --version)
             shift
             want_tag=${1-}
@@ -65,17 +68,22 @@ newest_release() {
     KIT_QUIET_FETCH=1 fetch "$API" "$list" 2>/dev/null || { rm -f "$list"; return 2; }
     grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$list" | sed 's/.*:[[:space:]]*"//; s/"$//' >"$list.urls"
     rm -f "$list"
-    local url name tag sha best='' best_zip='' best_sha=''
+    local url name tag sha cmp new_name best='' best_zip='' best_sha='' best_new=0
     while IFS= read -r url; do
         name=${url##*/}
-        [[ $name =~ ^oot-coop-(.+)-linux\.zip$ ]] || continue
-        tag=${BASH_REMATCH[1]}
+        [[ $name =~ ^(Squadala|oot-coop)-(.+)-linux\.zip$ ]] || continue
+        tag=${BASH_REMATCH[2]}
+        [[ ${BASH_REMATCH[1]} == Squadala ]] && new_name=1 || new_name=0
         [[ -z ${WANT_TAG-} || ${tag,,} == "${WANT_TAG,,}" ]] || continue
         [[ $(kit_version_compare "$tag" 0.0.0-a) == 1 ]] || continue   # a version, not a draft name
         sha=$(grep -F -- "/$name.sha256" "$list.urls" | head -n1)
         [[ -n $sha ]] || continue
         url_ok "$url" && url_ok "$sha" || continue
-        if [[ -z $best || $(kit_version_compare "$tag" "$best") == 1 ]]; then best=$tag best_zip=$url best_sha=$sha; fi
+        # (the same release under both names: the Squadala- one)
+        [[ -z $best ]] && cmp=1 || cmp=$(kit_version_compare "$tag" "$best")
+        if [[ $cmp == 1 || ($cmp == 0 && $new_name == 1 && $best_new == 0) ]]; then
+            best=$tag best_zip=$url best_sha=$sha best_new=$new_name
+        fi
     done <"$list.urls"
     rm -f "$list.urls"
     [[ -n $best ]] && printf '%s %s %s\n' "$best" "$best_zip" "$best_sha"
@@ -115,10 +123,11 @@ prev_rm() {
 # that failed while copying holds only some).
 kit_complete() {
     local rel
-    [[ -f $1/MANIFEST.txt && -f $1/start-oot-coop.sh ]] || return 1
+    [[ -f $1/MANIFEST.txt && ( -f $1/start-squadala.sh || -f $1/start-oot-coop.sh ) ]] || return 1
     while IFS= read -r rel; do
         rel=${rel%$'\r'}
-        [[ -z $rel || $rel == '#'* || $rel == data/coop-options.ini ]] && continue
+        # MANIFEST.txt.tmp: v0.11.2 to v0.11.4 kits list their build's temp file, which never shipped.
+        [[ -z $rel || $rel == '#'* || $rel == data/coop-options.ini || $rel == MANIFEST.txt.tmp ]] && continue
         plain_path "$rel" && ! player_path "$rel" || continue
         [[ -f $1/$rel ]] || return 1
     done <"$1/MANIFEST.txt"
@@ -157,6 +166,72 @@ game_change_text() {
         patches) say "The next start updates the co-op game for $2 (a few minutes). Your saves are kept." ;;
     esac
 }
+
+# Every way in to this kit follows its start file (update.ps1 Update-KitStartLinks on Windows). A menu or desktop entry
+# (*.desktop) or a Steam entry (userdata/<id>/config/shortcuts.vdf) that starts the kit's other start file when that one
+# is gone, or start-oot-coop.sh (the name up to v0.11.3) once this version's MANIFEST.txt no longer has it, now starts
+# the kit's own: start-squadala.sh after an update, start-oot-coop.sh after going back to a kit up to v0.11.2. Then
+# start-oot-coop.sh goes when MANIFEST.txt no longer has it. Runs on every start (start.sh: update.sh --tidy) and after
+# every update or going back. OOT_COOP_SHORTCUT_DIRS (':'-separated) and OOT_COOP_STEAM_DIR replace the places (tests);
+# with OOT_COOP_SHORTCUT_DIRS alone no Steam list is touched.
+tidy_start_links() {
+    local to from retire=0 dirs=() lists=() d f c n s q qt e et steam
+    if [[ -f $KIT/start-squadala.sh ]]; then to=start-squadala.sh from=start-oot-coop.sh
+    elif [[ -f $KIT/start-oot-coop.sh ]]; then to=start-oot-coop.sh from=start-squadala.sh
+    else return 0; fi
+    if [[ $to == start-squadala.sh && -f $KIT/$from && -f $KIT/MANIFEST.txt ]] &&
+        ! tr -d '\r' <"$KIT/MANIFEST.txt" | grep -qxF -- "$from"; then retire=1; fi
+    [[ -f $KIT/$from ]] && ((!retire)) && return 0
+    if [[ -n ${OOT_COOP_SHORTCUT_DIRS-} ]]; then
+        IFS=: read -r -a dirs <<<"$OOT_COOP_SHORTCUT_DIRS"
+    else
+        dirs=("${XDG_DATA_HOME:-$HOME/.local/share}/applications" "$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")")
+    fi
+    if [[ -n ${OOT_COOP_STEAM_DIR-} ]]; then
+        lists=("$OOT_COOP_STEAM_DIR"/userdata/*/config/shortcuts.vdf)
+    elif [[ -z ${OOT_COOP_SHORTCUT_DIRS-} ]]; then
+        for steam in "$HOME/.steam/steam" "${XDG_DATA_HOME:-$HOME/.local/share}/Steam" "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
+            for f in "$steam"/userdata/*/config/shortcuts.vdf; do
+                [[ -f $f ]] || continue
+                f=$(readlink -f -- "$f")
+                [[ " ${lists[*]-} " == *" $f "* ]] || lists+=("$f")
+            done
+        done
+    fi
+    # The path as written in a .desktop Exec= line ("...": \ " ` $ escaped, as start.sh writes it) and as plain text.
+    q=${KIT//\\/\\\\}; q=${q//\"/\\\"}; q=${q//\`/\\\`}; q=${q//\$/\\\$}
+    for d in "${dirs[@]}"; do
+        [[ -n $d && -d $d ]] || continue
+        for f in "$d"/*.desktop; do
+            [[ -f $f && -w $f ]] || continue
+            c=$(cat -- "$f"; printf x) || continue
+            c=${c%x}
+            n=${c//"$q/$from"/"$q/$to"}
+            [[ $q == "$KIT" ]] || n=${n//"$KIT/$from"/"$KIT/$to"}
+            [[ $n == "$c" ]] && continue
+            printf '%s' "$n" >"$f.squadala-new" && mv -f -- "$f.squadala-new" "$f" &&
+                echo "The menu entry ${f##*/} now starts $to."
+        done
+    done
+    # Steam keeps each path as plain text between its binary fields (no lengths), so the path is swapped in place.
+    e=$(printf '%s' "$KIT/$from" | sed 's#[]\/$*.^[]#\\&#g')
+    et=$(printf '%s' "$KIT/$to" | sed 's/[\/&]/\\&/g')
+    for f in "${lists[@]-}"; do
+        [[ -n $f && -f $f ]] && LC_ALL=C grep -qaF -- "$KIT/$from" "$f" || continue
+        cp -p -- "$f" "$f.before-squadala" &&
+            LC_ALL=C sed "s/$e/$et/g" "$f" >"$f.squadala-new" && mv -f -- "$f.squadala-new" "$f" || continue
+        s='.'
+        pgrep -x steam >/dev/null 2>&1 && s=' (after Steam restarts; until then start it from the kit folder).'
+        echo "Your Steam entry for this kit now starts $to$s"
+    done
+    ((retire)) && rm -f -- "$KIT/$from"
+    return 0
+}
+
+if [[ $action == tidy ]]; then
+    [[ -f $KIT/$MARKER ]] || tidy_start_links
+    exit 0
+fi
 
 if [[ $action == status ]]; then
     [[ -f $KIT/$MARKER ]] && { echo unfinished; exit 0; }
@@ -216,7 +291,7 @@ else
     fi
     if [[ $action == check ]]; then
         if wanted "$tag" || [[ -n $want_tag ]]; then
-            echo "Co-op $tag is out (this kit: ${current:-not a release}). Start start-oot-coop.sh to update."
+            echo "Co-op $tag is out (this kit: ${current:-not a release}). Start start-squadala.sh to update."
         else
             echo "You stay on $current (you went back from $left); $tag is out. bash scripts/update.sh goes forward again."
         fi
@@ -269,7 +344,8 @@ else
     fi
     unzip_to "$work/kit.zip" "$work/new" >/dev/null || { echo 'The download is damaged (it does not unpack); nothing was changed.'; exit 1; }
     new=$(find "$work/new" -mindepth 1 -maxdepth 1 -type d | head -n1)
-    [[ -n $new && -f $new/MANIFEST.txt && -f $new/VERSION.txt && -f $new/start-oot-coop.sh ]] ||
+    # (start-oot-coop.sh: the start file's name up to v0.11.2, when going back)
+    [[ -n $new && -f $new/MANIFEST.txt && -f $new/VERSION.txt && ( -f $new/start-squadala.sh || -f $new/start-oot-coop.sh ) ]] ||
         { echo 'The download is not a Linux co-op kit; nothing was changed.'; exit 1; }
 fi
 change=$(game_change "$KIT" "$new")
@@ -344,7 +420,7 @@ for rel in "${files[@]}"; do
     mkdir -p "$KIT/$(dirname "$rel")" && cp -p -- "$new/$rel" "$KIT/$rel.update-new" &&
         mv -f -- "$KIT/$rel.update-new" "$KIT/$rel" || restore
 done
-chmod +x "$KIT/start-oot-coop.sh" "$KIT"/scripts/*.sh "$KIT/revert.sh" 2>/dev/null || true
+chmod +x "$KIT"/start-*.sh "$KIT"/scripts/*.sh "$KIT/revert.sh" 2>/dev/null || true
 rm -f "$KIT/$MARKER"
 # previous/<version>/, the last $KEEP_PREV of them.
 if [[ -n $part && -d $part ]]; then
@@ -364,11 +440,13 @@ if ((back)); then
     game_change_text "$change" "$tag"
     echo "Starting the kit stays on $tag now; it asks only when a release newer than $l comes out. bash scripts/update.sh goes forward."
     echo 'Tell the others in your session to go back too: everyone needs the same version.'
+    tidy_start_links
     exit 0
 fi
 rm -f -- "$KIT/$STAY"
 echo "Done: this kit is co-op $tag. Your old files are in ${backup##*/}/."
 game_change_text "$change" "$tag"
 [[ -n $part && -n $current ]] && echo "Changed your mind? bash revert.sh goes back to $current (kept in $PREV/$current/)."
+tidy_start_links
 [[ $action == launch ]] && exit 3
 exit 0

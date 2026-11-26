@@ -1,0 +1,30 @@
+# geno-pickup Customize camera (patch 0043 in the build): the page's picture on both games. PASS: shots show the framed picture, not black/world.
+# hs-customize (Longshot, #74): the Customize page's picture of your own Link, as CHILD then as ADULT.
+# The live picture is the game's own view: the camera turns around your Link (coop_look_view.h); the flat one is the
+# coloured outline. A opens Multiplayer > Customize Link as child where the save loads, closes the menu, turns adult
+# (hs-adult's setflag + warp) and opens it again. B does the same as adult only, in Kakariko.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-customize
+# Pass: each game's log has "coop: test menu customize: asked" and a "coop: look: the Customize picture is live"
+# line after it (child and adult); no "flat:" or "not framed" line. Shots hs-customize-A-child-open/-turned-A and
+# -adult-open/-turned-A: the square shows Link in the game (not the outline), seen from another side in -turned.
+mark start
+wait 300                # the save loaded, Link standing
+menu customize
+wait 240                # the page drawn, the camera framed
+mark child-open
+wait 180
+mark child-turned
+menu close
+wait 120
+setflag Sequence_IsChildhood 0
+warp Graveyard_Adult
+wait 900                # the warp's load
+mark arrived
+menu customize
+wait 240
+mark adult-open
+wait 180
+mark adult-turned
+menu close
+wait 120
+mark done

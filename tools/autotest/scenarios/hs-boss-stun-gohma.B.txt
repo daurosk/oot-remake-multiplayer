@@ -1,0 +1,81 @@
+# hs-boss-stun-gohma, B: walks in ~25 s after A (a copy Gohma), then seeds her eye six times, 8 s apart: the copy's
+# own stun from B's shot (issue 150). See hs-boss-stun-gohma.A.txt.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+wait 1500               # A walks in first and owns her
+place -12.0 48.5 66.5   # the corridor (if the area rules moved B in already, this puts B back before the door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: B's own intro, with a copy Gohma
+mark b-in
+wait 2400               # B's intro (the copy runs its own event changes)
+mark b-after-intro
+goto 15.0 67.5 1.5 600  # CONTROL: 3.5 m west of her (the room's centre is x 22.5)
+mark b-moved
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed1
+wait 90
+mark b-stun1
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed2
+wait 90
+mark b-stun2
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed3
+wait 90
+mark b-stun3
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed4
+wait 90
+mark b-stun4
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed5
+wait 90
+mark b-stun5
+wait 210
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed6
+wait 90
+mark b-stun6
+wait 3000               # A seeds the copy after the hand-over
+mark end

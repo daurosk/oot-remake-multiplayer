@@ -2,9 +2,10 @@
 //
 // When a shared change must wait (issue 144). One rule for everything another game does to an
 // actor of ours (a kill, a remove, a new place, a played animation): never while our own Link
-// is in an event (a talk, a cutscene) with that actor. Which actor the event is with is not
-// read, so every actor within kEventNearM of our Link waits while an event runs, and the
-// change is made right after the event ends.
+// is in an event (a talk, a cutscene) with that actor. Every actor within kEventNearM of our
+// Link waits while an event runs, and so does every actor the event is with at any distance
+// (Local::partner, row 97: the Sync's event partners, coop_event_member.h); the change is
+// made right after the event ends.
 //
 // Seen in a player test: B beat a Deku Scrub and was in its talk; A beat the same scrub in A's game; the
 // kill reached B's scrub during B's talk and B's event waited on an actor that was gone, until
@@ -54,6 +55,13 @@ inline bool Near(const std::optional<Vec3>& link, const std::optional<Vec3>& at,
 struct Local {
     bool in_event = false;
     std::optional<Vec3> link;
+    // Row 97: whether the actor at an address is one our running event is with
+    // (Sync::EventPartner), wherever it stands; empty: none known.
+    std::function<bool(std::uint64_t address)> partner{};
+    // G1 (coop/host/event_owner.hpp): an event runs in our game that our Link is not in
+    // (another player's, replayed here). `in_event` is then false: nothing near our Link
+    // waits, but the event's own actors (partner) still do, or the event here waits on them.
+    bool others_event = false;
 };
 
 // True when a shared change to an actor at `at` must wait now. An actor whose place is not
@@ -66,6 +74,14 @@ inline bool Waits(const Local& local, const std::optional<Vec3>& at) {
         return true;
     }
     return !local.link || Near(local.link, at, kEventNearM);
+}
+
+// Waits, for the actor at `address`: also when our event is with it, however far (row 97).
+inline bool WaitsFor(const Local& local, std::uint64_t address, const std::optional<Vec3>& at) {
+    if (!local.in_event && !local.others_event) {
+        return false;
+    }
+    return (local.partner && local.partner(address)) || Waits(local, at);
 }
 
 // Who an actor at an address is, for Held: its placement hash, its name and the object id the
@@ -92,9 +108,24 @@ inline std::uint64_t Who(std::uint64_t hash, std::string_view name, std::optiona
 // `life`, the life it should end at, and `hurt`, above 0 when the game is to take that much
 // itself). Two hurts: both hits land (the hurts add up; the newer target). A hurt behind a
 // written life: the target is written as life (the game has not taken the first one yet).
+// A plain written life (not a heal, not a direct Life-step give, not a test kill) behind a held
+// hurt never replaces it (row 172, run 051351): the Sync gives a hurt kHurtWaitUs to be taken
+// and then writes its target itself, but a held hurt was never given; that write is its own
+// fallback, and the hurt must still land as the replayed hit (its hitter and hit record: a
+// killing blow's consequences, a Floormaster's count of its Littles). The hurt keeps its replay
+// and aims at the lower of the two lives; a higher life (a raise) still wins.
 // Otherwise the newer one wins.
 template <typename Change>
 void MergeLife(Change& kept, Change&& newer) {
+    bool plain = newer.hurt <= 0;
+    if constexpr (requires { newer.heal; newer.direct; newer.test_kill; }) {
+        plain = plain && !newer.heal && !newer.direct && !newer.test_kill;
+    }
+    if (kept.hurt > 0 && plain && newer.life <= kept.life) {
+        kept.hurt += kept.life - newer.life;
+        kept.life = newer.life;
+        return;
+    }
     if (newer.hurt > 0 && kept.hurt > 0) {
         newer.hurt += kept.hurt;
     } else if (newer.hurt > 0) {
@@ -128,7 +159,7 @@ public:
 
     Result Pass(std::vector<Change> now, const Local& local, const Where& where, const HashOf& hash_of) {
         Result out;
-        if (!local.in_event) {
+        if (!local.in_event && !local.others_event) {
             for (const std::uint64_t address : order_) {
                 Entry& e = held_.at(address);
                 const auto hash = hash_of(address);
@@ -143,7 +174,7 @@ public:
             order_.clear();
         }
         for (auto& c : now) {
-            if (Waits(local, where(c.address))) {
+            if (WaitsFor(local, c.address, where(c.address))) {
                 const std::uint64_t address = c.address;
                 const auto found = held_.find(address);
                 if (found == held_.end()) {
@@ -191,7 +222,7 @@ template <typename Change, typename AddressOf>
 std::size_t Skip(std::vector<Change>& changes, const Local& local,
                  const std::function<std::optional<Vec3>(std::uint64_t)>& where, AddressOf address_of,
                  const std::function<bool(std::uint64_t)>& never_waits = {}) {
-    if (!local.in_event) {
+    if (!local.in_event && !local.others_event) {
         return 0;
     }
     const auto before = changes.size();
@@ -200,7 +231,7 @@ std::size_t Skip(std::vector<Change>& changes, const Local& local,
         if (never_waits && never_waits(a)) {
             return false;
         }
-        return Waits(local, where(a));
+        return WaitsFor(local, a, where(a));
     });
     return before - changes.size();
 }

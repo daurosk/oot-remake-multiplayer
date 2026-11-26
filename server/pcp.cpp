@@ -7,6 +7,7 @@
 
 #include <enet/enet.h>
 
+#include "bind_host.hpp"
 #include "local_net.hpp"
 #include "nat_net.hpp"
 
@@ -186,9 +187,7 @@ std::optional<MapReply> Mapping::exchange(Addr to, std::span<const std::uint8_t>
     ENetSocket s;
     ~Closer() { enet_socket_destroy(s); }
   } closer{s};
-  ENetAddress any{};
-  any.host = ENET_HOST_ANY;
-  if (enet_socket_bind(s, &any) != 0) return std::nullopt;
+  if (bind_socket(s, config_.bind, 0) != 0) return std::nullopt;
   enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
   const ENetAddress where = nat::to_enet(to);
   for (std::uint32_t wait : waits) {

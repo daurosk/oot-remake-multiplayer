@@ -13,7 +13,9 @@ wait 300
 press A
 wait 2400
 mark b-in
-stick 1 0 30            # a step aside, out of A's way
+place -94.66 133.0 520.92  # the pond's other paver, 4.6 m from A's casting spot (hs-fishing.A.txt)
+wait 60
+toward -96.9 516.6 10
 press ZL 10
 wait 3600
 mark b-watch

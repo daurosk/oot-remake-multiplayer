@@ -6,8 +6,11 @@
 // emulator only (LICHII_COOP).
 
 #include "coop_spawn.h"
+#include "coop_caller_orders.h"
 
+#include "coop_every.h"
 #include "coop_objects_sync.h"  // QuatOf
+#include "coop_shot_reflect.h"
 
 #include <algorithm>
 #include <array>
@@ -112,6 +115,23 @@ void Sync::Receive(const proto::Message& message) {
         if (inbox_.size() < 1024) {
             inbox_.push_back(message);
         }
+    } else if (const auto* d = std::get_if<proto::Damage>(&message);
+               d != nullptr && d->cause == static_cast<std::uint8_t>(proto::DamageCause::reflected)) {
+        // Row 177: another player sent one of our shots back (CoopShotReflect); the rest of DAMAGE is the
+        // objects sync's.
+        std::lock_guard lock(inbox_mutex_);
+        if (inbox_.size() < 1024) {
+            inbox_.push_back(message);
+        }
+    } else if (bomb_share_ && (std::holds_alternative<proto::HandoverAsk>(message) ||
+                               std::holds_alternative<proto::HandoverState>(message) ||
+                               std::holds_alternative<proto::ObjectOwner>(message) ||
+                               std::holds_alternative<proto::BombAnswer>(message))) {
+        // Phase 2: only with the bomb share on (coop_bomb_share.h).
+        std::lock_guard lock(inbox_mutex_);
+        if (bomb_inbox_.size() < 256) {
+            bomb_inbox_.push_back(message);
+        }
     }
 }
 
@@ -135,8 +155,17 @@ void Sync::Reset() {
     local_.clear();
     impacts_.clear();  // issue 166: the old scene's sparks
     carriers_.clear();
+    takes_.Clear();
+    releasing_.clear();
+    blow_own_.clear();
+    reflect_asks_.clear();
+    announce_.Reset();
+    if (bomb_share_) {
+        CoopBombShare::TheOwnBombs().Clear();  // mine_ went with the scene
+    }
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
+    bomb_inbox_.clear();
 }
 
 void Sync::Apply(std::uint64_t now_us) {
@@ -146,6 +175,16 @@ void Sync::Apply(std::uint64_t now_us) {
         inbox.swap(inbox_);
     }
     for (const auto& m : inbox) {
+        if (const auto* d = std::get_if<proto::Damage>(&m)) {
+            // Row 177: our shot, sent back in another player's game (only DamageCause::reflected comes here).
+            for (const auto& [address, own] : mine_) {
+                if (own.id == d->id && d->player_number != proto::kPlayerSelf) {
+                    reflect_asks_.push_back(ReflectAsk{address, own.name, d->player_number});
+                    break;
+                }
+            }
+            continue;
+        }
         if (const auto* s = std::get_if<proto::ObjectSpawn>(&m)) {
             if (s->id.kind != proto::ObjectKind::made || !IsShared(s->actor) ||
                 copies_.count(s->id) != 0 || !s->state.position || !Finite(*s->state.position)) {
@@ -159,6 +198,7 @@ void Sync::Apply(std::uint64_t now_us) {
             r.rotation = s->state.rotation;
             r.blow_at = CoopProjectiles::BlowAt(s->state.time.server_time_us, s->state.fuse);
             r.got_us = now_us;
+            r.player = s->id.maker;
             // Issue 169: pulled out of the bag, so held from its first sample.
             r.held = Explodes(s->actor) && s->state.state &&
                      (*s->state.state & proto::object_state::held) != 0;
@@ -174,6 +214,10 @@ void Sync::Apply(std::uint64_t now_us) {
                 continue;
             }
             Remote& r = it->second;
+            r.epoch = p->epoch;  // phase 2: what a BOMB_TAKE names
+            if (p->player_number != proto::kPlayerSelf) {
+                r.player = p->player_number;  // #239: its sender's show delay
+            }
             if (p->state.rotation) {
                 r.rotation = p->state.rotation;
             }
@@ -217,9 +261,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     Apply(now_us);
     flights_.clear();
+    turns_.clear();
     made_up_.clear();
     doom_.clear();
     decided_.clear();
+    blow_own_.clear();
+    bomb_notes_.clear();
+    if (bomb_share_) {
+        Bombs(self, now_us, send);  // phase 2: may doom one of ours (handed on)
+    }
     // Issue 169: how fast our Link moves, so a bomb moving with him is held.
     link_velocity_ = {};
     if (link_ && Finite(*link_)) {
@@ -255,6 +305,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.blasted = true;
         }
     }
+    if (bomb_share_) {
+        Adopt(now_us);  // phase 2: a handed copy becomes ours before the walk
+    }
 
     std::set<std::uint64_t> on_list;
     for (const Seen& s : seen) {
@@ -266,6 +319,33 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
 
     for (const Seen& s : seen) {
+        if (bomb_share_ && s.animation && CoopBombShare::IsBomb(s.name) &&
+            copy_addresses_.count(s.address) != 0) {
+            // Phase 2: our Link lifted the copy of another player's bomb (the
+            // copy's own animation says Lifted while its owner's does not).
+            for (auto& [id, r] : copies_) {
+                if (r.address != s.address) {
+                    continue;
+                }
+                // ... and only beside our own Link, its place known (a Lifted
+                // copy away from our Link, or with our Link not read, is not
+                // our lift).
+                const bool lifted =
+                    CoopBombShare::LiftedHere(CoopProjectiles::HeldByAnimation(s.animation->name), r.held) &&
+                    CoopBombShare::NearOurLink(link_, s.position);
+                if (!lifted) {
+                    r.refused = false;
+                } else if (!r.removed && !r.taking && !r.refused && !r.adopt) {
+                    if (auto take = takes_.Lifted(id, r.epoch, now_us)) {
+                        send.emplace_back(*take);
+                        r.taking = true;
+                        bomb_notes_.push_back("lifted the copy #" + Hex(id.value) + ": BOMB_TAKE epoch " +
+                                              std::to_string(r.epoch));
+                    }
+                }
+                break;
+            }
+        }
         if (old_.count(s.address) != 0 || copy_addresses_.count(s.address) != 0 ||
             !Finite(s.position)) {
             continue;
@@ -302,10 +382,26 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (bounced) {
                 ++m.bounces;
             }
-            m.far = std::max(m.far, Distance(m.position, m.made_position));
+            if (const float d = Distance(m.position, m.made_position); d > m.far) {
+                m.far = d;
+                m.far_at = m.position;
+                m.far_stood = 0;
+            } else if (dt > 0.0) {
+                ++m.far_stood;
+                // Row 164 follow-up: a boomerang or hookshot turned (came back, or its tip stood in what it hit or
+                // held): its hit for a boss copy now, while the copy's skipped stun is still within its look-back.
+                if (!m.turn_seen && !m.made_up && m.far >= kReturnShotMinFarM && IsReturnShot(m.name) &&
+                    (m.far - d >= kReturnShotTurnM || m.far_stood >= kReturnShotStoodSteps)) {
+                    m.turn_seen = true;
+                    turns_.push_back(m.far_at);
+                }
+            }
             m.seen_at = now_us;
             m.missed = 0;
             m.animation = s.animation;
+            if (s.vtable != 0) {
+                m.vtable = s.vtable;  // phase 2: for a blow or a delete
+            }
             Hands(m, false);
             MakeUpFlight(m, now_us);
             // A made-up flight is sent in place of the place, which stays
@@ -325,12 +421,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                  (moved || busy || now_us - m.sent_at >= kStillEveryUs))) {
                 proto::ObjectSample out;
                 out.id = m.id;
+                out.epoch = m.epoch;  // 0 unless handed to us (phase 2)
                 out.state.time = {now_us, ++m.sequence};
                 out.state.position = at;
                 out.state.velocity = velocity;
                 out.state.rotation = m.rotation;
                 if (Explodes(m.name)) {
-                    out.state.fuse = fuse_.Left(now_us - m.made_at);
+                    out.state.fuse = FuseOf(m, now_us);
                     out.state.state = m.held ? proto::object_state::held : std::uint8_t{0};
                 }
                 if (Animated(m.name)) {
@@ -410,6 +507,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             m.rotation = CoopObjects::QuatOf(*s.rotation);
         }
         m.animation = s.animation;
+        m.vtable = s.vtable;
+        if (bomb_share_ && CoopBombShare::IsBomb(s.name)) {
+            CoopBombShare::TheOwnBombs().Note(m.id, true);  // its HANDOVER_ASK is ours to answer
+        }
         Hands(m, true);
         proto::ObjectSpawn out;
         out.id = m.id;
@@ -431,6 +532,26 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         mine_[s.address] = std::move(m);
     }
 
+    // Issue 133 (whose hit): an enemy's hit record naming one of these is our hit, also just after it went.
+    const std::uint64_t steady_us = CoopEvery::NowUs();
+    for (const auto& entry : mine_) {
+        const std::uint64_t address = entry.first;
+        if (on_list.count(address) != 0) {
+            CoopProjectiles::TheOwnShots().Note(address, steady_us);
+        }
+    }
+    for (auto& [address, m] : mine_) {
+        // Phase 2: a bomb handed to us goes off on its owner's fuse, through
+        // the game's own explosion (the director sets its life to 0).
+        if (m.taken && m.blow_at && !m.blown && now_us >= *m.blow_at && on_list.count(address) != 0) {
+            m.blown = true;
+            if (m.vtable != 0) {
+                blow_own_.push_back({address, m.vtable});
+            }
+            bomb_notes_.push_back("our taken bomb #" + Hex(m.id.value) + ": fuse out, blown" +
+                                  (m.vtable != 0 ? "" : " (no vtable: left to its own fuse)"));
+        }
+    }
     for (auto it = mine_.begin(); it != mine_.end();) {
         if (on_list.count(it->first) != 0 || ++it->second.missed < kGoneWalks) {
             ++it;
@@ -452,13 +573,25 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // (issue 166 landing), they go at once.
             out.reason = proto::RemoveReason::gone;
         }
-        if (out.reason == proto::RemoveReason::exploded && CoopProjectiles::Find(m.name)->fused) {
+        if (m.taken) {
+            // Phase 2: lit, it went off (on the fuse handed to us, or a hit);
+            // unlit with the pouch's count up by one, it was stashed.
+            const bool lit = m.blow_at.has_value();
+            const auto otherwise = m.blown || lit ? proto::RemoveReason::exploded : out.reason;
+            out.reason = CoopBombShare::GoneReason(true, lit, pouch_.RoseNear(now_us), otherwise);
+            bomb_notes_.push_back("our taken bomb #" + Hex(m.id.value) + " gone, reason " +
+                                  std::to_string(static_cast<int>(out.reason)));
+        } else if (out.reason == proto::RemoveReason::exploded && CoopProjectiles::Find(m.name)->fused) {
             fuse_.Lived(lived);  // the game's fuse, for our next bombs' copies
         }
+        if (bomb_share_) {
+            CoopBombShare::TheOwnBombs().Note(m.id, false);
+        }
+        out.epoch = m.epoch;
         out.position = m.made_up ? ShotPlace(m, now_us) : m.position;
         send.emplace_back(out);
         flights_.push_back({m.id, m.name, lived, m.far, m.top_speed, out.reason,
-                            m.shot_at.has_value(), m.made_up, m.bounces});
+                            m.shot_at.has_value(), m.made_up, m.bounces, m.far_at, m.turn_seen});
         it = mine_.erase(it);
     }
     // Addresses the game may give to a new actor later.
@@ -492,17 +625,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Copy c;
         c.key = r.key;
         c.actor = r.actor;
+        // #239: as late as its sender's puppet (that player's show delay; 100 ms on a LAN, as before).
+        const std::uint64_t behind = std::max(CoopProjectiles::Track::kBehindUs, CoopShowDelay::Us(r.player));
+        const std::uint64_t held_behind = std::max(CoopProjectiles::kHeldBehindUs, CoopShowDelay::Us(r.player));
         if ((r.held || r.explode_once_made) && !r.held_path.Empty()) {
             // Issue 169: in the puppet's hands, shown as late as the puppet
             // (and blown up there when it went off in them).
-            c.position = r.held_path.At(now_us - std::min(now_us, CoopProjectiles::kHeldBehindUs));
+            c.position = r.held_path.At(now_us - std::min(now_us, held_behind));
         } else if (explode) {
             // Goes off where the owner's did, at the owner's moment.
             c.position = r.track.At(now_us, info != nullptr && info->ballistic);
         } else {
             // Smooth shots: the owner's path as late as the puppet, between
             // its samples, so the copy flies in even steps.
-            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic);
+            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic, behind);
         }
         if (r.rotation) {
             c.rotation = CoopPuppet::QuatToMatrix(*r.rotation);
@@ -512,9 +648,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (r.animation) {
             proto::Animation a = *r.animation;
             const std::int64_t age = std::int64_t(now_us) - std::int64_t(r.animation_at) -
-                                     (r.held ? std::int64_t(CoopProjectiles::kHeldBehindUs) : 0);
+                                     (r.held ? std::int64_t(held_behind) : 0);
             a.frame = CoopObjects::FrameAfter(a.frame, a.rate, age);
             c.animation = std::move(a);
+        }
+        if (r.taking) {
+            // Phase 2: our Link holds it now (the game's lift); not pulled back
+            // to the owner's place, nor its animation played over the lift.
+            c.place = false;
+            c.setter = false;
+            c.animation.reset();
         }
         const auto live_it = copies_live.find(r.key);
         const bool made = live_it != copies_live.end() && live_it->second != 0;
@@ -524,24 +667,27 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // the owner removed (hit or gone) is kept that much longer: it
         // reaches the hit spot (or the hand) first, then gets its full hold.
         const bool hit = r.removed && *r.removed == proto::RemoveReason::hit && info != nullptr;
-        const std::uint64_t hold =
-            CoopProjectiles::Track::kBehindUs + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
+        const std::uint64_t hold = behind + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
         const bool landing = r.removed && !explode && now_us - r.got_us < hold;
         if (hit && landing && !r.landed) {
             r.landed = true;
             ++landed_;
+            // ai-stuns: it is shown reaching the spot kBehindUs late; a stun there is the thrower's.
+            CoopProjectiles::TheShotHits().Add(r.Position(), r.got_us + behind);
         }
         if (hit && landing && r.effect.empty() && hit_effects_ == HitEffectMode::copy &&
-            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs &&
-            !CoopProjectiles::HitEffect(info->kind).empty()) {
+            now_us >= r.got_us + behind && !CoopProjectiles::HitEffect(info->kind).empty()) {
             // Issue 166: the copy reaches the spot now (it is shown kBehindUs
             // late): it plays the shootable's own hit effect there, through
             // the game's own emit (the director; once for a copy).
             r.effect = std::string(CoopProjectiles::HitEffect(info->kind));
+            // ... and its landing sound on its own sound user, after it.
+            r.sound = std::string(CoopProjectiles::HitSound(info->kind));
             r.effect_asked = true;
             ++hit_effects_asked_;
         }
         c.effect = r.effect;
+        c.sound = r.sound;
         if (hit && landing && !r.effect_asked && hit_effects_ == HitEffectMode::real &&
             !CoopProjectiles::HitEffect(info->kind).empty()) {
             // The test route: the game's own shootable is made at the spot
@@ -549,7 +695,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // reaching it (kBehindUs late); then it goes.
             r.effect_asked = true;
             ++hit_effects_asked_;
-            const std::uint64_t at_us = r.got_us + CoopProjectiles::Track::kBehindUs;
+            const std::uint64_t at_us = r.got_us + behind;
             carriers_.push_back({next_key_++, r.actor, r.Position(), std::string(CoopProjectiles::HitEffect(info->kind)),
                                  at_us, at_us + CoopProjectiles::kImpactLifeUs, 0});
             if (carriers_.size() > CoopProjectiles::kMaxImpacts) {  // (never the shot copies' slots)
@@ -558,8 +704,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                                                                 CoopProjectiles::kMaxImpacts));
             }
         }
-        if (hit && landing && !r.impacted && impacts_on_ &&
-            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs) {
+        if (hit && landing && !r.impacted && impacts_on_ && now_us >= r.got_us + behind) {
             // The earlier way (LICHII_COOP_SHOT_IMPACTS=1): impact actors of
             // ours made there. The game never made one (issue 198).
             r.impacted = true;
@@ -587,6 +732,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         copies.push_back(std::move(c));
         ++it;
     }
+    // Phase 2: copies made ours; the director lets go of the actor (it is
+    // ours now) until it has.
+    for (auto it = releasing_.begin(); it != releasing_.end();) {
+        const auto live = copies_live.find(it->first);
+        if (live == copies_live.end() || live->second == 0 || ++it->second > kReleaseWalks) {
+            it = releasing_.erase(it);
+            continue;
+        }
+        Copy c;
+        c.key = it->first;
+        c.actor = "Item_Bomb";
+        c.act = Act::release;
+        c.place = false;
+        copies.push_back(std::move(c));
+        ++it;
+    }
     // Issue 166: made where they are and left there (no place written); gone
     // from the list, the director deletes them.
     std::erase_if(carriers_, [now_us](const Carrier& c) { return now_us >= c.until_us; });
@@ -610,6 +771,170 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         c.position = i.position;
         c.place = false;
         copies.push_back(std::move(c));
+    }
+}
+
+std::optional<float> Sync::FuseOf(const Own& m, std::uint64_t now_us) const {
+    if (m.taken) {  // phase 2: the fuse handed to us, not our own bombs' clock
+        return m.blow_at ? std::optional<float>(CoopBombShare::FuseLeft(*m.blow_at, now_us)) : std::nullopt;
+    }
+    return fuse_.Left(now_us - m.made_at);
+}
+
+proto::ObjectState Sync::StateOf(const Own& m, std::uint64_t now_us) const {
+    proto::ObjectState out;
+    out.time = {now_us, m.sequence};
+    out.position = m.position;
+    out.velocity = m.velocity;
+    out.rotation = m.rotation;
+    if (Explodes(m.name)) {
+        out.fuse = FuseOf(m, now_us);
+        out.state = m.held ? proto::object_state::held : std::uint8_t{0};
+    }
+    if (Animated(m.name)) {
+        out.animation = m.animation;
+    }
+    return out;
+}
+
+// Phase 2 (coop_bomb_share.h): the bomb share's messages, with the bomb
+// share on only.
+void Sync::Bombs(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Message>& send) {
+    std::vector<proto::Message> inbox;
+    {
+        std::lock_guard lock(inbox_mutex_);
+        inbox.swap(bomb_inbox_);
+    }
+    const auto own_of = [this](const proto::ObjectId& id) {
+        return std::find_if(mine_.begin(), mine_.end(), [&](const auto& e) { return e.second.id == id; });
+    };
+    for (const auto& message : inbox) {
+        if (const auto* ask = std::get_if<proto::HandoverAsk>(&message)) {
+            const auto own = own_of(ask->id);
+            if (own == mine_.end()) {
+                continue;  // not one of our bombs (the objects sync answers the rest)
+            }
+            const std::string who = "asked for our bomb #" + Hex(ask->id.value) + " by P" +
+                                    std::to_string(ask->to_player);
+            if (auto answer = CoopBombShare::Answer(*ask, own->second.held, StateOf(own->second, now_us))) {
+                send.emplace_back(std::move(*answer));
+                bomb_notes_.push_back(who + ": handed over");
+            } else {
+                bomb_notes_.push_back(who + ": kept (our Link holds it)");
+            }
+        } else if (const auto* handed = std::get_if<proto::HandoverState>(&message)) {
+            const bool asked = takes_.Done(handed->id);
+            const auto it = copies_.find(handed->id);
+            if (it == copies_.end() || !CoopBombShare::IsBomb(it->second.actor) || it->second.removed) {
+                if (asked) {
+                    bomb_notes_.push_back("bomb #" + Hex(handed->id.value) + " handed to us, but its copy is gone");
+                }
+                continue;
+            }
+            it->second.adopt = *handed;
+            it->second.epoch = handed->epoch;
+            bomb_notes_.push_back("bomb #" + Hex(handed->id.value) + " handed to us (epoch " +
+                                  std::to_string(handed->epoch) + (asked ? ", lifted" : ", its owner left") +
+                                  "), fuse " + std::to_string(handed->state.fuse.value_or(-1.0f)));
+        } else if (const auto* owner = std::get_if<proto::ObjectOwner>(&message)) {
+            if (const auto c = copies_.find(owner->id); c != copies_.end()) {
+                c->second.epoch = owner->epoch;
+                continue;
+            }
+            if (owner->owner == self) {
+                continue;
+            }
+            const auto own = own_of(owner->id);
+            if (own == mine_.end() || !CoopBombShare::IsBomb(own->second.name)) {
+                continue;
+            }
+            // Another player has our bomb now: our actor goes without an
+            // explosion, and the new owner's samples make the copy here.
+            const Own& m = own->second;
+            if (m.vtable != 0) {
+                doom_.push_back({own->first, m.vtable});
+            }
+            old_.insert(own->first);
+            CoopBombShare::TheOwnBombs().Note(m.id, false);
+            proto::ObjectSpawn spawn;
+            spawn.player_number = owner->owner;
+            spawn.id = m.id;
+            spawn.actor = m.name;
+            spawn.flags = proto::object_spawn::projectile;
+            spawn.state = StateOf(m, now_us);
+            spawn.state.state = proto::object_state::held;  // it was lifted
+            bomb_notes_.push_back("our bomb #" + Hex(m.id.value) + " is P" + std::to_string(owner->owner) +
+                                  "'s now (epoch " + std::to_string(owner->epoch) + ")" +
+                                  (m.vtable != 0 ? ": ours deleted" : ": no vtable, ours not deleted"));
+            mine_.erase(own);
+            std::lock_guard lock(inbox_mutex_);
+            inbox_.push_back(std::move(spawn));  // applied on the next Tick
+        } else if (const auto* answer = std::get_if<proto::BombAnswer>(&message)) {
+            takes_.Done(answer->id);
+            if (const auto c = copies_.find(answer->id); c != copies_.end()) {
+                c->second.taking = false;
+                c->second.refused = true;
+                c->second.epoch = answer->epoch;
+            }
+            bomb_notes_.push_back("lift of bomb #" + Hex(answer->id.value) + " refused (" +
+                                  std::to_string(static_cast<int>(answer->refusal)) + ")");
+        }
+    }
+    for (const auto& id : takes_.Expired(now_us)) {
+        if (const auto c = copies_.find(id); c != copies_.end()) {
+            c->second.taking = false;
+            c->second.refused = true;
+        }
+        bomb_notes_.push_back("lift of bomb #" + Hex(id.value) + ": no answer, dropped");
+    }
+    if (auto share = announce_.Due(now_us)) {
+        send.emplace_back(*share);
+    }
+}
+
+// Phase 2: a copy the server made ours becomes one of our own once the
+// director has the game's own bomb for it (a held stand-in cannot go off:
+// the game's own bomb is made first).
+void Sync::Adopt(std::uint64_t now_us) {
+    for (auto it = copies_.begin(); it != copies_.end();) {
+        Remote& r = it->second;
+        if (!r.adopt || r.removed) {
+            ++it;
+            continue;
+        }
+        if (r.held) {
+            Rekey(r, false);
+            ++it;
+            continue;
+        }
+        if (r.address == 0) {
+            ++it;
+            continue;
+        }
+        Own m;
+        m.id = it->first;
+        m.name = r.actor;
+        m.position = m.sent_position = m.made_position = r.Position();
+        m.seen_at = m.made_at = now_us;
+        m.sent_at = 0;  // its first sample as ours goes this walk
+        m.sequence = r.adopt->state.time.sequence;
+        m.rotation = r.rotation;
+        m.epoch = r.adopt->epoch;
+        m.taken = true;
+        m.held = m.sent_held = r.taking;
+        m.blow_at = CoopBombShare::BlowAt(r.adopt->state);
+        if (!m.blow_at) {
+            m.blow_at = r.blow_at;  // the owner's last word on its fuse
+        }
+        CoopBombShare::TheOwnBombs().Note(m.id, true);
+        bomb_notes_.push_back("bomb #" + Hex(m.id.value) + " is ours now" +
+                              (m.blow_at ? ", goes off in " +
+                                               std::to_string(CoopBombShare::FuseLeft(*m.blow_at, now_us)) + " s"
+                                         : std::string(", unlit")));
+        copy_addresses_.erase(r.address);
+        releasing_[r.key] = 0;
+        mine_[r.address] = std::move(m);
+        it = copies_.erase(it);
     }
 }
 
@@ -752,6 +1077,18 @@ void Director::SetDoomed(std::vector<Doomed> doomed) {
     }
 }
 
+void Director::SetBlowOwn(const std::vector<Doomed>& blow) {
+    if (blow.empty()) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    for (const Doomed& b : blow) {
+        if (blow_own_.size() < 16) {
+            blow_own_.push_back(b);
+        }
+    }
+}
+
 std::size_t Director::Deleted() const {
     std::lock_guard lock(mutex_);
     return deleted_;
@@ -814,6 +1151,29 @@ std::optional<CoopPuppet::Call> Director::NextDoomed(CoopPuppet::Guest& guest, s
 std::map<std::uint64_t, std::uint64_t> Director::Live() const {
     std::lock_guard lock(mutex_);
     return live_;
+}
+
+std::vector<std::uint64_t> Director::TakeReflected() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(reflected_, {});
+}
+
+void Sync::SendReflected(const std::vector<std::uint64_t>& keys, std::vector<proto::Message>& send) {
+    for (const std::uint64_t key : keys) {
+        for (const auto& [id, r] : copies_) {
+            if (r.key != key || r.removed) {
+                continue;
+            }
+            proto::Damage d;
+            d.id = id;
+            d.epoch = r.epoch;
+            d.amount = 0;
+            d.cause = static_cast<std::uint8_t>(proto::DamageCause::reflected);
+            d.position = r.Position();
+            send.emplace_back(std::move(d));
+            break;
+        }
+    }
 }
 
 bool Director::Due(const Copy& c, std::uint64_t now_ms) const {
@@ -889,13 +1249,18 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
             emit_found_ = (result & 1) != 0;
             if (!emit_found_ && emit_notes_ < 8) {
                 ++emit_notes_;
-                Say(slot.actor + ": its effect user has no such key; no hit effect for copy " +
+                Say(slot.actor + (emit_sound_ ? ": its sound user has no such key; no landing sound for copy "
+                                              : ": its effect user has no such key; no hit effect for copy ") +
                     std::to_string(slot.key));
             }
             break;
         case Pending::emit:
-            ++emits_done_;
-            if (emits_done_ <= 8) {
+            if (emit_sound_) {
+                if (++sounds_done_ <= 8) {
+                    Say(slot.actor + ": copy " + std::to_string(slot.key) +
+                        " played its landing sound through the game's own emit");
+                }
+            } else if (++emits_done_ <= 8) {
                 Say(slot.actor + ": copy " + std::to_string(slot.key) +
                     " played its hit effect through the game's own emit");
             }
@@ -1152,6 +1517,7 @@ std::uint64_t Director::NameCellOf(CoopPuppet::Guest& guest, const std::string& 
 namespace {
 constexpr std::uint64_t kComponentXLink = 0x68;
 constexpr std::uint64_t kXLinkELinkUser = 0x70;
+constexpr std::uint64_t kXLinkSLinkUser = 0x78;  // (CoopPuppetSound: the same search and emit play it)
 constexpr std::uint64_t kUserResource = 0x58;
 constexpr std::uint64_t kResourceAccessor = 0x18;
 constexpr std::uint64_t kXLinkSearch = 0x43db00;
@@ -1161,14 +1527,22 @@ constexpr std::uint64_t kSlotEmitHandle = 0x168;
 static_assert(kSlotEmitHandle + 0x10 <= Director::kSlotSize);
 } // namespace
 
-std::uint64_t Director::ELinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const {
+std::uint64_t Director::XLinkUser(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint64_t at) const {
     std::uint64_t table = 0, xlink = 0, user = 0;
     if (actor == 0 || !ReadValue(guest, actor + kActorComponents, table) || table == 0 ||
         !ReadValue(guest, table + kComponentXLink, xlink) || xlink == 0 ||
-        !ReadValue(guest, xlink + kXLinkELinkUser, user)) {
+        !ReadValue(guest, xlink + at, user)) {
         return 0;
     }
     return user;
+}
+
+std::uint64_t Director::ELinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const {
+    return XLinkUser(guest, actor, kXLinkELinkUser);
+}
+
+std::uint64_t Director::SLinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const {
+    return XLinkUser(guest, actor, kXLinkSLinkUser);
 }
 
 std::optional<CoopPuppet::Call> Director::NextEmit(CoopPuppet::Guest& guest) {
@@ -1177,15 +1551,24 @@ std::optional<CoopPuppet::Call> Director::NextEmit(CoopPuppet::Guest& guest) {
         emits_.pop_back();
         Slot& slot = slots_[i];
         const Copy* c = Wanted(slot.key);
-        if (slot.phase != Phase::live || slot.emitted || c == nullptr || c->effect.empty()) {
+        if (slot.phase != Phase::live || c == nullptr) {
             continue;
         }
-        slot.emitted = true;  // once, whatever comes of it
+        // The hit effect (ELink user) first, then the landing sound (SLink
+        // user): each once, whatever comes of it.
+        const bool effect = !slot.emitted && !c->effect.empty();
+        const bool sound = !effect && !slot.sounded && !c->sound.empty();
+        if (!effect && !sound) {
+            continue;
+        }
+        (effect ? slot.emitted : slot.sounded) = true;
+        if (effect && !slot.sounded && !c->sound.empty()) {
+            emits_.push_back(i);  // the sound is asked for when the effect's calls are done
+        }
         std::uint64_t vtable = 0, resource = 0, accessor = 0;
-        const std::uint64_t user = ReadValue(guest, slot.taken, vtable) && vtable == slot.vtable
-                                       ? ELinkUser(guest, slot.taken)
-                                       : 0;
-        const std::uint64_t key = NameCellOf(guest, c->effect);
+        const bool same = ReadValue(guest, slot.taken, vtable) && vtable == slot.vtable;
+        const std::uint64_t user = !same ? 0 : effect ? ELinkUser(guest, slot.taken) : SLinkUser(guest, slot.taken);
+        const std::uint64_t key = NameCellOf(guest, effect ? c->effect : c->sound);
         const std::uint64_t b = SlotBase(i);
         const std::array<std::uint8_t, 0x18> zero{};
         if (user == 0 || key == 0 || !ReadValue(guest, user + kUserResource, resource) || resource == 0 ||
@@ -1194,7 +1577,9 @@ std::optional<CoopPuppet::Call> Director::NextEmit(CoopPuppet::Guest& guest) {
             if (emit_notes_ < 8) {
                 ++emit_notes_;
                 Say(slot.actor + ": copy " + std::to_string(slot.key) +
-                    (user == 0 ? " has no effect user; no hit effect" : " could not ask for its hit effect"));
+                    (effect ? (user == 0 ? " has no effect user; no hit effect" : " could not ask for its hit effect")
+                            : (user == 0 ? " has no sound user; no landing sound"
+                                         : " could not ask for its landing sound")));
             }
             continue;
         }
@@ -1205,6 +1590,7 @@ std::optional<CoopPuppet::Call> Director::NextEmit(CoopPuppet::Guest& guest) {
         call.x[2] = key;
         pending_ = Pending::search;
         pending_slot_ = i;
+        emit_sound_ = sound;
         return call;
     }
     return std::nullopt;
@@ -1218,13 +1604,13 @@ std::optional<CoopPuppet::Call> Director::EmitCall(CoopPuppet::Guest& guest, std
         vtable != slot.vtable) {
         return std::nullopt;  // (gone between the two calls)
     }
-    const std::uint64_t user = ELinkUser(guest, slot.taken);
+    const std::uint64_t user = emit_sound_ ? SLinkUser(guest, slot.taken) : ELinkUser(guest, slot.taken);
     const std::uint64_t b = SlotBase(i);
     if (user == 0 || !ReadValue(guest, b + kSlotLocator, locator) || locator == 0) {
         if (emit_notes_ < 8) {
             ++emit_notes_;
-            Say(slot.actor + ": the game's search found the key but named nothing; no hit effect for copy " +
-                std::to_string(slot.key));
+            Say(slot.actor + ": the game's search found the key but named nothing; no " +
+                (emit_sound_ ? "landing sound" : "hit effect") + " for copy " + std::to_string(slot.key));
         }
         return std::nullopt;
     }
@@ -1246,6 +1632,29 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     plays_.clear();
     emits_.clear();
     emit_found_ = false;
+    emit_sound_ = false;
+    {
+        // Phase 2 (bomb share): our taken bombs whose handed fuse ran out
+        // go off as a copy does (a bomb's life is 1; at 0 the game runs its
+        // own explosion), if the actor is still the same one.
+        std::vector<Doomed> blow;
+        {
+            std::lock_guard lock(mutex_);
+            blow.swap(blow_own_);
+        }
+        for (const Doomed& b : blow) {
+            std::uint64_t vtable = 0, table = 0, life = 0, value = 0;
+            if (ReadValue(guest, b.address, vtable) && vtable == b.vtable &&
+                ReadValue(guest, b.address + kActorComponents, table) && table != 0 &&
+                ReadValue(guest, table + kComponentLife, life) && life != 0 &&
+                ReadValue(guest, life + kLifeValue, value) && value != 0) {
+                WriteValue(guest, value + 8, std::int32_t{0});
+                Say("our taken bomb " + Hex(b.address) + " blown on the fuse handed to us");
+            } else {
+                Say("our taken bomb " + Hex(b.address) + " not blown: not the same actor any more");
+            }
+        }
+    }
     if (pending_ == Pending::malloc) {
         allocating_ = false;  // the cave did not make the call
     } else if (pending_ == Pending::create) {
@@ -1345,6 +1754,31 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 if (c->setter && c->act == Act::show && !slot.stand_in) {
                     setters_.push_back(i);
                 }
+                if (c->act == Act::show && !slot.stand_in && !slot.reflected) {
+                    // Row 177: our Link's sword or shield on another player's shot here, as the game's own
+                    // hit lists of the copy hold it; the owner's game sends its real shot back.
+                    const std::string& shared = slot.copy_of.empty() ? slot.actor : slot.copy_of;
+                    const auto way = CoopShotReflect::ReflectedBy(shared);
+                    if (way != CoopShotReflect::Way::none && slot.hits_noted < 3) {
+                        if (const std::string hits = CoopShotReflect::Describe(guest, slot.taken); !hits.empty()) {
+                            ++slot.hits_noted;
+                            Say(shared + ": copy " + std::to_string(slot.key) + " hit lists (our Link " +
+                                Hex(our_link_.load(std::memory_order_relaxed)) + "):" + hits);
+                        }
+                    }
+                    if (way != CoopShotReflect::Way::none &&
+                        CoopShotReflect::OurHit(guest, slot.taken, our_link_.load(std::memory_order_relaxed), way)) {
+                        slot.reflected = true;
+                        {
+                            std::lock_guard lock(mutex_);
+                            if (reflected_.size() < 64) {
+                                reflected_.push_back(slot.key);
+                            }
+                        }
+                        Say(shared + ": copy " + std::to_string(slot.key) + " sent back by our Link (" +
+                            CoopShotReflect::NameOf(way) + "): told its owner");
+                    }
+                }
                 if (c->animation && c->act == Act::show && !c->animation->name.empty()) {
                     plays_.push_back(i);  // issue 169: the fuse's blink
                 }
@@ -1365,9 +1799,12 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 }
             }
         }
-        if (slot.phase == Phase::live && !slot.emitted) {
-            // Issue 166: the hit effect, once (also for an actor that is not placed: Copy::real).
-            if (const Copy* c = Wanted(slot.key); c != nullptr && c->act == Act::show && !c->effect.empty()) {
+        if (slot.phase == Phase::live && !(slot.emitted && slot.sounded)) {
+            // Issue 166: the hit effect and the landing sound, once each (also for an actor that is
+            // not placed: Copy::real).
+            if (const Copy* c = Wanted(slot.key);
+                c != nullptr && c->act == Act::show &&
+                ((!slot.emitted && !c->effect.empty()) || (!slot.sounded && !c->sound.empty()))) {
                 emits_.push_back(i);
             }
         }
@@ -1624,6 +2061,8 @@ Director& TheDirector() {
 #include "coop/net/client.hpp"
 #include "coop/host/game_flags.hpp"
 #include "coop/host/player_reader.hpp"
+#include "coop_boss_native.h"  // NoteOwnShotEnd (issue 150)
+#include "coop_objects.h"  // OurLinkActor (row 177)
 #include "coop_flags.h"  // EmulatorMemory
 #include "coop_pvp_game.h"
 #include "coop_svc.h"
@@ -1669,6 +2108,7 @@ public:
         if (session == nullptr || !scene || scene->empty() || now_us == 0 || !Ready(system)) {
             if (active_) {
                 sync_.Reset();
+                CoopShotReflect::TheQueue().Reset();
                 CoopProjectiles::TheLures().Set({});
                 TheDirector().SetInput(0, {});
                 active_ = false;
@@ -1686,6 +2126,14 @@ public:
             return;
         }
         active_ = true;
+        if (sync_.BombShare()) {
+            // Phase 2: a bomb's vtable, so a blow or a delete is sure of it.
+            for (Seen& s : seen) {
+                if (CoopBombShare::IsBomb(s.name)) {
+                    s.vtable = Get<u64>(memory, s.address).value_or(0);
+                }
+            }
+        }
         Shots(memory, now_us);
         std::vector<coop::protocol::Message> send;
         std::vector<Copy> copies;
@@ -1698,11 +2146,36 @@ public:
         sync_.SetShooters(CoopEnemyShots::Shooters(now_us));
         sync_.SetHide(CoopEnemyShots::HideOn());
         sync_.Tick(*scene, self, now_us, seen, TheDirector().Live(), send, copies);
+        // Row 177 (coop_shot_reflect.h): shots sent back. Ours in another game: the game's own call here (the
+        // caller below); another player's sent back by our Link here: told to its owner.
+        TheDirector().SetOurLink(CoopObjects::OurLinkActor().value_or(0));
+        sync_.SendReflected(TheDirector().TakeReflected(), send);
+        for (const auto& ask : sync_.TakeReflectAsks()) {
+            std::vector<u64> makers;
+            for (const auto& shooter : CoopEnemyShots::Shooters(now_us)) {
+                if (shooter.owner == CoopEnemyShots::Owner::ours && shooter.address != 0) {
+                    makers.push_back(shooter.address);
+                }
+            }
+            LOG_INFO(Core, "coop: shots: P{} sent our {} {:#x} back in its game: asking ours ({} of our enemies)",
+                     ask.player, ask.name, ask.address, makers.size());
+            CoopShotReflect::TheQueue().Ask(ask.address, ask.name, std::move(makers), main_);
+        }
+        for (const auto& note : CoopShotReflect::TheQueue().TakeNotes()) {
+            LOG_INFO(Core, "coop: shots: {}", note);
+        }
         for (const auto& d : sync_.EnemyShotsDecided()) {
+            const char* verdict = CoopEnemyShots::IsSplitShot(d.name)
+                                      ? "kept here (a split shot: each game's own, never sent)"
+                                      : CoopEnemyShots::NameOf(d.verdict);
             LOG_INFO(Core, "coop: shots: enemy shot {} at {:.2f} {:.2f} {:.2f}: {}", d.name,
-                     d.position[0], d.position[1], d.position[2], CoopEnemyShots::NameOf(d.verdict));
+                     d.position[0], d.position[1], d.position[2], verdict);
         }
         TheDirector().SetDoomed(sync_.Doom());
+        TheDirector().SetBlowOwn(sync_.BlowOwn());
+        for (const auto& note : sync_.BombNotes()) {
+            LOG_INFO(Core, "coop: bombs: {}", note);
+        }
         if (const auto held = std::make_pair(sync_.HeldMine(), sync_.HeldCopies()); held != logged_held_) {
             LOG_INFO(Core, "coop: shots: bombs held: {} of ours, {} copies in other players' hands",
                      held.first, held.second);
@@ -1742,6 +2215,11 @@ public:
             LOG_INFO(Core, "coop: shots: bomb copy blown on the owner's fuse ({} so far)",
                      logged_blown_);
         }
+        // Row 164 follow-up: our boomerang's or hookshot's turn, read on the walk it happened (its hit or hold), so a
+        // boss copy there still has its skipped stun within its look-back (coop_boss_native.h kLookBackSteps).
+        for (const auto& at : sync_.ReturnTurns()) {
+            CoopBossNative::TheTable().NoteOwnShotEnd(at);
+        }
         for (const auto& f : sync_.Flights()) {
             LOG_INFO(Core,
                      "coop: shots: our {} #{:#x} gone (reason {}) after {} ms: went {:.2f} m from "
@@ -1749,6 +2227,15 @@ public:
                      f.name, f.id.value, static_cast<int>(f.reason), f.lived_us / 1000, f.far,
                      f.top_speed,
                      f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "", f.bounces);
+            // Row 164 follow-up (the audit's stun gap): the boomerang and the hookshot come back, so they never end
+            // at what they hit. Their turn (the farthest point) is where they hit or held: a boss copy within reach
+            // of it takes it as our hit, as a seed's end (Barinade's stem and jellyfish, Morpha's nucleus, the Flare
+            // Dancer's core; coop_boss_native.h NoteOwnShotEnd).
+            // Read while it flew (ReturnTurns, below the walk); here only one that went before its turn was read
+            // (gone at its farthest point: held in place, or lost).
+            if (!f.made_up && !f.turn_seen && f.far >= kReturnShotMinFarM && IsReturnShot(f.name)) {
+                CoopBossNative::TheTable().NoteOwnShotEnd(f.far_at);
+            }
             // PvP (coop_pvp_game.h): a shot that hit something or went off, where
             // its remove says it ended, may have reached another player's Link.
             const auto* info = CoopProjectiles::Find(f.name);
@@ -1759,6 +2246,8 @@ public:
             }
             for (const auto& m : send) {
                 if (const auto* r = std::get_if<coop::protocol::ObjectRemove>(&m); r && r->id == f.id) {
+                    // Issue 150: a boss copy there takes it as our hit (its own stun; coop_boss_native.h).
+                    CoopBossNative::TheTable().NoteOwnShotEnd(r->position);
                     CoopPvp::OwnShot(CoopProjectiles::CauseOf(info->kind), r->position);
                 }
             }
@@ -1778,6 +2267,12 @@ public:
                 } else if (const auto* r = std::get_if<coop::protocol::ObjectRemove>(&m)) {
                     LOG_INFO(Core, "coop: spawn: sent remove #{:#x} reason {}{}", r->id.value,
                              static_cast<int>(r->reason), sent ? "" : " (not sent)");
+                } else if (const auto* t = std::get_if<coop::protocol::BombTake>(&m)) {
+                    LOG_INFO(Core, "coop: bombs: sent BOMB_TAKE #{:#x} epoch {}{}", t->id.value, t->epoch,
+                             sent ? "" : " (not sent)");
+                } else if (const auto* h = std::get_if<coop::protocol::HandoverState>(&m)) {
+                    LOG_INFO(Core, "coop: bombs: sent HANDOVER_STATE #{:#x} fuse {:.2f}{}", h->id.value,
+                             h->state.fuse.value_or(-1.0f), sent ? "" : " (not sent)");
                 }
             }
         });
@@ -1803,6 +2298,10 @@ private:
         for (const auto& [kind, actor] : {std::pair{Kind::seed, "Shootable_DekuSeed"},
                                           std::pair{Kind::arrow, "NormalArrow"}}) {
             const auto count = flags.get_int(CoopProjectiles::AmmoFlag(kind));
+            if (kind == Kind::seed && sync_.BombShare()) {
+                // Phase 2: a stash. PouchData.Item_Bomb.StockNum (coop/host game_items.cpp).
+                sync_.SetPouch(flags.get_int(0xdb1bcd4f), now_us);
+            }
             if (ammo_.Dropped(kind, count)) {
                 const bool found = sync_.Shot(actor, now_us);
                 LOG_INFO(Core, "coop: shots: our {} let go ({} left){}", actor, count.value_or(-1),
@@ -1861,6 +2360,11 @@ private:
             sync_.Reset();
             sync_.SetSetter(SetterOn());
             sync_.SetShots(ShotSettingsFromEnv());
+            // Native puppets phase 2: a bomb changes hands (off by default).
+            sync_.SetBombShare(Env("LICHII_COOP_BOMB_SHARE").value_or("0") == "1");
+            if (sync_.BombShare()) {
+                LOG_INFO(Core, "coop: bombs: LICHII_COOP_BOMB_SHARE=1: a lifted bomb changes hands");
+            }
             // Issue 166: the hit effect is the copy's own, through the game's
             // emit; the impact actors (never made by the game) only on request.
             sync_.SetImpacts(Env("LICHII_COOP_SHOT_IMPACTS").value_or("0") == "1");
@@ -2083,9 +2587,14 @@ void UseDirector() {
         LOG_INFO(Core, "coop: spawn: stand-ins in the puppet pack: {}",
                  list.empty() ? "none (copies are the game's own actors; rebuild the puppet pack)" : list);
         TheDirector().SetStandIns(std::move(names));
-        CoopSvc::AddCaller(10, [](CoopPuppet::Guest& guest, bool after_call,
+        CoopSvc::AddCaller(CoopCallerOrders::kSpawn, [](CoopPuppet::Guest& guest, bool after_call,
                                   std::uint64_t result, std::uint64_t now_ms) {
             return TheDirector().Step(guest, after_call, result, now_ms);
+        });
+        // Row 177: another player's swing or guard sent one of our shots back (coop_shot_reflect.h).
+        CoopSvc::AddCaller(CoopCallerOrders::kShotReflect, [](CoopPuppet::Guest& guest, bool after_call,
+                                  std::uint64_t result, std::uint64_t) {
+            return CoopShotReflect::TheQueue().Step(guest, after_call, result);
         });
         return true;
     }();

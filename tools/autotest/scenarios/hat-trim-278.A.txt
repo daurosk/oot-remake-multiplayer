@@ -1,0 +1,53 @@
+# hat-trim-278 (row 278): the Cap trim on every tunic, A's own Link and B's puppet of A. NOT RUN YET (prepared).
+# Before the run: A's coop-options.ini (lane1-A) has `look_cap_trim = red` and no `color` (the Kokiri tunic
+# green), B's none; both kits' puppet pack made again from this branch (cap.bin with the Goron and Zora trims).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hat-trim-278
+# A and B child in Kakariko by day, then both warp there as adults; A wears the Kokiri, Goron, Zora tunic in turn
+# (`give` + `wear armor` + `dress armor`: the game's own equip call). B (hat-trim-278.B.txt) faces A and watches.
+# Pass (shots, both games): child-kokiri: A's headband and knot red, the cap green; adult-kokiri: the hood's trims red;
+#   adult-goron: the Goron hood's trims red over the Goron red cloth (the hood's base keeps the tunic's red, its gold
+#   stitching stays); adult-zora: the Zora hood's pattern and rope red, the rest blue. B's b-* shots: A's puppet the
+#   same at each step. A's log: "the Cap trim paints N blocks of 6 tunic textures (3 of the Goron and Zora tunics)".
+#   FAIL: a Goron or Zora hood with no red trim on either game (the row), or red on the body cloth (wrong blocks).
+#! switches LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the warp lands
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark child-kokiri
+wait 240
+setflag Sequence_IsChildhood 0  # set AFTER the save is loaded (run.ps1 loads it first): at the title the load put the save's age back
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1500
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark adult-kokiri
+give PouchData.Armor_Adult_Goron.StockNum
+give PouchData.Armor_Adult_Zora.StockNum
+wait 120
+wear armor Armor_Adult_Goron
+wait 30
+dress armor
+wait 300
+mark adult-goron
+wear armor Armor_Adult_Zora
+wait 30
+dress armor
+wait 300
+mark adult-zora
+wear armor Armor_Adult_Normal
+wait 30
+dress armor
+wait 300
+mark adult-kokiri-again
+wait 120
+mark end

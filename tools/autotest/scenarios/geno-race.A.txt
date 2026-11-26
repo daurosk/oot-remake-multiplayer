@@ -1,0 +1,25 @@
+# geno-pickup race mode: both games have race=on in coop-options.ini (run script). A gives itself 20 Deku Nuts and sets a flag; B must NOT receive them (shot b-no-nuts), and both still see each other's puppet. PASS: log 'race' on both, B pouch unchanged, shots.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Item_DekuNut.StockNum
+wait 120
+setflag PouchData.Item_DekuNut.Count 20
+wait 600
+mark a-gave
+wait 1200
+mark end

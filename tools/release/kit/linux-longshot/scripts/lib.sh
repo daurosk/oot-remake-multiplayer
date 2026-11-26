@@ -1,5 +1,5 @@
 # Shared by the Linux kit's scripts (sourced, not run). The kit:
-#   start-oot-coop.sh   the one file players start
+#   start-squadala.sh   the one file players start
 #   README.txt
 #   scripts/            these scripts (players never open it)
 #   data/               the server, Longshot's pin and our patches, the co-op module, docs, licences;
@@ -195,6 +195,29 @@ kit_auto_update() {
 # bin/ and launcher script), so the game, its renderer (longshot_vk.so), SDL, our module, coop.ini and
 # mods/ are in one folder that Longshot (host/hos_paths.h) and the module (its GameDir) both read.
 kit_game_exe() { [[ -x $GAME/longshot && -f $GAME/image.bin ]] && printf '%s\n' "$GAME/longshot"; }
+
+# Steam Input outside Steam (player report 202; the Windows kit's Get-KitSteamInputHint): with Steam open and the game
+# not started by Steam, Steam gives a Steam Controller (or a pad Steam Input runs) its desktop layout, a mouse and
+# keyboard. Steam sets SteamGameId, SteamAppId, SteamClientLaunch or SteamOverlayGameId for what it starts (a non-Steam
+# game too). Says the warning, never stops. $1: the "Steam is running" check (tests), else kit_steam_running.
+kit_steam_running() {
+    local p c
+    for p in /proc/[0-9]*/comm; do
+        read -r c <"$p" 2>/dev/null && [[ $c == steam ]] && return 0
+    done
+    return 1
+}
+kit_steam_input_hint() {
+    local n v
+    for n in SteamGameId SteamAppId SteamClientLaunch SteamOverlayGameId; do
+        v=${!n-}
+        [[ -n ${v//[[:space:]]/} ]] && return 0
+    done
+    "${1:-kit_steam_running}" 2>/dev/null || return 0
+    say 'Steam is open, but this game was not started from Steam. A Steam Controller (or a pad Steam Input runs) then works as a mouse and keyboard, not as a controller.'
+    say '  To play with it: start start-squadala.sh from Steam (add it as a non-Steam game) with a gamepad controller layout, or turn Steam Input off for that pad.'
+    return 0
+}
 
 # Is this kit's game running? (a process whose program is data/game/longshot)
 kit_game_running() {

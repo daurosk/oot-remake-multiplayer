@@ -1,0 +1,16 @@
+# fx-nut, B: loads the same spot and watches A's nuts (see fx-nut.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 2400
+mark end

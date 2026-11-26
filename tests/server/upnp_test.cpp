@@ -280,6 +280,7 @@ Config fake_config(const FakeRouter& router, std::vector<std::string>& log) {
   c.internal_port = 27510;
   c.external_port = 27510;
   c.discovery_host = "127.0.0.1";
+  c.bind = 0x7F000001u;  // (127.0.0.1 only)
   c.discovery_port = router.ssdp_port;
   c.discovery_ms = 1500;
   c.log = [&log](const std::string& text) { log.push_back(text); };
@@ -345,6 +346,7 @@ TEST_CASE("upnp loopback: no router answers, so nothing is opened and it says wh
   c.internal_port = 27510;
   c.external_port = 27510;
   c.discovery_host = "127.0.0.1";
+  c.bind = 0x7F000001u;  // (127.0.0.1 only)
   c.discovery_port = got.port;
   c.discovery_ms = 300;
   c.log = [&log](const std::string& text) { log.push_back(text); };

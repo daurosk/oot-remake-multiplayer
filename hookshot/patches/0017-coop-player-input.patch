@@ -1,4 +1,4 @@
-From a52928ca45d7f13a491f7c508300a85a3e3dc190 Mon Sep 17 00:00:00 2001
+From f6cb28e117f88d3fdf92f0d0a054518fdeed2b1d Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 15:11:06 -0900
 Subject: [PATCH] Co-op player input: the Player's pad reads are wrapped for
@@ -12,7 +12,7 @@ The other player's Link is to be the game's own Player actor. Four wrapped funct
  create mode 100644 nx2/coop_player_wraps.py
 
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index b4c0d96b..d50a212c 100644
+index 2d0ffdac..e9905c58 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
 @@ -63,6 +63,8 @@ def install(lifter, img, build_id):
@@ -26,7 +26,7 @@ index b4c0d96b..d50a212c 100644
      import coop_puppet_guard   # (patch 0002: the other players' Link)
 diff --git a/nx2/coop_player_wraps.py b/nx2/coop_player_wraps.py
 new file mode 100644
-index 00000000..100c3085
+index 00000000..57c75b78
 --- /dev/null
 +++ b/nx2/coop_player_wraps.py
 @@ -0,0 +1,33 @@
@@ -63,6 +63,3 @@ index 00000000..100c3085
 +def install(lifter, img, build_id):
 +    """The wraps into lifter.wraps, with patch 0005's checks; returns how many went in."""
 +    return coop_world_wraps.install(lifter, img, build_id, WRAPS)
--- 
-2.56.0.windows.4
-

@@ -3,6 +3,7 @@
 #include "coop_mod_library.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include <monocypher.h>
 
 #include "coop_mod_json.h"
+#include "coop_i18n.h"
 #include "hos_coop_mods.h"
 
 namespace CoopMods {
@@ -32,6 +34,16 @@ bool IsLowerAlnum(char c) {
 
 bool Printable(std::string_view s) {
     return std::all_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x20 && c != 0x7f; });
+}
+
+// The length a person reads, not the bytes it takes: one Chinese character is one
+// character in the Mods tab and three bytes in UTF-8, so a limit of "at most 64
+// characters" has to be counted on the text. Counted in bytes it turns away a
+// translation of ordinary length while the English half goes through, and with it
+// the whole mod: one field over the line, and the manifest is not read at all.
+std::size_t CountChars(std::string_view s) {
+    return static_cast<std::size_t>(
+        std::count_if(s.begin(), s.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
 }
 
 std::string NumberText(double n) {
@@ -62,14 +74,36 @@ std::string_view Leaf(std::string_view name) {
     return slash == std::string_view::npos ? name : name.substr(slash + 1);
 }
 
-bool StartsFolded(std::string_view s, std::string_view prefix) {
-    return s.size() >= prefix.size() && NameSame(s.substr(0, prefix.size()), prefix);
+// Co-op's own packs (the puppet pack, the HUD pack): the kit installs and updates them (hos_coop_mods_own: host/mods.c
+// keeps them as switched).
+bool Internal(std::string_view name) {
+    return hos_coop_mods_own(std::string(name).c_str()) != 0;
 }
 
-// Co-op's own packs (the puppet pack, the HUD pack): the kit installs and updates them.
-bool Internal(std::string_view name) {
-    const std::string_view leaf = Leaf(name);
-    return StartsFolded(leaf, "coop-puppet") || StartsFolded(leaf, "coop_hud") || StartsFolded(leaf, "coop-hud");
+// Its ExeFS patch files, as host/mods.c exefs_status finds and hashes them: the .ips and .pchtxt files right in its exefs
+// folder, each with the FNV-1a 32 of its bytes (a file that cannot be read is left out, as there).
+std::vector<std::pair<std::string, unsigned long>> ExefsPatchFiles(const fs::path& exefs) {
+    std::error_code ec;
+    std::vector<std::pair<std::string, unsigned long>> out;
+    for (fs::directory_iterator it(exefs, ec), end; !ec && it != end; it.increment(ec)) {
+        std::string ext = it->path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::error_code file_ec;
+        if ((ext != ".ips" && ext != ".pchtxt") || !it->is_regular_file(file_ec)) {
+            continue;
+        }
+        std::ifstream in(it->path(), std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        unsigned long h = HOS_COOP_MODS_FNV32_START;
+        char buf[4096];
+        while (in.read(buf, sizeof buf) || in.gcount() > 0) {
+            h = hos_coop_mods_fnv32(h, buf, static_cast<std::size_t>(in.gcount()));
+        }
+        out.emplace_back(ToUtf8(it->path().filename()), h);
+    }
+    return out;
 }
 
 bool Listable(std::string_view name) {
@@ -130,12 +164,35 @@ struct Field {
         if (v == nullptr) {
             return true;
         }
-        if (v->kind != Value::Kind::String || v->string.size() > most || !Printable(v->string)) {
+        if (v->kind != Value::Kind::String || CountChars(v->string) > most || !Printable(v->string)) {
             problem = std::string("\"") + key + "\" must be a text of at most " + std::to_string(most) + " characters";
             return false;
         }
         out = v->string;
         return true;
+    }
+
+    // A text member in the player's language and, when it has none, the plain one:
+    // "name_zh-Hans" (the code language.txt and Longshot's Menu language row use),
+    // then "name". A mod that carries one of these shows that language's text in the
+    // Mods tab; a mod that carries none is as it was.
+    bool TextIn(const char* key, std::size_t most, std::string& out) const {
+        const std::string_view code = CoopI18n::Current() != nullptr ? CoopI18n::Current()->code : std::string_view();
+        if (!code.empty()) {
+            std::string localised(key);
+            localised += '_';
+            localised += code;
+            const Value* v = object.Get(localised);
+            if (v != nullptr) {
+                if (v->kind != Value::Kind::String || CountChars(v->string) > most || !Printable(v->string)) {
+                    problem = "\"" + localised + "\" must be a text of at most " + std::to_string(most) + " characters";
+                    return false;
+                }
+                out = v->string;
+                return true;
+            }
+        }
+        return Text(key, most, out);
     }
 
     bool Flag(const char* key, bool& out) const {
@@ -186,7 +243,7 @@ bool ReadSetting(const Value& row, Setting& out, std::string& problem) {
     }
     out.name = out.key;
     double max_length = 64;
-    if (!f.Text("name", 64, out.name) || !f.Text("help", 256, out.help) || !f.Flag("restart", out.restart) ||
+    if (!f.TextIn("name", 64, out.name) || !f.TextIn("help", 256, out.help) || !f.Flag("restart", out.restart) ||
         !f.Flag("shared", out.shared) || !f.Number("min", out.min) || !f.Number("max", out.max) ||
         !f.Number("step", out.step) || !f.Number("max_length", max_length)) {
         return false;
@@ -221,16 +278,24 @@ bool ReadSetting(const Value& row, Setting& out, std::string& problem) {
             return false;
         }
         for (const Value& c : choices->array) {
-            std::string value, caption;
+            std::string value, caption, ignored;
             if (c.kind == Value::Kind::String) {
                 value = caption = c.string;
             } else if (c.kind == Value::Kind::Object) {
                 value = c.Text("value").value_or("");
-                caption = c.Text("name").value_or(value);
+                // {"value", "name"}: the name in the player's language when the mod has one.
+                const Field pair{c, ignored};
+                if (!pair.TextIn("name", 64, caption)) {
+                    caption = value;
+                }
+                if (caption.empty()) {
+                    caption = value;
+                }
             }
             const bool twice = std::any_of(out.choices.begin(), out.choices.end(),
                                            [&](const auto& have) { return have.first == value; });
-            if (value.empty() || value.size() > 64 || caption.size() > 64 || !Printable(value) || !Printable(caption) ||
+            if (value.empty() || CountChars(value) > 64 || CountChars(caption) > 64 || !Printable(value) ||
+                !Printable(caption) ||
                 twice) {
                 problem = "setting \"" + out.key +
                           "\": each choice must be a text or {\"value\", \"name\"}, at most 64 characters, no value twice";
@@ -425,9 +490,9 @@ std::optional<Manifest> ParseManifest(std::string_view text, std::string_view fo
     const Field f{*doc, why};
     std::string share = "everyone";
     double api = 0;
-    if (!f.Text("id", kMaxId, m.id) || !f.Text("name", 64, m.name) || !f.Text("version", kMaxVersion, m.version) ||
-        !f.Text("author", 64, m.author) || !f.Text("description", 512, m.description) ||
-        !f.Text("coop", 16, share) || !f.Number("api", api)) {
+    if (!f.Text("id", kMaxId, m.id) || !f.TextIn("name", 64, m.name) || !f.Text("version", kMaxVersion, m.version) ||
+        !f.TextIn("author", 64, m.author) || !f.TextIn("description", 512, m.description) ||
+        !f.Text("coop", 16, share) || !f.Number("api", api) || !f.Flag("file_select", m.file_select)) {
         return fail();
     }
     if (!ValidId(m.id)) {
@@ -505,6 +570,9 @@ void Found(const fs::path& dir, const std::string& name, bool off, std::vector<M
     mod.folder = dir;
     mod.has_romfs = fs::is_directory(dir / "romfs", ec);
     mod.has_exefs = fs::is_directory(dir / "exefs", ec);
+    if (mod.has_exefs) {
+        mod.exefs_patches = ExefsPatchFiles(dir / "exefs");
+    }
     mod.has_manifest = fs::is_regular_file(dir / kManifestFile, ec);
     mod.folder_off = off;
     mod.internal = Internal(name);
@@ -628,6 +696,13 @@ void Normalize(State& state, const std::vector<Mod>& mods) {
             off.push_back(m->name);
         }
     }
+    if (state.default_off) {   // (the ones no row named are off, as Hookshot reads the list: hos_coop_mods_rank)
+        for (const std::string& name : order) {
+            if (!has(state.order, name) && !has(off, name)) {
+                off.push_back(name);
+            }
+        }
+    }
     state.order = std::move(order);
     state.off = std::move(off);
 }
@@ -636,6 +711,10 @@ std::string ListText(const State& state, const std::vector<Mod>& mods) {
     State s = state;
     Normalize(s, mods);
     std::string text = "coop-mods " + std::to_string(HOS_COOP_MODS_VERSION) + "\n";
+    if (s.default_off) {
+        text += HOS_COOP_MODS_DEFAULT_OFF;
+        text += '\n';
+    }
     std::size_t rows = 0;
     for (const std::string& name : s.order) {
         if (rows++ == HOS_COOP_MODS_MAX) {
@@ -655,6 +734,7 @@ bool ReadListText(std::string_view text, State& state) {
     }
     state.order.clear();
     state.off.clear();
+    state.default_off = list->default_off != 0;
     for (int i = 0; i < list->count; ++i) {
         state.order.emplace_back(list->rows[i].name);
         if (list->rows[i].off) {
@@ -852,7 +932,7 @@ void ClearStarting(const fs::path& mods_root) {
     fs::remove(mods_root / kStartingFile, ec);
 }
 
-std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop) {
+std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop, const StandIn* stand_in) {
     Hashes h;
     std::error_code ec;
     const fs::path romfs = mod.folder / "romfs";
@@ -866,7 +946,15 @@ std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop)
             }
             std::string key = ToUtf8(it->path().lexically_relative(romfs));
             std::transform(key.begin(), key.end(), key.begin(), Fold);
-            files.emplace_back(std::move(key), it->path());
+            fs::path from = it->path();
+            if (stand_in != nullptr && *stand_in) {
+                std::optional<fs::path> picked = (*stand_in)(from, key);
+                if (!picked) {
+                    continue;
+                }
+                from = std::move(*picked);
+            }
+            files.emplace_back(std::move(key), std::move(from));
         }
         if (ec) {
             return std::nullopt;

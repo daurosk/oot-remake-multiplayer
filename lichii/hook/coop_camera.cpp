@@ -7,23 +7,33 @@
 namespace CoopCamera {
 namespace {
 
-std::atomic<bool> g_wanted{false};
+std::atomic<bool> g_wanted{false};       // the hook: name tags while Ocarina runs with co-op on
+std::atomic<bool> g_tool_wanted{false};  // the play-test bridge's `move` (coop_playtest.cpp)
 std::mutex g_mutex;
 std::optional<Frame> g_pending;  // the frame the renderer is drawing
 std::optional<Frame> g_latest;   // the last finished one
 
-} // namespace
-
-void SetWanted(bool wanted) {
-    if (g_wanted.exchange(wanted) && !wanted) {
+// Forgets the camera once neither side wants it, so a stale one is never steered or drawn by.
+void Turned(std::atomic<bool>& mine, const std::atomic<bool>& other, bool wanted) {
+    if (mine.exchange(wanted) && !wanted && !other.load()) {
         std::lock_guard lock(g_mutex);
         g_pending.reset();
         g_latest.reset();
     }
 }
 
+} // namespace
+
+void SetWanted(bool wanted) {
+    Turned(g_wanted, g_tool_wanted, wanted);
+}
+
+void SetToolWanted(bool wanted) {
+    Turned(g_tool_wanted, g_wanted, wanted);
+}
+
 bool Wanted() {
-    return g_wanted.load(std::memory_order_relaxed);
+    return g_wanted.load(std::memory_order_relaxed) || g_tool_wanted.load(std::memory_order_relaxed);
 }
 
 bool Better(std::uint64_t frame, float width, float height) {

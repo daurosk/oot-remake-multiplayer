@@ -2,6 +2,8 @@
 
 Status: research and a first test switch. Not in any release. The puppet from the puppet pack
 (docs/puppet.md) stays the way other players are shown until every step below is proven in game.
+The wider plan (bodies, lifting, bombs changing hands, PvP on real bodies) and how this real-Player
+track fits in it: [native-puppets.md](native-puppets.md).
 
 ## Why
 

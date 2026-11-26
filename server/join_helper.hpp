@@ -50,6 +50,9 @@ struct JoinConfig {
   // with no new answer code. Empty / 0: a random nonce, any port.
   std::optional<Nonce> nonce;
   std::uint16_t public_port = 0;
+  // The one IPv4 address of this PC (host order) the helper's public socket binds to; none: all addresses. Tests:
+  // 127.0.0.1, so a test never listens on the network (the Windows firewall asks about every such program).
+  std::optional<std::uint32_t> bind;
   std::function<void(const std::string&)> log;
   std::function<void(const std::string&)> on_answer;  // the answer code, once
   std::function<std::uint64_t()> unix_now;            // empty: the system clock
@@ -70,6 +73,9 @@ class JoinHelper {
   void stop();
 
   JoinState state() const { return state_; }
+  // Row 209: still waiting for the host after punch_ms: no way through the routers was found (both strict, or a
+  // provider's shared address: CGNAT). An answer code or UPnP cannot open it; a VPN network can (no_way_help).
+  bool no_way() const { return helped_; }
   bool direct() const { return direct_; }
   // Where the host's server is reached: the invite's address, or the
   // nearby one (this PC, the local network) that answered first.

@@ -1,0 +1,52 @@
+# hs-phantom-ganon-fall (row 178's fall guard in a game, test step `drop`): A owns Phantom Ganon (host). At t2 A drops
+# him 60 m (`drop`: the set-matrix call the copies are placed with). Wanted: A's log "fell N m below its fight start
+# (row 178): put back at its fight start, its AI chooses again" and "coop: test drop ..."; B's share stats line
+# "boss copies kept in the room N" with N > 0; PG in the room on both screens at f1/f2 (shots). At t4 A goes down
+# (hurt 80 after nofairy): the server hands him to B. At t5 B drops him (B owns now): the same lines with A/B
+# swapped (fall + hand-over). Then B hits him until he dies (death on both screens, d1/end).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-phantom-ganon-fall
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+drop Enemy_DungeonBoss_PhantomGanon 60   # ours: the fall guard puts him back
+wait 60
+mark f1
+wait 600
+mark f2
+wait 600
+mark t3
+wait 600
+mark t4
+hurt 80                 # the owner goes down: the server hands him to B
+wait 600
+mark t5
+wait 120
+mark f3                 # B drops him meanwhile (B's turn)
+wait 600
+mark f4
+wait 1800               # B hits him until he dies
+mark d1
+wait 900
+mark end

@@ -19,10 +19,16 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
+#include "coop_caller_orders.h"
+#include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
+#include "coop_session_gate.h"
 #include "coop_objects.h"
 
+#include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -56,8 +62,9 @@ constexpr std::uint64_t kForceSkip = 0x3b3af30;
 constexpr std::uint64_t kActorState = 0x2c;
 constexpr std::uint32_t kActorStatePresent = 4;
 constexpr std::uint64_t kActorPosition = 0x31c;
+constexpr std::uint64_t kActorRotation = 0x328;  // 9 x f32, rows of 3 (player-state-map.md)
 constexpr std::uint64_t kSetMatrix = 0x4c6580;  // vtable slot 0x218 of every actor seen
-constexpr int kCallerOrder = 50;  // after the puppets, spawn, fairy, objects, time
+constexpr int kCallerOrder = CoopCallerOrders::kBossRooms;  // after the puppets, spawn, fairy, objects, time
 // Ten times a second on the steady clock, not by presented frames (issue
 // 106: with the emulator's speed-up, frames come faster).
 constexpr std::uint64_t kTickEveryUs = 100'000;
@@ -87,6 +94,14 @@ public:
         main_ = main;
         move_ = Move{actor, to};
     }
+    // Test only (`face X Z`, row 175): our Link turned to face the world point (x, z), its rotation (actor
+    // +0x328, rows of 3; column 2 is the way it faces, as CoopObjects reads it) written as a plain turn about
+    // the up axis, then its matrix set from it as a move does.
+    void WantFace(std::uint64_t main, std::uint64_t actor, float x, float z) {
+        std::lock_guard lock(mutex_);
+        main_ = main;
+        face_ = Face{actor, x, z};
+    }
     void WantSkip(std::uint64_t main) {
         std::lock_guard lock(mutex_);
         main_ = main;
@@ -113,6 +128,30 @@ public:
                     c.x[1] = 0;
                     LOG_INFO(Core, "coop: boss: moved Link to {:.1f} {:.1f} {:.1f}", m.to.x, m.to.y, m.to.z);
                     return c;
+                }
+            }
+        }
+        if (face_) {
+            const Face f = *face_;
+            face_.reset();
+            std::uint32_t state = 0;
+            float at[3] = {};
+            if (!guest.Read(f.actor + kActorState, &state, 4) || state != kActorStatePresent ||
+                !guest.Read(f.actor + kActorPosition, at, sizeof(at))) {
+                LOG_WARNING(Core, "coop: test face: Link's actor is gone; not turned");
+            } else {
+                const float yaw = std::atan2(f.x - at[0], f.z - at[2]);
+                const float s = std::sin(yaw);
+                const float c = std::cos(yaw);
+                const float m[9] = {c, 0.0f, s, 0.0f, 1.0f, 0.0f, -s, 0.0f, c};
+                if (guest.Write(f.actor + kActorRotation, m, sizeof(m))) {
+                    CoopPuppet::Call call;
+                    call.function = main_ + kSetMatrix;
+                    call.x[0] = f.actor;
+                    call.x[1] = 0;
+                    LOG_INFO(Core, "coop: test face {:.2f} {:.2f}: Link at {:.2f} {:.2f} turned to yaw {:.1f} deg",
+                             f.x, f.z, at[0], at[2], yaw * 57.29578f);
+                    return call;
                 }
             }
         }
@@ -146,6 +185,12 @@ private:
         std::uint64_t actor = 0;
         Vec to;
     };
+    struct Face {
+        std::uint64_t actor = 0;
+        float x = 0.0f;
+        float z = 0.0f;
+    };
+    std::optional<Face> face_;
     std::mutex mutex_;
     std::uint64_t main_ = 0;
     std::optional<Move> move_;
@@ -157,8 +202,9 @@ struct Glue {
     bool by_scene = true;  // LICHII_COOP_BOSS_MOVE=matrix: never
     bool debug = false;
     std::uint64_t tick_at = 0;  // steady clock, us
-    bool connected = false;
+    CoopSessionGate::Gate gate;  // the session's end seen before the tick (coop_session_gate.h)
     bool unready_logged_ = true;  // the last state logged: ready
+    Readiness readiness;          // boss-copy-b: may our game own the room's boss
     std::uint64_t debug_at = 0;
     Sync sync;
     Mover mover;
@@ -169,6 +215,7 @@ struct Glue {
     bool scenes_live = false;  // logged once
     std::uint64_t requests_cursor = 0;
     std::optional<std::int32_t> max_life;          // set by the hook (SetMaxLife)
+    std::atomic<std::int32_t> max_life_from_others{0};   // the maximum another game's pickup gave us (0 none)
     std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
     std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
@@ -222,6 +269,18 @@ struct Glue {
         return true;
     }
 
+    bool AskFace(Core::System& system, std::uint64_t main, float x, float z) {
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+        coop::host::PlayerReader reader(memory);
+        const auto actor = reader.find_player_actor();
+        if (!actor) {
+            LOG_INFO(Core, "coop: test face: Link's actor not found; not turned");
+            return false;
+        }
+        mover.WantFace(main, *actor, x, z);
+        return true;
+    }
+
     bool Scenes(Core::System& system, std::uint64_t main, const Local& local, bool event,
                 coop::host::Session* session, std::uint64_t now_us);
 
@@ -235,20 +294,26 @@ struct Glue {
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-        if (tick_at != 0 && steady_us - tick_at < kTickEveryUs) {
-            return;
-        }
-        tick_at = steady_us;
-        if (main == 0 || now_us == 0 || session == nullptr) {
-            if (connected) {
-                sync.Reset();
-                scenes.Reset();
-                max_life_cap.reset();
-                connected = false;
+        const auto step = gate.Next(main != 0 && now_us != 0 && session != nullptr, [&] {
+            if (tick_at != 0 && steady_us - tick_at < kTickEveryUs) {
+                return false;
             }
+            tick_at = steady_us;
+            return true;
+        });
+        if (step == CoopSessionGate::Step::forget) {
+            sync.Reset();
+            scenes.Reset();
+            CoopBossBeaten::TheRecord().ForgetSession();  // out of the session: the server tells us again on a join
+            CoopBossBeaten::TheHostAlive().Clear();
+            CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
+            readiness.Reset();
+            CoopBossNative::TheTable().SetNotBegun({});
+            max_life_cap.reset();
+        }
+        if (step != CoopSessionGate::Step::join && step != CoopSessionGate::Step::run) {
             return;
         }
-        connected = true;
         Local local;
         local.scene = scene;
         if (position) {
@@ -259,33 +324,69 @@ struct Glue {
         if (scene) {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
+                local.boss_read_dead = CoopObjects::LastBossReadDead(Bodies(*room));
                 local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
+                // A Game Over here is no boss's death (boss-gameover-b): Link's own Life at 0.
+                if (const auto life = CoopObjects::OurLinkLife()) {
+                    local.link_dead = *life <= 0;
+                }
                 // Not ready to own the boss until our game has played its
                 // intro: before it our boss is still in its pre-battle phase
                 // (Gohma on the ceiling), and as owner it would hold every
                 // game's boss there (the eye shut, no fight).
                 CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
                 coop::host::GameFlags flags(memory);
-                const auto intro = flags.get_bool(
-                    coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                auto intro = flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                // Our own intro ended here (not skipped): played, though the game sets that flag later or never
+                // (Gohma's), else the intro's own owner reads unready and the server hands her away.
+                if (sync.OwnIntroPlayed()) {
+                    intro = true;
+                }
+                // boss-copy-b: also ready once our boss left its pre-battle
+                // phase here (a late joiner's copy following the fight).
+                // Row 244: never while our game plays the intro (sync's phase from its last Tick, 100 ms ago): its
+                // boss is the cutscene's, and as owner it held every game that skipped on the intro's boss (King
+                // Dodongo in his pit, Gohma in her intro animations). The server then gives the boss to a game in
+                // the fight (boss_to_ready); with every game in the intro the owner keeps it, as before.
+                const bool in_intro = sync.InIntro(event, now_us);
+                const bool ready =
+                    readiness.Step(room->index, intro, CoopObjects::LastBossPreBattle(Bodies(*room)), in_intro,
+                                   CoopObjects::LastBossHurt(Bodies(*room)));
+                if (readiness.TakeFoughtNews() && intro.has_value() && !*intro) {
+                    LOG_INFO(Core, "coop: boss: our boss left its pre-battle phase or lost life here: ready to own it "
+                                   "without our intro");
+                }
                 std::vector<std::string> unready;
-                if (intro.has_value() && !*intro) {
+                if (!ready) {
                     for (const auto body : Bodies(*room)) unready.emplace_back(body);
                 }
                 if (unready.empty() != unready_logged_) {
                     unready_logged_ = unready.empty();
                     LOG_INFO(Core, "coop: boss: {} ({})",
-                             unready.empty() ? "ready to own the boss" : "not ready to own the boss: its intro is not played here",
+                             unready.empty() ? "ready to own the boss"
+                             : in_intro      ? "not ready to own the boss: our game plays its intro now"
+                                             : "not ready to own the boss: its intro is not played here",
                              room->intro);
                 }
+                CoopBossNative::TheTable().SetNotBegun(unready);  // (row 189: its wait is no stuck move)
                 CoopObjects::SetUnreadyBosses(std::move(unready));
             } else {
+                readiness.Reset();  // out of the boss room: her next visit starts over
+                CoopBossNative::TheTable().SetNotBegun({});
                 CoopObjects::SetUnreadyBosses({});
             }
         }
         local.self = session->with_client([](coop::net::Client& c) { return c.player_number(); });
         Actions act = sync.Tick(local, now_us);
+        // With the area's rules on (Scenes below returns true then) the older dungeon-wide pull is dropped, so its
+        // "moving in (try N)" / "could not move into" lines would tell of a move that never happens (big-run-0115
+        // hs-gohma-native: B at the dungeon's entrance, outside the boss's area, logged 5 tries and stayed put).
+        const bool area_rules = scenes_on && CoopLiveEvents::TheGameRequests().Live();
         for (const auto& line : act.log) {
+            if (area_rules && (line.rfind("another player is in the boss room of ", 0) == 0 ||
+                               line.rfind("could not move into the boss room of ", 0) == 0)) {
+                continue;
+            }
             LOG_INFO(Core, "coop: boss: {}", line);
         }
         {
@@ -336,6 +437,16 @@ struct Glue {
                 }
             });
         }
+        if (!act.chat.empty()) {  // "<name> took the blue warp" (#50); the chat draws it in the menu's language
+            session->with_client([&](coop::net::Client& c) {
+                for (auto& line : act.chat) {
+                    const auto* p = c.find_player(line.player);
+                    lines.push_back((p != nullptr ? p->nickname : "player " + std::to_string(line.player)) + " " +
+                                    line.text);
+                }
+                return 0;
+            });
+        }
     }
 };
 
@@ -345,6 +456,9 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     auto& requests = CoopLiveEvents::TheGameRequests();
     if (!scenes_on || !requests.Live()) {
         max_life_cap.reset();
+        CoopBossNative::TheTable().SetDying({});
+        CoopObjects::SetDyingBosses({});
+        CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);  // (no Director: nothing refused)
         std::lock_guard lock(searched_mutex);
         searched.clear();  // nothing takes them: none applied late when the rules come on
         return false;
@@ -376,15 +490,35 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     here.event = event;
     here.self = local.self;
     here.max_life = max_life;
+    here.max_life_from_others = max_life && *max_life == max_life_from_others.load();
     if (local.scene) {
         for (const auto& room : CoopBoss::Rooms()) {  // the scene's boss (a dungeon has one boss room)
             if (room.scene == *local.scene) {
                 here.boss_ours = CoopObjects::LastBossOurs(CoopBoss::Bodies(room));
+                here.boss_alive = CoopObjects::LastBossAlive(CoopBoss::Bodies(room));
                 break;
             }
         }
     }
     CoopBossScenes::Actions a = scenes.Tick(here, ours, now_us);
+    // (one death cutscene per game: the event request refuses a played death while we are in its area)
+    CoopBossScenes::RefusedDeaths().store(a.refuse_deaths, std::memory_order_release);
+    // Player report #105 (a black screen after Gohma's death): once her death has begun in any game, our copy is
+    // no copy any more; its own game runs its death (the setting we ask it, its warp and its container).
+    std::vector<std::string> dying;
+    if (local.scene) {
+        for (const auto& room : CoopBoss::Rooms()) {
+            // enemies-dying-01111: also where the director's own area is not the room's dungeon scene (the boss
+            // rush's DodongoStage: King Dodongo's copy there was never named dying, and B replayed A's killing
+            // blow on it ~50 times, run 20261122-092813).
+            if (scenes.phase(room.index) >= CoopBossScenes::Director::Phase::outro &&
+                (room.scene == *local.scene || scenes.DeathBegunHere(room.index, here))) {
+                for (const auto body : CoopBoss::Bodies(room)) dying.emplace_back(body);
+            }
+        }
+    }
+    CoopObjects::SetDyingBosses(dying);
+    CoopBossNative::TheTable().SetDying(std::move(dying));
     for (const auto& line : a.log) {
         LOG_INFO(Core, "coop: boss: {}", line);
     }
@@ -397,6 +531,9 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     if (a.skip) {
         mover.WantSkip(main);
     }
+    if (a.refill) {
+        CoopObjects::AskRefill();   // (another player took the container: our hearts full, as its pickup would)
+    }
     if (a.set_max_life) {
         max_life_write = a.set_max_life;
     }
@@ -408,9 +545,13 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     max_life_cap = a.max_life_cap;
     session->with_client([&](coop::net::Client& c) {
         for (auto& m : a.send) {
-            const bool sent = c.send(coop::protocol::Message{m});
+            const coop::protocol::Message msg{m};
+            const bool sent = c.send(msg);
             LOG_INFO(Core, "coop: boss: sent cutscene {} of boss {}{}", static_cast<int>(m.kind), m.boss,
                      sent ? "" : " (not sent)");
+            if (const auto room = CoopBossBeaten::ProvenDeath(msg)) {
+                CoopBossBeaten::TheRecord().Add(*room);  // our game took the death itself (G2)
+            }
         }
         for (auto& m : a.claims) {
             const bool sent = c.send(coop::protocol::Message{m});
@@ -436,6 +577,8 @@ Glue& TheGlue() {
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<std::string>& scene,
            const std::optional<coop::protocol::Vec3>& position, bool event_running, std::optional<bool> shut_in,
            coop::host::Session* session, std::uint64_t server_now_us) {
+    // Native boss sync: during our event a copy boss runs its own changes (the intro's, the death's; boss-fix).
+    CoopBossNative::TheTable().SetEvent(main_base != 0 && event_running);
     TheGlue().Frame(system, main_base, scene, position, event_running, shut_in, session, server_now_us);
 }
 
@@ -453,20 +596,58 @@ bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to) {
     return main_base != 0 && TheGlue().on && TheGlue().AskMove(system, main_base, to);
 }
 
+bool FaceLink(Core::System& system, std::uint64_t main_base, float x, float z) {
+    return main_base != 0 && TheGlue().on && TheGlue().AskFace(system, main_base, x, z);
+}
+
 void OnEvent(const coop::net::Event& event) {
     if (event.kind == coop::net::EventKind::message) {
         TheGlue().sync.Receive(event.message);
         TheGlue().scenes.Receive(event.message);
+        // Row 159: the host's save load, its bosses alive. Taken off the record here, on the thread that adds to
+        // it, so a death proven before it never outlives it; the hook's frame rewinds our game (Apply::HostAlive).
+        // Only a boss that died this session is rewound: one a guest's own save beat before stays its own.
+        if (const auto* alive = std::get_if<coop::protocol::BossAlive>(&event.message)) {
+            CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
+            const auto here = static_cast<std::uint16_t>(alive->alive & record.SeenMask());
+            record.Remove(here);
+            CoopBossBeaten::TheHostAlive().Put(coop::protocol::BossAlive{alive->player_number, alive->known, here});
+            LOG_INFO(Core, "coop: boss: the host's save holds bosses {:#05x} alive (of {:#05x} read; died this "
+                           "session: {:#05x})",
+                     alive->alive, alive->known, here);
+        }
         const auto* m = std::get_if<coop::protocol::BossRoom>(&event.message);
         if (m != nullptr && m->state != coop::protocol::BossState::in_room) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),
                      m->scene);
         }
+        // G2: a proven death of a dungeon boss (another game took its death event, or the server's record of one
+        // for a player who joins; never a player's BOSS_ROOM defeated, maybe a guess). A game whose own flags lack
+        // it gets its beaten set at a scene outside the boss's (coop_boss_beaten.h, coop_hook.cpp).
+        if (const auto room = CoopBossBeaten::ProvenDeath(event.message);
+            room && CoopBossBeaten::TheRecord().Add(*room)) {
+            LOG_INFO(Core, "coop: boss: the group beat the boss of room {}: kept for this session", *room);
+        }
     }
+}
+
+void ForgetFights() {
+    Glue& g = TheGlue();
+    g.sync.Reset();
+    g.scenes.Reset();
+    CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
+    g.readiness.Reset();
+    g.max_life_cap.reset();
+    CoopBossBeaten::TheRecord().Clear();  // bosses beaten after that save are alive again (G2, as #52)
+    LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
 }
 
 void SetMaxLife(std::optional<std::int32_t> max_life) {
     TheGlue().max_life = max_life;
+}
+
+void NoteMaxLifeFromOthers(std::int32_t max_life) {
+    TheGlue().max_life_from_others = max_life;
 }
 
 std::optional<std::int32_t> TakeMaxLifeWrite() {
@@ -477,8 +658,30 @@ std::optional<std::int32_t> MaxLifeCap() {
     return TheGlue().max_life_cap;
 }
 
+// The autotest's `event NAME` (WantEvent): the play-test bridge's PlayNow asks it from the calc thread, so it has
+// its own lock (the glue's `wanted` is the present thread's).
+namespace {
+std::mutex g_test_events_mutex;
+std::vector<std::string> g_test_events;
+} // namespace
+
 std::vector<std::string> TakeWantedEvents() {
-    return std::exchange(TheGlue().wanted, {});
+    auto out = std::exchange(TheGlue().wanted, {});
+    std::lock_guard lock(g_test_events_mutex);
+    for (auto& name : g_test_events) {
+        out.push_back(std::move(name));
+    }
+    g_test_events.clear();
+    return out;
+}
+
+void WantEvent(std::string name) {
+    std::lock_guard lock(g_test_events_mutex);
+    g_test_events.push_back(std::move(name));
+}
+
+bool DeathMayRun(std::uint8_t boss) {
+    return TheGlue().scenes.DeathMayRun(boss);
 }
 
 std::vector<std::string> TakeLines() {

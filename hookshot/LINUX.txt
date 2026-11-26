@@ -2,11 +2,11 @@
 # for the release in PIN: its AppImage from that release's downloads, checked against this SHA-256 (the release's
 # SHA256SUMS). The kit unpacks it (no FUSE), takes its Python and its source, applies patches/ and compiles the game and
 # its renderer on the player's PC. Change it with PIN (the tags must match).
-tag=v3.0.0-rc.3
-appimage=Longshot-v3.0.0-rc.3-x86_64.AppImage
-url=https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/v3.0.0-rc.3/Longshot-v3.0.0-rc.3-x86_64.AppImage
-sha256=910799f8361cce6e1c5413434d2205b6cdec63f7bcf4350a151ca26e93cf8256
-size=98609656
+tag=v3.2.0
+appimage=Longshot-v3.2.0-x86_64.AppImage
+url=https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/v3.2.0/Longshot-v3.2.0-x86_64.AppImage
+sha256=70b8269b03c8bfd48385f7cb18bc0a493985219e6645d1eef104ae93cd1f2506
+size=102377976
 # The co-op mirror (kit-mirror): our GitHub release with the same AppImage (tools/release/mirror_longshot.ps1), tried
 # after url=; the SHA-256 above decides. Moves with tag= (a new mirror tag per Longshot release).
-mirror=https://github.com/daurosk/oot-remake-multiplayer/releases/download/longshot-mirror-v3.0.0-rc.3
+mirror=https://github.com/daurosk/oot-remake-multiplayer/releases/download/longshot-mirror-v3.2.0

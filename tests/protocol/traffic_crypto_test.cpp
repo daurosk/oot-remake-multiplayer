@@ -296,3 +296,17 @@ TEST_CASE("traffic crypto: the player key is sealed with a key of its own, opene
   changed[kSealedPlayerKeyBytes - 1] ^= 1;      // its tag
   CHECK_FALSE(open_player_key(c2s, changed));
 }
+
+TEST_CASE("player key tag: the same for one key and label, different for another key or label") {
+    PlayerKey a{};
+    PlayerKey b{};
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        a[i] = static_cast<std::uint8_t>(i + 1);
+        b[i] = static_cast<std::uint8_t>(0x80 + i);
+    }
+    const auto tag = player_key_tag(a, "oot-coop gold race v1");
+    CHECK(tag == player_key_tag(a, "oot-coop gold race v1"));
+    CHECK(tag != player_key_tag(b, "oot-coop gold race v1"));
+    CHECK(tag != player_key_tag(a, "another use"));
+    CHECK(tag != decltype(tag){});
+}

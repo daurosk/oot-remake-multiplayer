@@ -83,6 +83,8 @@ struct Config {
   // A renewal runs inside the server's loop and blocks it while it waits, so
   // it waits less (a router on the home network answers in milliseconds).
   std::uint32_t renew_timeout_ms = 1000;
+  // The one IPv4 address of this PC (host order) the discovery socket binds to; none: all addresses (tests: 127.0.0.1).
+  std::optional<std::uint32_t> bind;
   std::function<void(const std::string&)> log;
 };
 

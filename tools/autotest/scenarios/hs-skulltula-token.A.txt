@@ -9,7 +9,7 @@
 #   take2: placed on it, then A pressed (in case this game picks things up with A),
 #   take3: placed 1.2 m above it, falling through it.
 #! switches LICHII_COOP_TIME_TEST_SET=72000@75,LICHII_COOP_DEBUG_TIME=1
-#! timeout 330
+#! timeout 400
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-skulltula-token   (emulator: the same name)
 # Pass (as skulltula-kill): A "world: <TokenId> Obj_Token_Gold broken here (gone next to Link): sent" and
 # a flags line PouchData.Item_Token_Gold.StockNum N -> N+1 with the Skulltula key 0x32f42f523be6425 set
@@ -17,6 +17,11 @@
 # deleted" (if its game made one), "world: key64 ... set to 1 (a token taken elsewhere)", and B's count
 # N -> N+1 (the same N+1). Shots: the token on A's screen at `token`, gone in both at `taken`/`end`.
 # Which take worked goes into the result (the next scenarios use that one).
+# bigrun-0115 (shots g2/hs-skulltula-token/20261117-194804): take2 took it (A's 'taken' shot: "You got a Gold
+# Skulltula token! You've collected 6 tokens so far."), but nothing pressed A, so the message stayed open to the end:
+# the get event never ended, the token was never deleted and no "broken here" / "taken elsewhere" line came. Now
+# each take is followed by A presses that close the message (one press each 1.5 s; a press with no message open does
+# nothing here, Link is held against the wall), then 4 s for the delete and the send.
 # INCONCLUSIVE: "test kill ... none here with a life" at before-kill (still day), or no take counted
 # (then the token needs a real climb or the boomerang: a hand check).
 mark start
@@ -43,15 +48,33 @@ mark token              # the token, where the Skulltula was (-20.26 104.35 26.0
 place -20.26 103.80 25.45   # take1: in front of it, body height, then into it
 wait 10
 toward -20.26 26.40 20   # walk into it (toward the wall)
-wait 60
+wait 30
+press A 12              # close the get message (if it took)
+wait 90
+press A 12
+wait 90
+press A 12
+wait 240
 mark take1
 place -20.26 104.35 26.06   # take2: on it, then A
 wait 10
 press A 12
-wait 60
+wait 30
+press A 12              # close the get message (if it took)
+wait 90
+press A 12
+wait 90
+press A 12
+wait 240
 mark take2
 place -20.26 105.55 26.06   # take3: above it, falling through it
-wait 120
+wait 30
+press A 12              # close the get message (if it took)
+wait 90
+press A 12
+wait 90
+press A 12
+wait 240
 mark take3
 goto -20.2 22.5 0.5 300
 wait 300

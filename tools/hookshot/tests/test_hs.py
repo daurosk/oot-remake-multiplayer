@@ -7,7 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import hs  # noqa: E402
@@ -220,6 +220,45 @@ class WarmTest(Fixture):
         os.unlink(os.path.join(src, "longshot_pipelines.bin.built"))
         with self.assertRaises(hs.Fail):
             hs.warm_spread(src, [self.game("pair")], say=self.say)
+
+    # Longshot rc.4: the caches are in cache\ beside longshot.exe, some under new names, and the game build fills part.
+    WARM_RC4 = ("longshot_pipelines.bin", "longshot_pipelines.bin.built", "longshot_prepared.bin", "longshot_programs.bin",
+                "longshot_programs.idx", "longshot_vk_pipelines.bin", "longshot_vk_pipelines.stamp",
+                "longshot_vk_pipelines_play_1.bin", "longshot_compute_variants.bin", "longshot_module_ids.bin")
+
+    def warmed_rc4(self, name="warm4"):
+        g = self.game(name)
+        for n in self.WARM_RC4:
+            write(os.path.join(g, "cache", n), "warm " + n)
+        write(os.path.join(g, "cache", "prompts", "Common.key"), "k")   # (not a warm file)
+        return g
+
+    def test_rc4_warm_files_are_in_the_cache_folder(self):
+        g = self.warmed_rc4()
+        self.assertEqual(hs.warm_dir(g), os.path.join(g, "cache"))
+        self.assertEqual(hs.warm_files(g), sorted(self.WARM_RC4))
+        for n in self.WARM_RC4:
+            self.assertTrue(hs.RUNTIME_CACHE.match(n), n)
+        dst = self.game("pair4")
+        write(os.path.join(dst, "cache", "longshot_vk_pipelines_play_3.bin"), "a play file of another start")
+        self.assertEqual(hs.warm_spread(g, [dst], say=self.say), len(self.WARM_RC4))
+        self.assertEqual(hs.warm_files(dst), sorted(self.WARM_RC4))
+        os.unlink(os.path.join(g, "cache", "longshot_pipelines.bin.built"))
+        with self.assertRaises(hs.Fail):
+            hs.warm_spread(g, [dst], say=self.say)
+
+    def test_rc4_copy_keeps_the_pairs_cache_folder_files(self):
+        src = self.warmed_rc4("built4")
+        write(os.path.join(src, "cache", "longshot_vk_pipelines.bin"), "the build's, bigger than the pair's file")
+        dst = self.game("pair4")
+        write(os.path.join(dst, "cache", "longshot_vk_pipelines.bin"), "the pair's warmed")
+        hs.copy_tree(src, dst, say=self.say)
+        with open(os.path.join(dst, "cache", "longshot_vk_pipelines.bin")) as f:
+            self.assertEqual(f.read(), "the pair's warmed")   # a runtime cache in cache\: kept
+        self.assertTrue(os.path.isfile(os.path.join(dst, "cache", "prompts", "Common.key")))   # the rest copied
+        hs.copy_tree(src, dst, say=self.say, runtime_too=True)
+        with open(os.path.join(dst, "cache", "longshot_vk_pipelines.bin")) as f:
+            self.assertEqual(f.read(), "the build's, bigger than the pair's file")
 
     def test_restore_replaces_the_runtime_caches_of_another_build(self):
         k = hs.cache_store(self.warmed("new"), self.repo, say=self.say)
@@ -504,6 +543,174 @@ class CompileTest(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("compile-all: OK"))
         self.assertTrue(any(line.startswith("$ cmake --build") for line in lines))
         self.assertTrue(any("ninja -C E" in line for line in lines))
+
+
+class CodeModsTest(Fixture):
+    """charsel-tab-0119: a pair's mods with code patches (Character Select's exefs) go into the game build's key and
+    HOS_MODS; a game without them takes an older build's exefs_patches.txt away."""
+
+    LINE = "\nexefs=CS/exefs/E0.ips:aa;list=none"   # (what Get-KitExefsStampLine says: a fake here)
+
+    class Run:
+        def __init__(self, out="\nexefs=CS/exefs/E0.ips:aa;list=none", code=0):
+            self.out, self.code, self.calls = out, code, []
+
+        def __call__(self, cmd, **kw):
+            self.calls.append(cmd)
+            return type("R", (), {"returncode": self.code, "stdout": self.out, "stderr": ""})()
+
+    def mods(self, pair, folder="OoT Character Select", name="E0F3.ips"):
+        write(os.path.join(self.tmp, pair, "mods", folder, "exefs", name), "PATCH")
+        return os.path.join(self.tmp, pair, "mods")
+
+    def test_code_patches_found_by_the_kit_rule(self):
+        self.assertTrue(hs.has_code_patches(self.mods("A")))
+        self.assertTrue(hs.has_code_patches(self.mods("P", "OoT Character Select", "x.pchtxt")))
+        self.assertFalse(hs.has_code_patches(self.mods("B", "_OoT Character Select.prev")))   # (a mod kept aside)
+        self.assertFalse(hs.has_code_patches(self.mods("C", "OoT Character Select", "readme.txt")))
+        write(os.path.join(self.tmp, "D", "mods", "contents", "0400486024DEC000", "coop-puppet", "romfs", "a"), "x")
+        self.assertFalse(hs.has_code_patches(os.path.join(self.tmp, "D", "mods")))
+        self.assertFalse(hs.has_code_patches(os.path.join(self.tmp, "none")))
+
+    def test_line_asks_the_kit_only_with_code_patches(self):
+        run = self.Run()
+        self.assertEqual(hs.code_mods_line(os.path.join(self.tmp, "none"), self.repo, run), "")
+        self.assertEqual(run.calls, [])
+        self.assertEqual(hs.code_mods_line(self.mods("A"), self.repo, run), self.LINE)
+        self.assertIn("Get-KitExefsStampLine -Game '' -Mods", run.calls[0][-1])
+        with self.assertRaises(hs.Fail):
+            hs.code_mods_line(self.mods("B"), self.repo, self.Run(out="", code=1))
+
+    def test_pairs_must_share_their_code_patches(self):
+        a, b = os.path.join(self.tmp, "A"), os.path.join(self.tmp, "B")
+        self.mods("A"), self.mods("B")
+        line, mods = hs.pairs_code_mods([a, b], self.repo, self.Run())
+        self.assertEqual((line, mods), (self.LINE, os.path.join(a, "mods")))
+        self.assertEqual(hs.pairs_code_mods([os.path.join(self.tmp, "X"), os.path.join(self.tmp, "Y")], self.repo,
+                                            self.Run()), ("", None))
+        with self.assertRaises(hs.Fail):   # (one game for both: B without Character Select's code cannot share A's)
+            hs.pairs_code_mods([a, os.path.join(self.tmp, "Y")], self.repo, self.Run())
+
+    def test_charsel_native_patch_synced_into_the_pairs_packs_first(self):
+        # (co-op's own Characters tab: kit-paths.ps1 Sync-KitCharselNativePatch per pair pack, one call; no packs: none)
+        a, b = os.path.join(self.tmp, "A"), os.path.join(self.tmp, "B")
+        run = self.Run()
+        self.assertEqual(hs.sync_charsel_native([a, b], self.repo, run), {})
+        self.assertEqual(run.calls, [])
+        os.makedirs(os.path.join(a, hs.PACK_DIR)), os.makedirs(os.path.join(b, hs.PACK_DIR))
+        run = self.Run(out="r=in\r\nr=\r\n")
+        self.assertEqual(hs.sync_charsel_native([a, b], self.repo, run), {a: "in", b: ""})
+        self.assertEqual(run.calls[0][-1].count("Sync-KitCharselNativePatch"), 2)
+        with self.assertRaises(hs.Fail):   # (one answer missing: the kit's function is not there)
+            hs.sync_charsel_native([a, b], self.repo, self.Run(out="r=in\r\n"))
+
+    def test_key_and_restore_with_code_patches(self):
+        st = hs.stamp(self.repo) + self.LINE
+        self.assertNotEqual(hs.key_of(st), hs.key_of(hs.stamp(self.repo)))
+        g = self.game(stamp=st)
+        write(os.path.join(g, "exefs_patches.txt"), "OoT Character Select	E0.ips")
+        k = hs.cache_store(g, self.repo, say=self.say, want=st)
+        self.assertEqual(k, hs.key_of(st))
+        pair = os.path.join(self.tmp, "pair")
+        self.assertTrue(hs.cache_restore(pair, self.repo, say=self.say, want=st))
+        self.assertTrue(os.path.isfile(os.path.join(pair, "exefs_patches.txt")))
+
+    def test_mismatch_of_a_code_mod_added_after_the_build(self):
+        g = self.game(stamp=hs.stamp(self.repo))
+        self.assertIsNone(hs.code_mods_mismatch(g, self.repo, self.Run()))          # no code mods, none built in
+        self.mods("built")                                                            # Character Select put in after
+        why = hs.code_mods_mismatch(g, self.repo, self.Run())
+        self.assertIn("game: none", why)
+        self.assertIn("mods: exefs=CS/exefs/E0.ips:aa;list=none", why)
+        write(os.path.join(g, "coop-built-from.txt"), hs.stamp(self.repo) + self.LINE + "\r\n")   # built with it
+        self.assertIsNone(hs.code_mods_mismatch(g, self.repo, self.Run()))
+        self.assertIsNone(hs.code_mods_mismatch(os.path.join(self.tmp, "no-game"), self.repo, self.Run()))
+
+    def test_restore_of_a_plain_game_takes_a_stale_list_away(self):
+        hs.cache_store(self.game(), self.repo, say=self.say)
+        pair = os.path.join(self.tmp, "B1")
+        write(os.path.join(pair, "exefs_patches.txt"), "OoT Character Select	E0.ips (an older build's)")
+        self.assertTrue(hs.cache_restore(pair, self.repo, say=self.say))
+        self.assertFalse(os.path.exists(os.path.join(pair, "exefs_patches.txt")))
+        self.assertIn("older build's exefs_patches.txt removed", self.out.getvalue())
+
+
+class PinModsTest(Fixture):
+    """hs-mods-root (rejoin-host-273): a game build never reads the pin game folder's own mods (the last kit build's
+    puppet pack, with whatever code patch it had): HOS_MODS is always set, to the pairs' mods or an empty folder."""
+
+    LINE = CodeModsTest.LINE
+    mods = CodeModsTest.mods
+
+    def kit(self):
+        k = os.path.join(self.tmp, "kit")
+        write(os.path.join(k, "scripts", "hookshot-build.ps1"),
+              "param([string]$Game = '', [string]$Out = '', [int]$Jobs = 0, [string]$Tools = '', [string]$Work = '')\n")
+        return k
+
+    def build_env(self, pairs, line=""):
+        """The env the kit's hookshot-build.ps1 gets from a dry build of these pairs (a stale pack in the pin)."""
+        shared = hs.pin_dir(hs.stamp(self.repo) + line)
+        write(os.path.join(shared, "game", hs.PACK_DIR, "exefs", "E0F3.ips"), "co-op's Characters tab of a CS-on build")
+        envs = []
+
+        def run_steps(steps, prefix, dry, say=print, cwd=None, env=None):
+            envs.extend(env for s in steps if any("hookshot-build.ps1" in c for c in s))
+            return True
+        old_run, old_line = hs.run_steps, hs.code_mods_line
+        hs.run_steps = run_steps
+        hs.code_mods_line = lambda mods, repo=None, run=None: line if hs.has_code_patches(mods) else ""
+        os.environ["HOS_MODS"] = os.path.join(shared, "game", "mods")   # (a caller's own must not leak in either)
+        try:
+            self.assertTrue(hs.build(pairs, os.path.join(self.tmp, "b"), kit=self.kit(), game="g.nup",
+                                     repo=self.repo, dry=True, say=self.say))
+        finally:
+            hs.run_steps, hs.code_mods_line = old_run, old_line
+            os.environ.pop("HOS_MODS", None)
+        self.assertEqual(len(envs), 1)
+        return envs[0]
+
+    def test_pairs_without_code_mods_build_with_an_empty_mods_folder(self):
+        env = self.build_env([os.path.join(self.tmp, "A1"), os.path.join(self.tmp, "B1")])
+        self.assertEqual(env["HOS_MODS"], os.path.abspath(os.path.join(self.cache, hs.NO_MODS)))
+        self.assertNotIn(os.path.join("pins", ""), env["HOS_MODS"])
+
+    def test_pairs_with_code_mods_build_with_theirs(self):
+        a = os.path.join(self.tmp, "A1")
+        self.mods("A1"), self.mods("B1")
+        env = self.build_env([a, os.path.join(self.tmp, "B1")], self.LINE)
+        self.assertEqual(env["HOS_MODS"], os.path.abspath(os.path.join(a, "mods")))
+
+    def test_the_empty_folder_is_made_empty_again(self):
+        d = os.path.join(self.cache, hs.NO_MODS)
+        self.assertEqual(hs.no_mods_dir(dry=True), os.path.abspath(d))
+        self.assertFalse(os.path.exists(d))   # (a dry run makes nothing)
+        write(os.path.join(d, "OoT Character Select", "exefs", "E0.ips"), "PATCH")
+        self.assertEqual(hs.no_mods_dir(), os.path.abspath(d))
+        self.assertEqual(os.listdir(d), [])
+        self.assertFalse(hs.CACHE_NAME.match(hs.NO_MODS))   # (cache_prune leaves it)
+
+    def test_store_from_a_pins_game_folder_needs_the_pairs(self):
+        st = hs.stamp(self.repo)
+        g = self.game(os.path.join("cache", "pins", hs.pin_of(st), "game"), stamp=st)
+        write(os.path.join(g, hs.PACK_DIR, "exefs", "E0F3.ips"), "stale")
+        with self.assertRaises(hs.Fail) as e:
+            hs.cache_store(g, self.repo, say=self.say)
+        self.assertIn("--pair", str(e.exception))
+        self.assertEqual(hs.cache_store(g, self.repo, say=self.say, want=st), hs.key_of(st))
+        with redirect_stdout(io.StringIO()):   # (the CLI: --pair gives the pairs' want; pairs without code mods)
+            self.assertEqual(hs.main(["--repo", self.repo, "cache", "store", "--from", g,
+                                      "--pair", os.path.join(self.tmp, "A1")]), 0)
+
+    def test_a_cache_in_a_packaged_apps_appdata_is_named_once(self):
+        # (release-01112-4: sessions in a packaged app wrote the whole cache into its own AppData copy, unseen outside)
+        self.assertFalse(hs.packaged(self.cache))
+        os.environ["OOT_COOP_HS_CACHE"] = os.path.join(self.tmp, "AppData", "Local", "Packages", "App_x", "hs-cache")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            hs.cache_root(), hs.cache_root()
+        self.assertEqual(err.getvalue().count("WARNING"), 1)
+        self.assertIn("OOT_COOP_HS_CACHE", err.getvalue())
 
 
 if __name__ == "__main__":

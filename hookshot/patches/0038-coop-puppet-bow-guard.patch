@@ -1,0 +1,108 @@
+From d46af45657f842572ac82f895438d73e1b6fe546 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 23 Nov 2026 00:55:25 -0900
+Subject: [PATCH] Co-op bow guard: a bow or slingshot worn by another player's
+ Link
+
+A co-op puppet has no Player component (PlayerRef, slot 107), yet it
+wears the other player's held item through the game's wear call, so it
+is the item's wearer. The bow's component update (BowRef, slot 48;
+main+0x2dcee60, for Weapon_Range_Bow, Weapon_Range_SlingShot and their
+MiniGame_HitTarget copies) reads the wearer's Player component +0x7d8
+at main+0x2dceef8 without a check: guest 0x7d8 for a puppet (patch
+0002's null page makes it 0, which is not the game's -1, so the bow
+took the aiming branch).
+
+nx2/coop_puppet_bow_guard.py: C after main+0x2dceef0 (x0 = the wearer)
+reads the wearer's Player component as main+0x82acc0 does and, when
+there is none, goes to main+0x2dcef04, the function's own way for a
+wearer with no bow request (-1). Link runs as shipped. Build e0f3ccfa
+only, words checked. Called from nx2/coop_hooks.py install().
+---
+ nx2/coop_hooks.py            |  2 ++
+ nx2/coop_puppet_bow_guard.py | 63 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 65 insertions(+)
+ create mode 100644 nx2/coop_puppet_bow_guard.py
+
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index cd126a73..a5ba68d7 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -69,6 +69,8 @@ def install(lifter, img, build_id):
+     coop_actor_lift.install(lifter, img, build_id)
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+     coop_puppet_guard.install(lifter, img, build_id)
++    import coop_puppet_bow_guard   # (patch 0038: a bow or slingshot the other players' Link wears)
++    coop_puppet_bow_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
+     coop_platform_lift.install(lifter, img, build_id)
+     import coop_title_hooks   # (patch 0004: the title menu)
+diff --git a/nx2/coop_puppet_bow_guard.py b/nx2/coop_puppet_bow_guard.py
+new file mode 100644
+index 00000000..9fc9c496
+--- /dev/null
++++ b/nx2/coop_puppet_bow_guard.py
+@@ -0,0 +1,63 @@
++"""Co-op's guard for a bow or slingshot worn by another player's Link (oot-remake-multiplayer's patch 0038, its
++docs/hookshot.md "Link puppets").
++
++A co-op puppet (CoopPuppet_*) is a stripped copy of Link: its pack leaves out the Player component (PlayerRef, component
++slot 107, table +0x358), the player's own code. It still wears the other player's held item through the game's own
++wear call, and that call makes the puppet the item's wearer (the item's DynamicEquipment, slot 59, +0x20 handle).
++
++main+0x2dcee60 is the update of the bow's component (BowRef, slot 48, table +0x180: Weapon_Range_Bow,
++Weapon_Range_SlingShot and their two MiniGame_HitTarget copies are the only actors with it), called from the actor
++update at main+0x2c20efc. When the component's switch is on and the wearer handle is set, it takes the wearer
++(main+0x9375f0, cbz at main+0x2dceeec), asks main+0x82acc0 for the wearer's Player component and reads its +0x7d8 at
++main+0x2dceef8 without a check: the game knows only Link as a bow's wearer. -1 there goes to main+0x2dcef04, the
++function's own way out (the epilogue and a tail call of main+0x2dd1720, the bow's own update); anything else follows the
++wearer's AS ('Draw', 'Shoot'). For a puppet main+0x82acc0 gives 0, so the read is guest 0x7d8: a crash on Hookshot
++without patch 0002's null page, and with it a 0, which is not -1, so the puppet's bow took the aiming branch on a
++wearer with no Player state (the "coop: null read: guest 0x7d8" line at each puppet's held-item change).
++
++The guard: C after `mov x23, x0` (main+0x2dceef0, x0 = the wearer, not 0): the wearer's Player component read as
++main+0x82acc0 does ([[x0+0x270]+0x358]); when it is 0, go to main+0x2dcef04, the branch the game takes for a wearer
++that holds no bow request (+0x7d8 == -1). Link has the component and runs as shipped; nothing is read through 0.
++
++The words are checked and the build id; another game version leaves the guard out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++SITE = 0x2dceef0          # mov x23, x0: x0 = the wearer (cbz x0 just before)
++SKIP = 0x2dcef04          # the function's own exit when the wearer's Player +0x7d8 is -1
++WORDS = ((0x2dceee8, 0x976da1c2),   # bl main+0x9375f0: the wearer from the item's handle
++         (0x2dceeec, 0xb40000c0),   # cbz x0, main+0x2dcef04
++         (0x2dceef0, 0xaa0003f7),   # mov x23, x0
++         (0x2dceef4, 0x97696f73),   # bl main+0x82acc0: the wearer's Player component ([[x0+0x270]+0x358])
++         (0x2dceef8, 0xb947d808),   # ldr w8, [x0, #0x7d8]
++         (0x2dceefc, 0x3100051f),   # cmn w8, #1
++         (0x2dcef00, 0x54000181),   # b.ne main+0x2dcef30
++         (0x2dcef04, 0xfd403be8))   # ldr d8, [sp, #0x70]: the exit
++TEXT = ("{ uint64_t coop_t = *(uint64_t *)A64_PTR(c->x[0] + 0x270); "
++        "if (!coop_t || !*(uint64_t *)A64_PTR(coop_t + 0x358)) { extern void hos_log(const char *fmt, ...); "
++        "static volatile long said; "
++        "if (said++ < 4) hos_log(\"coop: puppet guard: bow wearer %%#llx has no Player component: the bow's own \"\n"
++        "\"update, as for a wearer not aiming (nx2/coop_puppet_bow_guard.py)\", (unsigned long long)c->x[0]); "
++        "goto L_%08x; } }   /* (nx2/coop_puppet_bow_guard.py) */") % (MAIN + SKIP)
++
++
++def install(lifter, img, build_id):
++    """The guard into lifter.after; nothing when the build or a word differs. Returns 1 when it went in."""
++    if build_id != BUILD_ID:
++        print("co-op bow guard: build %s is not %s: left out" % (build_id or "?", BUILD_ID))
++        return 0
++    for off, want in WORDS:
++        try:
++            have = img.word(MAIN + off)
++        except Exception:
++            have = None
++        if have != want:
++            print("co-op bow guard: main+%#x holds %s, not %08x: left out" % (
++                off, "?" if have is None else "%08x" % have, want))
++            return 0
++    pc = MAIN + SITE
++    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
++    print("co-op bow guard: at main+%#x (a bow worn by a Link with no Player component takes main+%#x)" % (
++        SITE, SKIP))
++    return 1

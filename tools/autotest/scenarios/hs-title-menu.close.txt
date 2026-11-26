@@ -1,0 +1,3 @@
+# hs-title-menu, both games: the menu closed (the menu takes no test pad: the module's own close), the title again.
+menu close
+wait 120

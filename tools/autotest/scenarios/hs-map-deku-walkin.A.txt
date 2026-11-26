@@ -1,0 +1,73 @@
+# hs-map-deku-walkin (dungeon-sync-b, #63/#76/#146, research for after 0.11.3): the map run with a WALK into the
+# Deku Tree from Kokiri Forest, the host first, then the guest. A (host) and B (guest on the REAL guest path: the
+# host's save copy). The Deku Tree is open in the lane saves and its map is got there (hs-minimap); #146 was the
+# Deku Tree map. (Dodongo's Cavern was given up: its boulder is a NoRespawn placement record, runs 20261115-*.)
+# Both start in KokiriForest_Child (a hookshot warp ignores the start name, so a place at StartPos FrontDekuTree
+# 90.04 115.48 -27.90 follows), walk through the entrance trigger (FieldAndDungeonEntranceEventRequestActor
+# FrontDekuTree 92.41 127.6 -27.53; the tree's mouth at +x), and in the entrance room look at the map chest
+# (6.51 7.25: open, or A opens it), the minimap and the Map page.
+# LICHII_COOP_MAP_REFRESH=1: the log line "map refresh: ... the HUD screen's copy floors 0x.. map . -> ..." on B.
+# LICHII_COOP_DEBUG_BOOL=89787395: DungeonInfo.InsideTheDekuTree.IsGetMap in both logs.
+# Pass: A's Map page and minimap show the Deku Tree after the walk-in (if not: the walk-in alone does not fix a
+# host's map, against the warp/scene-index guess); B's too (the per-role bug #63/#76 on the real guest path).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395,LICHII_COOP_MAP_REFRESH=1,B:LICHII_COOP_TEST_OWN_SAVE=0
+#! timeout 540
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+place 90.04 115.48 -27.90  # StartPos FrontDekuTree: just outside the entrance trigger (a dungeon exit lands here)
+wait 240
+mark tree                 # the tree's mouth ahead (+x)
+goto 98.0 -28.8 0.5 600    # through the entrance trigger: the scene change
+wait 2400
+mark mini-in              # inside, after the walk-in: the minimap
+press MINUS
+wait 120
+mark panel
+press R
+wait 90
+mark panel-r1
+press R
+wait 90
+mark panel-r2
+press B
+wait 240
+place 4.4 108.9 5.1        # 1.5 m behind the map chest's front spot (hs-map-opener)
+wait 240
+goto 5.45 6.15 0.35 300    # to its front
+toward 6.51 7.25 20        # face it
+mark chest                # open (the lane saves have the map) or closed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # a get scene if it was closed
+press A
+wait 120
+press B
+wait 600
+mark mini-chest
+press MINUS
+wait 120
+mark panel2
+press R
+wait 90
+mark panel2-r1
+press R
+wait 90
+mark panel2-r2
+press B
+wait 240
+mark end

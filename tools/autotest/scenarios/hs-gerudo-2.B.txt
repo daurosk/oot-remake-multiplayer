@@ -1,0 +1,5 @@
+# hs-gerudo phase 2 (B, guest): waits at cell 1 while A's rescue arrives.
+mark b-wait1
+wait 600
+toward 31.9 -66.6 10
+mark b-cell1

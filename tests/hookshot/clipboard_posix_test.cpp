@@ -4,11 +4,14 @@
 // CoopFiles::ReadClipboard (the answer paste, the Join paste) is this.
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <optional>
 #include <string>
 
 #include <fcntl.h>
@@ -66,7 +69,7 @@ struct Desktop {
                "[ \"$1 $2\" = '-selection clipboard' ] || exit 3\n"
                "if [ \"$3\" = -i ]; then cat > '" + clip + "'; ls /proc/$$/fd > '" + fds + "'; "
                "else cat '" + clip + "'; fi\n");
-        for (const char* tool : {"cat", "ls", "timeout", "yes", "touch"}) {
+        for (const char* tool : {"cat", "ls", "timeout", "yes", "touch", "sleep"}) {
             for (const char* bin : {"/usr/bin/", "/bin/"}) {
                 std::error_code ec;
                 if (fs::exists(std::string(bin) + tool, ec)) {
@@ -179,4 +182,122 @@ TEST_CASE("Linux clipboard: the clipboard's text never reaches a shell") {
     CHECK(d.Clip() == evil);
     CHECK(CoopClipboard::Paste() == evil.substr(0, evil.size() - 1));
     CHECK_FALSE(fs::exists(marker));
+}
+
+TEST_CASE("Linux clipboard: a paste on SDL's thread takes SDL's text first, then a tool's, then SDL's empty one") {
+    int asked = 0;
+    const auto tool = [&asked](std::optional<std::string> answer) {
+        return [&asked, answer]() {
+            ++asked;
+            return answer;
+        };
+    };
+    // SDL has text (Steam Deck Game Mode: no tool at all): that, and no tool is run
+    CHECK(CoopClipboard::PickPaste(std::string("ABCD-EFGH"), tool(std::nullopt)) == "ABCD-EFGH");
+    CHECK(asked == 0);
+    // SDL's "" is empty or unreadable: a tool's answer wins, else the empty clipboard stands
+    CHECK(CoopClipboard::PickPaste(std::string(), tool(std::string("from wl-paste"))) == "from wl-paste");
+    CHECK(CoopClipboard::PickPaste(std::string(), tool(std::nullopt)) == "");
+    // not on SDL's thread, or no SDL: the tools alone; nothing only when neither can read
+    CHECK(CoopClipboard::PickPaste(std::nullopt, tool(std::string("from xclip"))) == "from xclip");
+    CHECK_FALSE(CoopClipboard::PickPaste(std::nullopt, tool(std::nullopt)).has_value());
+    CHECK(asked == 4);
+}
+
+TEST_CASE("Linux clipboard: without the game's SDL, SDL's thread pastes through the tools as before") {
+    CHECK(CoopClipboard::GameSdl("SDL_GetClipboardText") == nullptr);   // (the tests load no SDL)
+    Desktop d("wayland-7", "");
+    CHECK(CoopClipboard::Copy("ABCD-EFGH-5678"));
+    const CoopClipboard::OnSdlThread sdl_thread;
+    CHECK(CoopClipboard::Paste() == "ABCD-EFGH-5678");
+    {
+        const CoopClipboard::OnSdlThread nested;
+    }
+    d.Remove("wl-paste");
+    d.Remove("xclip");
+    CHECK_FALSE(CoopClipboard::Paste().has_value());   // (said in the tab: "no clipboard tool ... press Ctrl+V")
+}
+
+namespace {
+
+// Take(ticket), asked until the job is done (5 s at most).
+std::optional<CoopClipboard::Done> Wait(std::uint64_t ticket) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < until) {
+        if (auto d = CoopClipboard::Take(ticket)) {
+            return d;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+TEST_CASE("Linux clipboard: CopyLater and PasteLater do not wait for a slow tool (the game's frames go on)") {
+    Desktop d("wayland-0", "");
+    const std::string clip = (d.dir / "clip.txt").string();
+    d.Tool("wl-copy", "sleep 1\ncat > '" + clip + "'\n");   // (as a tool that waits under Steam Deck Game Mode)
+    const auto start = std::chrono::steady_clock::now();
+    const std::uint64_t copy = CoopClipboard::CopyLater("ABCD-EFGH-1234");
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500));
+    CHECK_FALSE(CoopClipboard::Take(copy).has_value());   // (still running)
+    const auto copied = Wait(copy);
+    REQUIRE(copied.has_value());
+    CHECK(copied->ok);
+    CHECK(d.Clip() == "ABCD-EFGH-1234");
+    CHECK_FALSE(CoopClipboard::Take(copy).has_value());   // (taken once, then forgotten)
+
+    const std::uint64_t paste = CoopClipboard::PasteLater();
+    const auto pasted = Wait(paste);
+    REQUIRE(pasted.has_value());
+    CHECK(pasted->ok);
+    CHECK(pasted->text == "ABCD-EFGH-1234");   // (trimmed as Paste)
+}
+
+TEST_CASE("Linux clipboard: later jobs run in order, a copy nobody asks about is not kept, no tool fails") {
+    Desktop d("wayland-0", "");
+    const std::uint64_t first = CoopClipboard::CopyLater("first", false);
+    const std::uint64_t then = CoopClipboard::PasteLater();
+    const auto pasted = Wait(then);
+    REQUIRE(pasted.has_value());
+    CHECK(pasted->text == "first");
+    CHECK_FALSE(CoopClipboard::Take(first).has_value());
+
+    Desktop none("", "");
+    const auto failed = Wait(CoopClipboard::CopyLater("x"));
+    REQUIRE(failed.has_value());
+    CHECK_FALSE(failed->ok);
+    const auto nothing = Wait(CoopClipboard::PasteLater());
+    REQUIRE(nothing.has_value());
+    CHECK_FALSE(nothing->text.has_value());
+}
+
+TEST_CASE("Linux clipboard: PasteNow reads only SDL's clipboard, and only on SDL's thread") {
+    Desktop d("wayland-0", "");
+    REQUIRE(CoopClipboard::Copy("TOOLTEXT"));
+    CHECK_FALSE(CoopClipboard::PasteNow().has_value());   // (not SDL's thread: never a tool here)
+}
+
+TEST_CASE("Linux clipboard: a tool that hangs (no timeout program) is killed, and later jobs still run") {
+    Desktop d("wayland-0", "");
+    d.Remove("timeout");   // (as a system without coreutils' timeout: only the module's own deadline is left)
+    const std::string clip = (d.dir / "clip.txt").string();
+    d.Tool("wl-copy", "sleep 30\n");
+    const auto start = std::chrono::steady_clock::now();
+    CHECK_FALSE(CoopClipboard::Copy("never"));
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(took >= std::chrono::milliseconds(2500));
+    CHECK(took < std::chrono::seconds(6));
+
+    d.Tool("wl-paste", "sleep 30\n");
+    const auto hung = Wait(CoopClipboard::PasteLater());   // (Wait: 5 s at most; the deadline is 3 s)
+    REQUIRE(hung.has_value());
+    CHECK(hung->text == "");   // (the tool ran and was stopped: believed, as a failed tool's output)
+
+    d.Tool("wl-copy", "cat > '" + clip + "'\n");
+    const auto copied = Wait(CoopClipboard::CopyLater("after"));
+    REQUIRE(copied.has_value());
+    CHECK(copied->ok);
+    CHECK(d.Clip() == "after");
 }

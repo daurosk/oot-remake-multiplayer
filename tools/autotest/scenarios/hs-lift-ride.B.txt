@@ -1,0 +1,23 @@
+# hs-lift-ride, B (jabu-lifts, #65): B steps onto Jabu-Jabu's lift and stays on it while A watches its own copy.
+#! noload
+#! start coop: test warp done
+#! timeout 420
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+wait 300
+place -32.36 84.5 -93.31   # on the lift (its own AI starts it on B's contact)
+wait 1500
+mark b-on-lift
+wait 900
+mark end

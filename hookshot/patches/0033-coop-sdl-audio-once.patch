@@ -1,0 +1,60 @@
+From 841ad901697244a6a6f86f02d18f0da6c625cbc5 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 19 Nov 2026 13:40:11 -0900
+Subject: [PATCH] Co-op voice crash: start SDL's audio once for the microphones
+
+rec_ready (host/hos_sdl.c) ran for every microphone list and open and
+called SDL_InitSubSystem(SDL_INIT_AUDIO) each time, never quitting it.
+SDL3 counts those calls in an 8-bit count: the 256th wrapped it to 0, so
+the next call started SDL's audio from scratch, and SDL_InitAudio quits
+the running audio first, destroying every SDL_AudioStream. The open
+microphones' streams in host/nn_audio_in.c were then read freed:
+0xc0000005 in SDL_GetAudioStreamAvailable on the thread reading the
+microphone (row 156 of the co-op tracker: about an hour of the co-op
+voice's microphone opening again for push to talk and talks, and its 5 s
+checks of a chosen microphone).
+
+SDL's audio is now started once, under a lock of its own (the lists come
+from any thread). A failed start is tried again at the next call, as
+before; SDL leaves a failed start uncounted.
+---
+ host/hos_sdl.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/host/hos_sdl.c b/host/hos_sdl.c
+index 72c38f26..3b0d9110 100644
+--- a/host/hos_sdl.c
++++ b/host/hos_sdl.c
+@@ -894,10 +894,20 @@ static struct {
+     void *GetDevices, *DeviceName, *Available, *GetData, *Clear, *Destroy;   /* (SDL3) */
+     void *NumDevices, *DeviceName2, *CloseDevice, *LockDevice, *UnlockDevice;   /* (SDL2) */
+     int tried, ok;
++    int audio_on;   /* (patch 0033) SDL's audio started for the microphones: once, never again while it runs */
+ } rec;
++/* (oot-remake-multiplayer, patch 0033) Every microphone list and open came through rec_ready, and each call started SDL's
++   audio again: SDL_InitSubSystem counts its callers, SDL3 in an 8-bit count, so the 256th call made it 0 and the next one
++   started SDL's audio from scratch (SDL_InitAudio quits the running audio first), which destroyed every SDL_AudioStream:
++   the open microphones' streams in host/nn_audio_in.c, then read freed (0xc0000005 in SDL_GetAudioStreamAvailable, row 156
++   of the co-op tracker, after about an hour of the co-op voice's microphone opening and its 5 s checks). Now SDL's audio is
++   started once (a failed start is tried again at the next call, which SDL leaves uncounted), under a lock of its own: the
++   lists come from any thread (the menu's, the co-op module's), the opens from the game's under nn_audio_in.c's lock. */
++static SRWLOCK rec_lock = SRWLOCK_INIT;
+ #define REC_GET(field, name) (*(FARPROC *)&rec.field = GetProcAddress(m, name))
+ static int rec_ready(void) {
+     if (!hos_sdl_load()) return 0;
++    AcquireSRWLockExclusive(&rec_lock);
+     if (!rec.tried) {
+         rec.tried = 1;
+         HMODULE m = load_one(version == 3 ? "SDL3.dll" : "SDL2.dll");   /* (the one loaded: the same handle back) */
+@@ -914,7 +924,10 @@ static int rec_ready(void) {
+         }
+         if (!rec.ok) hos_log("sdl: no recording functions: no microphone");
+     }
+-    return rec.ok && hos_sdl_init(HOS_SDL_AUDIO);
++    if (rec.ok && !rec.audio_on) rec.audio_on = hos_sdl_init(HOS_SDL_AUDIO);
++    const int ready = rec.ok && rec.audio_on;
++    ReleaseSRWLockExclusive(&rec_lock);
++    return ready;
+ }
+ #undef REC_GET
+ /* SDL2: the capture callback fills a ring of about a second, the oldest dropped when full; read under the device's lock */

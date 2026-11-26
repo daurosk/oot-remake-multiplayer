@@ -27,6 +27,15 @@ shader/
 *.bin
 *.log
 
+# Play-test run output (shots are pictures of the game; docs/playtest-agents.md): local only
+playtest-logs/
+sessions/
+shots/
+calls.jsonl
+state-history.json
+session.json
+.mcp.json
+
 # Editors and tools
 .vs/
 .vscode/

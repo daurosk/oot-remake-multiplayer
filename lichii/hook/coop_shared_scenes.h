@@ -33,9 +33,71 @@ namespace CoopSharedScenes {
 // (Dm_Kokiri_0000), the parts played inside another (_Effect, _Env, _Get,
 // _move), boss intros and outs (dungeons-boss.md), the Chamber of Sages
 // (Dm_Awake_, Dm_SageRoom_), and time travel (Dm_TimeTemple_: threads-of-time,
-// issue 193); plus Meet_DekuTree, Meet_GreatFairy and Get_StoneOf...
+// issue 193), and the Gerudo Fortress cells' own scenes (player report 200:
+// Dm_Gerudo_0010, the caught player thrown into the prison, and Dm_Gerudo_0020
+// with its settings _0021.._0023, the carpenter freed by the player who opened
+// that cell: each warps the Player to that player's own place, the prison or
+// the cell's LinkStartPosition, so a joiner within reach was moved into a room
+// it was not in, through the floor; the rescue's result comes by its shared
+// flags, report 99); plus Meet_DekuTree, Meet_GreatFairy and Get_StoneOf...
 std::span<const std::string_view> Names();
 bool IsShared(std::string_view name);
+
+// Player report 110 (Deku Tree): the game asks for an event by its *event
+// setting* (RSDB EventSetting: a name, the flow and the entry it plays), and
+// keeps "already played" per setting (HavePlayedEvent.<setting>; every one of
+// the game's 2172 named settings has that flag). Most story cutscenes are a
+// setting of their own name; many settings play a story flow under another
+// name: the Great Deku Tree's meeting is the setting
+// KokiriForest_Meet_DekuTree_MeetDekuTree_01 (flow Meet_DekuTree), the Fire
+// Temple's freed Gorons Dm_FireTemple_0014.._0022 (flow Dm_FireTemple_0020).
+// The game's request then named no story event, the story search's flow name
+// counted as a leftover of another event (intro-ocarina) and was never sent:
+// each player watched it alone. So the key of such a cutscene is its setting:
+// the starter sends it, a game that joins asks for it and reads its played
+// flag. coop_story_requests.inc (tools/puppet_pack/story_requests.py) holds
+// every named setting of a story flow under another name, classified from the
+// game's data: the shared ones here, the others (boss events, dungeon
+// gimmicks, talks, arrivals, items, room events) in comments with why.
+struct StoryOwn {
+    std::string_view name;  // a story name
+    std::string_view why;   // what of the player's own its flow changes
+};
+struct StorySetting {
+    std::string_view request;  // the setting's name (what the game's request names)
+    std::string_view flow;     // the shared story flow it plays
+};
+std::span<const StorySetting> StorySettings();
+// The shared story flow a request of our game plays: `request` itself when it
+// is a story name, the flow of a story setting in the table, else nothing.
+std::optional<std::string_view> StoryOfRequest(std::string_view request);
+// A setting in the table (sent and joined by that name).
+bool IsStorySetting(std::string_view name);
+// A story start to send or join: a story name or a story setting.
+bool IsStory(std::string_view name);
+// The names a request of our game counts as a story start by: the story
+// names and the story settings (RequestedOf / RequestedOtherOf).
+std::vector<std::string_view> RequestNames();
+// Why `name` is neither sent nor joined, or "" when it is shared:
+// - a story name the game has no event setting of (the quests Meet_DekuTree,
+//   Meet_GreatFairy, Get_StoneOf{Forest,Fire,Water}, which also have no played
+//   flag, and Dm_FinalBattle_0000, Dm_LostWood_0030, played inside other
+//   settings): asking it plays nothing, and a game could not tell it played
+//   it. Their cutscenes are settings of their own (the table above,
+//   Dm_FairyFountain_*, the boss events);
+// - a story name whose event flow changes what is the player's own (a trade
+//   item taken, rupees, gear equipped from the pouch: Talon woken with the
+//   Cucco Dm_HrlCastle_0020; kOwnStory with why, read from the game's flows by
+//   story_requests.py): another game asked for it would be charged or changed
+//   too. A gift of an item co-op shares stays shared (Zelda's letter);
+// - a story name whose event flow turns a room's own state (kRoomStory: the
+//   Forest Temple's twisted corridor Dm_ForestTemple_0005/_0007 toggles its
+//   flags and turns round the player, row 173): a game that joined it would
+//   turn its corridor once more, under its own player; the corridor's state
+//   comes by its held flags (coop_dungeon.cpp) at that game's next load.
+std::string_view NotShared(std::string_view name);
+// NotShared(name) is "".
+bool Askable(std::string_view name);
 
 // How near the starter must be to our Link for us to join: same room. The
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is
@@ -47,10 +109,39 @@ inline constexpr float kRoomM = 30.0f;
 // starter must be in our room (Here::room, Started's room: coop_rooms.h);
 // where a room is not known (no room table), only this near.
 inline constexpr float kNoRoomM = 8.0f;
+// Player report 200: in the Gerudo Fortress the 30 m reach also goes through
+// floors: its roofs and outdoor prison are 8 to 20 m over the cells' rooms,
+// in the same scene. A joined cutscene warps our Link to its own place for the
+// Player (EventPlayerWarpTo*), so a joiner on another level would be moved into
+// a room it was not in. Only in that scene (StackedScene) the starter must
+// also be within this much above or below our Link; one further waits as "too
+// far" (NotNearYet), and the result comes by the flags as for any player who
+// could not join. Every other scene joins as before (slopes and stairs too).
+inline constexpr float kJoinRiseM = 6.0f;
+// The scenes with rooms stacked under their open ground (GerudoFortress_*).
+bool StackedScene(std::string_view scene);
 // How long a start waits while our game cannot take it (our own event, a
 // menu, a pause, a load) before it is skipped: a cutscene joined later than
 // this would be far behind the starter's.
 inline constexpr std::uint64_t kJoinUs = 3'000'000;
+// Row 176 (Meg, run 20261119-222229): a start skipped only because we were not
+// near (too far, another room or scene, our room not known) is held this long,
+// or until our save has it played (the starter's result came by the flags), and
+// joined once we come near: player 2 walked into Meg's area while player 1's
+// Dm_ForestTemple_0015 still played, its own room logic started a second
+// Dm_ForestTemple_0015, and each game then ran its own Meg (two owners). Joined,
+// our game plays the starter's event (its actors act for the starter) and the
+// room logic does not start it again (its played flag is then set here).
+// Row 176 again (the Forest playtest on 0.11.7): Meg's fight ran past 2 min
+// (Dm_ForestTemple_0017 to her death), so a partner who came after kHoldUs
+// still had its own room logic start a second Dm_0017 and a second Meg. So a
+// held start is also kept past kHoldUs while its starter is still in that scene
+// (Here::in_scene): their fight goes on there, and our late start is theirs. Once
+// they left the scene (or the session), what they started is gone with them, and
+// our own start of it is a new one of ours.
+inline constexpr std::uint64_t kHoldUs = 120'000'000;
+// The reasons Why gives for a start we are only not near (held, kHoldUs).
+bool NotNearYet(std::string_view why);
 
 using Vec3 = std::array<float, 3>;
 
@@ -62,6 +153,9 @@ struct Here {
     bool dungeon = false;       // the scene is a dungeon (rooms loaded one by one)
     std::optional<int> room;    // our Link's room there, if known
     std::uint64_t now_us = 0;
+    // The other players in our scene now (their numbers); read only while a start
+    // waits. A held start whose starter is here is kept past kHoldUs.
+    std::vector<std::uint8_t> in_scene;
 };
 
 // Story order (intro-ocarina, a player report 2026-11-13): a story cutscene
@@ -103,7 +197,9 @@ public:
                  std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room = std::nullopt);
     // Our own game started `name` (found by our watch). Returns whether to
     // send it to the others: not when we only joined another player's start
-    // (it would come back to them) or already sent it this visit.
+    // (it would come back to them) or already sent it this visit, nor when
+    // another player's start of it is held for us here (kHoldUs): ours is then
+    // a late start of theirs (a place into the area beat the join), not a new one.
     bool Ours(const std::string& name, const std::string& scene);
     // Once a frame: the cutscene to ask our game for now, if any. `played`
     // says whether our game already has it played (HavePlayedEvent.<name>):
@@ -123,21 +219,37 @@ private:
     template <typename Played, typename Flag>
     std::optional<std::string> Next(const Here& here, Played&& played, Flag&& flag, bool gated) {
         Visit(here.scene);
-        while (!pending_.empty()) {
-            std::string why = Why(pending_.front(), here, played(pending_.front().name));
-            if (gated && (why.empty() || why == "wait") && !GateHolds(pending_.front().name, flag)) {
+        for (std::size_t i = 0; i < pending_.size();) {
+            Pending& p = pending_[i];
+            std::string why = Why(p, here, played(p.name));
+            if (p.held && p.near_us == 0 && !NotNearYet(why)) {
+                p.near_us = here.now_us;  // near now: a busy game gets its 3 s from here
+                why = Why(p, here, played(p.name));
+            }
+            if (gated && (why.empty() || why == "wait") && !GateHolds(p.name, flag)) {
                 why = "our story is not there yet";
+            }
+            if (NotNearYet(why) && (here.now_us < p.at_us + kHoldUs || StarterStays(p, here))) {
+                if (!p.held) {
+                    p.held = true;
+                    notes_.push_back("player " + std::to_string(p.player) + "'s story cutscene " + p.name +
+                                     " not played here yet (" + why + "): held, played here if we come near "
+                                     "while it is not played here");
+                }
+                ++i;
+                continue;
             }
             if (why == "wait") {
                 return std::nullopt;
             }
-            Pending taken = std::move(pending_.front());
-            pending_.erase(pending_.begin());
+            Pending taken = std::move(p);
+            pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(i));
             if (why.empty()) {
                 done_.insert(taken.name);
                 joined_.insert(taken.name);
                 notes_.push_back("player " + std::to_string(taken.player) + " started the story cutscene " +
-                                 taken.name + " near us: playing it here too");
+                                 taken.name + (taken.held ? " earlier, now near us: playing it here too (late)"
+                                                          : " near us: playing it here too"));
                 return taken.name;
             }
             notes_.push_back("player " + std::to_string(taken.player) + "'s story cutscene " + taken.name +
@@ -159,9 +271,13 @@ private:
         std::optional<Vec3> starter;
         std::uint64_t at_us;
         std::optional<int> room;
+        bool held = false;           // skipped only for not being near: kept (kHoldUs)
+        std::uint64_t near_us = 0;   // when a held start was first near (its busy wait counts from then)
     };
     // "" to start now, "wait", or why it is skipped.
     std::string Why(const Pending& p, const Here& here, bool played) const;
+    // A held start whose starter is still in its scene (kept past kHoldUs).
+    static bool StarterStays(const Pending& p, const Here& here);
     void Visit(const std::string& scene);
     std::string scene_;
     std::vector<Pending> pending_;

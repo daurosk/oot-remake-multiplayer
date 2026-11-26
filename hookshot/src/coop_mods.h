@@ -69,6 +69,10 @@ public:
         unsigned long pid = 0;
         // Whether that process runs now (a coop-mods.starting of a game that still starts is not a crash). Unset: no.
         std::function<bool(unsigned long)> running;
+        // The game's build list, <game>/exefs_patches.txt ("" when the build wrote none), read once at Start: a mod with
+        // code patches is used as the game was built for it until Start Squadala builds again (hos_coop_mods_as_built,
+        // patch 0011). Unset: not known, and nothing is said about it.
+        std::function<std::string()> exefs_list;
     };
 
     Loader(std::filesystem::path mods_root, Hooks hooks);
@@ -85,6 +89,9 @@ public:
     // Whether this hookshot.exe reads the list (patch 0011). Without it the mods load in Hookshot's own order and the
     // tab cannot switch or move them; code mods and settings work all the same.
     bool ExeReadsList() const;
+    // What this run's game indexed, in its order (the last one wins a file), the pack included: coop-mods.applied's
+    // "on" rows. Only when ExeReadsList; else the mods it sees by name.
+    std::vector<std::string> Indexed() const;
 
     std::vector<Row> Rows() const;
     bool SetOn(std::string_view name, bool on, std::string* problem = nullptr);
@@ -106,6 +113,9 @@ public:
     void SetHostValues(std::optional<std::vector<SharedValue>> values);
     // Whether host values are set: this game is a guest in a co-op game.
     bool HostValuesSet() const;
+    // One of the host's values as it came, also for a key no manifest of this game has (the randomizer's hand_seed):
+    // nullopt when not a guest or the host sent none.
+    std::optional<std::string> HostValue(std::string_view id, std::string_view key) const;
 
     Restart RestartNeeded() const;
     // Something changed a mod's files under the running game (the randomizer made a new seed): a restart is needed
@@ -131,6 +141,14 @@ private:
     bool HostSets(const Mod& m, const Setting& s) const;          // locked
     bool SaveLocked(std::string* problem);
     void Say(const std::string& line) const;
+    // locked: the build's state of this mod's code (HOS_COOP_MODS_BUILT_*, hos_coop_mods_built_changed); -1 when not
+    // known (no build list, an older hookshot.exe, no patch file, a mod the game does not see)
+    int BuiltState(const Mod& m) const;
+    // locked: -1 when the running game uses this mod as switched; else 0 or 1, what it uses instead (its code waits for a
+    // game build, hos_coop_mods_as_built)
+    int Held(const Mod& m) const;
+    // locked: its code in the game is older than its patch files (a new release put in by hand): a build is needed
+    bool CodeChanged(const Mod& m) const;
 
     const std::filesystem::path root_;
     const Hooks hooks_;
@@ -140,6 +158,7 @@ private:
     bool started_ = false;
     bool exe_reads_list_ = false;
     std::vector<std::string> files_now_;                 // what this run indexed, in its order
+    std::optional<std::string> exefs_list_;              // Hooks::exefs_list at Start
     std::map<std::string, std::string> code_now_;        // name -> problem ("" loaded), of the code tried at the start
     std::map<std::string, std::string> restart_values_;  // "id\nkey" -> the value at the start, "restart" settings
     std::map<std::string, std::string> changed_;         // name -> reason (NoteChanged)

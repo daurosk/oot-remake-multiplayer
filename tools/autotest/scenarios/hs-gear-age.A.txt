@@ -1,0 +1,51 @@
+# hs-gear-age (row 148, world-misc-0115): a young Link whose gear flags name adult pieces. A loads straight
+# into Kakariko by day as a child (B there too, hs-gear-age.B.txt), steps aside to face B and sets its own
+# flags with the test-only `wear` (only the flag changes, not A's own Link): the Golden Gauntlets, then the
+# Goron Tunic and the Hover Boots. Then A warps to the same place, so the game makes its Link again and
+# wears what it wears for a child with those flags (its own GameData path), as after a player's reload.
+# The bug (bladeedge02, 0.11.4): B's puppet of a child A wore the Golden Gauntlets the flag named.
+# Pass (shots, both games): at gold-flag and adult-flags, B's puppet of A shows no gauntlets, no red tunic,
+#   no Hover Boots (A's own Link shows none: the flag alone draws nothing). At rewarp: A's own Link shows what
+#   the game draws for a child with those flags, and B's puppet of A looks the same (gauntlets/bracelet,
+#   tunic colour, boots). B's log: "P1 PLAYER_EQUIP: ... hand ''" (or the bracelet) after gold-flag, never
+#   "hand 'Armor_Adult_Gauntlet_Gold'" unless A's own rewarp shot shows them on the child.
+#   FAIL: B's puppet wears a piece A's own Link does not show at the same mark.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_ANIM=1
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+wear hand Armor_Adult_Gauntlet_Gold
+wait 300
+mark gold-flag
+wear armor Armor_Adult_Goron
+wear boots Armor_Adult_HoverBoot
+wait 300
+mark adult-flags
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark rewarp
+wait 300
+mark end

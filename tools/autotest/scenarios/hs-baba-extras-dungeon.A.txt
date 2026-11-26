@@ -1,0 +1,39 @@
+# hs-baba-extras-dungeon (dungeon-extras, player report 111): enemies 125% (lane1-A coop-difficulty.ini count = 125
+# for the run), both walk into the Deku Tree; A (host) stands 3 m off the 1F extra of Baba 9184f95e (spot 10.25 100
+# -6.44), then the room-7 extra of Baba bf30f8ae (spot -64.8 82.3 35.0); B walks onto each. Pass: dungeon extras made
+# ('extra enemies to make in InsideTheDekuTree') and they rise and attack (GetUp/Attack, shots).
+#! noload
+#! start coop: test warp done
+#! switches B:LICHII_COOP_TEST_OWN_SAVE=0
+#! timeout 600
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+place 90.04 115.48 -27.90
+wait 240
+mark tree
+goto 98.0 -28.8 0.5 600
+wait 2400
+mark in
+place 13.0 100.6 -9.0     # 3 m off the 1F extra's spot
+wait 600
+mark a-1f
+wait 900
+mark a-1f-2
+wait 600
+place -61.0 82.8 31.0     # room 7, 5 m off its extra's spot
+wait 900
+mark a-r7
+wait 900
+mark a-r7-2
+wait 600
+mark end

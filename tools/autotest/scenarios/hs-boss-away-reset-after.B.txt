@@ -1,0 +1,15 @@
+# hs-boss-away-reset, B part 2 (after the host's load): B still in her room (put-back waits), out to room E (given),
+# back into her room (no warp, Gohma as in the host's save).
+wait 300
+mark b-in-area          # still in her area: nothing put back yet
+place -14.5 79.6 -6.5   # room E: out of her area
+wait 600
+mark b-out
+place -12.0 48.5 66.5   # the corridor
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door again
+wait 1200
+mark b-back
+wait 900
+mark b-late

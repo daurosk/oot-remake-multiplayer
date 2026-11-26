@@ -1,0 +1,111 @@
+# hs-boss-fix-gohma (Hookshot, branch boss-fix; player reports #30, #31; docs/dungeons-boss.md, "The copy's own
+# game runs its events and its own hit reactions"). Queen Gohma, two players, both walk in through the door:
+# A first (A owns her), B about 25 s later, so B, the non-owner, plays its own intro with a copy Gohma.
+# SAVE: a pre-Gohma save in both lanes' baselines (player-logs/owner-saves-OoTRsaves1.0 "1. Deku Tree", quest
+# Get_StoneOfForest before DefeatBoss), or the kit save with the six Deku boss flags cleared as hs-gohma-door's
+# header says. The setflags below clear the intro and boss flags again after the load.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-fix-gohma
+# PASS (proof lines and shots):
+#  1. Both: "native boss sync on (BSA 0x..., ours)" in A, "a copy" in B; B "the owner's verbs came".
+#  2. B (copy) during its own intro: "Enemy_DungeonBoss_Gohma: our event: the copy runs its own (the owner's wait)",
+#     then "our event is over" and "the copy takes the owner's state again"; the 10 s line's "own run in our
+#     event or after our hit" > 0 in B.
+#  3. Neither log: "force skip of the event" right after "InsideTheDekuTree_BossAppear"; if the rules want to
+#     skip it they log "... not skipped" instead.
+#  0. FIRST (else VOID, not a sync FAIL): after "mark a-trigger" A's log has Gohma's anim leave
+#     Pre_Battle_Ceiling_Wait/Turn "(ours)" and "ready to own the boss (Dm_Deku_BossIn)" (her drop sets the
+#     flag); B's copy follows. Big run 2 (20261115-102144) parked the owner at x 0 (the doorway): she never
+#     dropped, both stayed 'unready', every later check was unreachable (boss-owner-b).
+#  4. CONTROL: shots a-moved / b-moved show each Link at its goto target (away from where the intro left it);
+#     the log's "test goto ... reached" (or the position lines) for both. A Link stuck in the intro = FAIL #30.
+#  5. STUN on the copy: after B's seeds (b-seed1..2), B's log "our own hit: the copy runs its own reaction";
+#     shot b-stun: Gohma down/stunned on BOTH screens (a-watch1 is A's shot at the same moment); then the
+#     server's hand-over: B's log "Enemy_DungeonBoss_Gohma: now ours".
+#  6. DAMAGE from both: B's sword hits (b-hit*) and A's (a-hit*) each lower her life in the owner's game
+#     (objects debug life lines / "replays a hit" in the owner, "share damage" in the hitter).
+#  8. ONE DEATH (0.11.2): B's own hits never kill its copy ("own Life step ... held at 1" counted in the 10 s
+#     bosses line, never "lost kill" / "killed here, owner still shows life"); after A's kill (a-k0) B logs
+#     "its owner's died: the copy's own Life step lets it die now" and its copy dies (shots b-k1/b-k2, the
+#     objects life line to 0), one heart container.
+#  7. Optional (if she dies): "boss beaten (Dm_Deku_BossOut)" in one game and the death cutscene in both.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 2400               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (18.49 59.97 67.79); the owner's Link must
+rstick 0 1 60           # walk into the room for her own trigger (GohmaStage Banc: floor Area x 22.5 z 68.2)
+press ZL 10             # look up at her
+wait 900
+mark a-trigger          # her anim leaves Pre_Battle_Ceiling_* here ('(ours)'), else the run is VOID
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her (x 0.0 was the doorway, 17 m from her)
+mark a-moved
+wait 1500               # B's intro (B walks in now)
+mark a-watch0
+wait 600
+mark a-watch1           # B's seeds: Gohma stunned here too?
+wait 600
+mark a-watch2
+wait 600
+hold ZL 30              # A's own seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed
+wait 120
+hold ZL+LSTICK_UP 90    # locked on: walk up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit1
+wait 900
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 120
+hold ZL+LSTICK_UP 90
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit2
+wait 600
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # 8. the owner's Gohma dies (direct life 0 write): the copy must die too
+wait 120
+mark a-k1
+wait 900
+mark a-k2
+wait 1200
+mark end

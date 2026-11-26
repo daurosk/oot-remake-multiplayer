@@ -18,6 +18,7 @@
 
 #include "coop/net/path_mark.hpp"
 #include "session.hpp"
+#include "test_delay.hpp"
 
 namespace coop::server {
 
@@ -32,6 +33,8 @@ struct ServerOptions {
   // The server's clock in microseconds. Empty means std::chrono::steady_clock
   // since the server was made. Tests step a clock of their own here.
   std::function<std::uint64_t()> now_us;
+  // TEST ONLY (test_delay.hpp): hold every packet in and out this long.
+  TestDelay test_delay;
 };
 
 // ENet flags for a packet on `channel`: 0 to 2 reliable, 3 and 4 unreliable
@@ -58,6 +61,9 @@ class EnetServer {
   void service(std::uint32_t timeout_ms);
 
   const Session& session() const { return session_; }
+  Session& session() { return session_; }  // (Navi: New Game+, HostService::set_ngplus)
+  // The console's moderation (Session::admin), with the server's clock; its kicks go out at once.
+  std::string admin(std::string_view line);
 
   // Bytes ENet had counted for players' lost fragments and we took off again
   // (coop/net/enet_waiting.hpp): above 0 means the line loses packets.
@@ -83,11 +89,27 @@ class EnetServer {
   // relay guest and the host's own game share 127.0.0.1. Tests turn it on.
   void remember_loopback_small_paths(bool on) { remember_loopback_ = on; }
 
+  // What ENet holds to send to the players (coop/net/enet_waiting.hpp outgoing_bytes, row 260), as of the last
+  // round: the sum, the largest one peer's, unreliable messages not queued to a slow peer (net::kSlowPeerBytes),
+  // and players dropped because too much waited for them (net::kMaxOutgoingBytes).
+  struct Queues {
+    std::size_t peers = 0;
+    std::size_t outgoing_bytes = 0;
+    std::size_t largest_outgoing = 0;
+    std::size_t waiting_bytes = 0;  // what they sent that ENet still holds
+    std::uint64_t unreliable_skipped = 0;
+    std::uint64_t backlog_drops = 0;
+  };
+  Queues queues() const;
+
   // Sealed packets that did not open (wrong key, changed, replayed) and
   // plain ones on an encrypted connection: dropped unread.
   std::uint64_t unsealed_drops() const { return unsealed_drops_; }
   // Connections whose traffic is encrypted now.
   std::size_t encrypted_connections() const { return ciphers_.size(); }
+
+  // TEST ONLY (ServerOptions::test_delay): packets held right now.
+  std::size_t held_packets() const { return held_.size(); }
 
  private:
   std::uint64_t now_us() const;
@@ -96,6 +118,14 @@ class EnetServer {
   // Ends `peer`'s connection with kDisconnectSmallDatagrams (no DISCONNECT
   // event follows) and tells the session; `why` goes into its drop line.
   void send_small(ENetPeer* peer, const std::string& why);
+  // Ends `peer`'s connection at once with `code` and tells the session (`why` in its drop line).
+  void drop_now(ENetPeer* peer, enet_uint32 code, const std::string& why);
+  // Opens (on an encrypted connection) and gives a player's packet to the session.
+  void receive_now(ConnectionId id, std::uint8_t channel, std::span<const std::uint8_t> bytes);
+  // Hands `bytes` (sealed already when the connection is) to ENet.
+  void send_now(ENetPeer* peer, std::uint8_t channel, const std::vector<std::uint8_t>& bytes);
+  // TEST ONLY: the held packets whose time has come, in time order.
+  void release_held();
 
   ServerOptions options_;
   Session session_;
@@ -107,8 +137,11 @@ class EnetServer {
     enet_uint32 round_trip_ms = 0;
     enet_uint32 loss_percent = 0;
     std::size_t waiting_bytes = 0;
+    std::size_t outgoing_bytes = 0;  // and what we queued since (send_now)
   };
   std::map<ConnectionId, LinkSeen> links_;
+  std::uint64_t unreliable_skipped_ = 0;
+  std::uint64_t backlog_drops_ = 0;
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
   std::uint64_t small_path_drops_ = 0;
@@ -122,6 +155,20 @@ class EnetServer {
   std::uint64_t unsealed_drops_ = 0;
   std::chrono::steady_clock::time_point start_;
   RawHandler raw_;
+  // TEST ONLY (test_delay.hpp): what the delay holds. Lane id * 2 is a
+  // player's packets to us, id * 2 + 1 ours to them.
+  struct Held {
+    enum class Kind : std::uint8_t { receive, leave, send, drop };
+    Kind kind;
+    ConnectionId id;
+    std::uint8_t channel = 0;
+    std::vector<std::uint8_t> bytes;  // receive: plain; send: as for the wire
+    std::string link;                 // leave: the drop line's link
+  };
+  static std::uint64_t in_lane(ConnectionId id) { return std::uint64_t{id} * 2; }
+  static std::uint64_t out_lane(ConnectionId id) { return std::uint64_t{id} * 2 + 1; }
+  DelayClock delay_;
+  DelayQueue<Held> held_;
 };
 
 }  // namespace coop::server

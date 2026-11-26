@@ -1,0 +1,3 @@
+# hs-title-menu (proof-0116): back up to Host (button 4).
+press DUP
+wait 60

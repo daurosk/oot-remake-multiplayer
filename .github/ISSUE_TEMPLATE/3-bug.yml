@@ -1,11 +1,11 @@
 name: Bug
-description: Something in co-op works wrongly but nothing crashed.
+description: Something in Squadala! works wrongly but nothing crashed.
 labels: [bug]
 body:
   - type: input
     id: version
     attributes:
-      label: Co-op build and game version
+      label: Squadala! version and game version
     validations:
       required: true
   - type: dropdown
@@ -13,7 +13,7 @@ body:
     attributes:
       label: Where you played
       options:
-        - The kit's emulator (Lichii / Fritchii)
+        - An old emulator kit (Lichii / Fritchii, retired)
         - Hookshot (experimental)
         - The Linux kit (experimental)
         - Not sure

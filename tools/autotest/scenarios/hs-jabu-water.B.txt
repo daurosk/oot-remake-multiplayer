@@ -1,0 +1,22 @@
+# hs-jabu-water, B: lands on Jabu-Jabu room 14's UNDER step switch after A is in place and stays on it (see the .A.txt).
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1100
+place 28.9 76.0 -58.5    # 1.5 m over the under switch (28.9 74.5 -58.5): B lands on it (sets Updown_MoveWater)
+wait 60
+mark pressed
+wait 600
+mark water
+wait 1200
+mark late

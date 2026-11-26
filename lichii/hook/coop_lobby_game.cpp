@@ -5,6 +5,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -26,6 +27,9 @@ struct Glue {
     Mutes own;                                                  // ours, by name
     std::deque<proto::LobbyAction> asked;                       // the tab -> Frame
     std::vector<std::string> lines;                             // -> the chat box
+    Knocks knocks;                                              // who asks to join (we host)
+    std::uint32_t refusals = 0;                                 // Seen::refusals (never reset)
+    std::uint32_t names_taken = 0;                              // Seen::names_taken (never reset)
 
     void Line(std::string text) {
         if (lines.size() < 32) {
@@ -44,6 +48,7 @@ struct Glue {
     // The room from the client, with what we keep of each player (under mutex).
     void Copy(const coop::net::Client& client) {
         const bool on = client.state() == coop::net::State::connected;
+        const std::uint8_t host_before = seen.connected ? seen.host : 0;
         seen.connected = on;
         seen.self = on ? client.player_number() : 0;
         seen.host = on ? client.host_number() : 0;
@@ -60,6 +65,13 @@ struct Glue {
             s.color = p.equipment && p.equipment->color ? *p.equipment->color : proto::slot_color(p.number);
             s.status = p.status.value_or(0);
             seen.players.push_back(std::move(s));
+        }
+        if (host_before != 0 && seen.host != 0 && host_before != seen.host) {
+            LOG_INFO(Core, "coop: lobby: the host is now player {} (was {})", seen.host, host_before);
+        }
+        if (auto line = HostChangedLine(host_before, seen.host, NameOf(seen.host), seen.host == seen.self);
+            !line.empty()) {
+            Line(std::move(line));
         }
         Refresh();
     }
@@ -100,6 +112,35 @@ bool OnChat(std::string_view text, coop::host::Session& session) {
     std::vector<std::string> out;
     if (command->kind == Command::Kind::bad) {
         out.push_back(UsageLine(command->word));
+    } else if (command->kind == Command::Kind::allow || command->kind == Command::Kind::deny) {
+        // Host approval: the answer to a player who asks to join.
+        session.with_client([&](coop::net::Client& client) {
+            if (client.state() != coop::net::State::connected) {
+                out.push_back(command->word + ": not connected");
+                return;
+            }
+            if (!client.is_host()) {
+                out.push_back(command->word + ": only the host can do that");
+                return;
+            }
+            std::optional<proto::JoinKnock> knock;
+            {
+                std::lock_guard lock(g.mutex);
+                knock = g.knocks.Find(command->name);
+            }
+            if (!knock) {
+                out.push_back(NoKnockLine(command->word, command->name));
+                return;
+            }
+            const bool allow = command->kind == Command::Kind::allow;
+            if (!client.send(AnswerFor(*knock, command->kind, command->always))) {
+                out.push_back(command->word + ": could not be sent");
+                return;
+            }
+            std::lock_guard lock(g.mutex);
+            g.knocks.Forget(knock->knock);
+            out.push_back(AnswerLine(knock->nickname, allow, command->always));
+        });
     } else {
         session.with_client([&](coop::net::Client& client) {
             if (client.state() != coop::net::State::connected) {
@@ -163,11 +204,19 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         // Each connection learns the host's mutes again (LOBBY_MUTES after WELCOME).
         g.host_mutes.clear();
         g.dbno.clear();
+        g.knocks.Clear();  // the server turns away whoever waited for this game's answer
         g.Copy(client);
+        g.seen.held = false;   // (the wait for the host's answer, if any, ended here)
         g.seen.refused = event.kind == EventKind::refused
-                             ? std::string(coop::net::refuse_reason_text(event.refuse_reason))
+                             ? std::string(coop::net::refuse_text(event))
                              : std::string();
         g.seen.banned = event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::banned;
+        if (event.kind == EventKind::refused && StopsRejoin(event.refuse_reason)) {
+            ++g.refusals;   // (kept across the disconnect that clears `refused`: Seen::refusals)
+        }
+        if (event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::name_taken) {
+            ++g.names_taken;
+        }
         if (!g.seen.refused.empty()) {
             g.Line("refused: " + g.seen.refused);   // the full reason in the chat (the tabs show its first part)
         }
@@ -186,6 +235,14 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         g.Copy(client);
         if (event.player == client.player_number()) {
             g.Line("you host now: the Lobby's host controls are yours");
+        }
+        return;
+    case EventKind::waiting_for_host:
+        // Host approval: our own join waits for the host's answer.
+        if (const auto* k = std::get_if<proto::JoinKnock>(&event.message)) {
+            g.seen.held = true;   // (the Lobby tab says so: row 208)
+            g.Line(WaitingLine(k->wait_s));
+            LOG_INFO(Core, "coop: lobby: waiting for the host to let this game in (up to {} s)", k->wait_s);
         }
         return;
     case EventKind::message: break;
@@ -214,6 +271,12 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     } else if (const auto* d = std::get_if<proto::DbnoStatus>(&event.message)) {
         g.dbno[d->player_number] = d->state;
         g.Refresh();
+    } else if (const auto* k = std::get_if<proto::JoinKnock>(&event.message)) {
+        // Host approval: a player asks to join (the server sends it to the host only).
+        if (auto line = g.knocks.Take(*k)) {
+            g.Line(std::move(*line));
+        }
+        LOG_INFO(Core, "coop: lobby: knock {}: {}", k->knock, k->wait_s == 0 ? "over" : "a player asks to join");
     }
 }
 
@@ -300,7 +363,20 @@ bool OwnVoiceMuted() {
 Seen Now() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);
-    return g.seen;
+    Seen s = g.seen;
+    s.refusals = g.refusals;
+    s.names_taken = g.names_taken;
+    return s;
+}
+
+std::vector<std::string> Asking() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    std::vector<std::string> out;
+    for (const proto::JoinKnock& k : g.knocks.open()) {
+        out.push_back(k.nickname);
+    }
+    return out;
 }
 
 void Forget() {

@@ -1,0 +1,22 @@
+# hs-map-pingpong-183: B goes where A goes and stands still (header in A); B's log shows what the shared map does.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+wait 120
+mark b-map-on
+wait 330
+mark b-drops
+warp InsideTheDekuTree Entrance
+wait 900
+mark b-after-room
+wait 180
+mark end

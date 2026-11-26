@@ -3,6 +3,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -16,6 +17,7 @@
 
 #include <enet/enet.h>
 
+#include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/traffic_crypto.hpp"
@@ -39,6 +41,7 @@ constexpr const char* kTestPassword = "test-pass";
 ServerOptions server_options() {
   ServerOptions options;
   options.port = 0;  // any free port
+  options.bind = 0x7F000001u;  // 127.0.0.1 only: a test listens on no other address
   options.session.join_password = kTestPassword;
   return options;
 }
@@ -816,6 +819,7 @@ namespace {
 HostServiceConfig service_config(std::vector<std::string>* log) {
   HostServiceConfig config;
   config.port = 0;  // any free port
+  config.bind = 0x7F000001u;  // 127.0.0.1 only: a test listens on no other address
   config.session.join_password = kTestPassword;
   if (log != nullptr) config.log = [log](const std::string& line) { log->push_back(line); };
   return config;
@@ -852,7 +856,7 @@ TEST_CASE("host service: a player joins with the password, the status counts the
   REQUIRE(port != 0);
   CHECK(service.status().state == HostState::kHosting);
   CHECK(service.status().port == port);
-  CHECK(said(log, "listening on port " + std::to_string(port) + " (all network adapters"));
+  CHECK(said(log, "listening on port " + std::to_string(port) + " (only 127.0.0.1"));
   CHECK(said(log, "players must give the join password to join; the traffic is encrypted"));
 
   Client a;
@@ -933,6 +937,47 @@ TEST_CASE("host service: a wrong password is refused") {
   CHECK(service.status().players == 0);
 }
 
+TEST_CASE("host service: the host changes the join password, new joins need it, players already in stay in") {
+  EnetLife enet;
+  std::vector<std::string> log;
+  HostService service(service_config(&log));
+  std::string why;
+  CHECK_FALSE(service.set_join_password("before-start", why));   // (not hosting yet)
+  CHECK(why == "not hosting");
+  REQUIRE(service.start(why));
+  Client in;
+  in.connect(service.port());
+  REQUIRE(pump_service(service, {&in}, [&] { return in.connected; }));
+  in.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_service(service, {&in}, [&] { return in.find<Welcome>() != nullptr; }));
+
+  CHECK_FALSE(service.set_join_password("has a space", why));
+  CHECK(why.find("space") != std::string::npos);
+  CHECK_FALSE(service.set_join_password("", why));
+  CHECK_FALSE(service.set_join_password(std::string(200, 'x'), why));
+  REQUIRE(service.set_join_password("NEW-pass-42", why));
+  REQUIRE(service.session() != nullptr);
+  CHECK(service.session()->join_password() == "NEW-pass-42");
+  CHECK(said(log, "the join password changed: players who join from now on need the new one"));
+  for (const auto& line : log) CHECK(line.find("NEW-pass-42") == std::string::npos);   // (never in the log)
+
+  Client old_pass;   // (the old password: refused now)
+  old_pass.connect(service.port());
+  REQUIRE(pump_service(service, {&in, &old_pass}, [&] { return old_pass.connected; }));
+  old_pass.send(hello_from("Saria"), kChannelSession);
+  pump_service(service, {&in, &old_pass}, [&] { return old_pass.find<Refused>() != nullptr || old_pass.disconnected; });
+  CHECK(old_pass.find<Welcome>() == nullptr);
+
+  Client fresh;   // (the new one: let in)
+  fresh.password = "NEW-pass-42";
+  fresh.connect(service.port());
+  REQUIRE(pump_service(service, {&in, &fresh}, [&] { return fresh.connected; }));
+  fresh.send(hello_from("Mido"), kChannelSession);
+  REQUIRE(pump_service(service, {&in, &fresh}, [&] { return fresh.find<Welcome>() != nullptr; }));
+  CHECK_FALSE(in.disconnected);   // (the player who was in stays in)
+  CHECK(service.status().players == 2);
+}
+
 TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the server is full") {
   EnetLife enet;
   HostServiceConfig config = service_config(nullptr);
@@ -966,4 +1011,302 @@ TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the serv
   if (const Refused* r = late.find<Refused>()) CHECK(r->reason == RefuseReason::server_full);
   CHECK(late.find<Welcome>() == nullptr);
   CHECK(service.status().players == 16);
+}
+
+// TEST ONLY delay (server/test_delay.hpp): the encrypted join still works,
+// a relayed packet takes the round trip (half in, half out), jitter keeps
+// every line in order, and a leave comes after what was sent before it.
+TEST_CASE("loopback: the test delay holds packets each way and keeps their order") {
+  EnetLife enet;
+  SimClock clock;
+  clock.enet();
+  ServerOptions options = server_options();
+  options.now_us = clock.us();
+  options.test_delay = TestDelay{200, 0, 1};
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client a;
+  Client b;
+  a.connect(server.port());
+  b.connect(server.port());
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return a.connected && b.connected; }, &clock));
+  a.send(hello_from("Link"), kChannelSession);
+  const std::uint64_t hello_at = clock.ms;
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return a.find<Welcome>() != nullptr; }, &clock));
+  // HELLO in (100 ms), the challenge out (100), the proof in (100), WELCOME out (100).
+  CHECK(clock.ms - hello_at >= 400);
+  b.send(hello_from("Zelda"), kChannelSession);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<Welcome>() != nullptr; }, &clock));
+
+  PlayerSample sample;
+  sample.time = {1000, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  a.send(sample, kChannelPlayerSamples);
+  const std::uint64_t sent_at = clock.ms;
+  clock.step();
+  clock.enet();
+  a.pump();
+  server.service(0);
+  CHECK(server.held_packets() >= 1);  // the sample, held on its way in
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<PlayerSample>() != nullptr; }, &clock));
+  const std::uint64_t took = clock.ms - sent_at;
+  CHECK(took >= 200);
+  CHECK(took < 230);
+
+  // Leaving waits for the lines sent before it.
+  a.send(Chat{0, "last words"}, kChannelSession);
+  clock.step();
+  clock.enet();
+  a.pump();
+  enet_peer_disconnect(a.peer, 0);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<PlayerLeft>() != nullptr; }, &clock));
+  std::size_t chat_at = 0;
+  std::size_t left_at = 0;
+  for (std::size_t i = 0; i < b.inbox.size(); ++i) {
+    if (std::holds_alternative<Chat>(b.inbox[i].message)) chat_at = i + 1;
+    if (std::holds_alternative<PlayerLeft>(b.inbox[i].message)) left_at = i + 1;
+  }
+  CHECK(chat_at != 0);
+  CHECK(chat_at < left_at);
+}
+
+TEST_CASE("loopback: with test jitter every reliable line still arrives in order") {
+  EnetLife enet;
+  SimClock clock;
+  clock.enet();
+  ServerOptions options = server_options();
+  options.now_us = clock.us();
+  options.test_delay = TestDelay{100, 60, 5};
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client a;
+  Client b;
+  a.connect(server.port());
+  b.connect(server.port());
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return a.connected && b.connected; }, &clock));
+  a.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return a.find<Welcome>() != nullptr; }, &clock));
+  b.send(hello_from("Zelda"), kChannelSession);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<Welcome>() != nullptr; }, &clock));
+
+  constexpr int kLines = 8;
+  for (int i = 0; i < kLines; ++i) {
+    a.send(Chat{0, "line " + std::to_string(i)}, kChannelSession);
+    for (int s = 0; s < 3; ++s) {  // a few ms apart, inside the jitter
+      clock.step();
+      clock.enet();
+      server.service(0);
+      clock.enet();
+      a.pump();
+      b.pump();
+    }
+  }
+  auto lines = [&] {
+    std::vector<std::string> out;
+    for (const Received& r : b.inbox) {
+      if (const auto* c = std::get_if<Chat>(&r.message)) out.push_back(c->text);
+    }
+    return out;
+  };
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return lines().size() == kLines; }, &clock));
+  const std::vector<std::string> got = lines();
+  for (int i = 0; i < kLines; ++i) CHECK(got[static_cast<std::size_t>(i)] == "line " + std::to_string(i));
+}
+
+TEST_CASE("loopback: with host approval a joiner waits, sealed, until the host lets it in or says no") {
+  EnetLife enet;
+  ServerOptions options = server_options();
+  options.session.approve_joins = true;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client host;
+  host.connect(server.port());
+  REQUIRE(pump_until(server, {&host}, [&] { return host.connected; }));
+  host.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&host}, [&] { return host.find<Welcome>() != nullptr; }));
+
+  // A joiner with the password is held; both ends hear of the knock, encrypted.
+  Client riley;
+  riley.connect(server.port());
+  REQUIRE(pump_until(server, {&host, &riley}, [&] { return riley.connected; }));
+  riley.send(hello_from("Riley"), kChannelSession);
+  REQUIRE(pump_until(server, {&host, &riley}, [&] {
+    return riley.find<JoinKnock>() != nullptr && host.find<JoinKnock>() != nullptr;
+  }));
+  CHECK(riley.cipher != nullptr);
+  CHECK(riley.find<Welcome>() == nullptr);
+  const JoinKnock asked = *host.find<JoinKnock>();
+  CHECK(asked.nickname == "Riley");
+  CHECK(riley.find<JoinKnock>()->knock == asked.knock);
+  CHECK(server.session().player_count() == 1);
+  host.send(JoinAllow{asked.knock, true, false}, kChannelSession);
+  REQUIRE(pump_until(server, {&host, &riley}, [&] {
+    return riley.find<Welcome>() != nullptr && host.find<PlayerJoined>() != nullptr;
+  }));
+  CHECK(riley.find<Welcome>()->player_number == 2);
+
+  // Another one is turned away: REFUSED not_let_in, and the server closes it.
+  Client mido;
+  mido.connect(server.port());
+  REQUIRE(pump_until(server, {&host, &riley, &mido}, [&] { return mido.connected; }));
+  mido.send(hello_from("Mido"), kChannelSession);
+  const JoinKnock* second = nullptr;
+  REQUIRE(pump_until(server, {&host, &riley, &mido}, [&] {
+    second = nullptr;
+    for (const Received& r : host.inbox) {
+      if (const auto* k = std::get_if<JoinKnock>(&r.message); k && k->nickname == "Mido") second = k;
+    }
+    return second != nullptr;
+  }));
+  host.send(JoinAllow{second->knock, false, false}, kChannelSession);
+  REQUIRE(pump_until(server, {&host, &riley, &mido}, [&] { return mido.disconnected; }));
+  REQUIRE(mido.find<Refused>() != nullptr);
+  CHECK(mido.find<Refused>()->reason == RefuseReason::not_let_in);
+  CHECK(server.session().player_count() == 2);
+  CHECK(server.session().stats().joins_denied == 1);
+}
+
+TEST_CASE("host service: with approve_joins it says so at the start, holds a joiner, and stop says the counts") {
+  EnetLife enet;
+  std::vector<std::string> log;
+  HostServiceConfig config = service_config(&log);
+  config.session.approve_joins = true;
+  HostService service(config);
+  std::string why;
+  REQUIRE(service.start(why));
+  CHECK(said(log, "each new player waits until the host lets them in (/allow or /deny)"));
+
+  Client host;
+  host.connect(service.port());
+  REQUIRE(pump_service(service, {&host}, [&] { return host.connected; }));
+  host.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_service(service, {&host}, [&] { return host.find<Welcome>() != nullptr; }));
+  Client riley;
+  riley.connect(service.port());
+  REQUIRE(pump_service(service, {&host, &riley}, [&] { return riley.connected; }));
+  riley.send(hello_from("Riley"), kChannelSession);
+  REQUIRE(pump_service(service, {&host, &riley}, [&] { return host.find<JoinKnock>() != nullptr; }));
+  CHECK(service.status().players == 1);  // a held joiner is not a player
+
+  service.stop();
+  CHECK(said(log, "host approval: asked 1, let in 0, turned away 0, no answer 0, in without asking 0"));
+}
+
+TEST_CASE("loopback: what waits for a player that stops reading is counted, and goes when it reads again (row 260)") {
+  EnetLife enet;
+  ServerOptions options = server_options();
+  EnetServer server(options);
+  REQUIRE(server.start());
+  const std::uint16_t port = server.port();
+  Client a;
+  Client b;
+  a.connect(port);
+  REQUIRE(pump_until(server, {&a}, [&] { return a.connected; }));
+  a.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&a}, [&] { return a.find<Welcome>() != nullptr; }));
+  b.connect(port);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.connected; }));
+  b.send(hello_from("Zelda"), kChannelSession);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<Welcome>() != nullptr; }));
+  CHECK(server.queues().peers == 2);
+
+  // b stops reading (its game hangs): what the server relays to it reliably waits, unacknowledged.
+  for (int i = 0; i < 20; ++i) a.send(Chat{0, "line " + std::to_string(i)}, kChannelSession);
+  REQUIRE(pump_until(server, {&a}, [&] { return server.queues().largest_outgoing > 200; }));
+  const std::size_t held = server.queues().largest_outgoing;
+  CHECK(server.queues().backlog_drops == 0);   // far under kMaxOutgoingBytes: b stays in
+
+  // b reads again: the chat comes through and the backlog goes.
+  REQUIRE(pump_until(server, {&a, &b}, [&] {
+    const auto chats = std::count_if(b.inbox.begin(), b.inbox.end(), [](const Received& r) {
+      return std::holds_alternative<Chat>(r.message);
+    });
+    return chats == 20 && server.queues().largest_outgoing < held;
+  }));
+  CHECK(server.queues().backlog_drops == 0);
+  CHECK(server.session().player_count() == 2);
+}
+
+TEST_CASE("loopback: the largest save in flight to a player that is not reading never stops the puppets (row 260)") {
+  EnetLife enet;
+  ServerOptions options = server_options();
+  EnetServer server(options);
+  REQUIRE(server.start());
+  const std::uint16_t port = server.port();
+  Client a;   // the host (the first player in)
+  Client b;
+  a.connect(port);
+  REQUIRE(pump_until(server, {&a}, [&] { return a.connected; }));
+  a.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&a}, [&] { return a.find<Welcome>() != nullptr; }));
+  b.connect(port);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.connected; }));
+  b.send(hello_from("Zelda"), kChannelSession);
+  REQUIRE(pump_until(server, {&a, &b}, [&] { return b.find<Welcome>() != nullptr; }));
+
+  // b stops reading while the host sends it a save of kMaxSaveBytes (every part, at once).
+  for (std::uint16_t i = 0; i < kMaxSaveParts; ++i) {
+    SavePart part;
+    part.to_player = 2;
+    part.transfer_id = 7;
+    part.total_size = kMaxSaveBytes;
+    part.count = kMaxSaveParts;
+    part.index = i;
+    part.data.assign(save_part_size(kMaxSaveBytes, i), static_cast<std::uint8_t>(i));
+    a.send(part, kChannelSession);
+  }
+  REQUIRE(pump_until(server, {&a}, [&] { return server.session().stats().save_parts == kMaxSaveParts; }));
+  const auto settle = [&] {   // (a few rounds without b: what can go to it went)
+    for (int round = 0; round < 100; ++round) {
+      server.service(1);
+      a.pump();
+    }
+  };
+  settle();
+  CHECK(server.queues().largest_outgoing >= kMaxSaveBytes / 2);
+  CHECK(server.queues().largest_outgoing < coop::net::kSlowPeerBytes);
+
+  // A pose of the host's (unreliable) is still queued to b, and reaches it once it reads.
+  PlayerSample sample;
+  sample.time = {2000, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  a.send(sample, kChannelPlayerSamples);
+  settle();
+  CHECK(server.queues().unreliable_skipped == 0);
+  CHECK(server.queues().backlog_drops == 0);
+  // (ENet's resends to b have backed off while it did not read: up to a few seconds)
+  const auto all_parts = [&] {
+    return std::count_if(b.inbox.begin(), b.inbox.end(), [](const Received& r) {
+             return std::holds_alternative<SavePart>(r.message);
+           }) == kMaxSaveParts;
+  };
+  bool got = false;
+  for (int tries = 0; tries < 4 && !got; ++tries) got = pump_until(server, {&a, &b}, all_parts);
+  CHECK(got);
+  CHECK(server.session().player_count() == 2);
+}
+
+TEST_CASE("session: sizes of an empty session are all 0, and the host's memory line names each (row 260)") {
+  Session session;
+  const Session::Sizes sizes = session.sizes();
+  CHECK(sizes.connections == 0);
+  CHECK(sizes.deferred == 0);
+  CHECK(sizes.deferred_bytes == 0);
+  CHECK(sizes.objects == 0);
+  CHECK(sizes.flags == 0);
+  CHECK(sizes.world_entries == 0);
+  CHECK(sizes.actions == 0);
+  Session::Sizes s;
+  s.connections = 2, s.deferred = 3, s.deferred_bytes = 4096, s.objects = 17, s.present = 30, s.flags = 900;
+  s.dead = 5, s.grass = 6, s.world_scenes = 1, s.world_entries = 8, s.actions = 0;
+  EnetServer::Queues q;
+  q.peers = 2, q.outgoing_bytes = 2048, q.largest_outgoing = 1500, q.waiting_bytes = 64, q.unreliable_skipped = 9;
+  q.backlog_drops = 1;
+  const std::string line = host_memory_line(s, q);
+  CHECK(line == "server: 2 connections, deferred 3 (4096 B), objects 17 (listed 30), flags 900, dead 5, grass 6, "
+                "world 8 in 1 scenes, actions 0; enet: 2 peers, out 2048 B (largest 1500), in 64 B, unreliable not "
+                "queued 9, dropped for backlog 1");
 }

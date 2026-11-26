@@ -1,0 +1,69 @@
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+# ui-snail-customize (ui-tabs-0119; rows 202, 207 and the Customize screen). The lane kit must have Character Select
+# ON (its UI part, the NPC download not needed). A only; B idles.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario ui-snail-customize
+# Path: - menu (opens on Map) -> L to his Characters tab -> A on the portrait (his picker) -> B back -> X Customize
+# (his CharacterCustomize_00 with co-op's rows) -> Hair and Eyes changed -> Kokiri Tunic to the next colour ->
+# B out of the menu -> Link in the field.
+# PASS (lane-0119 reads the shots and the log):
+# 1. no crash in the whole run (row 207: his page, his picker and his Customize under co-op);
+# 2. shot customize-open: HIS screen (his frame, title, two columns of three), with co-op's row names (Hair Colour,
+#    Eye Colour, Kokiri Tunic | Cap Trim, Goron Tunic, Zora Tunic) and values; SIDE BY SIDE with his own
+#    CharacterCustomize_00 shot from his mod page: same frame, fonts, focus marker; no box glyphs, no cut text;
+# 3. shots hair-changed / eyes-changed: the Link in the picture shows the new hair / iris colour. Hair: YES if the
+#    tint is plainly seen, NO if it is weak (the Hair row then goes); eyes the same;
+# 4. shot field-tunic (row 202): your own Link's tunic is the new colour with Character Select on; log has
+#    "coop: look:" lines naming your tunic, none "no tunic texture of your Link";
+# 5. log: "Your Link's colours:" from the kit start (merge_self_models) on the first run with his mod.
+mark start
+wait 300
+press MINUS
+wait 150
+mark minus-open
+press L
+wait 120
+press L
+wait 120
+press L
+wait 120
+mark characters-page
+press A
+wait 150
+mark picker-open
+press B
+wait 150
+mark picker-back
+press X
+wait 180
+mark customize-open
+press ZR
+wait 60
+press ZR
+wait 60
+press ZR
+wait 90
+mark hair-changed
+press DDOWN
+wait 60
+press ZR
+wait 60
+press ZR
+wait 60
+press ZR
+wait 90
+mark eyes-changed
+press DDOWN
+wait 60
+press ZR
+wait 90
+mark tunic-changed
+press B
+wait 150
+press B
+wait 150
+mark customize-left
+press MINUS
+wait 180
+mark field-tunic
+wait 120
+mark end

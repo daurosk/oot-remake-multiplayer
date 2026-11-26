@@ -1,0 +1,26 @@
+# what: Row 273 / gate NS-leave-solo: B is a guest on the host's save, A and the server go, B rejoins alone as the host on its own save, changes scene, restarts and has its progress.
+# scene: HyruleField_Child
+# start: live.py start --boot tools/autotest/scenarios/live-leave-solo --no-load --env LICHII_COOP_DEBUG_FLAGS=1 --env B:LICHII_COOP_HOST_SAVE=1 --env B:LICHII_COOP_TEST_OWN_SAVE=0 (replay --include-reads for the shots).
+# expect: every wait_log ok (a warp never saves: B asks for its own autosave, then Longshot publishes a second save, rejoin-host-273-2); shot after the warp and after the restart: B in Hyrule Field in front of Kakariko; B's own save folder changed (the job hashes it).
+# kit: 1
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"coop: save: now playing from the co-op save folder","timeout_s":120}}
+{"server":"live","tool":"shot","args":{}}
+{"server":"live","tool":"quit_game","args":{"player":"A","kill":true}}
+{"server":"live","tool":"server","args":{"action":"stop"}}
+{"server":"live","tool":"sleep","args":{"seconds":20}}
+{"server":"live","tool":"server","args":{"action":"start"}}
+{"server":"live","tool":"sleep","args":{"seconds":60}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"coop: save: the host: this game uses its own saves","timeout_s":60}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"coop: save: the save folder is now .*[0-9a-f]{32}: the game re-reads","timeout_s":30}}
+{"server":"live","tool":"act","args":{"player":"B","script":"press A; wait 180; press A; wait 180; press A; wait 300; press A; wait 600"}}
+{"server":"live","tool":"act","args":{"player":"B","script":"wait 120; warp HyruleField_Child HyruleField_FrontOfKakarikoVillage; wait 900"}}
+{"server":"live","tool":"act","args":{"player":"B","script":"autosave; wait 600"}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"coop: save: asked our game for its own autosave .*for the test","timeout_s":30}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"fs: save: published","min":2,"timeout_s":30}}
+{"server":"live","tool":"shot","args":{"player":"B"}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"unhandled exception|fault at|coop: null read","min":0,"max":0,"timeout_s":0}}
+{"server":"live","tool":"quit_game","args":{"player":"B"}}
+{"server":"live","tool":"relaunch","args":{"player":"B"}}
+{"server":"live","tool":"sleep","args":{"seconds":30}}
+{"server":"live","tool":"shot","args":{"player":"B"}}
+{"server":"live","tool":"wait_log","args":{"player":"B","pattern":"unhandled exception|fault at|coop: null read","min":0,"max":0,"timeout_s":0}}

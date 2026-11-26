@@ -1,0 +1,40 @@
+# hs-dc-armos, A (dc-break-0118, tracker row 167; research run, both games in Dodongo's Cavern room 12).
+# Row 167: the Armos (Enemy_Amos 0x17b56952c160d7fc -49 111.4 -10.5, 0xa77c50f6f6fcadbf -51.5 111.4 -8,
+# 0xdc58f4f68359bb71 -46.5 111.4 -8) shake without end on a guest. hs-dc-break showed that standing beside them wakes
+# nothing (they stayed 'Wait' 60 s at 2.7 m) and the hand-over to the near player works once the owner is gone.
+# Here A walks into 17b5 and hits it (A wakes and owns it), fights 10 s while B stands 6 m away, then goes 45 m
+# south (the Armos' drop-out distance, so A's own Armos leave and come back on A's walk, as P3's did), and B hits it last.
+# B's shots (b-f*, b-l*, b-h*) and both logs (LICHII_COOP_DEBUG_OBJECTS) show the copy's shake, owner and hand-over.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 600
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 2400
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -49.0 111.5 -14.0     # room 12, 3.5 m south of Armos 17b5
+wait 600
+toward -49.0 -10.5 60       # walk into it
+press Y 8                   # sword: wakes it
+wait 30
+press Y 8
+wait 30
+press Y 8
+mark a-hit
+wait 600                    # A fights it; B watches from 6 m
+mark a-fight
+place -49.0 111.5 -55.0     # 45 m south: A's Armos drop in and out of A's walk
+wait 3600                   # B stands by, then hits it
+mark a-away
+wait 600
+mark end

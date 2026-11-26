@@ -1,0 +1,34 @@
+# bomb-handover B (proof-0116): lifts A's lit bomb (A on it, the game's own lift), holds it until it blows.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_SPAWN=1,LICHII_COOP_BOMB_SHARE=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 540
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+give bombs
+place 196.13 163.4 309.87
+wait 30
+toward 197.93 309.87 6
+wait 760
+press A
+wait 30
+mark b-lifted
+wait 90
+mark b-holds
+wait 150
+mark blast
+wait 600
+mark b-hud-before
+wait 600
+mark end

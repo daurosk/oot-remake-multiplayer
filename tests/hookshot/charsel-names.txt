@@ -1,0 +1,120 @@
+# Character Select v0.2.2's characters.json names in its order, and the name co-op shows for each
+# (tools/puppet_pack/charsel_names.py and hookshot/src/coop_charsel_names.h must both give these).
+# <his name><TAB><shown>
+Link	Link
+Retro Link	Retro Link
+Saria	Saria
+Mido	Mido
+Zelda (child)	Zelda (child)
+Malon (child)	Malon (child)
+Ruto (child)	Ruto (child)
+Fado	Fado
+Zelda	Zelda
+Sheik	Sheik
+Impa	Impa
+Malon	Malon
+Ruto	Ruto
+Nabooru	Nabooru
+Ganondorf (child era)	Ganondorf (child era)
+Ganondorf	Ganondorf
+Darunia	Darunia
+King Zora	King Zora
+Rauru	Rauru
+Great Fairy	Great Fairy
+Talon	Talon
+Ingo	Ingo
+Ingo (adult era)	Ingo (adult era)
+Dampe	Dampe
+Darunia's son	Darunia's son
+Biggoron	Biggoron
+Medigoron	Medigoron
+Phantom Ganon	Phantom Ganon
+Gerudo_GEN_001	Gerudo 1
+Gerudo_GEN_002	Gerudo 2
+Gerudo_GEN_003	Gerudo 3
+Gerudo_GEN_004	Gerudo 4
+Gerudo_GEN_011	Gerudo 5
+Gerudo_GEN_011_Leader	Gerudo leader
+Goron_GON_001	Goron 1
+Goron_GON_006	Goron 3
+Goron_GON_002	Goron 2
+Hylia_MF_001	Townsman 1
+Hylia_MF_002	Townsman 2
+Hylia_MF_003	Townsman 3
+Hylia_MF_004	Townsman 4
+Hylia_MF_005	Townsman 5
+Hylia_ML_001	Townsman 6
+Hylia_ML_002	Townsman 7
+Hylia_ML_003	Townsman 8
+Hylia_ML_004	Townsman 9
+Hylia_MM_001	Townsman 10
+Hylia_MM_002	Townsman 11
+Hylia_MM_003	Townsman 12
+Hylia_MM_004	Townsman 13
+Hylia_MM_006	Townsman 14
+Hylia_MN_001	Townsman 15
+Hylia_MN_003	Townsman 16
+Hylia_MN_004	Townsman 17
+Hylia_MN_005	Townsman 18
+Hylia_MN_006	Townsman 19
+Hylia_MN_007	Townsman 20
+Hylia_MN_008	Townsman 21
+Hylia_MN_009	Townsman 22
+Hylia_MN_014	Townsman 23
+Hylia_MN_101	Townsman 24
+Hylia_MN_102	Townsman 25
+Hylia_MN_103	Townsman 26
+Hylia_MN_104	Townsman 27
+Hylia_MO_001	Old man 1
+Hylia_MO_002	Old man 2
+Hylia_MS_001	Soldier
+Hylia_MU_001	Townsman 28
+Hylia_MU_003	Townsman 29
+Hylia_MU_004	Townsman 30
+Hylia_MU_005	Townsman 31
+Hylia_MX_001	Townsman 32
+Hylia_MX_002	Townsman 33
+Hylia_MX_003	Townsman 34
+Hylia_WF_001	Townswoman 1
+Hylia_WF_002	Townswoman 2
+Hylia_WF_003	Townswoman 3
+Hylia_WF_004	Townswoman 4
+Hylia_WF_005	Townswoman 5
+Hylia_WF_006	Townswoman 6
+Hylia_WN_001	Townswoman 7
+Hylia_WN_002	Townswoman 8
+Hylia_WN_003	Townswoman 9
+Hylia_WN_004	Townswoman 10
+Hylia_WN_005	Townswoman 11
+Hylia_WN_006	Townswoman 12
+Hylia_WN_007	Townswoman 13
+Hylia_WN_008	Townswoman 14
+Hylia_WO_001	Old woman
+Hylia_WU_001	Townswoman 15
+Hylia_WU_002	Townswoman 16
+Hylia_WX_001	Townswoman 17
+Hylia_WX_002	Townswoman 18
+Kokiri_MC_001	Kokiri boy 1
+Kokiri_MC_002	Kokiri boy 2
+Kokiri_MC_003	Kokiri boy 3
+Kokiri_MC_004	Kokiri boy 4
+Kokiri_WC_001	Kokiri girl 1
+Kokiri_WC_002	Kokiri girl 2
+Zora_ZN_001	Zora
+Dark Link	Dark Link
+Skull Kid	Skull Kid
+Koume & Kotake	Koume & Kotake
+Koume & Kotake (boss)	Koume & Kotake (boss)
+Twinrova	Twinrova
+Iron Knuckle (Nabooru)	Iron Knuckle (Nabooru)
+Iron Knuckle (Nabooru, cutscene)	Iron Knuckle (Nabooru, cutscene)
+Iron Knuckle	Iron Knuckle
+Gibdo	Gibdo
+ReDead	ReDead
+Moblin	Moblin
+Club Moblin	Club Moblin
+Wolfos	Wolfos
+Cow	Cow
+Link (opening)	Link (opening)
+Lizalfos	Lizalfos
+Link (adult)	Link (adult)

@@ -1,0 +1,23 @@
+# fresh-save-copy (player report #96, the normal guest path must not change): the same prep as fresh-save
+# (A's file without the Fairy Ocarina, B's baseline with it), but B plays from the co-op save folder: it asks for
+# the host's save, waits for it on the title, and loads that copy (LICHII_COOP_TEST_OWN_SAVE=0). Its load goes
+# through the title (a save load now, fresh-save), and the copy holds the group's values: nothing changes, B
+# sends nothing, A gets nothing from B.
+# Run after fresh-save, with the same prep in place:
+#   tools\autotest\hookshot.py run --lane 1 ... with this steps file (or run.ps1 -Runtime hookshot -Scenario fresh-save-copy)
+# PASS: b-got-host-save (the copy came and was written), b-load-seen, b-never-ocarina (B never had the Ocarina:
+# it plays the host's copy), a-no-ocarina, a-no-b-items, a-no-quests.
+#! switches LICHII_COOP_DEBUG_BOOL=42bd296f,B:LICHII_COOP_TEST_OWN_SAVE=0
+start A B
+load A
+sleep 30
+shot a-loaded
+load B
+sleep 45
+shot b-loaded
+lines b-got-host-save B min=1 coop: save: the host's save written to
+lines b-load-seen B min=1 coop: flags: save load seen
+lines b-never-ocarina B max=0 get_bool\(0x42bd296f\) = 1(?<=save written to[\s\S]*)
+lines a-no-ocarina A max=0 get_bool\(0x42bd296f\) = 1
+lines a-no-b-items A max=0 coop: notice: B (?:got|learned)
+lines a-no-quests A max=0 coop: quests: \S+ \S+ -> \S+ \(shared

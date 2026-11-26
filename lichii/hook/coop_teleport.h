@@ -16,14 +16,18 @@
 // 3. On accept (Trip::Accepted): the same scene moves our Link there at once;
 //    another scene asks the game's scene change, at that scene's entrance
 //    start point nearest the player (NearestStart), the way a loading zone
-//    does (docs/scenes.md "Free-play scene change"): the String64s
-//    Sequence_ReservedNextBanc and ...NextStartPosName, then a short game
-//    event (kSceneEvent), since the game loads a reserved scene when an event
-//    ends. Asks again every 0.5 s and starts the event again every 3 s until
-//    the game takes it (it starts loading, or empties the request), then
-//    waits for the scene to settle, asks the player again for where it
-//    stands now, and moves there. An event already running (a talk) takes
-//    the same request when it ends.
+//    does: by default the loading zone's own event Dm_SY_BancChangeGo with
+//    NextBanc, NextStartPos and the entrance's arrival event (ArrivalEvent),
+//    started by our Link (map_event; teleport-direct-0116). It is asked again
+//    every 3 s while no event runs, at most kMaxEventAsks times, until the
+//    game takes it (it starts loading, or empties the request), then waits
+//    for the scene to settle, asks the player again for where it stands now,
+//    and moves there (in a dungeon into any room: moving Link loads his room,
+//    teleport-197). LICHII_COOP_TELEPORT_EVENT=0 (no map_event): the
+//    String64s Sequence_ReservedNextBanc and ...NextStartPosName are written,
+//    asked again every 0.5 s, and the game takes them when an event of the
+//    player's own (a talk, a sign) ends (docs/scenes.md "Free-play scene
+//    change", #197).
 // Another scene with no start point known is refused: without one the game
 // keeps the old scene's start name, which the new scene does not have, and
 // the picture stays black after the load (docs/scenes.md "The start point").
@@ -49,36 +53,47 @@ struct Vec {
     float z = 0.0f;
 };
 
-// Whether the "next to" move may put our Link from `from` at `to` in
-// `scene` (issue 197). Moving Link into another room of a dungeon right
-// after the load left the picture black and Link held for good (bigrun4:
-// Kokiri Forest -> the Deku Tree's slingshot room, arrival at Entrance, the
-// move into room C): a dungeon loads one room at a time. So in a dungeon the
-// move stays within our room: by the puppet pack's room table when it knows
-// both rooms, else only within kNearMove. Outside dungeons (overworld,
-// interiors) any move is fine (teleport-other passes).
-// door-unlock (2026-11-12): that holds only right after a load (`after_load`).
-// A /teleport to a player in our own scene loads nothing, and the same move
-// (CoopBoss::MoveLink) puts Link in other rooms of a dungeon in the autotests'
-// `place` step (deku-ladder, lock-open) and the boss move-in: always ok. So a
-// player refused at the entrance types /teleport once more.
+// Whether the game draws `to` while our Link stands at `from` in `scene`: a
+// dungeon has only the rooms around Link loaded. In a dungeon both must be in
+// one room of the puppet pack's room table, else (no table) within kNearMove;
+// outside dungeons always. Used by the down-but-not-out spectate camera
+// (coop_dbno_game.cpp), which looks at a teammate without moving Link.
+// Not a rule for moving Link (issue 197, teleport-197): moving Link loads the
+// room he is put in, right after a scene change too. The "next to" move into
+// another room of a dungeon was refused from 2026-11-12 (blamed on bigrun4's
+// black, held picture), but that lock came from the request emptied too early
+// (teleport-b3, the same lock with no move); in big-run-0117 B itself was put
+// from the Deku Tree's entrance into the slingshot room on 2F right after its
+// load by the same move (CoopBoss::MoveLink) and the room was drawn.
 enum class MoveCheck : std::uint8_t {
     ok,
     other_room,  // the room table puts `to` in another room of the dungeon
     too_far,     // no room known for one of them, and farther than kNearMove
 };
 inline constexpr float kNearMove = 10.0f;  // game units (about metres)
-MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to,
-                    bool after_load = true);
-// The chat line when CheckMove refused (not ok): "<name> is in another room of this dungeon;
-// you are at its entrance: type /teleport again, or walk there" (`after_load`: just arrived
-// by a scene change) or "...; walk there" (not after a load: no longer refused, kept for the text).
-std::string NotMovedLine(MoveCheck check, std::string_view name, bool after_load);
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to);
 
 // The entrance start point of `scene` nearest `to` (coop_start_points.inc,
 // written from the game's scene files by tools/puppet_pack/start_points.py).
 // Nothing for a scene we have no start point of.
 std::optional<std::string> NearestStart(std::string_view scene, const Vec& to);
+
+// Whether `scene` is a scene name the game has, as far as the code knows: every scene of coop_start_points.inc
+// (the entrance scenes) and the boss-rush interval room. Exact match, case and all. The test warp checks it before
+// it writes a scene into the game (a name the game does not have, such as "Market" for Market_Child, crashed a game
+// worker right after the load began, 2026-11-23). A scene the list lacks is a scene to add there, not to let through.
+bool IsKnownScene(std::string_view scene);
+// The first start point the list has for `scene` (a boss stage has just one, named like the scene): what a warp with no
+// entrance uses. Nothing for a scene the list lacks.
+std::optional<std::string> DefaultStart(std::string_view scene);
+// The known scenes that `name` is the start of (a name given without its age: "Market" gives Market_Adult and
+// Market_Child), for the "did you mean" of an error. At most `most`, in list order.
+std::vector<std::string> ScenesLike(std::string_view name, std::size_t most = 6);
+
+// The arrival event (BootEventName of Dm_SY_BancChangeGo) of the entrance at `start` in `scene`: the one the game's
+// own entrance there names (a few have their own, e.g. Kakariko's Dm_SY_BancChangeArrive_KakarikoVillage_01, as
+// Longshot's teleport table took them from the game), else the plain Dm_SY_BancChangeArrive.
+std::string ArrivalEvent(std::string_view scene, std::string_view start);
 
 // A chat line that is a command, not chat. "/teleport" alone lists players.
 struct Command {
@@ -176,30 +191,31 @@ public:
     static constexpr std::uint64_t kSettleUs = 1'500'000;
     // A taken scene change that ended somewhere else is asked again after this.
     static constexpr std::uint64_t kRearmUs = 5'000'000;
-    // The game loads a requested scene when an event ends (a loading zone is
-    // an event: docs/scenes.md "Free-play scene change"), so with the request
-    // set this short event is started (one wait node, no actor, no picture),
-    // again after this if the game has not taken the request.
-    static constexpr const char* kSceneEvent = "DefaultParentEvent";
+    // map_event: the map change event is asked again after this while no
+    // event runs and the game has not taken it, at most kMaxEventAsks times
+    // in all; then the trip is given up (the game refused it: Link in the
+    // air, swimming, held). #197: the old short event DefaultParentEvent
+    // (one EventWait binding the nearest actor) held Link after the load and
+    // is never started any more; Dm_SY_BancChangeGo is a loading zone's own
+    // event, whose arrival event hands Link back.
     static constexpr std::uint64_t kEventAgainUs = 3'000'000;
-    // Off (#197): after a load that kSceneEvent carried, our Link never moved
-    // again and the game refused every later event (autotest teleport-lock,
-    // Kokiri Forest <-> Deku Tree, both ways; docs/scenes.md). So the request
-    // waits for an event of the player's own (a talk, a sign), as the boss
-    // pull's scene change does, which leaves Link playable.
-    static constexpr bool kStartSceneEvent = false;
+    static constexpr int kMaxEventAsks = 3;
+
+    // map_event false: no event of ours, the request waits for the player's
+    // own talk or sign (LICHII_COOP_TELEPORT_EVENT=0).
+    explicit Trip(bool map_event = false) : map_event_(map_event) {}
+    bool map_event() const { return map_event_; }
 
     struct Actions {
         std::vector<std::string> lines;      // chat notices
         std::optional<std::string> scene;    // ask the game's scene change to it (free play or event)
         std::string start;                   // with scene: the start point there (never empty)
         std::optional<Vec> move;             // move our Link here (same scene)
-        bool after_load = false;             // with move: we just arrived by a scene change (at an entrance)
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request and its switch (settled, given up)
         bool release = false;                // the game took it: drop only the free-play switch
         bool game_cleared = false;           // the game emptied our request itself (after its arrival): log only
-        bool start_event = false;            // with the request set: start kSceneEvent (no event runs)
+        bool start_event = false;            // map_event: ask the map change event to scene/start (no event runs)
         // With cancel_scene, not arrived (given up, the player left, a new
         // /teleport) and no load ran in this trip: put back the start name the
         // game had before our first ask, so it does not keep a start of a
@@ -234,7 +250,9 @@ private:
     Vec at_{};                    // travelling: the first answer's place, the fallback
     std::uint64_t since_us_ = 0;  // travelling: since the first ask
     std::uint64_t asked_us_ = 0;  // travelling: the last ask
-    std::uint64_t event_us_ = 0;  // travelling: the last kSceneEvent started
+    bool map_event_ = false;      // the game's map change event carries the trip (else a talk or sign)
+    std::uint64_t event_us_ = 0;  // travelling: the last map change event asked
+    int event_asks_ = 0;          // travelling: map change events asked in this trip
     std::uint64_t settle_us_ = 0; // settling: since the scene was in
     bool taken_ = false;          // travelling: the game took the request
     bool seen_request_ = false;   // travelling: the game's flag showed our request

@@ -7,10 +7,13 @@
 #      and, if the map is missing, again with -NoCoop (the game's own behaviour, no session).
 # Look at: "got" (the get scene), "mini-room" (the minimap, same room), "panel" / "panel-r1" / "panel-r2" (the
 # Minus panel's pages: the Map page shows the Deku Tree floors), "mini-room2" and "panel2" (after a room change).
-# The log: "bool 0x89787395" 0 -> 1, no "coop: map-drop:" line.
+# The log: "bool 0x89787395" 0 -> 1, no "coop: map-drop:" line; "coop: map probe:" (dungeon-maps-a, row 76): the HUD
+# screen's own copy (floors byte, cached map) before and after the get. Stage the Deku floors to 1 first (the lane saves
+# have 31, every floor, so the map shows from the floors alone): save_flags.py set <pair>/autotest-save/slot_0*/progress.sav
+# uint:0x5c6c21c1=1 (and back to 31 after).
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395,LICHII_COOP_MAP_PROBE=1
 #! timeout 420
 mark start
 warp InsideTheDekuTree Entrance

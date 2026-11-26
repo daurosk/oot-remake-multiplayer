@@ -1,0 +1,396 @@
+From 8b78901b3338d09bc788f189ed5793323e42069f Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 23:28:22 -0900
+Subject: [PATCH] Co-op title: Skip title screen chooses natively, presses
+ nothing
+
+oot-remake-multiplayer's patch 0028 (player report 133). Longshot's Skip
+title screen (Insert menu, Gameplay; off by default) tapped A every 2 s
+from 20 s after the start, so A went to whatever had the focus: a player
+who wanted a new game, or co-op's Host and Join, was carried into the
+newest save. The row stays; its taps go.
+
+host/oot_autoload.c arms as before (the row on and a save on disk) and
+makes the choices the game's own way: at a menu screen's update on the
+game's thread (host/oot_menu.c hos_oot_menu_tick, both platforms), the
+screen's one focused button, steady for 1 s, gets the game's
+Button::Decide (main+0x3771db0, with 0: the call the game's screens make
+for a button chosen without its own input). Only three screens, in
+order, known by their vtables (host/hos_skip_title.h): the title's
+Continue (Pa_Button_02), the load list's focused file, its question's
+first answer (Pa_CheckButton_00). Any other screen with a focused
+button, a known one out of order or focused elsewhere, stops it for
+good. It also stops on any button, key or click of the player's
+(hos_coop_pad), when the co-op module holds it (host/coop_bridge.c
+hos_coop_title_hold_now, the module's optional hos_coop_title_hold:
+hosting, joining, a session, the host's save coming), once Link runs or
+after 120 s. Each choice and each stop is logged with its reason.
+---
+ host/coop_bridge.c    |   7 ++
+ host/hos_skip_title.h |  64 ++++++++++++++++
+ host/oot_autoload.c   | 170 +++++++++++++++++++++++++++++++++++++-----
+ host/oot_autoload.h   |   8 +-
+ host/oot_menu.c       |   2 +
+ 5 files changed, 232 insertions(+), 19 deletions(-)
+ create mode 100644 host/hos_skip_title.h
+
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index 6bf35e14..957c34e8 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -85,6 +85,7 @@ static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks,
+ static hos_coop_pad_fn coop_pad;       /* (optional: the title menu, nn_hid.c and nx2/coop_title_hooks.py below) */
+ static hos_coop_title_fn coop_title;
+ static hos_coop_view_fn coop_view;     /* (optional, patch 0019: the camera, hos_main.c hos_oot_free_view) */
++static int (*coop_title_hold)(void);   /* (optional, patch 0028: Skip title screen waits, host/oot_autoload.c) */
+ /* Bytes for the next call's pointers: in the game's stack between the call's stack words (bridge_call's sp + 32) and the
+    hook's own sp, which the called function does not touch (it only writes below its sp): [sp - 0x1c0, sp - 0xc0). x8,
+    where a function puts a result it returns in memory, is [sp - 0xb0, sp - 0x30) (bridge_call). */
+@@ -162,6 +163,7 @@ static void load(void) {
+     coop_pad = (hos_coop_pad_fn)(void *)GetProcAddress(m, "hos_coop_pad");
+     coop_title = (hos_coop_title_fn)(void *)GetProcAddress(m, "hos_coop_title");
+     coop_view = (hos_coop_view_fn)(void *)GetProcAddress(m, "hos_coop_view");
++    coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, "hos_coop_title_hold");
+     if (!start || !coop_frame || !coop_hold || !coop_stop) {
+         hos_log("coop: %s lacks an export: co-op off", path);
+         __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
+@@ -207,6 +209,11 @@ int hos_coop_keys_taken(void) {
+ uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]) {
+     return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pad ? coop_pad(buttons, stick) : buttons;
+ }
++/* (patch 0028) host/oot_autoload.c: 1 while the module holds Skip title screen's choices (co-op is hosting, joining or in
++   a session); 0 without a module or with co-op off (solo skips the title as before) */
++int hos_coop_title_hold_now(void) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title_hold ? coop_title_hold() : 0;
++}
+ /* nx2/coop_title_hooks.py: the game's title screen (HOS_COOP_TITLE_*) */
+ void hos_coop_title(Ctx *c, uint64_t screen, int event) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title) coop_title(c, screen, event);
+diff --git a/host/hos_skip_title.h b/host/hos_skip_title.h
+new file mode 100644
+index 00000000..23e5c98a
+--- /dev/null
++++ b/host/hos_skip_title.h
+@@ -0,0 +1,64 @@
++/* (oot-remake-multiplayer's patch 0028, player report 133) Which button Longshot's Skip title screen may choose, and when.
++   The same file is the patch's host/hos_skip_title.h and the module repo's hookshot/src/hos_skip_title.h (unit tests:
++   tests/hookshot/skip_title_test.cpp; tests/hookshot/module_test.cpp checks the two are one).
++
++   Skip title screen goes the way the player's A would go to load the newest save, and no other: three screens, in order,
++   each known by its class's vtable (read from main: each class's name getter, then its factory's constructor):
++     0. the title, UITitleScreen (main+0x4bf06e8): its Continue, Pa_Button_02 (OpenTitle.module.ainb gives that pane
++        LayoutMsg/Title_00's label 0001, "Continue"; 0000 "New Game" is Pa_Button_00, 0002 "Options" Pa_Button_01);
++     1. the load list, UISystemLoadListScreen (main+0x4beeba0): the file it focuses as it opens, a Pa_ pane;
++     2. its question, UISystemSaveLoadScreen (main+0x4bef840): Pa_CheckButton_00, its first answer.
++   A screen of an earlier step still updating (the title behind the list) is waited out. Any other screen with a focused
++   button, a known one out of order, or a known one focused on another button stops the skip for good: the rest is the
++   player's. At most three choices. */
++#ifndef HOS_SKIP_TITLE_H
++#define HOS_SKIP_TITLE_H
++#include <stdint.h>
++#include <string.h>
++
++#define HOS_SKIP_TITLE_SCREEN 0x84c106e8ULL       /* UITitleScreen (guest address: main at 0x80020000) */
++#define HOS_SKIP_LOAD_LIST_SCREEN 0x84c0eba0ULL   /* UISystemLoadListScreen */
++#define HOS_SKIP_LOAD_CHECK_SCREEN 0x84c0f840ULL  /* UISystemSaveLoadScreen */
++#define HOS_SKIP_STEPS 3
++
++enum { HOS_SKIP_WAIT = 0, HOS_SKIP_CHOOSE = 1, HOS_SKIP_STOP = 2 };
++
++/* The step a screen's vtable is (0..2), -1 for any other screen */
++static inline int hos_skip_title_step_of(uint64_t vtable) {
++    return vtable == HOS_SKIP_TITLE_SCREEN ? 0 : vtable == HOS_SKIP_LOAD_LIST_SCREEN ? 1 : vtable == HOS_SKIP_LOAD_CHECK_SCREEN ? 2 : -1;
++}
++
++/* step: the choices made so far. vtable: a screen that has one focused button; name: that button's pane name ("" when it
++   could not be read). HOS_SKIP_CHOOSE, HOS_SKIP_WAIT, or HOS_SKIP_STOP with *why (a static line for the log) */
++static inline int hos_skip_title_next(int step, uint64_t vtable, const char *name, const char **why) {
++    const int at = hos_skip_title_step_of(vtable);
++    if (why) *why = "";
++    if (!name) name = "";
++    if (step >= HOS_SKIP_STEPS) {
++        if (why) *why = "made its three choices";
++        return HOS_SKIP_STOP;
++    }
++    if (at < 0) {
++        if (why) *why = "a screen that is not the title, the load list or its question";
++        return HOS_SKIP_STOP;
++    }
++    if (at < step) return HOS_SKIP_WAIT;   /* (an earlier step's screen, still updating behind the next one) */
++    if (at > step) {
++        if (why) *why = "a screen out of order";
++        return HOS_SKIP_STOP;
++    }
++    if (at == 0 && strcmp(name, "Pa_Button_02") != 0) {
++        if (why) *why = "the title's focus is not on Continue (Pa_Button_02)";
++        return HOS_SKIP_STOP;
++    }
++    if (at == 1 && strncmp(name, "Pa_", 3) != 0) {
++        if (why) *why = "the load list's focus is not on a file";
++        return HOS_SKIP_STOP;
++    }
++    if (at == 2 && strcmp(name, "Pa_CheckButton_00") != 0) {
++        if (why) *why = "the question's focus is not on its first answer (Pa_CheckButton_00)";
++        return HOS_SKIP_STOP;
++    }
++    return HOS_SKIP_CHOOSE;
++}
++#endif
+diff --git a/host/oot_autoload.c b/host/oot_autoload.c
+index 4110c56c..381042c3 100644
+--- a/host/oot_autoload.c
++++ b/host/oot_autoload.c
+@@ -9,6 +9,8 @@
+    The presses are the host's, in host/nn_hid.c's input script syntax (hos_hid_tap), added to whatever the player and a
+    test's script do. They begin 20 s after the game's first controller read (the intro and title), every 2 s, and stop as
+    soon as the player is running (host/hos_main.c: the lifted player's movement) or after 120 s. */
++#include "hos.h"   /* (patch 0028: Ctx, a64_lookup, hos_guest_range) */
++#include "hos_skip_title.h"   /* (patch 0028: the screens, in order) */
+ #include "oot_autoload.h"
+ #include "../gpu/vk/vk_api.h"   /* (HOS_OPT_SKIP_TITLE) */
+ #include <string.h>
+@@ -29,11 +31,30 @@ extern void hos_log(const char *fmt, ...);
+ extern int64_t hos_now_ns(void);   /* (host/hos_main.c) */
+ extern int rx_option(int id, int otherwise);   /* (host/rx_backend.c) */
+ extern int hos_oot_player_seen(void);   /* (host/hos_main.c) */
+-extern void hos_hid_tap(const char *presses);   /* (host/nn_hid.c) */
++/* (oot-remake-multiplayer's patch 0028, player report 133) No pressed buttons. The taps of A (hos_hid_tap, every 2 s from
++   20 s) went to whatever had the focus: a player who wanted a new game, or co-op's Host and Join on the title, was
++   carried into the newest save, and the taps went on through the next screens. Now the choice is made the game's own
++   way: hos_oot_autoload_screen, at a menu screen's update on the game's thread (host/oot_menu.c hos_oot_menu_tick, before
++   the screen's own update), calls the focused button's Button::Decide (main+0x3771db0, with 0: the call the game's
++   screens make for a button chosen without its own input, main+0x3405280 and +0x3405930). The button checks that it can
++   be chosen (enabled and shown, its controller not deciding another) and queues its own decide; the screen's update hands
++   that to the Sequence graph that waits for it (SeqExecuteWaitScreenButtonInput's request on the screen). The focused
++   button is the one the player's A would choose: the screen's default (Continue on a title with a save, then the file the
++   load list focuses and its first answer). It never chooses: with the row off (the default); after any button, key or
++   click of the player's since the start (hos_coop_pad, the word the game was given; a click is a tap there too); while the co-op module holds it
++   (hos_coop_title_hold: hosting, joining or in a session, the host's save coming), which ends it for this run; once Link
++   runs or after 120 s. Only the title's Continue, the load list's file and its first answer, in order
++   (hos_skip_title.h): any other screen stops it. */
++extern volatile uint64_t hos_coop_pad;   /* (host/nn_hid.c, patch 0001: player 1's word as the game got it) */
++int hos_coop_title_hold_now(void);       /* (host/coop_bridge.c, patch 0028: 1 while the co-op module holds it) */
+ 
+ /* (the wait before the first press, the gap between presses, and when to give up: the intro and title take about 23 s on
+    the supported build, and preparing the shaders comes before it) */
+ enum { kFirstMs = 20000, kEveryMs = 2000, kGiveUpMs = 120000 };
++/* (patch 0028) a screen's focused button must have been the same for kSteadyMs (its opening animation over) before it is
++   chosen; which screens and buttons, and how many: hos_skip_title.h */
++enum { kSteadyMs = 1000 };
++static const uint64_t kButtonDecide = 0x80020000ULL + 0x3771db0ULL;   /* Button::Decide(button, 0) -> 1 chosen */
+ 
+ static uint64_t file_time(const char *path) {
+     struct stat st;
+@@ -167,14 +188,28 @@ uint64_t hos_oot_newest_save(const char *user_dir, char *path, size_t size) {
+ }
+ #endif
+ 
+-static int started, active;
+-static int64_t start_ms, next_ms;
++static int started;
++static volatile int active;   /* (patch 0028: read by every screen's update, on the game's threads) */
++static int64_t start_ms;
++static volatile int64_t next_ms;
+ static char save_path[MAX_PATH];
++static volatile int screen_busy;   /* (one screen step at a time) */
++static uint64_t steady_screen, steady_button;
++static int64_t steady_ms;
++static int choices;
++
++static void stop(const char *why) {
++    if (__atomic_exchange_n(&active, 0, __ATOMIC_ACQ_REL)) hos_log("skip title: %s", why);
++}
+ 
+ void hos_oot_autoload_reset(void) {
+-    started = active = 0;
++    started = 0;
++    __atomic_store_n(&active, 0, __ATOMIC_RELEASE);
+     start_ms = next_ms = 0;
+     save_path[0] = 0;
++    steady_screen = steady_button = 0;
++    steady_ms = 0;
++    choices = 0;
+ }
+ 
+ void hos_oot_autoload_input(void) {
+@@ -187,27 +222,126 @@ void hos_oot_autoload_input(void) {
+             hos_log("skip title: no saved game yet: the title screen stays");
+             return;
+         }
+-        active = 1;
+-        hos_log("skip title: %s is the most recent save: pressing A from %.0f s", save_path, kFirstMs / 1000.0);
++        __atomic_store_n(&active, 1, __ATOMIC_RELEASE);
++        hos_log("skip title: %s is the most recent save: the title's choices are made from %.0f s, the game's own way "
++                "(no presses; any press of yours stops it)", save_path, kFirstMs / 1000.0);
+     }
+-    if (!active) return;
++    if (!__atomic_load_n(&active, __ATOMIC_ACQUIRE)) return;
+     if (!rx_option(HOS_OPT_SKIP_TITLE, 0)) {
+-        hos_log("skip title: the row was turned off while waiting");
+-        active = 0;
++        stop("the row was turned off while waiting");
++        return;
++    }
++    if (__atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED) != 0) {   /* (the player's own: the title is theirs) */
++        stop("stopped: a button, key or click of yours (the title is yours)");
+         return;
+     }
+-    if (rx_option(1, 0)) return;   /* (the Insert menu is open: its presses are its own) */
+     if (hos_oot_player_seen()) {
+-        hos_log("skip title: loaded, the player is running");
+-        active = 0;
++        stop("loaded, the player is running");
+         return;
+     }
+-    if (now - start_ms >= kGiveUpMs) {
+-        hos_log("skip title: gave up after %.0f s", kGiveUpMs / 1000.0);
+-        active = 0;
++    if (now - start_ms >= kGiveUpMs) stop("gave up after 120 s");
++}
++
++/* (patch 0028) guest reads of the game's objects, as host/oot_menu.c peek: an address below 1 MB (a null pointer's page)
++   or outside the guest window reads as 0 */
++static uint64_t peek64(uint64_t a) {
++    const uint64_t *p = a >= 0x100000 ? (const uint64_t *)hos_guest_range(a, 8) : NULL;
++    return p ? *p : 0;
++}
++static int32_t peek32(uint64_t a) {
++    const int32_t *p = a >= 0x100000 ? (const int32_t *)hos_guest_range(a, 4) : NULL;
++    return p ? *p : 0;
++}
++static uint8_t peek8(uint64_t a) {
++    const uint8_t *p = a >= 0x100000 ? (const uint8_t *)hos_guest_range(a, 1) : NULL;
++    return p ? *p : 0;
++}
++
++/* (patch 0028) the screen's focused button (0: none, or more than one), as host/oot_menu.c walks a screen's buttons: its
++   list's head at +136, the first node at +144, an entry's offset from its node at +156, the entry's button at +24; a
++   button's state at +56 (0 not focused, 4 and 5 decided); its focus manager (*(screen+32)+96) set while it takes input */
++static uint64_t focused_button(uint64_t screen) {
++    if (!peek64(peek64(screen + 32) + 96)) return 0;
++    const uint64_t head = screen + 136;
++    const int64_t off = peek32(screen + 156);
++    uint64_t node = peek64(screen + 144), found = 0;
++    for (int i = 0; i < 64 && node && node != head; i++) {
++        const uint64_t button = peek64(node - (uint64_t)off + 24);
++        const uint8_t state = button ? peek8(button + 56) : 0;
++        if (state && (state & 0xfe) != 4) {
++            if (found) return 0;
++            found = button;
++        }
++        node = peek64(node + 8);
++    }
++    return found;
++}
++
++/* (patch 0028) a button's pane name, as the game's own screen request reads it (main+0x3379160): its length at +0x18, its
++   text at *(button+0x20), or at *(*(button+0x20)+0x30) when bit 5 of +0x41 is set; "" when it cannot be read */
++static void button_name(uint64_t button, char *out, size_t cap) {
++    out[0] = 0;
++    uint64_t n = peek64(button + 0x18);
++    const uint64_t at = (peek8(button + 0x41) & 0x20) ? peek64(peek64(button + 0x20) + 0x30) : peek64(button + 0x20);
++    if (n >= cap) n = cap - 1;
++    const char *s = at >= 0x100000 && n ? (const char *)hos_guest_range(at, n) : NULL;
++    if (!s) return;
++    memcpy(out, s, n);
++    out[n] = 0;
++}
++
++/* (patch 0028) one screen's step, while armed and not held: hos_skip_title.h says which screen and button, in order */
++static void screen_step(Ctx *c, uint64_t screen) {
++    const int64_t now = hos_now_ns() / 1000000;
++    if (choices >= HOS_SKIP_STEPS) return;   /* (its three choices made: the game loads; input() logs the end) */
++    if (now < __atomic_load_n(&next_ms, __ATOMIC_RELAXED) || rx_option(1, 0)) return;   /* (the Insert menu: its own) */
++    if (hos_coop_title_hold_now()) {
++        stop("stopped: co-op is busy at the title (the module's log says why); the choice is yours");
++        return;
++    }
++    const uint64_t button = focused_button(screen);
++    if (!button) return;
++    const uint64_t vtable = peek64(screen);
++    char name[64];
++    button_name(button, name, sizeof name);
++    const char *why = "";
++    const int next = hos_skip_title_next(choices, vtable, name, &why);
++    if (next == HOS_SKIP_WAIT) return;
++    if (next == HOS_SKIP_STOP) {
++        if (__atomic_exchange_n(&active, 0, __ATOMIC_ACQ_REL))
++            hos_log("skip title: stopped: %s (screen vtable %#llx, button %s): the rest is yours", why,
++                    (unsigned long long)vtable, name[0] ? name : "-");
++        return;
++    }
++    if (button != steady_button || screen != steady_screen) {
++        steady_screen = screen, steady_button = button, steady_ms = now;
+         return;
+     }
+-    if (now < next_ms) return;
+-    hos_hid_tap("0:A/200");
+-    next_ms = now + kEveryMs;
++    if (now - steady_ms < kSteadyMs) return;
++    const A64Fn decide = a64_lookup(kButtonDecide);
++    if (!decide) {
++        stop("stopped: Button::Decide is not in this build of the game (the supported build only)");
++        return;
++    }
++    const Ctx saved = *c;
++    c->x[0] = button, c->x[1] = 0, c->x[30] = 0;
++    decide(c);
++    const int chosen = (int)(c->x[0] & 1);
++    *c = saved;
++    if (!chosen) {   /* (not now: a button that cannot be chosen yet, or its controller is deciding another) */
++        __atomic_store_n(&next_ms, now + 500, __ATOMIC_RELAXED);
++        return;
++    }
++    __atomic_store_n(&next_ms, now + kEveryMs, __ATOMIC_RELAXED);
++    ++choices;
++    hos_log("skip title: chose %s of screen %#llx (vtable %#llx), the game's own way (choice %d of %d)", name,
++            (unsigned long long)screen, (unsigned long long)vtable, choices, HOS_SKIP_STEPS);
++}
++
++void hos_oot_autoload_screen(void *ctx, uint64_t screen) {
++    Ctx *c = (Ctx *)ctx;
++    if (!c || screen < 0x100000 || !__atomic_load_n(&active, __ATOMIC_ACQUIRE)) return;
++    if (__atomic_exchange_n(&screen_busy, 1, __ATOMIC_ACQUIRE)) return;   /* (the screens' updates run on several threads) */
++    screen_step(c, screen);
++    __atomic_store_n(&screen_busy, 0, __ATOMIC_RELEASE);
+ }
+diff --git a/host/oot_autoload.h b/host/oot_autoload.h
+index 557c6e9f..0598e4a6 100644
+--- a/host/oot_autoload.h
++++ b/host/oot_autoload.h
+@@ -8,8 +8,14 @@
+ uint64_t hos_oot_newest_save(const char *user_dir, char *path, size_t size);
+ 
+ /* Called at each controller read while the game starts (host/nn_hid.c, read_input). Reads the option once, and while it is
+-   on and a save exists, taps A through the title screen and its file list until the player is running. */
++   on and a save exists, keeps the skip armed until the player is running (oot-remake-multiplayer's patch 0028: it taps
++   nothing; any press of the player's stops it). */
+ void hos_oot_autoload_input(void);
+ 
++/* (oot-remake-multiplayer's patch 0028) Called at each menu screen's update on the game's thread (host/oot_menu.c,
++   hos_oot_menu_tick): while the skip is armed, chooses the screen's focused button the game's own way (its
++   Button::Decide), as the player's A would. ctx is the game thread's Ctx. */
++void hos_oot_autoload_screen(void *ctx, uint64_t screen);
++
+ /* (tests) forget the run's state, as after a restart. */
+ void hos_oot_autoload_reset(void);
+diff --git a/host/oot_menu.c b/host/oot_menu.c
+index e58f73d7..0eb57207 100644
+--- a/host/oot_menu.c
++++ b/host/oot_menu.c
+@@ -27,6 +27,7 @@ static void sprint_menu_tick(uint64_t screen) {
+         vt == g_module_base + 0x84c07798ULL || vt == g_module_base + 0x84c04a18ULL)
+         __atomic_store_n(&sprint_menu_seen, 1, __ATOMIC_RELAXED);
+ }
++#include "oot_autoload.h"   /* (patch 0028: hos_oot_autoload_screen) */
+ #ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
+ #include "../gpu/vk/compat/longshot_env.h"
+ #endif
+@@ -835,6 +836,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+     if (!screen) return;
+     sprint_menu_tick(screen);
++    hos_oot_autoload_screen(c, screen);   /* (patch 0028: Skip title screen's choice, before the screen's own update) */
+     if (trace < 0) trace = env_on("HOS_MENU_TRACE");
+     const int64_t now = hos_now_ns();
+     AcquireSRWLockExclusive(&seen_lock);

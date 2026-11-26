@@ -94,6 +94,15 @@ class ApplyPatchTest(unittest.TestCase):
         self.assertIn("does not match", r.stdout)
         self.assertEqual(self.read("nx2", "lift.py"), before)
 
+    def test_same_text_a_few_lines_off_applies_there(self):
+        # (Longshot v3.1.0's Linux AppImage: one file's text a few lines off the tag's; exact text, another line)
+        self.write_lift("# one\n# two\n" + LIFT)
+        r = run(self.root, self.patch)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(self.read("nx2", "lift.py"),
+                         "# one\n# two\ndef main():\n    a = 1\n    b = 2\n    import coop_hooks\n    coop_hooks.install()\n"
+                         "    c = 3\n    d = 4\n")
+
     def test_changed_context_refused_and_nothing_written(self):
         self.write_lift(LIFT.replace("b = 2", "b = 7"))
         r = run(self.root, self.patch)

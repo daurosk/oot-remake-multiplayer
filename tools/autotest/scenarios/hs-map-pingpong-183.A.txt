@@ -1,0 +1,64 @@
+# hs-map-pingpong-183 (row 183, triage-183): a map the game keeps lowering in one room is put back
+# kMaxQuickUndos (2) times, then left to the game until the next room, where it is owed back once; no
+# endless put-back and HUD refresh (the flicker "like equipping and unequipping"). The drops are forced
+# with setflag (the game's own setter: the flag watcher sees them as the game lowering the map), 30
+# frames apart: past the old 2-read window, so the old code put it back every time.
+# Run (two games in a session, both in the Deku Tree; module from triage-183):
+#   tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-map-pingpong-183
+#   with LICHII_COOP_MAP_REFRESH=1 and LICHII_COOP_DEBUG_BOOL=89787395 (IsGetMap in the log).
+# Pass, in A's log between the marks:
+#   - map-on .. drop-5: IsGetMap back to 1 after drop-1 and drop-2 only; from drop-3 on it stays 0;
+#     one line "the game lowered it again after our put-back (2 times)" for IsGetMap; at most one
+#     "map refresh" from the put-backs (the same value is not refreshed again);
+#   - after-room: IsGetMap 1 again (owed back once after the room load), one map refresh;
+#   - room2-drop: put back again (the count starts again in the new room).
+# Shots (every mark shoots both games; owner rule: no PASS from log lines alone), in -A and -B of each:
+#   - map-on: both minimaps show the Deku Tree map (lit);
+#   - drop-2: A lit (put back), B lit;
+#   - drop-5 and drop-5b (60 frames apart): A's minimap dark in BOTH (left to the game, steady: no flicker
+#     back to lit between them); B lit in both (a drop is never sent);
+#   - after-room: A lit again (owed back after the room load), B lit;
+#   - room2-drop: A lit (put back in the new room), B lit.
+#! noload
+#! start coop: test warp done
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 1
+wait 120
+mark map-on
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 30
+mark drop-1
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 30
+mark drop-2
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 30
+mark drop-3
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 30
+mark drop-4
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 120
+mark drop-5
+wait 60
+mark drop-5b
+warp InsideTheDekuTree Entrance
+wait 900
+mark after-room
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 60
+mark room2-drop
+wait 120
+mark end

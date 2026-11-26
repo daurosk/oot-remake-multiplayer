@@ -53,6 +53,7 @@ struct SimClock {
 coop::server::ServerOptions server_options(const SimClock& clock) {
   coop::server::ServerOptions options;
   options.port = 0;
+  options.bind = 0x7F000001u;  // 127.0.0.1 only: a test listens on no other address
   options.session.join_password = "test-pass";
   options.now_us = clock.us();
   return options;

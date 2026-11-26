@@ -15,9 +15,11 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace CoopPuppet {
@@ -61,6 +63,23 @@ float StrengthFrom(const char* text);
 std::string_view TunicOf(std::uint32_t rgb);
 // Every suffix TunicOf returns besides "".
 const std::vector<std::string_view>& Tunics();
+// The colour a tunic copy's suffix stands for ("Red": 0xFF3030); nothing for one that is not.
+std::optional<std::uint32_t> TunicColour(std::string_view suffix);
+
+// 0.11.9 (the owner: any colour, exactly): each other player wears a tunic copy of their own, repainted live in their
+// exact colour (CoopLook's puppets' tunics). The nine coloured copies are given out by player number, each to the
+// one nearest of those still free; never the plain (green) puppet, whose tunic is the game's own texture the Kokiri
+// share. `exact`: the player has a copy no one before them has, so its painting is theirs; past nine players, the
+// rest share the copy nearest their colour (TunicOf, green included), shown in that preset as before.
+struct TunicCopy {
+    std::string suffix;   // "Red".."Black", or "" for the plain puppet
+    bool exact = false;
+};
+// `before`: the last round's (review round 2): a player who stays keeps the exact copy they had (a join, a rejoin or
+// another player's colour change never moves them, so their puppet is not made again); only players without one get
+// one from those still free.
+std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players,
+                                                   const std::map<std::uint8_t, TunicCopy>& before = {});
 
 // The actor's model, or 0 when the actor has none (yet).
 std::uint64_t ModelOf(CoopPuppet::Guest& guest, std::uint64_t actor);

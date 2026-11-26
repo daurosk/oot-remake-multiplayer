@@ -1,0 +1,51 @@
+# hs-dc-lifts-164 (row 164, dc-world-0118 a788f276; crawl-mido-0119): the Dodongo's Cavern room 1 lifts after a pause menu and a re-entry.
+# First half = hs-platforms-dodongo (both on lift 51802f1732232227, shots s1..s4). Then A opens its pause menu for 30 s
+# (paused-1, paused-2: B's three lifts keep moving, no long stop), closes it (back-1, back-2: A's lifts line up within 2
+# cycles of ~21 s). Then B warps back to the dungeon's entrance (a scene load: leave and come back) and stands on the lift
+# again (again-1, again-2: in step within 1 cycle, the shortcut lift 6aaec6828516aa4b at x=10.5 too).
+# Expect: B's log 'pause counter' writes after each event and no long 'do not hold'; A's log no 'pulls' while paused.
+# Shots: the same lift at the same height in A and B at s3/s4, back-2 and again-2; paused-1/-2 on B show the lifts moving.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 600
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -10.5 97.6 -23.0
+wait 10
+toward -10.5 40.0 6
+wait 224
+mark placed
+wait 600
+mark s1
+wait 600
+mark s2
+wait 900
+mark s3
+wait 1200
+mark s4
+press PLUS                      # A's pause menu open for 30 s
+wait 900
+mark paused-1
+wait 900
+mark paused-2
+press PLUS                      # closed
+wait 1260
+mark back-1
+wait 1260
+mark back-2
+wait 1500                       # (B leaves and comes back)
+mark again-1
+wait 1260
+mark again-2

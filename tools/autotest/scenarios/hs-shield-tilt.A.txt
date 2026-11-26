@@ -1,0 +1,50 @@
+# hs-shield-tilt (row 184): the Hylian Shield on a puppet, on the back and in hand, child and adult. The lane kit saves wear
+# it (child). A player with gear colours is shown by a colour copy (Weapon_Shield_Hylian_Look<k>), which before the fix hung
+# turned on the back (its own Carry clip did not bind: look_items.copy_animation_param). Both child at the Deku Tree
+# entrance: B walks ahead (A sees B's back), B raises the shield (ZL+ZR), A walks past (B sees A's back), A raises it.
+# Then A sets Sequence_IsChildhood 0 and reloads the same map as an adult behind B: B raises again, A walks past and raises.
+# Pass (shots, both games): every puppet shield sits as the own Link's does at the same step (back: flat on the back;
+# hand: held up in front). Run: run.ps1 -Runtime hookshot -Lane N -Scenario hs-shield-tilt (lane's own saves; the
+# lane's puppet pack made with the fix)
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 720
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark a-sees-b-child
+wait 160
+mark a-sees-b-hand
+wait 240
+stick 0 0.6 120
+wait 60
+mark a-passed
+hold ZL+ZR 300
+wait 300
+setflag Sequence_IsChildhood 0
+warp InsideTheDekuTree Entrance
+wait 1800
+mark a-adult
+wait 300
+mark a-adult-sees-b
+wait 150
+mark a-adult-sees-b-hand
+wait 200
+stick 0 0.6 150
+wait 60
+mark a-adult-passed
+hold ZL+ZR 300
+wait 300
+mark end

@@ -1,0 +1,69 @@
+# hs-event-result, B (see hs-event-result.A.txt): B stands near each asker, in its room, when A's played flag comes;
+# B's game sets that asker's outputs (no replay). B never presses a plate or shoots an eye itself.
+#! noload
+#! start coop: test warp done
+#! timeout 900
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+setflag InsideTheDekuTree_RoomC_Cleared 0
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp 0
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb 0
+wait 240
+place -47.5 112.0 9.0    # the slingshot room, west of the eye column (hs-eye-probe's B spot), ~11 m from the asker
+wait 240
+mark placed
+toward -35.6 10.7 10     # face the eye column and its ladder
+press ZL 10
+mark b-view
+wait 1500                # A's ladder flags come at about 360 frames in
+mark b-ladder
+# events-next-a-11 (test honesty): every watcher spot is >= 5 m off the room's plate and B is put back before the
+# shot, so B's own press can never be what moved the room (at 2.9 m hs-deku-platforms' A slid onto the plate).
+place -17.5 120.2 0.5    # the compass room's plate floor (3F), 5.4 m off the plate (hs-deku-platforms' A spot)
+wait 240
+toward -29.9 3.2 10      # face the lifts themselves (hs-deku-platforms.A's view; the asker spot showed a door)
+press ZL 10              # camera behind Link (without it b-lifts showed the room's east door, events-next-a-12 probe)
+wait 750                 # A's flag comes at about 600 frames after the place
+place -17.5 120.2 0.5
+toward -29.9 3.2 10
+press ZL 10
+wait 750
+mark b-lifts
+place -14.5 79.6 -6.5    # the web room, hs-deku-torch's A spot (~5 m off the plate at -10.2): not on it
+wait 240
+toward -10.0 -9.5 10     # face the torch and the web
+press ZL 10
+wait 750
+place -14.5 79.6 -6.5
+toward -10.0 -9.5 10
+press ZL 10
+wait 750
+mark b-web
+wait 300
+mark b-end
+warp IceCavern             # 4. the silver rupee room: B beside the room-5 asker while A takes the rupees
+wait 2400
+setflag HaveEncountered_Token 1   # no first-sight token event of B's own
+wait 240
+place 12.0 108.5 -21.0     # 3 m from the asker (11.0 107.9 -24.0 / 14.9 107.9 -24.0), in room 5's rupee room
+wait 240
+toward 14.9 -24.0 10
+mark b-silver-placed
+wait 3000                  # A's four tokens, then the last one and the counter's key, come in this time
+mark b-silver-held
+wait 1500                  # A's played flag comes in this time
+mark b-silver-set
+wait 900
+mark b-silver-end

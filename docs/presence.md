@@ -17,7 +17,8 @@ for (auto n : presence.players_in_scene(local_scene)) {
 - A sample with a NaN or infinite float, or a rotation of length 0, is dropped as invalid (the decoder refuses these already; this is a second guard). Rotations are normalised when buffered, and shown positions and velocities are kept within the float range, so even huge finite values from a sender give a finite pose.
 - Scene and age come from the newest sample that carried them, by sequence (allowing for the u32 wrap), so a late, older sample does not overwrite them and a jump in the sender's clock estimate cannot freeze them. They are taken even from a sample too late to be drawn. `same_scene` is false while the scene is not known.
 - `PLAYER_STATUS` flags are kept per player as received (unknown bits too).
-- `shown(player, server_now)` gives the pose at `server_now - show_delay`, and `Pose::how` says how it was made:
+- **Each player's own delay** (player report #37, `show_delay.hpp`): a sample from another game is its trip to the server plus the server's trip to us old when it comes (150-300 ms at internet pings), so a fixed 100 ms put the shown time past the newest sample: every frame extrapolated, then held, a jump at each sample. `seen(player, sample_time, server_now)` (the host session calls it for each `PLAYER_SAMPLE`) keeps that player's last 32 ages; its delay aims at their 90th percentile plus 60 ms (one send interval), never under `show_delay_us` (a LAN is unchanged) nor over 600 ms, grows at half speed and shrinks at 5 % (the shown time never goes back). `show_delay_us(player)` reads it; the hook gives the same delay to that player's pose copy and to the enemies it owns (`coop_show_delay.h`). Measured (tests/net/lag_path_test.cpp, 62 ms + 0-60 ms jitter each way): the other player drawn between two samples 0 % of frames at the fixed 100 ms, 99.6 % at the aged delay (about 260 ms).
+- `shown(player, server_now)` gives the pose at `server_now - ` that player's delay (`Pose::at_us`), and `Pose::how` says how it was made:
   - **interpolated** between the two samples around that time: cubic Hermite using both velocities, or a straight line if either has none. Rotation is a shortest-path slerp.
   - **extrapolated** past the last sample with its velocity, up to `extrapolate_us`.
   - **held** after that, at the extrapolation's end, with `fade` going from 1 to 0 over `fade_us`. Draw with `fade` as opacity; 0 means hide.
@@ -28,7 +29,7 @@ for (auto n : presence.players_in_scene(local_scene)) {
 
 | Setting | Default | Raise it when | Lower it when |
 |---|---|---|---|
-| `show_delay_us` | 100 ms | players stutter or extrapolate often (jitter or loss) | players look late next to voice or video |
+| `show_delay_us` | 100 ms | players stutter or extrapolate often on a LAN (jitter or loss); over the internet each player's delay rises above it by itself | players look late next to voice or video |
 | `extrapolate_us` | 150 ms | short drops make players freeze | players overshoot corners after a drop |
 | `fade_us` | 250 ms | a held player vanishes too abruptly | a stalled player lingers too long |
 | `max_gap_us` | 500 ms | normal keep-alive gaps (4 a second while still) are being cut | players slide across a pause |

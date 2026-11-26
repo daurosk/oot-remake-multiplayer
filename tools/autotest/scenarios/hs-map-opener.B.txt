@@ -1,0 +1,60 @@
+# hs-map-opener, B (dungeon-sync-b, then dungeon-maps-a, row 76 / #146): B gets only what co-op shares of A's map get
+# (IsGetMap and EnteredFloorBit), the same as a randomizer's map (it sets IsGetMap alone). Does B's map show?
+# B stands in the Deku Tree's first room while A opens the map chest, looks at its minimap and Map page, then a room
+# load, then a new load of the whole dungeon (warp out and in): a HUD made after the get.
+# "coop: map probe:" lines: B's HUD copy (floors byte, cached map) at each step.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395,LICHII_COOP_MAP_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-before
+wait 3000                 # A walks to the chest and plays the get scene
+mark b-after
+press MINUS
+wait 120
+mark b-panel
+press R
+wait 90
+mark b-panel-r1
+press R
+wait 90
+mark b-panel-r2
+press B
+wait 240
+place -29 117.6 0         # room 3: a room load (the map is read again)
+wait 900
+mark b-mini-room2
+press MINUS
+wait 120
+mark b-panel2
+press R
+wait 90
+mark b-panel2-r1
+press B
+wait 240
+warp KokiriForest_Child FrontDekuTree
+wait 1500
+warp InsideTheDekuTree Entrance
+wait 1800
+mark b-reentered          # a HUD built after the get
+press MINUS
+wait 120
+mark b-panel3
+press R
+wait 90
+mark b-panel3-r1
+press B
+wait 240
+mark end

@@ -1,0 +1,134 @@
+From 38aa22c80c224b22d96df0754b147ba3ed97bdb1 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 11:48:13 -0900
+Subject: [PATCH] Co-op AI node starts: the started node and its actor, to the
+ module
+
+One generic world event more (patch 0005's hook layer), for
+oot-remake-multiplayer's pushed blocks (issue 147, its docs/world.md
+"Pushed blocks"): 16 = HOS_COOP_WORLD_NODE_START, a = the node, b = its
+actor (host/hos_coop_nodes.h). nx2/coop_node_lift.py has one row per node
+start; a new start is a new row, not a new event. First row: the push
+node's start main+0x2751790 (ExecuteMovableBoxControl's Enter and the two
+node classes whose Enter calls it first), after main+0x27517c0 where x0 is
+the node and x9 its actor. The module keeps the newest node of each actor
+instead of looking for it in the heap. Words and build id checked.
+---
+ host/hos_coop_nodes.h | 26 ++++++++++++++++++
+ nx2/coop_hooks.py     |  2 ++
+ nx2/coop_node_lift.py | 62 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 90 insertions(+)
+ create mode 100644 host/hos_coop_nodes.h
+ create mode 100644 nx2/coop_node_lift.py
+
+diff --git a/host/hos_coop_nodes.h b/host/hos_coop_nodes.h
+new file mode 100644
+index 00000000..d1fe54a4
+--- /dev/null
++++ b/host/hos_coop_nodes.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   Co-op's AI node starts on Hookshot (oot-remake-multiplayer, docs/hookshot.md "World hooks"; our patch 0029).
++
++   Patch 0029's lift-time hooks (nx2/coop_node_lift.py, one row per node start) hand a started AI node and its actor to
++   the module through the same world hook as the pause counters (patch 0005, hos_coop_world.h: Hookshot's
++   host/coop_world.c -> the module's hos_coop_world). One event for every start: a new start is a new row there, not a
++   new event. Only the number lives here; the hook text in the patch uses it as a plain number
++   (tests/hookshot/module_test.cpp checks they agree). Hookshot's host/hos_coop_nodes.h is the same file. Plain C. */
++#ifndef HOS_COOP_NODES_H
++#define HOS_COOP_NODES_H
++#include "hos_coop_world.h"
++
++/* An AI node of an actor was started (entered): a = the node, b = its actor ([[[node + 8] + 8] + 0x1f0]), on the game
++   thread that runs the actor's AI. The starts hooked (nx2/coop_node_lift.py STARTS):
++   - main+0x2751790, the push node's start of every pushed block (ExecuteMovableBoxControl's Enter, vtable
++     main+0x49ae6f8, and the two node classes whose Enter calls it first, vtables main+0x499dfd0 and main+0x49dd0f0):
++     after main+0x27517c0, where it has read the actor and has not yet left early. */
++#define HOS_COOP_WORLD_NODE_START 16u
++
++/* The event numbers are one space with hos_coop_world.h's, which names the ranges: this one is the first of
++   HOS_COOP_WORLD_NEXT_FIRST to HOS_COOP_WORLD_NEXT_LAST. */
++#if HOS_COOP_WORLD_NODE_START < HOS_COOP_WORLD_NEXT_FIRST || HOS_COOP_WORLD_NODE_START > HOS_COOP_WORLD_NEXT_LAST
++#error "hos_coop_nodes.h: the node start's event number is outside its range (hos_coop_world.h)"
++#endif
++
++#endif
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index e9905c58..cd126a73 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -73,4 +73,6 @@ def install(lifter, img, build_id):
+     coop_platform_lift.install(lifter, img, build_id)
+     import coop_title_hooks   # (patch 0004: the title menu)
+     coop_title_hooks.install(lifter, img, build_id)
++    import coop_node_lift   # (patch 0029: AI node starts, the pushed blocks' push node)
++    coop_node_lift.install(lifter, img, build_id)
+     return len(FRAME_SITES) + 1
+diff --git a/nx2/coop_node_lift.py b/nx2/coop_node_lift.py
+new file mode 100644
+index 00000000..bb086a00
+--- /dev/null
++++ b/nx2/coop_node_lift.py
+@@ -0,0 +1,62 @@
++"""Co-op's AI node starts (oot-remake-multiplayer's patch 0029, its docs/hookshot.md "World hooks" and docs/world.md
++"Pushed blocks").
++
++One C hook after one ordinary instruction in an AI node's start hands the started node and its actor to the co-op
++module through host/coop_world.c (patch 0005), the same world hook layer as the pause counters and the actor events.
++The event number is in the module's hookshot/src/hos_coop_nodes.h (16 = HOS_COOP_WORLD_NODE_START, a = the node,
++b = its actor), one event for every node start listed in STARTS: a new start takes a row here, not a new event.
++
++- main+0x2751790, the start of the push node of every pushed block (ExecuteMovableBoxControl's Enter, vtable
++  main+0x49ae6f8 slot 29, and the Enter of two node classes built on it, main+0x26db2a0 (vtable main+0x499dfd0) and
++  main+0x2872580 (vtable main+0x49dd0f0), which call it first): it sets the push's start and target from the block's
++  place. After `ldr x9, [x9, #0x1f0]` (main+0x27517c0): x0 = the node, x9 = its actor ([[[node + 8] + 8] + 0x1f0]),
++  before the function's early exit when the actor has no component table. The module keeps the newest node of each
++  actor, so a block another player moved can have its own start run again (issue 147) without looking for the node in
++  the heap.
++
++The words are checked and the build id; another game version leaves the hook out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++EVENT = "extern void hos_coop_world_event(uint32_t event, uint64_t a, uint64_t b); "
++STARTS = (
++    ("push node", 0x27517c0,
++     ((0x2751790, 0xd503237f),    # pacibsp
++      (0x2751794, 0xd10343ff),    # sub sp, sp, #0xd0
++      (0x27517b4, 0xf9400408),    # ldr x8, [x0, #8]
++      (0x27517b8, 0xf90003e1),    # str x1, [sp]
++      (0x27517bc, 0xf9400509),    # ldr x9, [x8, #8]
++      (0x27517c0, 0xf940f929),    # ldr x9, [x9, #0x1f0]: the actor
++      (0x27517c4, 0xf9413929)),   # ldr x9, [x9, #0x270]
++     "{ " + EVENT + "hos_coop_world_event(16u, c->x[0], c->x[9]); }   "
++     "/* (nx2/coop_node_lift.py: co-op's AI node starts, host/coop_world.c: 16 = HOS_COOP_WORLD_NODE_START) */"),
++)
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def install(lifter, img, build_id):
++    """The hooks into lifter.after; a start whose words differ is left out, all of them on another build. Returns how
++    many went in."""
++    if build_id != BUILD_ID:
++        return 0
++    n = 0
++    for name, site, words, text in STARTS:
++        bad = next(((off, _word(img, MAIN + off), want) for off, want in words if _word(img, MAIN + off) != want),
++                   None)
++        if bad:
++            off, have, want = bad
++            print("co-op node starts: %s: main+%#x holds %s, not %08x: left out" % (
++                name, off, "?" if have is None else "%08x" % have, want))
++            continue
++        pc = MAIN + site
++        lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + text
++        print("co-op node starts: %s hook at main+%#x (world hook)" % (name, site))
++        n += 1
++    return n

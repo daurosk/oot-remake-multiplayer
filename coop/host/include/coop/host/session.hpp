@@ -34,6 +34,7 @@
 // While not connected frame() reads nothing and sends nothing; changes the
 // game made meanwhile are found at the first connected frame.
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -82,6 +83,12 @@ struct FrameReport {
   std::uint64_t server_now_us = 0;      // the client's estimate; 0 when not connected
   bool hosting = false;                 // the watcher's role is host
   bool holding = false;                 // a snapshot is coming in parts: hold the game
+  bool race = false;                    // race mode: nothing of the world is shared (coop/protocol/race.hpp)
+  // Rows 106/107: a held snapshot was dropped this frame (FlagWatcher::kHoldMaxFrames): the hook says so once.
+  bool hold_timeout = false;
+  // How long (1/60 s) the watcher's load window has been open; 0 when closed. Our own changes are not sent
+  // while it is: the hook logs one that stays open for a minute (rows 106/107).
+  std::uint64_t window_for = 0;
   std::size_t queued = 0;               // messages and flag lists queued to send
   // The host's save load reached this game this frame (FlagWatcher::
   // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
@@ -91,8 +98,11 @@ struct FrameReport {
   std::vector<FlagWatcher::Received> received;
   // A save load was seen this frame (FlagWatcher::take_save_load): distinct
   // flags gone back, frames with no scene. 0 when not.
+  bool save_load = false;  // (save_load_flags may be 0: a load through the title, #96)
   int save_load_flags = 0;
   int save_load_frames = 0;
+  bool save_load_native = false;  // said by the game's own load nodes (patch 0024), not the old signs
+  bool save_load_retry = false;   // Game Over's Try Again (row 159: the host sends no BOSS_ALIVE for it)
 };
 
 class Session {
@@ -105,6 +115,22 @@ class Session {
   // (PlayerReader::read_scene). Its absence for a while in a load is the
   // title screen, the sign of a save load (FlagWatcher::set_scene).
   void set_scene_readable(bool readable) { scene_readable_ = readable; }
+  // Emulator thread, before frame(): Hookshot's title menu is up now
+  // (FlagWatcher::set_title; passed on also while not connected). Never set
+  // on the emulator.
+  void set_title_up(bool up) { title_up_ = up; }
+  // Emulator thread, before frame(): Hookshot's save-load wraps (patch 0024; FlagWatcher::set_native_loads,
+  // note_save_load_start, note_save_loaded). Passed on also while not connected: a load then is taken at the
+  // connection's first frame. Never set on the emulator.
+  void set_native_save_loads(bool on) {
+    if (watcher_) watcher_->set_native_loads(on);
+  }
+  void note_save_load_start() {
+    if (watcher_) watcher_->note_save_load_start();
+  }
+  void note_save_loaded(bool retry = false) {
+    if (watcher_) watcher_->note_save_loaded(retry);
+  }
 
   // Emulator thread, once per emulated frame. `reading` is this frame's
   // PlayerReader::read() (nothing when the game is not the right one);
@@ -122,7 +148,14 @@ class Session {
   // starts velocity afresh, as after a WELCOME; the connection is kept.
   void reset() { reset_sampler_ = true; }
   // Emulator thread: the player's colour changed (Sampler::set_color).
-  void set_color(std::optional<std::uint32_t> color) { sampler_.set_color(color); }
+  void set_color(std::optional<std::uint32_t> color) {
+    std::lock_guard lock(sampler_mutex_);
+    sampler_.set_color(color);
+  }
+  // Any thread: the game is held now (the play-test bridge's hold: no frame()
+  // comes while it lasts). service() then sends the last sample again each
+  // keep-alive time (Sampler::hold), so the others keep a still puppet of us.
+  void set_held(bool held) { held_.store(held, std::memory_order_relaxed); }
 
   // Network thread: sends what frame() queued, runs the client once without
   // waiting, and handles every event that came.
@@ -152,8 +185,14 @@ class Session {
   // loaded in the game (FlagWatcher::share_pickup). False when flags are not
   // shared or it was known.
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
+  // FlagWatcher::keep_local. Emulator thread only, like share_pickup. 0 when flags are not shared.
+  std::size_t keep_local(std::span<const FlagKey> keys) { return watcher_ ? watcher_->keep_local(keys) : 0; }
   // FlagWatcher::share_one_way. Emulator thread only, like share_pickup.
   bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
+  // FlagWatcher::share_down_only. Emulator thread only, like share_pickup.
+  bool share_down_only(FlagKey key) { return watcher_ && watcher_->share_down_only(key); }
+  // FlagWatcher::share_up_only. Emulator thread only, like share_pickup.
+  bool share_up_only(FlagKey key) { return watcher_ && watcher_->share_up_only(key); }
   // The game's own flag writes as events (FlagWatcher::use_events,
   // game_wrote, game_wrote_all). Emulator thread only, before frame().
   void flag_events(bool on) {
@@ -169,10 +208,29 @@ class Session {
   FlagStats flag_stats() const { return watcher_ ? watcher_->stats() : FlagStats{}; }
   // FlagWatcher::share_pickup_named (a named Bool, the pickup rule).
   bool share_pickup_named(FlagKey key) { return watcher_ && watcher_->share_pickup_named(key); }
+  // Emulator thread only: FlagWatcher::share_containers (row 218, heart containers add up).
+  bool share_containers(FlagKey key) { return watcher_ && watcher_->share_containers(key); }
+  // Emulator thread only: FlagWatcher::group_int (row 218: the group's maximum life as we know it).
+  std::optional<std::int32_t> group_int(FlagKey key) const {
+    return watcher_ ? watcher_->group_int(key) : std::nullopt;
+  }
+  // Emulator thread only: FlagWatcher::note_group_at_least (row 218, the boss's one container).
+  void note_group_at_least(FlagKey key, std::int32_t value) {
+    if (watcher_) watcher_->note_group_at_least(key, value);
+  }
   // Emulator thread only: FlagWatcher::take_written_for_others (empty when
   // flags are not shared).
-  std::vector<FlagKey> take_one_way_restores() {
-    return watcher_ ? watcher_->take_one_way_restores() : std::vector<FlagKey>{};
+  std::vector<FlagWatcher::OneWayRestore> take_one_way_restores() {
+    return watcher_ ? watcher_->take_one_way_restores() : std::vector<FlagWatcher::OneWayRestore>{};
+  }
+  // Row 140: FlagWatcher::take_one_way_left / take_keeps_failing (for the log; empty when flags are not shared).
+  std::vector<FlagKey> take_one_way_left() {
+    return watcher_ ? watcher_->take_one_way_left() : std::vector<FlagKey>{};
+  }
+  // Row 140: FlagWatcher::take_hud_refresh (false when flags are not shared).
+  bool take_one_way_hud_refresh() { return watcher_ && watcher_->take_hud_refresh(); }
+  std::vector<FlagWatcher::KeepsFailing> take_keeps_failing() {
+    return watcher_ ? watcher_->take_keeps_failing() : std::vector<FlagWatcher::KeepsFailing>{};
   }
   // How many times a one-way Bool was put back this session (for the log).
   std::uint64_t one_way_restores() const {
@@ -191,6 +249,21 @@ class Session {
     if (!watcher_) return false;
     watcher_->guard_count(count, sources);
     return true;
+  }
+  // Emulator thread only: FlagWatcher::guard_reward (row 272, a once-per-save
+  // reward got in two games at once). False when flags are not shared.
+  bool guard_reward(std::span<const std::vector<FlagKey>> units, std::span<const FlagKey> sources) {
+    if (!watcher_) return false;
+    watcher_->guard_reward(units, sources);
+    return true;
+  }
+  // Emulator thread only: FlagWatcher::set_reward_self (row 272).
+  void set_reward_self(std::uint8_t number) {
+    if (watcher_) watcher_->set_reward_self(number);
+  }
+  // Emulator thread only: FlagWatcher::take_rewards_guarded.
+  std::vector<FlagWatcher::RewardGuarded> take_rewards_guarded() {
+    return watcher_ ? watcher_->take_rewards_guarded() : std::vector<FlagWatcher::RewardGuarded>{};
   }
   // Emulator thread only: FlagWatcher::expect_doubled_gain (issue 195, a
   // chest opened again here). False when flags are not shared.
@@ -214,13 +287,32 @@ class Session {
     }
     return true;
   }
+  // Emulator thread only: FlagWatcher::reset_lowered (rows 136/137).
+  std::optional<std::int32_t> reset_lowered(FlagKey key) const {
+    return watcher_ ? watcher_->reset_lowered(key) : std::nullopt;
+  }
+  // Emulator thread only: FlagWatcher::lowered_done (row 238).
+  void lowered_done(FlagKey key, std::int32_t seen) {
+    if (watcher_) watcher_->lowered_done(key, seen);
+  }
+  // Emulator thread only: FlagWatcher::held_lower (rows 136/137 and 181).
+  std::optional<std::int32_t> held_lower(FlagKey key) const {
+    return watcher_ ? watcher_->held_lower(key) : std::nullopt;
+  }
   // Emulator thread only: FlagWatcher::take_counts_guarded.
   std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
     return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};
   }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.
+  // While held, service() also sends samples: read the sequence with
+  // next_sample_sequence() then.
   const Sampler& sampler() const { return sampler_; }
+  // Any thread: Sampler::next_sequence, under the sampler's lock.
+  std::uint32_t next_sample_sequence() {
+    std::lock_guard lock(sampler_mutex_);
+    return sampler_.next_sequence();
+  }
   // Null when no flags are shared.
   const FlagWatcher* flags() const { return watcher_ ? &*watcher_ : nullptr; }
 
@@ -241,11 +333,16 @@ class Session {
   void send(Outbound& out);              // network thread, under net_mutex_
   void queue_flags(const std::vector<Outgoing>& out, std::vector<Outbound>& to);
 
-  // Emulator thread only.
+  // Emulator thread, and the network thread while held (set_held): the
+  // sampler under sampler_mutex_ (taken after net_mutex_, never before).
+  std::mutex sampler_mutex_;
   Sampler sampler_;
+  std::atomic<bool> held_{false};
+  // Emulator thread only.
   std::optional<FlagWatcher> watcher_;
   bool reset_sampler_ = false;
   bool scene_readable_ = true;  // set_scene_readable
+  bool title_up_ = false;       // set_title_up
   PlayerReader::DrawnState drawn_state_{};  // frame(GameMemory&)'s readers share it
 
   // Guarded by net_mutex_.
@@ -258,6 +355,8 @@ class Session {
   std::function<void(const net::Event&, net::Client&)> on_event_;
   std::function<std::uint64_t()> game_frame_age_us_;  // SessionSettings::game_frame_age_us
   bool sharing_ = false;  // set once, before any thread starts
+  bool race_ = false;     // the game thread's: race mode seen in this session (frame())
+  bool welcomed_held_ = false;  // a WELCOME came while held: service() sends the status again
 
   // Guarded by presence_mutex_.
   std::mutex presence_mutex_;

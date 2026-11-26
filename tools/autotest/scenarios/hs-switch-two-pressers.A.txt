@@ -1,0 +1,45 @@
+# hs-switch-two-pressers (row 244, branch cutscene-244; docs/objects.md "Timed switches"): both players stand on
+# Dodongo's Cavern's block-puzzle plate (Obj_StepSwitch_A_01 OnState at -49.0 114.2 -8.0, the SwitchShutter's),
+# as piscesgamer97's group did. Before 2e34957a each game held the plate for the other and both stopped sending,
+# so each let the other's press go every ~5 s ("let go after 5.1 s held") and every other game's switch blinked.
+# Two games show it: the third game's view is each game's view of the other.
+# Run: hookshot.py run --lane 1 --name hs-switch-two-pressers --script-a <this> --script-b <the .B file> --no-load
+# PASS:
+#  1. Both: "switch share: Obj_StepSwitch_A_01 OnState at -49.0 114.2 -8.0: our player's press: sent" and
+#     "another player's is on: ours held on".
+#  2. A (player 1, the lowest): "another player presses it too: ours is resent while held".
+#  3. B: between "mark both-on" and "mark a-off" no "let go after" line for that plate (A's press is resent every
+#     2 s); at most one in A (B is quiet, so A's hold of B lapses once; A's own press keeps its plate on).
+#  4. After a-off (A steps away): B keeps its own plate on (its own press); after b-off both plates go off and
+#     nothing is sent any more (no latch).
+#  Shots both-on / held30: both Links on the plate on both screens.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 400
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -49.4 114.6 -8.0   # on the plate (west half)
+wait 300
+mark both-on
+wait 1800
+mark held30
+wait 600
+place -43.0 114.6 -8.0   # off the plate
+wait 60
+mark a-off
+wait 900
+mark a-off15
+wait 900
+mark end

@@ -4,9 +4,9 @@ Two stages: co-op on the Lichii emulator first, then the same co-op in a native 
 
 ## Where it stands
 
-- **Stage 1 (emulator)**: steps 0 to 6 below are built and ship in the test releases (see the [README](../README.md) and [known-issues.md](known-issues.md) for what works). Sharing is being widened area by area: [sync-coverage.md](sync-coverage.md).
-- **Stage 2 (PC port)**: co-op in Hookshot, the PC port of the same game build, is in progress as an experimental second runtime, with the same protocol and server.
-- Wire protocol: version 10 ([protocol.md](protocol.md)).
+- **Stage 1 (emulator)**: steps 0 to 6 below were built and shipped in the early test releases, the last emulator release being the one of 2026-11-12 (see the [README](../README.md) and [known-issues.md](known-issues.md) for what works). Sharing is being widened area by area: [sync-coverage.md](sync-coverage.md).
+- **Stage 2 (PC port)**: co-op on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (the PC port of the same game build) is where the releases are: since 0.10.1 they run only on it, with the same protocol and server ([hookshot.md](hookshot.md)). The newest release is in the [README](../README.md). Native puppets (the other players as real game bodies) are designed in [native-puppets.md](native-puppets.md) and built behind switches, off by default. For 1.0 the co-op is meant to ship as an add-on mod for a recomp.
+- Wire protocol: version 15 ([protocol.md](protocol.md), "Versioning").
 
 ## Why the emulator first
 
@@ -23,7 +23,7 @@ The TOTK Online mod (kirbymimi) is a closed module that hooks Tears of the Kingd
 - **Transport:** ENet (MIT). Reliable channels for events and progress, fast unreliable channels for positions. Runs on the PC side, never inside guest code. LAN, VPN networks, invite codes with UPnP and NAT hole punching, and an optional relay ([play-online.md](play-online.md)).
 - **Server:** our own, small, in this repository. The host's game decides shared progress.
 - **Wire format:** every sample carries a timestamp and a velocity; every component carries its own length; the same layout in both directions; a protocol version checked on connect.
-- **Players:** 2 to 4.
+- **Players:** 2 to 16 (up to 4 on this plan's first stages; the server's `--max-players` is 1 to 16, default 16).
 - **Full protocol:** [protocol.md](protocol.md).
 
 ## Code layout

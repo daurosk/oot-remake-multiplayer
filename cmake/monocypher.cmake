@@ -1,7 +1,8 @@
 # Monocypher 4.0.2 (Loup Vaillant and others; BSD-2-Clause or CC0-1.0, the
 # user's choice), fetched at a fixed commit and never copied into the tree.
 # Used for the traffic encryption (coop/protocol traffic_crypto): X25519,
-# BLAKE2b and XChaCha20-Poly1305. No crypto primitive is our own.
+# BLAKE2b and XChaCha20-Poly1305; the optional Ed25519 (official_mark) for the
+# official public game's signed mark. No crypto primitive is our own.
 include(FetchContent)
 
 FetchContent_Declare(monocypher
@@ -12,8 +13,10 @@ FetchContent_Declare(monocypher
 )
 FetchContent_MakeAvailable(monocypher)
 
-add_library(monocypher STATIC "${monocypher_SOURCE_DIR}/src/monocypher.c")
-target_include_directories(monocypher SYSTEM PUBLIC "${monocypher_SOURCE_DIR}/src")
+add_library(monocypher STATIC "${monocypher_SOURCE_DIR}/src/monocypher.c"
+  "${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c")   # Ed25519 + SHA-512: the official game's mark
+target_include_directories(monocypher SYSTEM PUBLIC "${monocypher_SOURCE_DIR}/src"
+                           "${monocypher_SOURCE_DIR}/src/optional")
 set_target_properties(monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
   target_compile_options(monocypher PRIVATE /w)

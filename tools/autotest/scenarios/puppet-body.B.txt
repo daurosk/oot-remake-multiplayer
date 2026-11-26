@@ -1,0 +1,28 @@
+# puppet-body B (proof-0116): stands still at 191.93 309.87, facing A (east), camera recentred.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+place 191.93 163.4 309.87
+wait 30
+toward 195.93 309.87 6
+wait 30
+press ZL                # camera behind B along +x, at A
+wait 60
+wait 30
+mark standing
+wait 1200
+mark end

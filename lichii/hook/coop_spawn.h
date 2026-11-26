@@ -14,6 +14,7 @@
 //   the owner's remove (the game's own explosion), deletes the others.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -21,9 +22,11 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_bomb_share.h"
 #include "coop_enemy_shots.h"
 #include "coop_projectiles.h"
 #include "coop_puppet.h"
@@ -41,6 +44,18 @@ struct Event;
 namespace CoopSpawn {
 
 using coop::protocol::Vec3;
+
+// Row 164 follow-up: a flight that comes back to its thrower (the boomerang, the hookshot's tip): it never ends where
+// it hit, so its farthest point (Flight::far_at) stands for that. Shorter than kReturnShotMinFarM: never left the hand.
+inline constexpr float kReturnShotMinFarM = 1.0f;
+// Its turn is read while it flies, not when it is gone (it comes back up to a second or more after its hit, past a
+// boss copy's 12-frame look-back for its skipped stun): it came this much nearer than its farthest, or its farthest
+// stood for kReturnShotStoodSteps walks (a hookshot's tip held in a target or a boss's part).
+inline constexpr float kReturnShotTurnM = 0.25f;
+inline constexpr unsigned kReturnShotStoodSteps = 3;
+inline bool IsReturnShot(std::string_view name) {
+    return name == "Weapon_Boomerang" || name == "Shootable_Hook" || name == "Shootable_HookLong";
+}
 
 // The made actors that are shared, and whether they explode when gone.
 bool IsShared(std::string_view name);
@@ -106,6 +121,9 @@ struct Copy {
     // director emits once on it with the game's own search and emit, where
     // it is.
     std::string effect;
+    // Issue 166: not empty: a key of the actor's own SLink user, played
+    // once on it the same way after `effect` (the landing sound).
+    std::string sound;
     // Always the game's own actor of that name, never the pack's stand-in:
     // the shootable the game makes has the effect user the key belongs to.
     bool real = false;
@@ -119,10 +137,13 @@ public:
     static constexpr std::uint64_t kCopyLifeUs = 20'000'000; // no remove came: dropped
     static constexpr float kClaimDistance = 1.5f;            // a fresh copy found on the list
     static constexpr unsigned kGoneWalks = 2;
+    // Phase 2: walks a copy made ours is offered to the director to let go.
+    static constexpr unsigned kReleaseWalks = 30;
     static constexpr std::uint64_t kExplodeMinUs = CoopProjectiles::kExplodeMinUs;
 
-    // Network thread: OBJECT_SPAWN, OBJECT_SAMPLE, OBJECT_REMOVE. Applied on
-    // the next Tick.
+    // Network thread: OBJECT_SPAWN, OBJECT_SAMPLE, OBJECT_REMOVE (and, with
+    // the bomb share on, HANDOVER_ASK, HANDOVER_STATE, OBJECT_OWNER and
+    // BOMB_ANSWER). Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
 
     // Present thread, once per walk. `copies_live` are the actors the
@@ -132,6 +153,20 @@ public:
               std::vector<coop::protocol::Message>& send, std::vector<Copy>& copies);
 
     void Reset();
+
+    // Native puppets phase 2 (coop_bomb_share.h, LICHII_COOP_BOMB_SHARE=1):
+    // a bomb changes hands when our Link lifts another player's. Off: none of
+    // the messages below is taken in or sent, and nothing else changes. Set
+    // before the first Tick (the network thread reads it).
+    void SetBombShare(bool on) { bomb_share_ = on; }
+    bool BombShare() const { return bomb_share_; }
+    // Present thread, before Tick: the pouch's "Bomb" count (a stash).
+    void SetPouch(std::optional<int> count, std::uint64_t now_us) { pouch_.Read(count, now_us); }
+    // Our taken bombs whose fuse ran out this Tick: the director sets their
+    // life to 0 (the game's own explosion) if the actor still has `vtable`.
+    const std::vector<Doomed>& BlowOwn() const { return blow_own_; }
+    // What the bomb share did in the last Tick, one line each (for the log).
+    const std::vector<std::string>& BombNotes() const { return bomb_notes_; }
 
     // Projectile copies get the game's setter after each place write
     // (Copy::setter). LICHII_COOP_SHOTS_SETTER=0 turns it off.
@@ -230,6 +265,18 @@ public:
     // One of ours that left the list, and how it moved (issue 158: whether
     // a slingshot seed's place moves in flight, or the game keeps it at the
     // sling). For the log.
+    // Row 177 (coop_shot_reflect.h). Our shots another player sent back since the last take (filled by Tick from
+    // DAMAGE cause reflected): the owner's game sends each back with the game's own call.
+    struct ReflectAsk {
+        std::uint64_t address = 0;  // our shot's actor
+        std::string name;
+        std::uint8_t player = 0;    // who sent it back
+    };
+    std::vector<ReflectAsk> TakeReflectAsks() { return std::exchange(reflect_asks_, {}); }
+    // The copies (Copy::key) our Link sent back in our game (Director::TakeReflected): one DAMAGE cause
+    // reflected each to the shot's owner. Present thread, after Tick.
+    void SendReflected(const std::vector<std::uint64_t>& keys, std::vector<coop::protocol::Message>& send);
+
     struct Flight {
         coop::protocol::ObjectId id;
         std::string name;
@@ -240,9 +287,14 @@ public:
         bool shot = false;       // let go (its ammo count went down)
         bool made_up = false;    // its flight was sent from the shot, not its place
         unsigned bounces = 0;    // turned like a bounce (issue 166)
+        Vec3 far_at{};           // where it was farthest (a boomerang's or hookshot's turn: where it hit or held)
+        bool turn_seen = false;  // ReturnTurns had its turn while it flew
     };
     // The ones that left in the last Tick.
     const std::vector<Flight>& Flights() const { return flights_; }
+    // Row 164 follow-up: our boomerangs' and hookshots' turns read in the last Tick (IsReturnShot), each once,
+    // where it turned: for CoopBossNative::Table::NoteOwnShotEnd on the frame of the hit, not when the flight ends.
+    const std::vector<Vec3>& ReturnTurns() const { return turns_; }
 
 private:
     struct Own {
@@ -259,6 +311,9 @@ private:
         std::uint64_t made_at = 0;
         Vec3 made_position{};
         float far = 0.0f;
+        Vec3 far_at{};  // where `far` was reached
+        unsigned far_stood = 0;  // walks since `far` last grew (a return shot's turn)
+        bool turn_seen = false;  // its turn went to turns_
         float top_speed = 0.0f;
         // The shot (issue 158).
         std::optional<std::uint64_t> shot_at;
@@ -272,6 +327,15 @@ private:
         unsigned out_of_hands = 0;
         bool sent_held = false;
         std::optional<coop::protocol::Animation> animation;
+        // Phase 2 (bomb share): the epoch we own it at (0 for our own made
+        // ones), taken from another player, when it goes off (server clock;
+        // none: unlit), blown once, and its vtable (a delete or a blow
+        // checks it is still the same actor).
+        std::uint16_t epoch = 0;
+        bool taken = false;
+        std::optional<std::uint64_t> blow_at;
+        bool blown = false;
+        std::uint64_t vtable = 0;
     };
     struct Remote {
         std::uint64_t key = 0;
@@ -279,6 +343,9 @@ private:
         CoopProjectiles::Track track;  // the owner's samples on the server clock
         std::optional<coop::protocol::Quat> rotation;
         std::uint64_t got_us = 0;     // our time of the latest message
+        // #239: who sends its samples (the maker, then whoever its samples come from: a bomb handed over), whose
+        // show delay it is drawn with (CoopShowDelay::Us: as late as that player's puppet).
+        std::uint8_t player = 0;
         std::optional<coop::protocol::RemoveReason> removed;
         std::uint64_t address = 0;    // once the director made it
         // A bomb: when the owner's fuse runs out (server clock). Blown then
@@ -289,6 +356,7 @@ private:
         bool impacted = false;        // its impacts asked for once (issue 166)
         bool effect_asked = false;    // its hit effect was asked for once (issue 166)
         std::string effect;           // ... and, in copy mode, the key its copy plays from then on
+        std::string sound;            // ... and its landing sound's key (HitSound)
         bool live = false;            // the director had it on the list
         // Issue 169: in the owner's hands (shown as the held stand-in, along
         // `held_path` kHeldBehindUs late), and the owner's animation.
@@ -298,6 +366,16 @@ private:
         std::uint64_t animation_at = 0;  // server clock of its sample
         // Went off while held: the bomb is made first, then blown up.
         bool explode_once_made = false;
+        // Phase 2 (bomb share): the owner's epoch as last heard; our Link
+        // lifted it and BOMB_TAKE is out (the director stops placing it); the
+        // server made it ours (HANDOVER_STATE): adopted into mine_ once the
+        // director has the game's own bomb for it.
+        std::uint16_t epoch = 0;
+        bool taking = false;
+        // Refused (or no answer): not asked again until its animation stops
+        // saying Lifted (our Link let go of it).
+        bool refused = false;
+        std::optional<coop::protocol::HandoverState> adopt;
         Vec3 Position() const { return track.Empty() ? Vec3{} : track.Last().position; }
     };
 
@@ -310,6 +388,12 @@ private:
     // Issue 158: the made-up flight, once the grace is over (Shot).
     void MakeUpFlight(Own& m, std::uint64_t now_us);
     Vec3 ShotPlace(const Own& m, std::uint64_t now_us) const;
+    // Phase 2: the bomb share's messages (with `send`), the adoption of a
+    // handed copy, and a sample of our own for an answer.
+    void Bombs(std::uint8_t self, std::uint64_t now_us, std::vector<coop::protocol::Message>& send);
+    void Adopt(std::uint64_t now_us);
+    coop::protocol::ObjectState StateOf(const Own& m, std::uint64_t now_us) const;
+    std::optional<float> FuseOf(const Own& m, std::uint64_t now_us) const;
 
     std::string scene_;
     bool first_walk_ = true;
@@ -350,6 +434,7 @@ private:
     std::size_t hit_effects_asked_ = 0;
     std::size_t impacts_made_ = 0;
     std::vector<Flight> flights_;
+    std::vector<Vec3> turns_;  // ReturnTurns
     std::vector<MadeUp> made_up_;
     // Enemy shots on our list that are not sent (verdict keep or hide), by
     // address, and how many walks each was seen.
@@ -362,6 +447,7 @@ private:
     };
     std::map<std::uint64_t, Local> local_;
     std::vector<CoopEnemyShots::Shooter> shooters_;
+    std::vector<ReflectAsk> reflect_asks_;
     bool hide_ = true;
     std::vector<Doomed> doom_;
     std::vector<Decided> decided_;
@@ -374,6 +460,18 @@ private:
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;
+
+    // Phase 2 (bomb share).
+    std::atomic<bool> bomb_share_{false};
+    std::vector<coop::protocol::Message> bomb_inbox_;  // under inbox_mutex_
+    CoopBombShare::Takes takes_;
+    CoopBombShare::PouchWatch pouch_;
+    CoopBombShare::Announce announce_;
+    std::vector<Doomed> blow_own_;
+    std::vector<std::string> bomb_notes_;
+    // Copies made ours: the director is told to let go of the actor (Act::
+    // release) until it has (key to walks asked).
+    std::map<std::uint64_t, unsigned> releasing_;
 };
 
 // Issue 85: the copy of another player's slingshot seed, arrow or hookshot
@@ -444,11 +542,19 @@ public:
     // Each is deleted once, with the game's delete request, only if it is
     // still on the actor list with the same vtable and is none of ours.
     void SetDoomed(std::vector<Doomed> doomed);
+    // Phase 2 (bomb share): our own taken bombs whose fuse ran out. Each gets
+    // its life set to 0 once (the game's own explosion, as a copy is blown)
+    // if the actor still has the vtable.
+    void SetBlowOwn(const std::vector<Doomed>& blow);
     std::size_t Deleted() const;  // enemy shots deleted so far
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
     // Present thread: the stand-ins the installed puppet pack has
     // (StandInsIn). None (the default): every copy is the game's own actor.
     void SetStandIns(std::set<std::string> names);
+    // Row 177: our Link's actor (CoopObjects::OurLinkActor; 0 none), and the keys of the shot copies it sent back
+    // since the last take (CoopShotReflect::OurHit on the copy's own hit lists), each once.
+    void SetOurLink(std::uint64_t link) { our_link_.store(link, std::memory_order_relaxed); }
+    std::vector<std::uint64_t> TakeReflected();
     // A stand-in that failed this many times in a row (create failed, timed
     // out or dropped, or no actor taken) is not asked for again this session.
     static constexpr int kStandInTries = 3;
@@ -473,7 +579,10 @@ private:
         bool stand_in = false;
         bool effects = false;   // the EffectStandIn: it has the shootable's ELink user
         bool emitted = false;   // Copy::effect was played (or could not be) once
+        bool sounded = false;   // Copy::sound was played (or could not be) once
         std::string copy_of;  // the shared actor's name (Copy::actor)
+        bool reflected = false;  // row 177: our Link sent this shot copy back (said once)
+        int hits_noted = 0;      // row 177: its hit lists logged (at most 3 times, when not empty)
     };
     enum class Pending { none, malloc, create, take, drop, remove, search, emit };
 
@@ -491,6 +600,9 @@ private:
     std::optional<CoopPuppet::Call> EmitCall(CoopPuppet::Guest& guest, std::size_t i);
     std::uint64_t NameCellOf(CoopPuppet::Guest& guest, const std::string& name);
     std::uint64_t ELinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const;
+    // The SLink user (the sound's: XLink component + 0x78), or 0.
+    std::uint64_t SLinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const;
+    std::uint64_t XLinkUser(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint64_t at) const;
     std::uint64_t SlotBase(std::size_t i) const { return block_ + i * kSlotSize; }
     const Copy* Wanted(std::uint64_t key) const;
     void Say(const std::string& text) const;
@@ -528,6 +640,8 @@ private:
     std::vector<std::size_t> plays_;    // slots with an animation this frame
     std::vector<std::size_t> emits_;    // slots with an effect to play this frame
     bool emit_found_ = false;           // the search found the key: emit next
+    bool emit_sound_ = false;           // the search/emit under way is Copy::sound's (SLink user)
+    std::size_t sounds_done_ = 0;
     std::map<std::string, int> effect_fails_;  // EffectStandIn failures in a row, by shared actor
     std::set<std::string> no_effects_;         // ... kStandInTries times: the plain stand-in again
     std::size_t emits_done_ = 0;
@@ -538,6 +652,9 @@ private:
     // copied as the game's own actor from then on.
     std::set<std::string> no_stand_in_;
     std::vector<Doomed> doomed_;                     // guarded
+    std::vector<Doomed> blow_own_;                   // guarded
+    std::vector<std::uint64_t> reflected_;           // guarded (row 177)
+    std::atomic<std::uint64_t> our_link_{0};
     std::map<std::uint64_t, std::uint64_t> done_doomed_;  // address to when deleted (ms)
     std::size_t deleted_ = 0;                        // guarded
     std::optional<CoopPuppet::Call> NextDoomed(CoopPuppet::Guest& guest, std::uint64_t now_ms);

@@ -1,0 +1,25 @@
+# hs-switch-two-pressers, B: on the same plate (east half) with A; stays on 15 s after A steps off. See the A file.
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -48.6 114.6 -8.0   # on the plate (east half)
+wait 300
+mark b-both-on
+wait 2400
+mark b-a-off
+wait 900
+place -55.0 114.6 -8.0   # off the plate
+wait 60
+mark b-off
+wait 840
+mark end

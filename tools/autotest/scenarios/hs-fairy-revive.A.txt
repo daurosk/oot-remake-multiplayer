@@ -1,0 +1,35 @@
+# hs-fairy-revive (Hookshot, branch down-spectate, row 113 research; no PASS/FAIL of the game, a measurement):
+# how long the game's own bottled-fairy revive keeps Link at no life, so down but not out's kDyingUs (8 s, the
+# fallback before a Link at 0 counts as out) is known to be longer. A hosts (joins first) and turns down but not out
+# off, so B's death is the game's own; B carries a fairy in bottle A and takes the game's own hits on its Link
+# (`hurt 4`, CoopObjects::HurtOurLink, the PvP hit path) until its life is gone (hs-fairy-revive.B.txt).
+# Run 1 (20261116-084947) measured nothing: B walked off toward the pvp scenario's 213 14 (this kit's arrival point is
+# 197.6 309.9) and A's sword swung the other way; PlayerStatus.Life is the saved copy (setting it left the Life
+# component at 12); `kill Player_Child` finds no Player_Child (our Link is not in the objects' list). Hence `hurt`.
+# Read: B's "coop: objects: our Link's life N of M" lines (LICHII_COOP_DEBUG_OBJECTS=1): the first "life 0 of" and
+# the next "life N of" (N > 0) are the revive; the offline job timestamps them as they are written. Also the
+# puppets' actor names ("coop: objects: + CoopPuppet_").
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-fairy-revive -Server <protocol 12 server>
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark field
+chat /dbno off
+wait 3600               # B fills its bottle and is hurt until the fairy revives it
+mark after
+chat /dbno on
+wait 120
+mark end

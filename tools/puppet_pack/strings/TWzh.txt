@@ -1,0 +1,31 @@
+# The pack's own words in the game's Chinese (Traditional), for the pause menu's co-op pages
+# (ui_pack.py's load_strings: the labels of strings/en.txt, the same files and labels).
+#
+# [file] names a message file of the game's language archives (Mals/TWzh.Product.110.sarc.zs).
+
+[LayoutMsg/MenuOverlay_00.msbt]
+Characters = 角色
+# The - menu's tabs of ours, right of Map (0.11.9): T_Text_00 of the parts Pa_Category_04..06.
+Pa_Category_04-T_Text_00 = 連線
+Pa_Category_05-T_Text_00 = 大廳
+Pa_Category_06-T_Text_00 = 模組
+
+[LayoutMsg/PlusMenu_00.msbt]
+# The Multiplayer page's five rows. The co-op module writes the live words over them while the page
+# shows (the session's state, the room, who asks to join); these are what a pack shows before that.
+# System's buttons of ours: Longshot Settings, Multiplayer and Customize Link (the tab strip stays the game's own).
+Pa_System_00-Pa_Button_05-T_Btn_00 = Longshot 設定
+# Longshot Settings' five rows: Longshot's options by their tab in its own menu.
+Pa_Settings_00-Pa_Button_00-T_Btn_00 = 畫面
+Pa_Settings_00-Pa_Button_01-T_Btn_00 = 聲音
+Pa_Settings_00-Pa_Button_02-T_Btn_00 = 遊戲
+Pa_Settings_00-Pa_Button_03-T_Btn_00 = 操作
+Pa_Settings_00-Pa_Button_04-T_Btn_00 = 體感
+
+[LayoutMsg/CharacterMenu_00.msbt]
+T_Title_00 = 角色
+T_Custom_00 = 自訂
+T_Note_00 = 此角色頁面來自 Snail 的 OoT Character Select。\n下載他的模組即可使用其他可玩角色。
+
+[LayoutMsg/CharacterCustomize_00.msbt]
+T_Head_00 = 自訂

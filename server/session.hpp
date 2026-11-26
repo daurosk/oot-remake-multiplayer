@@ -50,6 +50,17 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 // number with the first dotted part highest.
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
+// A private network address (first dotted part highest): 10/8, 172.16/12,
+// 192.168/16 or link-local 169.254/16. Not 127/8: a relay's and a join
+// helper's connections come from there, for players from anywhere.
+bool is_same_network(std::uint32_t ipv4);
+// The same rule for an IPv6 address (its 16 bytes in network order): unique
+// local fc00::/7, link-local fe80::/10, and an IPv4-mapped one (::ffff:a.b.c.d)
+// by is_same_network. Not ::1 or ::ffff:127.x.y.z (as 127/8 above), and not an
+// IPv4-compatible or NAT64 one. ENet here speaks IPv4 only, so every peer goes
+// through is_same_network today; this keeps the rule whole for an IPv6 path.
+bool is_same_network_ipv6(const std::array<std::uint8_t, 16>& address);
+
 // Players a server takes unless told otherwise (coop_server --max-players).
 inline constexpr std::uint8_t kDefaultMaxPlayers = 16;
 
@@ -70,6 +81,8 @@ struct SessionConfig {
   std::uint8_t max_players = kDefaultMaxPlayers;
   // Interest (16 players, docs/protocol.md "Who gets which stream"): each
   // PLAYER_SAMPLE and PLAYER_POSE goes to a player by where the two are.
+  // "Same scene" here is the same PLACE in either era (Graveyard_Child and
+  // Graveyard_Adult: each draws the other's puppet; row 221).
   // Same scene within near_distance (game units), or either place unknown:
   // all of them. Same scene, farther: every far_pose_every-th pose (samples
   // all: they are small). Another scene: every other_scene_sample_every-th
@@ -94,6 +107,31 @@ struct SessionConfig {
   std::uint32_t max_wrong_passwords = 5;
   std::uint64_t wrong_password_window_us = 60'000'000;
   std::uint64_t wrong_password_block_us = 60'000'000;
+  // Host approval (coop_server --approve-joins; docs/protocol.md "Host
+  // approval"): a joiner who gave the right join password is held, not yet a
+  // player, and the host is asked (JOIN_KNOCK) until it answers (JOIN_ALLOW)
+  // or approve_wait_us pass. The first player in (the host) and a rejoin with
+  // its token are never held, nor is a player key the host said to remember.
+  // At most max_held_joins wait at once; one more is told the server is full.
+  // Off: everyone with the password joins at once, as before.
+  bool approve_joins = false;
+  // An always-on server with no hosting game (coop_server --dedicated, docs/official-game.md): the player who hosts
+  // the session's progress (the first in, then join order) gets no host powers: no kick, ban or mute, no join
+  // answers, no PvP, down-but-not-out or difficulty change. Moderation is the console's (admin) alone; the session
+  // keeps the server's settings. (MOD_SETTINGS stay the save host's: they belong to the save's mods.)
+  bool dedicated = false;
+  // Bans the host made in earlier sessions, kept by their player key (lobby
+  // ids "k:<hex>", the host's ban file): in force from the start and kept when
+  // the session empties. Names are never kept (one is easy to change, and
+  // someone else may have it).
+  std::vector<std::string> kept_bans;
+  // Players on the host's own network join without the password
+  // (docs/protocol.md "Same network"): a proof with the same-network key
+  // (protocol::kSameNetworkPassword) is taken from a private address only
+  // (is_same_network). Off: everyone needs the join password, as before.
+  bool same_network_open = false;
+  std::uint64_t approve_wait_us = 60'000'000;
+  std::size_t max_held_joins = 8;
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
   std::uint64_t ping_interval_us = 250'000;
   // A refused connection the transport has not closed this long after the
@@ -105,7 +143,19 @@ struct SessionConfig {
   // unreliable 3 and 4. The protocol's own rates (60 samples and a few other
   // messages a second) stay well under them.
   std::uint32_t reliable_per_second = 60;
+  // A player's reliable messages (channels 0 to 2, not PING) over its rate wait in order and are handled as its
+  // budget refills, at most this many; past that they are dropped and counted (rate_limited). Before, every one over
+  // the rate was dropped: ENet had acknowledged it, so its sender never sent it again, and a flag, a kill, a break
+  // or a hand-over answer was lost for good (report 138's host: 137 in one 4-player session).
+  std::size_t reliable_queue_max = 4096;
+  // And at most this many bytes of them (a message may be up to 64 KiB): past it, dropped and counted the same way.
+  std::size_t reliable_queue_bytes_max = 1u << 20;
   std::uint32_t unreliable_per_second = 240;
+  // Report 138 (4): after the host's save load (FLAG_RESET) a guest's FLAG_SET still in flight, sent before that
+  // guest's game had the reset, put its old values back (a guest's MaxLife 16 over the save's 12, a boss beaten
+  // again). For this long after a reset, a guest's change to a flag the reset set is refused, unless it is the
+  // reset's own value or a count change. 0: off.
+  std::uint64_t reset_fence_us = 2'000'000;
   // VOICE_FRAME (channel 5) has a budget of its own, so talking never takes
   // the poses' and samples' messages: 50 frames a second, bursts of twice.
   std::uint32_t voice_per_second = 60;
@@ -158,12 +208,22 @@ struct SessionConfig {
   float handover_chase_m = 20.0f;
   std::uint64_t handover_hold_us = 3'000'000;
   std::uint64_t handover_cooldown_us = 5'000'000;
+  // ai-stuns: a stun on a copy (DAMAGE of 0 for a plain enemy) waits only this long after the last change, not
+  // handover_cooldown_us: the stun is the stunner's own act and is sent once, so one refused right after a turn or a
+  // chase change left the stunner's copy stunned while the owner's enemy kept attacking (geno-polish-ai). A stun
+  // cannot shuttle: a copy that shows its owner's stun never asks, so a new ask needs a new stun.
+  std::uint64_t stun_handover_cooldown_us = 1'000'000;
   // Issue 101: a game that is not the owner says its copy chases its own
   // Link (OBJECT_PRESENT flag targeting). Its game is the only one whose
   // enemy moves right, so out of a fight the object goes to that player once
   // it has said so for handover_chased_us, wherever the owner's enemy
   // stands. The owner saying the same is a fight, which keeps it.
   std::uint64_t handover_chased_us = 500'000;
+  // Player report 37 (Revirie's 0.11.0 log: an Octorok went P2, P3, P2, P3 ... 42 times, some
+  // within 10 s): an object is not handed back to the player who just gave it up (a chase, the
+  // near-player rule or a hit) until this long after the change. A frozen owner, a group's root,
+  // a fish and a boss follow their own rules. 0: off.
+  std::uint64_t handover_back_us = 15'000'000;
   // Issue 151 (fishing-3): a fish (an object some game listed in FISH_LURE)
   // goes to the game whose lure is nearest it, not by the distance rule and
   // never held by a fight lock. Its owner keeps it while the fish is hooked,
@@ -215,10 +275,72 @@ struct SessionConfig {
   float boss_near_m = 15.0f;
   float boss_near_margin_m = 4.0f;
   std::uint64_t boss_near_hold_us = 0;
+  // Boss turns (every player fights the boss): its AI fights only its
+  // owner's Link, so in a fight the boss takes turns. Once one owner has had
+  // it boss_turn_us (from the fight's start or the last change of owner), it
+  // goes to the next fit player by player number, round and round, who has it
+  // loaded, has played its intro and stands within boss_turn_m of it. Only at
+  // a calm moment: no hit on it for boss_turn_quiet_us (none passed on, and
+  // not the owner's own, boss_owner_hit_hold_us), its life above 0, and its
+  // owner's animation no death and no cutscene. 0: off.
+  // Every attack (2026-11-21, "constantly changing its target between attacks"): the attack-end edge below
+  // decides; boss_turn_us is only the least time with one owner, so a quick combo is not split.
+  std::uint64_t boss_turn_us = 4'000'000;
+  std::uint64_t boss_turn_quiet_us = 3'000'000;
+  float boss_turn_m = 40.0f;
+  // A plain enemy takes turns too (#308), among the players near it (enemy_turn_m): the same rule as a boss's, only
+  // for the kinds the hook lists with object_presence::takes_turns (the big melee kinds: Moblin, Lizalfos, Dinolfos,
+  // Stalfos, Like Like, Iron Knuckle; coop_objects_sync.h TurnsAsEnemy), so any other plain enemy keeps the player it
+  // fights. Report 138's shuttle (a turn at each attack's end walked it to the other player and back) is held by
+  // caps: at most one move per enemy per enemy_turn_gap_us (counted from its last change of owner or its fight's
+  // start), never mid-attack, only when its owner and the next player are both up and within enemy_turn_m of it
+  // (2 fit players near; solo and a lone player in range never turn), and a turn goes to the near player who owns
+  // the fewest fighting enemies, only if that player owns fewer than the owner does (balance: a pack spreads, two
+  // players with one Moblin each keep theirs). false: no plain enemy turns.
+  bool enemy_turns = true;
+  float enemy_turn_m = 12.0f;
+  std::uint64_t enemy_turn_gap_us = 15'000'000;
+  // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
+  // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
+  // boss's own next attack ends) and the latest one says it ended, within boss_turn_edge_us. An owner whose
+  // samples read no attacks (no attack_read: an older build) keeps its boss, as before the turns. A boss in a
+  // phase with no attack (Phantom Ganon in his paintings, Gohma on the ceiling) is never handed over there.
+  std::uint64_t boss_turn_edge_us = 1'000'000;
+  // Never mid-attack (enemy survey, 2026-11-21): while an enemy's owner says its attack runs, no rule but a turn
+  // (which waits for the attack's end) and an unfit owner moves it: not a nearer player, not a chase, not the
+  // near rule. A grab or hold (Like Like, Redead, Wallmaster, Floormaster, Dead Hand, a Bubble) stays on the
+  // player it holds until it lets go. Capped at this long from the attack's start, so an enemy that keeps
+  // saying "attacking" is not held for good. 0: off.
+  std::uint64_t attack_hold_max_us = 8'000'000;
+  // Row 149 (King Dodongo rolling forever): a boss (a group's root) whose
+  // owner's samples keep one animation, one action verb and one life this
+  // long is stuck in that move. Its owner's game re-chooses after about 25 s
+  // (CoopBossNative::Table::kStallSteps); if it still holds the move, the
+  // fight lock is freed and not renewed by its samples until the move
+  // changes, so the rules out of a fight (a copy chasing its Link, the near
+  // player) can hand it to a game whose AI then chooses from its own body.
+  // A hit that takes life is a change. 0: off.
+  std::uint64_t boss_stall_us = 40'000'000;
+  // Row 149: a group member first listed this recently takes its root's owner
+  // at once when the group link comes (no hand-over ask): a boss's part made
+  // in every game (King Dodongo's roll centre, made anew for each roll) was
+  // first owned by whichever game listed it first, and ran in the boss
+  // owner's game as that game's copy until the ask was answered. 0: off.
+  std::uint64_t part_fresh_us = 3'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
   std::uint64_t owner_dead_us = 10'000'000;
+  // A boss, or any enemy in its fight, leaves an owner who died at once and one paused this long: its AI fights
+  // only its owner's Link, and a dead or paused one is nobody to fight (it stood idle until owner_dead_us). It goes
+  // to a player up and playing (best_other, fit only); a downed owner already loses it at once (dbno).
+  std::uint64_t fight_owner_dead_us = 0;
+  std::uint64_t fight_owner_paused_us = 2'000'000;
+  // A boss leaves an owner in a cutscene of its own game this long (an item get, Navi's talk, a late intro of its
+  // own): the boss's AI stands in the owner's event, so it stood still on every screen. Never while the boss itself
+  // plays an event, its death or is at life 0 (its own intro, phase change or death: every game is in that one), and
+  // only to a game up, playing and in no cutscene. 0: off.
+  std::uint64_t fight_owner_cutscene_us = 3'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
   // Proximity voice (docs/protocol.md, "Voice"): VOICE_FRAME goes to the
@@ -292,8 +414,10 @@ struct Stats {
   std::uint64_t before_welcome = 0;  // anything but HELLO before WELCOME
   std::uint64_t repeated_hello = 0;  // HELLO from a player already in
   std::uint64_t after_refused = 0;   // packets from a connection being closed
-  std::uint64_t rate_limited = 0;    // over a player's message rate
+  std::uint64_t rate_limited = 0;    // over a player's message rate, dropped
+  std::uint64_t rate_deferred = 0;   // reliable ones over a player's rate, kept and handled later (in order)
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  std::uint64_t reset_fenced = 0;    // a guest's flag change refused just after a host's save load (reset_fence_us)
   // Proximity voice. Relayed ones count in relayed too.
   std::uint64_t voice_relayed = 0;      // VOICE_FRAME passed on (once per frame)
   std::uint64_t voice_out_of_range = 0; // a listener left out: too far from the speaker
@@ -314,6 +438,7 @@ struct Stats {
   std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
   std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
+  std::uint64_t race_dropped = 0;          // race mode: world messages neither relayed nor sent
   // The Lobby (docs/protocol.md "Lobby"): the host's kicks, bans and mutes.
   std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
   std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
@@ -321,12 +446,21 @@ struct Stats {
   std::uint64_t lobby_bad_key = 0;   // a sealed player key that did not open: the player is known by name
   std::uint64_t lobby_shared_key = 0;  // a player key another player in has too (a copied kit): by name
   std::uint64_t lobby_mutes_kept = 0;  // ... from the same address: it kept that player's mutes (a restart)
+  // Host approval (SessionConfig::approve_joins).
+  std::uint64_t joins_held = 0;        // joiners held and the host asked (JOIN_KNOCK)
+  std::uint64_t joins_allowed = 0;     // ... the host let in
+  std::uint64_t joins_denied = 0;      // ... the host turned away
+  std::uint64_t joins_unanswered = 0;  // ... turned away: no answer in approve_wait_us, or the host left
+  std::uint64_t joins_remembered = 0;  // let in without asking: a player key the host said to remember
+  std::uint64_t join_answers_stray = 0;  // JOIN_ALLOW not from the host, or for no open knock
   std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
   std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
   // Boss heart containers (docs/protocol.md, "Boss cutscenes").
   std::uint64_t boss_hearts_given = 0;     // first claims: one BOSS_HEART given to everyone
   std::uint64_t boss_hearts_late = 0;      // later claims of a decided boss, answered to their sender
   std::uint64_t boss_hearts_refused = 0;   // a "given" from a client
+  std::uint64_t boss_alive_relayed = 0;    // BOSS_ALIVE from the host, to everyone else (row 159)
+  std::uint64_t boss_alive_refused = 0;    // BOSS_ALIVE from a player who is not the host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -344,6 +478,12 @@ struct Stats {
   std::uint64_t stray_rejoin_claim = 0;
   // JOIN_PROOFs that did not match the join password (each one refused).
   std::uint64_t bad_password = 0;
+  // JOIN_PROOFs that matched the password a rejoining player knew from before
+  // the host changed it (shown with that player's rejoin token).
+  std::uint64_t rejoin_old_password = 0;
+  // ... that matched the same-network key from a private address instead
+  // (SessionConfig::same_network_open): let in without the password.
+  std::uint64_t same_network_joins = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
   std::uint64_t stray_proof = 0;
   // A HELLO without a key share to a server with a join password (refused
@@ -384,8 +524,26 @@ struct Stats {
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
+  std::uint64_t stun_to_stunner = 0;    // a plain enemy asked over to the player who stunned it (ai-stuns)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
+  std::uint64_t boss_to_grabbed = 0;    // row 232: a boss asked over to a game whose Link its summoned piece holds
+  std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
+  std::uint64_t keyed_dropped = 0;       // protocol 18: keyed values (components 25-28) not kept, list full
+  std::uint64_t enemy_turns = 0;         // a plain enemy asked over to the next player's turn (enemy_turns)
+  std::uint64_t boss_from_cutscene = 0;  // a boss asked away from an owner in a cutscene of its own
+  std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
+  std::uint64_t boss_finish_kept = 0;  // row 215: hand-overs of a boss in its finish not made (asked or answered)
+  std::uint64_t kept_by_logic = 0;      // row 212: a hand-over to a game whose logic did not make it, refused
+  std::uint64_t back_to_logic = 0;      // row 212: asked back to a game whose logic made it
+  std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
+  std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
+  std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
+  // DAMAGE that crossed a hand-over to its own sender (sent as a copy, here
+  // after the sender became the owner): given back to it, so its game takes
+  // the hit off the life the hand-over gave it.
+  std::uint64_t damage_returned = 0;
+  std::uint64_t damage_held = 0;        // DAMAGE kept through the owner hold
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene
   std::uint64_t grass_repeated = 0;  // GRASS_CUT the scene already has: not passed on
@@ -398,7 +556,21 @@ struct Stats {
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
+  std::uint64_t bomb_takes = 0;           // BOMB_TAKE asked of the owner
+  std::uint64_t bomb_refused = 0;         // BOMB_TAKE answered with BOMB_ANSWER
+  std::uint64_t bomb_handed_on = 0;       // a bomb whose owner left went on
+  std::uint64_t lifts_relayed = 0;        // LIFT_ASK / LIFT_ANSWER / LIFT_PLACE passed to the player named
+  std::uint64_t lifts_dropped = 0;        // to nobody, to the sender, or from a game not sharing
+  std::uint64_t lifts_not_sharing = 0;    // LIFT_ASK answered not_sharing by the server
+  std::uint64_t lifts_unplaced = 0;       // LIFT_ASK answered too_far: the lifter's place not known there
+  std::uint64_t lifts_not_young = 0;      // LIFT_ASK answered not_young / LIFT_PLACE dropped: not a child Link
+  std::uint64_t pvp_strikes_relayed = 0;  // PVP_STRIKE passed on to its victim
+  std::uint64_t pvp_strikes_dropped = 0;  // PvP off, not native, other scene, no fresh place, not its object
+  std::uint64_t pvp_strikes_flood = 0;    // past kPvpStrikesPerSecond from one attacker
+  std::uint64_t pvp_results_relayed = 0;  // PVP_RESULT passed on to the victim's scene
+  std::uint64_t pvp_results_dropped = 0;  // no strike in flight with that attacker and seq
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
+  std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
@@ -457,14 +629,53 @@ class Session {
   // Addresses with recent wrong join passwords (max_wrong_passwords).
   std::size_t wrong_guess_addresses() const { return wrong_guesses_.size(); }
   std::size_t player_count() const;
+  // How much the session holds now (row 260: the host's memory line, every 30 s): each a count of entries, the
+  // deferred one also in bytes. Each is bounded (its own cap); a number that only grows is the one to look at.
+  struct Sizes {
+    std::size_t connections = 0;
+    std::size_t deferred = 0;        // reliable messages waiting for their sender's rate
+    std::size_t deferred_bytes = 0;
+    std::size_t present = 0;         // objects listed by the games, all told
+    std::size_t objects = 0;
+    std::size_t flags = 0;
+    std::size_t dead = 0;            // placed enemies killed, all scenes
+    std::size_t grass = 0;           // grass cuts, all scenes
+    std::size_t world_scenes = 0;
+    std::size_t world_entries = 0;
+    std::size_t actions = 0;         // queued for the transport
+  };
+  Sizes sizes() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
+  // The bans by player key now (the kept ones and this session's), for the
+  // host's ban file; sorted.
+  std::vector<std::string> key_bans() const;
+  // The server console's moderation (coop_server --dedicated, docs/official-game.md): "/players" (number, name, a
+  // short key id, never an address), "/kick N", "/ban N", "/unban KEYID" (its first 8 or more hex digits),
+  // "/mute N voice|chat", "/unmute N voice|chat". Returns what to print. Acts as the host would, on anyone (the
+  // session's host player too); a ban by key is kept as the host's (key_bans()).
+  std::string admin(std::string_view line, std::uint64_t now_us);
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
   // Down but not out now (config.dbno, then the host's DBNO_MODE).
   const protocol::DbnoMode& dbno() const { return dbno_; }
   // The difficulty in force now, as every player has been told (DIFFICULTY).
   protocol::Difficulty difficulty() const;
+  // (Navi) New Game+: the hosting game's level (protocol/difficulty.hpp
+  // ngplus_difficulty), on top of the difficulty in force; a change is told
+  // to everyone at once. 0: none. Only the in-game host's server sets it.
+  void set_ngplus(std::uint8_t level);
+  std::uint8_t ngplus() const { return ngplus_; }
+  // The join password from now on: a player who joins after this needs the new
+  // one; players already in keep their keys and stay in. A player who was in at
+  // the change and drops keeps a way back: its game still knows the password it
+  // joined with, so a connection that shows that player's rejoin token
+  // (REJOIN_CLAIM) may prove that one instead (old_passwords_). Not empty (the
+  // host's own checks); on the session's thread.
+  void set_join_password(std::string password);
+  // How many players' old passwords are kept for their rejoin (tests).
+  std::size_t old_password_count() const { return old_passwords_.size(); }
+  const std::string& join_password() const { return config_.join_password; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -483,7 +694,9 @@ class Session {
 
  private:
   // awaiting_proof: HELLO came, JOIN_CHALLENGE sent, JOIN_PROOF not yet.
-  enum class State : std::uint8_t { awaiting_hello, awaiting_proof, joined, closing };
+  // held: the proof was right and the host has not let it in yet
+  // (SessionConfig::approve_joins); not a player, nothing is relayed to it.
+  enum class State : std::uint8_t { awaiting_hello, awaiting_proof, held, joined, closing };
 
   struct Connection {
     State state = State::awaiting_hello;
@@ -493,6 +706,16 @@ class Session {
     std::uint64_t refused_at = 0;
     // Message budgets for the rate limits, in messages, refilled with time.
     double reliable_budget = 0;
+    // Reliable messages over the rate, in the order they came (reliable_queue_max).
+    struct Deferred {
+      std::uint8_t channel = 0;
+      protocol::Message message;
+      std::size_t bytes = 0;         // as the rate counts it
+      std::size_t raw_bytes = 0;     // as it came (reliable_queue_bytes_max)
+      std::uint64_t received_us = 0;  // when it came (on_flag_set's reset fence)
+    };
+    std::deque<Deferred> deferred;
+    std::size_t deferred_bytes = 0;  // the raw_bytes of deferred, all told
     double unreliable_budget = 0;
     double voice_budget = 0;
     // Proximity voice: the speakers this player hears now, by number, and
@@ -501,8 +724,11 @@ class Session {
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
-    // While awaiting_proof: the HELLO to admit and the nonce it was sent.
+    // While awaiting_proof or held: the HELLO to admit; the nonce it was sent.
     std::optional<protocol::Hello> pending_hello;
+    // While held: its knock (JOIN_KNOCK) and since when it waits.
+    std::uint32_t knock = 0;
+    std::uint64_t held_at = 0;
     protocol::JoinNonce nonce{};
     // While awaiting_proof: the HELLO and JOIN_CHALLENGE packets as on the
     // wire and our key pair, for the traffic keys.
@@ -513,7 +739,13 @@ class Session {
     // HELLO: the token its REJOIN_CLAIM showed, if any.
     protocol::RejoinTokenBytes rejoin_token{};
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
+    // Once joined: the join password its game proved (the session's, or an old
+    // one on a rejoin): what that game tries again when it drops.
+    std::string proved_password;
     std::uint8_t number = 0;  // 1 to max_players once joined
+    // When it joined, in order (Session::joins_): the host passes to the
+    // earliest joiner still in (a number can be a newer player's, freed).
+    std::uint64_t joined_order = 0;
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
     std::optional<protocol::ModList> mods;
@@ -529,6 +761,28 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // Its Link's age, from the last PLAYER_SAMPLE that had one (kept over scene changes); unset: not known.
+    // Only a child is ever lifted (on_lift).
+    std::optional<protocol::Age> age;
+    // BOMB_SHARE (native puppets phase 2): its game takes part in the bomb
+    // hand-over. Off until it says so.
+    bool bomb_share = false;
+    // LIFT_SHARE (native puppets phase 3): its game takes part in player
+    // lifts. Off until it says so.
+    bool lift_share = false;
+    // PVP_NATIVE (native puppets phase 4): its game runs PvP on real
+    // bodies. Off until it says so.
+    bool pvp_native = false;
+    // As an attacker: when its last PVP_STRIKEs came (the last second).
+    std::deque<std::uint64_t> pvp_strike_times;
+    // As a victim: strikes relayed to it and not answered yet. A PVP_RESULT
+    // is relayed only for one of these, once.
+    struct PvpPending {
+      std::uint8_t attacker = 0;
+      std::uint32_t seq = 0;
+      std::uint64_t at_us = 0;
+    };
+    std::deque<PvpPending> pvp_pending;
     // As a receiver: how many samples and poses of each sender it was due
     // (interest counts every n-th), and its share of the pose upload cap.
     std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
@@ -539,6 +793,7 @@ class Session {
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
     std::uint64_t dead_since = 0;
+    std::uint64_t cutscene_since = 0;  // in_cutscene since (0: not)
     // DBNO_STATE as the player last said it: a downed player owns no enemy.
     protocol::DbnoState dbno = protocol::DbnoState::up;
     // It entered a scene and has not been sent that scene's spawns yet.
@@ -554,7 +809,8 @@ class Session {
     // comes back to it or to its siblings.
     std::optional<ConnectionId> parent;
     std::uint8_t seat = 0;
-    // The Lobby: the player key its HELLO had (none: an old build).
+    // The Lobby: the player key its HELLO had (none: an old build). While
+    // held: the one it came with.
     std::optional<protocol::PlayerKey> player_key;
   };
 
@@ -573,7 +829,14 @@ class Session {
     std::uint8_t last_owner = 0;  // the player who owned it before, 0: none
     // The owner before the last change, for a kill that crossed it.
     std::optional<ConnectionId> previous_owner;
+    // Every player who gave it up, and when (report 138: with 3 or 4 players
+    // an enemy went round P2, P3, P4, P2 ... when only the last one was kept).
+    std::map<ConnectionId, std::uint64_t> gave_up;
     std::uint64_t changed_at = 0;  // the last change of owner; 0: never
+    // The last change of owner that was no boss turn (next_turn), for boss_hitter_cooldown_us: a turn passes at
+    // every attack's end (4 s), so a cooldown from changed_at would refuse nearly every stun from another player
+    // (Gohma's eye, a ball sent back into a copy Phantom Ganon or Ganondorf). 0: never.
+    std::uint64_t hitter_changed_at = 0;
     // The last state relayed from its owner, for a hand-over with no answer
     // and for a player who enters the scene later.
     std::optional<protocol::ObjectState> last_state;
@@ -592,18 +855,57 @@ class Session {
     std::map<ConnectionId, std::uint64_t> chased_by;
     // Games whose boss is not ready to be owned (object_presence::unready).
     std::set<ConnectionId> unready;
+    // Games that take boss turns (object_presence::takes_turns): an older build is never given a turn.
+    std::set<ConnectionId> takes_turns;
+    // Row 212: games whose own level logic made it (object_presence::own_logic). Not empty: it is owned only by
+    // one of them (ask_handover refuses the others; run_ownership asks it back; its owner leaving gives it to
+    // another of them, or removes it when none is left).
+    std::set<ConnectionId> own_logic;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;
       std::uint64_t at = 0;
+      // DAMAGE passed on to the owner after the ask went out. The channel
+      // keeps the order, so the owner's answer was read before any of it:
+      // finish_handover takes exactly this much off the answer's life.
+      std::int64_t hits = 0;
+      // A BOMB_TAKE (native puppets phase 2): no answer means the owner's
+      // game keeps the bomb (BOMB_ANSWER kept), not a move.
+      bool bomb = false;
+      // A boss turn (next_turn): its change does not start boss_hitter_cooldown_us (hitter_changed_at).
+      bool turn = false;
+      // Which rule asked (the 'hand-over:' log line, review-01111-b 17).
+      std::string why{};
     };
     std::optional<Ask> ask;
+    // DAMAGE that came while the owner hold had not chosen its owner yet
+    // (Object::held), with who sent it: passed on when the hold ends.
+    std::vector<std::pair<ConnectionId, protocol::Damage>> held_hits;
     // DAMAGE passed on lately: the life before the first, and their sum.
     std::optional<std::int32_t> hit_base;
     std::int64_t hit_sum = 0;
     std::uint64_t hit_at = 0;
     std::uint64_t owner_hit_at = 0;  // the owner's own hit (its samples' life fell); 0: none
     std::uint64_t orphan_since = 0;  // a made enemy its owner stopped listing
+    std::uint64_t first_at = 0;      // when it was first listed or spawned (part_fresh_us)
+    // Row 149 (boss_stall_us): the owner's move in its samples (animation,
+    // action verb, life), since when, and whether its fight lock is freed.
+    std::string hold_key;
+    std::uint64_t hold_since = 0;
+    bool stalled = false;
+    // Boss turns (boss_turn_us): when its current fight began; 0: not in one.
+    std::uint64_t fight_began = 0;
+    // Boss turns, the attack edge (boss_turn_edge_us): as of its owner's latest sample of this epoch.
+    bool attack_read = false;         // the owner reads its attacks (object_state::attack_read)
+    bool battle_manager = false;      // row 222: a game said it is a battle manager (object_presence::battle_manager)
+    std::set<ConnectionId> grabbed;   // row 232: games whose own Link a summoned piece of it holds (grabbed_here)
+    bool attacking = false;           // in its attack sequence
+    std::uint16_t attack_epoch = 0;   // the epoch those two are of
+    std::uint64_t attack_ended_at = 0;  // its newest attack's end in that epoch; 0: none
+    // Row 215: its finish was logged (a boss root at life 0 or in its death, kept by its owner's game); cleared
+    // when it is no longer in one (a refill for its next phase), so the next finish logs again.
+    bool finish_noted = false;
+    std::uint64_t attack_began_at = 0;  // when its running attack began (attack_hold_max_us); 0: none
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -611,9 +913,22 @@ class Session {
                 std::uint64_t now_us);
   void on_join_proof(ConnectionId id, Connection& c, const protocol::JoinProof& proof,
                      std::uint64_t now_us);
-  // The checks after the password, then WELCOME.
+  // The checks after the password, then WELCOME (or, with approve_joins,
+  // the hold; `approved`: the host has let it in).
   void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
-             std::uint64_t now_us, const std::optional<protocol::PlayerKey>& player_key);
+             std::uint64_t now_us, const std::optional<protocol::PlayerKey>& player_key,
+             bool approved = false);
+  // Host approval (docs/protocol.md "Host approval"): holds the joiner and
+  // asks the host; the host's answer; the knock over (left or no answer);
+  // every held joiner turned away when the host leaves.
+  void hold(ConnectionId id, Connection& c, const protocol::Hello& hello,
+            const std::optional<protocol::PlayerKey>& player_key, std::uint64_t now_us);
+  void on_join_allow(ConnectionId id, const protocol::JoinAllow& a, std::uint64_t now_us);
+  void knock_over(const Connection& c);
+  void refuse_held(std::uint64_t now_us, const std::string& why);
+  std::uint16_t knock_wait_s() const;
+  // A player in has this key (a copied kit): not the player the host let in.
+  bool key_in_use(const std::optional<protocol::PlayerKey>& key) const;
   // Split screen (docs/protocol.md, "Local players").
   void on_local(ConnectionId id, Connection& c, const protocol::Message& message, std::uint64_t now_us);
   void local_join(ConnectionId id, Connection& c, const protocol::LocalJoin& j, std::uint64_t now_us);
@@ -621,17 +936,23 @@ class Session {
   std::vector<ConnectionId> local_players(ConnectionId parent) const;
   // Whether a and b are one game's (the same connection, or its local players).
   bool same_game(ConnectionId a, ConnectionId b) const;
+  // After the rate check (on_player_message, or a deferred one from tick).
+  // received_us: when it reached us (now_us, or a deferred one's arrival).
+  void dispatch_player_message(ConnectionId id, Connection& c, std::uint8_t channel, protocol::Message& message,
+                               std::uint64_t now_us, std::uint64_t received_us);
+  // Handles a player's deferred reliable messages while its budget allows (tick).
+  void run_deferred(std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
-  void on_flag_set(Connection& c, protocol::Message& message);
-  void on_flag_state(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_flag_set(ConnectionId id, Connection& c, protocol::Message& message, std::uint64_t received_us);
+  void on_flag_state(ConnectionId id, Connection& c, protocol::Message& message, std::uint64_t now_us);
   void on_flag_snapshot(ConnectionId id, Connection& c, const protocol::FlagSnapshot& part);
   // The host loaded a save (its FLAG_RESET; docs/flags.md, "Saves"). Every
   // session-wide state kept outside the flag table that the host's save
   // undoes is dropped here: add each owner's clear (locked doors' kept
   // breaks, the kills-late dead list, ...). Called once per FLAG_RESET.
-  void on_host_reset();
+  void on_host_reset(const std::vector<protocol::FlagEntry>& flags, std::uint64_t now_us);
   void on_save(ConnectionId id, Connection& c, protocol::Message& message);
   // Keeps an entry in the table; false when it is new and the table is full.
   bool keep_flag(const protocol::FlagEntry& e);
@@ -650,6 +971,11 @@ class Session {
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
   // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
   void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  // A kick, ban or mute on player a.target, by the host (`actor`: its connection, which may not be its own target)
+  // or by the server's console (no actor); `by` names who in the log. Empty: nothing to answer.
+  std::optional<protocol::LobbyResultCode> apply_lobby(const protocol::LobbyAction& a,
+                                                       std::optional<ConnectionId> actor, std::uint64_t now_us,
+                                                       const char* by);
   std::uint8_t lobby_mutes_of(const Connection& c) const;
   // Who a player is to the Lobby: its player key (sealed in JOIN_PROOF, protocol 11) when it
   // sent one, a split-screen seat by its game's key and seat; the name only
@@ -657,6 +983,8 @@ class Session {
   std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
                        std::optional<ConnectionId> parent, std::uint8_t seat) const;
   std::string lobby_id(const Connection& c) const;
+  // Whether this player may use the host's powers over the session (SessionConfig::dedicated: nobody may).
+  bool hosts_rules(ConnectionId id) const { return !config_.dedicated && host_ && *host_ == id; }
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
   bool lobby_banned(const std::string& id, const std::string& nickname,
@@ -667,7 +995,10 @@ class Session {
   void on_boss_heart(ConnectionId id, Connection& c, const protocol::BossHeart& m);
   // A player who can be given an object: not loading, paused, dead or downed.
   static bool busy(const Connection& c);
-  void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
+  void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g,
+                       std::uint64_t now_us);
+  // Row 149 (boss_stall_us): a boss root's owner sample, for the stall check.
+  void note_hold(Object& o, const protocol::ObjectState& sample, std::uint64_t now_us);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // Proximity voice: to the others in the speaker's scene within voice_range_m.
   void on_voice(ConnectionId id, const Connection& c, protocol::VoiceFrame& m, std::uint64_t now_us);
@@ -716,32 +1047,106 @@ class Session {
   // The end of the owner hold: each held object to the lowest player number
   // that lists it, announced to its scene.
   void end_owner_hold(std::uint64_t now_us);
-  // Asks the owner to let go of it to `to`; finish_handover follows.
-  void ask_handover(const protocol::ObjectId& oid, Object& o, ConnectionId to,
-                    std::uint64_t now_us);
+  // Asks the owner to let go of it to `to`; finish_handover follows. False: not asked (no owner, `to` gone, or a
+  // boss in its finish, keeps_finish).
+  // `why`: the rule that asks, for the 'hand-over:' log line (change_owner).
+  bool ask_handover(const protocol::ObjectId& oid, Object& o, ConnectionId to,
+                    std::uint64_t now_us, std::string why);
+  // Row 215: a boss root whose owner's last state says it is at life 0 or plays its death (anim::IsDeath).
+  static bool boss_finishing(const Object& o);
+  // Row 215: no boss changes owner in its finish (at life 0 or in its death): the game that runs the finish keeps
+  // it to the end, whatever rule asks (hitter, turns, near, chase, unfit owner, unready). True: `o` (a boss or a
+  // boss's part) stays. A part may still go to its boss's own owner (the group together). Only an owner that
+  // leaves or unloads it gives it on (drop_presence: nobody else could run it).
+  bool keeps_finish(Object& o, ConnectionId to);
   // The owner answered (or never did: answer null) and the object moves.
   void finish_handover(const protocol::ObjectId& oid, Object& o,
                        const protocol::ObjectState* answer, std::uint64_t now_us);
+  // Native puppets phase 2 (docs/native-puppets.md, docs/protocol.md "Bomb
+  // hand-over").
+  void on_bomb_take(ConnectionId id, Connection& c, const protocol::BombTake& m,
+                    std::uint64_t now_us);
+  // Native puppets phase 3 (docs/protocol.md "Player lift"): LIFT_ASK,
+  // LIFT_ANSWER and LIFT_PLACE to the one player each names.
+  void on_lift(ConnectionId id, Connection& c, protocol::Message& message,
+               std::uint64_t now_us);
+  // Native puppets phase 4 (docs/protocol.md "PvP on real bodies"):
+  // PVP_STRIKE to its victim, PVP_RESULT to the victim's scene.
+  void on_pvp_strike(ConnectionId id, Connection& c, protocol::Message& message,
+                     std::uint64_t now_us);
+  void on_pvp_result(ConnectionId id, Connection& c, protocol::Message& message,
+                     std::uint64_t now_us);
+  void refuse_bomb(ConnectionId to, const protocol::ObjectId& oid, const Object* o,
+                   protocol::BombRefusal why);
+  // A made bomb whose owner lets go of it (left, changed scene): the
+  // sharing game in its scene that goes on with it, if any.
+  std::optional<ConnectionId> bomb_heir(const Object& o, ConnectionId except) const;
   // Gives the object to `next` (or nobody) with epoch + 1: HANDOVER_STATE to
   // the new owner, then OBJECT_OWNER to the scene.
+  // Every owner change goes through here. A boss (or a boss group's root) or a battle manager logs
+  // 'hand-over: ... why'.
   void change_owner(const protocol::ObjectId& oid, Object& o, std::optional<ConnectionId> next,
-                    std::uint8_t old_owner, std::uint64_t now_us);
+                    std::uint8_t old_owner, std::uint64_t now_us, const std::string& why);
+  // Why unfit_owner / unfit_fight_owner holds (loading, downed, dead N s, paused N s), for the log.
+  std::string unfit_why(const Connection& c, std::uint64_t now_us) const;
   // The best other player who has it loaded: the nearest when places are
   // known, then the lowest number. fit_only: none who is loading, paused or
   // dead.
   std::optional<ConnectionId> best_other(const Object& o, std::optional<ConnectionId> except,
                                          bool fit_only, std::uint64_t now_us) const;
+  // Who takes `o` when its owner `except` lets go: best_other, a fit player
+  // first (report 138).
+  std::optional<ConnectionId> next_owner(const Object& o, ConnectionId except,
+                                         std::uint64_t now_us) const;
+  // Row 212: of the games whose own logic made `o` (Object::own_logic), one that has it loaded, other than
+  // `except`: a fit one first, then the lowest player number. None: no such game has it.
+  std::optional<ConnectionId> logic_owner(const Object& o, std::optional<ConnectionId> except,
+                                          std::uint64_t now_us) const;
   // Joined, in the object's scene and with it loaded.
   bool has_loaded(ConnectionId id, const Object& o) const;
   // Metres from the player's Link to the object; none when either place is
   // not known or the player's is stale.
   std::optional<double> distance_to(const Connection& c, const Object& o,
                                     std::uint64_t now_us) const;
+  // The player's Link is known in `scene` (non-empty): its scene is that
+  // one and its PLAYER_SAMPLE position is fresh.
+  bool place_known_in(const Connection& c, const std::string& scene,
+                      std::uint64_t now_us) const;
+  // The same for a place between two PLAYERS (lifting, PvP): `scene` in either era counts, as both games draw
+  // the other's puppet there (coop/protocol/scene_place.hpp). Objects keep place_known_in's exact scene.
+  bool place_known_near(const Connection& c, const std::string& scene,
+                        std::uint64_t now_us) const;
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
+  // The same for the owner of a boss or of an enemy in its fight, sooner (fight_owner_dead_us, fight_owner_paused_us).
+  // Row 222 (option C): a boss group's root that a game says is a battle manager (object_presence::battle_manager:
+  // Twinrova's KotakeKoumeBattleManager), with no root of its own. It changes owner only when its owner is
+  // unfit (paused, dead, loading, gone) or unready, never by distance, a nearer player, a chase or a stun hit.
+  bool orders_root(const Object& o) const;
+  // Row 232: a game whose own Link a summoned piece of this boss holds (object_presence::grabbed_here) while its
+  // owner's game is not held: the boss's AI answers that grab only there. None while its owner is held too.
+  std::optional<ConnectionId> grab_owner(const Object& o, ConnectionId owner, std::uint64_t now_us) const;
+  bool unfit_fight_owner(const Connection& c, std::uint64_t now_us) const;
+  // A boss's owner in a cutscene of its own for fight_owner_cutscene_us while the boss plays none of its own, is in
+  // no attack, holds no Link of that game and has held one move that long (its AI stands in that event).
+  bool owner_in_own_cutscene(ConnectionId owner, const Connection& c, const Object& o, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).
   bool owner_hit_lately(const Object& o, std::uint64_t now_us) const;
+  // attack_hold_max_us: its owner's attack runs (never moved but by a turn or an unfit owner).
+  bool mid_attack(const Object& o, std::uint64_t now_us) const;
+  // ai-turns: how many plain enemies in a fight this game owns (a turn goes to the near player with the fewest).
+  std::size_t fighting_enemies(ConnectionId owner, std::uint64_t now_us) const;
+  // Boss turns (boss_turn_us): the player whose turn it is now, if a boss
+  // root in its fight is due for one at a calm moment.
+  std::optional<ConnectionId> next_turn(Object& o, ConnectionId owner, std::uint64_t now_us);
+  // Boss turns: the owner's attack edge from a sample of `epoch` (Object::attack_*).
+  void note_attack(Object& o, std::uint16_t epoch, const protocol::ObjectState& sample, std::uint64_t now_us);
+  // Not handed to `to` yet (counted): `to` gave `o` up less than
+  // handover_back_us ago (any player who did, report 138), or `o` changed
+  // owner that lately and its owner still stands within handover_chase_m of
+  // it (the sticky target, report 138 / row 71).
+  bool hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us);
   // The game that has said longest (at least handover_chased_us) that its
   // copy of `o`, or of one of its members, chases its Link; not the owner.
   std::optional<ConnectionId> chased_by(const Object& o, ConnectionId owner,
@@ -752,6 +1157,9 @@ class Session {
   void forget(Objects::iterator it);
   void unlink(const protocol::ObjectId& oid, Object& o);
   void announce_owner(const protocol::ObjectId& oid, const Object& o);
+  // To the joined players in `scene`'s place, either era (none when it is empty): for what is between players.
+  void send_to_place(const std::string& scene, std::optional<ConnectionId> except,
+                     std::uint8_t channel, const protocol::Message& m);
   // To every joined player in `scene` but `except`; empty scene: everyone.
   void send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                      std::uint8_t channel, const protocol::Message& m);
@@ -767,6 +1175,7 @@ class Session {
   std::uint8_t free_number(std::uint8_t preferred = 0) const;
   std::uint8_t max_players() const;  // config_.max_players, 1 to kMaxPlayers
 
+  bool race_held(const protocol::Message& m);  // race mode drops it (counted)
   void send(ConnectionId to, std::uint8_t channel, const protocol::Message& m);
   void send_to_others(ConnectionId except, std::uint8_t channel,
                       const protocol::Message& m);
@@ -774,11 +1183,18 @@ class Session {
   void send_streamed(ConnectionId from, const Connection& sender, std::uint8_t channel,
                      const protocol::Message& m, std::uint64_t now_us);
   void log(const std::string& line) const;
+ public:
+  // The client a joiner runs, for the server's log (docs/crossplay.md): its HELLO's build_id, printable ASCII only, at
+  // most 48 characters; "unnamed" when none.
+  static std::string client_label(const std::string& build_id);
 
+ private:
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
+  std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
+  std::uint64_t joins_ = 0;   // players joined so far (Connection::joined_order)
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
   // The Lobby, by lobby_id (the player key; the name only without one), so a
@@ -789,6 +1205,13 @@ class Session {
   std::map<std::string, std::uint8_t> lobby_mutes_;
   std::set<std::string> banned_ids_;
   std::set<std::uint32_t> banned_addresses_;
+  // Host approval, by lobby_id of a player key (never a name: a name is easy
+  // to take): the keys the host let in (JOIN_KNOCK's known), and those it
+  // said to remember, which get in without asking. Kept when the host
+  // changes; forgotten when the session empties, as the bans.
+  std::set<std::string> allowed_ids_;
+  std::set<std::string> remembered_ids_;
+  std::uint32_t next_knock_ = 1;
   // PvP now: config_.pvp until the host changes it; back to config_.pvp when
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
@@ -801,6 +1224,10 @@ class Session {
   // comes late, or after the winner left, gets the same answer; forgotten
   // when the session empties.
   std::map<std::uint8_t, protocol::BossHeart> boss_hearts_;
+  // The bosses whose death a game took (BOSS_SCENE outro_start), by boss and scene, as the outro_end a joiner is
+  // told, so its game gets their beaten sets (G2, #241). Forgotten when the host loads a save and when the session
+  // empties.
+  std::map<std::pair<std::uint8_t, std::string>, protocol::BossScene> boss_beaten_;
   // Difficulty (protocol/difficulty.hpp): automatic, by the number of
   // players, until the host chooses; the host's choice then stays whoever
   // joins or leaves, a new host included. Automatic again when the session
@@ -809,13 +1236,18 @@ class Session {
   protocol::DifficultyChoice difficulty_;
   std::uint8_t difficulty_set_by_ = 0;
   protocol::DifficultyValues difficulty_told_;
+  std::uint8_t ngplus_ = 0;  // (Navi) New Game+ level (set_ngplus)
   // The host's last MOD_SETTINGS (docs/protocol.md, "Mods"): kept when the
   // host leaves until the new host sends its own; forgotten when the session
   // empties.
   std::optional<protocol::ModSettings> mod_settings_;
+  bool race_ = false;  // race mode (coop/protocol/race.hpp): on until the session empties
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;
+  // The last host save load's values, refused from guests until reset_fence_until_ (reset_fence_us).
+  std::map<protocol::FlagKey, std::uint32_t> reset_fence_;
+  std::uint64_t reset_fence_until_ = 0;
   // Shared objects, by id. Forgotten when no game has them loaded.
   Objects objects_;
   std::uint32_t next_serial_ = 1;
@@ -841,6 +1273,7 @@ class Session {
   };
   std::map<std::string, std::map<protocol::ObjectId, Dead>> dead_;
   static constexpr std::size_t kMaxDeadPerScene = 1024;
+  static constexpr std::size_t kHeldHitsMax = 16;  // per object, through the owner hold
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;
@@ -853,6 +1286,17 @@ class Session {
     std::uint64_t blocked_until = 0;  // 0: not blocked
   };
   std::map<std::uint32_t, WrongGuesses> wrong_guesses_;
+  // The host changed the join password (set_join_password): for each player in
+  // then (by its rejoin token), the password its game knows. Taken only with
+  // that token; a player that left or was kicked loses it; at most
+  // kMaxOldPasswords, the oldest go first.
+  struct OldPassword {
+    protocol::RejoinTokenBytes token{};
+    std::string password;
+  };
+  std::vector<OldPassword> old_passwords_;
+  static constexpr std::size_t kMaxOldPasswords = 64;
+  void forget_old_password(const protocol::RejoinTokenBytes& token);
   static constexpr std::size_t kMaxWrongGuessAddresses = 4096;
   // Counts a wrong proof from `address`; blocks it at the limit.
   void note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us);

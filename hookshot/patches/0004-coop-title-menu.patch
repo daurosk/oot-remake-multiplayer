@@ -1,4 +1,4 @@
-From d744ab9fa4cb15b99ef89f8c4333843ba623daf7 Mon Sep 17 00:00:00 2001
+From a6c3d6cf5850ace09f0f7e95c661b679f64421e8 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:18:16 -0900
 Subject: [PATCH] Co-op title menu: the title screen's hooks, the pad first,
@@ -125,18 +125,18 @@ index 9e2075c4..bc47834c 100644
  
  #endif
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index d3f5bf31..02598424 100644
+index eb47959a..7ea662a1 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
-@@ -1113,6 +1113,8 @@ static void npad_states(Ctx *c) {
-     if (connected) buttons = hos_title_input(buttons);
+@@ -1683,6 +1683,8 @@ static void npad_states(Ctx *c) {
+     if (connected && !played) buttons = hos_title_input(buttons);
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
-     if (connected) buttons = hos_frame_step_buttons(buttons);
+     if (connected && !played) buttons = hos_frame_step_buttons(buttons);
 +    uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]);   /* (oot-remake-multiplayer, coop_bridge.c: the title menu) */
-+    if (connected) buttons = hos_coop_pad_filter(buttons, stick);
-     int64_t s = ++sampling;
-     const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
-     if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
++    if (connected && !played) buttons = hos_coop_pad_filter(buttons, stick);
+     /* (no stick direction bits 16-23 in the state: the game's own controllers take bits 16-19 as the D-pad, so the left
+        stick pushed forward, bit 17, held one and A pressed while running forward did not roll. They work out the
+        sticks' directions from the axes themselves) */
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 index 52a19bc9..cd87977f 100644
 --- a/nx2/coop_hooks.py

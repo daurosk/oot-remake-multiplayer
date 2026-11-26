@@ -12,6 +12,13 @@
 // closing (Hookshot with patch 0018), loads (a room or scene change), scene
 // changes, save loads, sessions starting and ending, the flag watcher's
 // snapshots and resets, and every write of ours to a map or compass flag.
+//
+// Row 269: the game clears its whole flag table before it loads a save and when it goes back to the title, so
+// every map and compass the old game had goes 1 -> 0 there, a moment BEFORE anything says a save is loading. That
+// is no drop in play, and as a warning at every save load it buried the real ones. A drop seen while the game is
+// not in play is therefore held for kHoldUs: when the game says in that time that it loads a save or shows the
+// title (game_reset), the line is an information line (take_info) that says so; when nothing does, it is the
+// warning it always was. A drop in play is a warning at once.
 // Any thread: one lock.
 #include <array>
 #include <cstdint>
@@ -37,6 +44,8 @@ class MapDropLog {
   static constexpr std::uint64_t kSummaryUs = 60'000'000;
   // More flags than this dropping in one frame: one line for them all.
   static constexpr std::size_t kBatch = 3;
+  // How long a drop seen out of play waits for the game to say why (the longest seen: well under a second).
+  static constexpr std::uint64_t kHoldUs = 3'000'000;
 
   using Clock = std::function<std::uint64_t()>;  // microseconds, steady
   MapDropLog();
@@ -47,16 +56,22 @@ class MapDropLog {
   // A write of ours to a map or compass flag (GameFlagStore); `by` says
   // through what. Other flags are ignored.
   void note_our_write(FlagKey key, std::uint32_t value, std::string_view by);
+  // The game clears its own flag table now or just did: it starts loading a save, loaded one, or shows the title
+  // (`what`, for the line). Noted as an event too.
+  void game_reset(std::string_view what);
+  // The lines of drops that were the game's own clear (game_reset within kHoldUs): information, not warnings.
+  std::vector<std::string> take_info();
   // The game's menus as Hookshot's patch 0018 tells them; noted when they
   // change. Never called: "unknown" in the line.
   void set_menu(bool menu_open, bool map_page);
 
   // One game frame: `scene` loaded (none while none), `in_play` (Link read),
   // Link's place when read. Reads every dungeon's map and compass, wherever
-  // Link is; returns a line for each that went from 1 to 0 since the last
-  // frame (capped: kLinesPerFlag, then a summary a minute; more than kBatch
-  // at once: one line). Also notes loads and scene changes.
-  std::vector<std::string> frame(FlagStore& store, std::optional<std::string_view> scene, bool in_play,
+  // Link is; returns a warning line for each that went from 1 to 0 since the
+  // last frame (capped: kLinesPerFlag, then a summary a minute; more than
+  // kBatch at once: one line). A drop out of play comes kHoldUs later, or
+  // through take_info instead. Also notes loads and scene changes.
+  std::vector<std::string> frame(FlagStore& store, const std::optional<std::string_view>& scene, bool in_play,
                                  std::optional<std::array<float, 3>> link = std::nullopt);
 
  private:
@@ -88,6 +103,14 @@ class MapDropLog {
   std::deque<Event> events_;
   std::map<FlagKey, Write> writes_;  // our last write to each flag
   std::map<FlagKey, std::uint32_t> last_;
+  // Row 269: the lines of a drop out of play, waiting for a game_reset; the last game_reset; the lines it explained.
+  struct Held {
+    std::uint64_t at;
+    std::vector<std::string> lines;
+  };
+  std::optional<Held> held_;
+  std::optional<Event> reset_;
+  std::vector<std::string> info_;
   std::string scene_;
   bool in_play_ = false;
   std::optional<bool> menu_open_, map_page_;

@@ -1,0 +1,84 @@
+# hs-dc-armos, B: see hs-dc-armos.A.txt. B stands 6 m from A's Armos while A wakes and fights it, stays when A goes
+# 45 m away, then walks into Armos 17b5 and hits it.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 600
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 2400
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+place -44.0 111.5 -14.0     # room 12, 6 m east of Armos 17b5, 6.5 m from dc58
+wait 60
+toward -49.0 -10.5 8        # face the Armos
+mark b-f1
+wait 60
+mark b-f2
+wait 60
+mark b-f3
+wait 60
+mark b-f4
+wait 60
+mark b-f5
+wait 60
+mark b-f6
+wait 60
+mark b-f7
+wait 60
+mark b-f8
+wait 60
+mark b-f9
+wait 60
+mark b-f10
+wait 60
+mark b-f11
+wait 60
+mark b-f12
+wait 60
+wait 240                    # A is 45 m away from here on
+mark b-l1
+wait 180
+mark b-l2
+wait 180
+mark b-l3
+wait 180
+mark b-l4
+wait 180
+mark b-l5
+wait 180
+mark b-l6
+wait 180
+mark b-l7
+wait 180
+mark b-l8
+wait 180
+mark b-l9
+wait 180
+mark b-l10
+wait 180
+toward -49.0 -10.5 40       # walk into Armos 17b5
+press Y 8                   # and hit it
+wait 30
+press Y 8
+mark b-h1
+wait 60
+mark b-h2
+wait 60
+mark b-h3
+wait 60
+mark b-h4
+wait 60
+mark b-h5
+wait 60
+wait 600
+mark end

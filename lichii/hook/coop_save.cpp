@@ -2,7 +2,10 @@
 
 #include "coop_save.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -19,10 +22,14 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 
+#include "coop/host/game_items.hpp"
+#include "coop/host/map_drop_log.hpp"
 #include "coop/host/save_transfer.hpp"
 #include "coop/net/client.hpp"
 #include "coop/protocol/messages.hpp"
+#include "coop_boundary.h"
 #include "coop_every.h"
+#include "coop_gold_mode.h"
 
 namespace CoopSave {
 
@@ -39,6 +46,26 @@ bool g_use = false;
 std::mutex g_mutex;  // everything below; the game's file service and the network thread
 fs::path g_dir;      // the folder the game opened for its account save
 save::Planner g_planner;
+bool g_save_requests = false;   // SetSaveRequests: Hookshot asks our game for its own autosave (TakeSaveRequest)
+bool g_test_save_ask = false;   // AskOwnAutoSave (the test commands' `autosave`), taken by TakeSaveRequest
+std::atomic<bool> g_save_request_due{false};   // set under g_mutex when an ask opens a round; TakeSaveRequest's
+                                               // lock-free check (the calc thread, every frame)
+// Player report 120: the slot our game plays (patch 0025's opens, patch 0024's load windows), sent to the guests.
+save::PlayedSlot g_played;
+std::atomic<SlotOpenedFn> g_slot_opened{nullptr};   // SetSlotOpens (Hookshot's patch 0025)
+struct SlotOpens {
+    unsigned opens = 0;   // the count of opens so far (0: none)
+    fs::path dir;         // the last one's slot folder
+    bool write = false;
+};
+unsigned g_slot_opens_seen = 0;
+bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
+bool g_resync = false;        // RequestResync: taken by the next OnFrame
+bool g_guest_live = false;    // a connected guest of this session (CanResync), set each OnFrame
+// The title's own ask (save::title_resync_due): a guest of this session played a file (NoteInGame), and the title has
+// come up since (NoteTitle); the next OnFrame decides, quietly (TitleResync). Both cleared with each new session.
+bool g_guest_played = false;
+bool g_title_ask = false;
 // This session's guest save state (save::GuestSession): fresh for each session (decide_again).
 save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
@@ -66,7 +93,37 @@ bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's titl
 // the hold ends: a save that comes in during play is kept and switched to back on the title (PendingFrame).
 bool g_suspended = false;
 const void* g_decided_client = nullptr;   // the session's client it was made for
+// Row 273: the role the choice was made for (the host: its own saves; a guest: the host's). A host migration or a
+// reconnect to a restarted server can change it in the same client: that choice is over then (save::role_changed).
+bool g_decided_host = false;
+// Row 273: the own folder a switch back to failed for (save::home_due): not tried again every frame.
+fs::path g_home_failed;
+// Row 273: this game took over the host's role with other players staying, on the co-op folder (the group's game): it
+// keeps playing that save for the session (save::keeps_group_save), never sent its own older save instead.
+bool g_group_save = false;
+// The session the choice was made for was seen over while a file was loaded (the choice is kept then: no switch under
+// a game being played). A new session connected in that state chooses again (save::rejoined_in_game).
+bool g_ended = false;
 bool g_live = false;   // decided and the session not over (SessionLive)
+// (Navi) Solo or multiplayer saves (ChooseSaveSet): the choice kept in coop-saves.ini, read once; put in force on the
+// first title's menu.
+bool g_mp_saves = false;
+bool g_set_read = false;
+bool g_set_applied = false;
+// Player report 124: the save folder was switched (RemountLocked) and the game's own save list (its caption manager,
+// which the title's Continue and Load read) still shows the old folder's saves. Taken by the title's step
+// (TakeSaveListStale), which has the game re-read it.
+bool g_list_stale = false;
+// rejoin-host-273-2: the first title's slot fixes went into the folder the game mounted at boot (Longshot 3.1 plays
+// its work copy): it is mounted again at the title's next idle step (RestageSaveFolder), so the game sees them.
+bool g_restage_due = false;
+// Row 63, Not shared: the co-op folder whose host's save was last written with our race (OwnGoldLocked); empty: none.
+fs::path g_race_dir;
+std::string g_race_dir_id;   // the race id that save was written with (a host's other playthrough has another)
+// The host's playthroughs (coordinator #11): per slot of its own, and a new game's (CoopGoldMode::Playthroughs).
+std::optional<CoopGoldMode::Playthroughs> g_playthroughs;
+std::optional<fs::path> g_playthrough_slot;   // the slot the playthrough was last taken for
+bool g_playthrough_new = false;               // a new game's playthrough taken
 
 // An environment variable's text ("" when unset).
 std::string EnvText(const char* name) {
@@ -112,8 +169,76 @@ void Decide() {
 }
 
 void NoteSaveDirLocked(const fs::path& dir);
+bool RemountLocked(const fs::path& dir);
+int FixSlotsLocked(const fs::path& dir);
 save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, bool played_from = true);
 void PendingFrame();
+void AskAtTitle();
+
+// Another player in this game's session (not this game): with them, a new host keeps the group's save (row 273).
+bool OthersIn(const coop::net::Client& client) {
+    const auto& players = client.players();
+    return std::any_of(players.begin(), players.end(), [](const auto& p) { return !p.self; });
+}
+
+// Under g_mutex: a session's choice with a file loaded (a Join from the pause menu, a rejoin during play): nothing
+// of the folder is touched under the game being played. A guest asks for the host's save as on any join; it is
+// written and switched to on the title's menu (AskAtTitle), and the chat says so.
+void DecideInGame(coop::net::Client& client) {
+    g_decided = true;
+    g_decided_client = &client;
+    g_decided_host = client.is_host();
+    g_group_save = client.is_host() && save::keeps_group_save(save::is_coop_dir(g_dir), OthersIn(client));
+    g_ended = false;
+    g_race_dir.clear();
+    if (client.is_host()) {
+        g_use = false;
+        g_guest = save::GuestSession{};   // (an earlier session's host's save, still waiting: not this game's)
+        g_lines = save::GuestNotices{g_in_game};
+        g_pending.clear();
+        g_suspended = false;
+        LOG_INFO(Core, "coop: save: the host (a file is loaded): this game keeps the saves it plays ({}){}",
+                 g_dir.string(), g_group_save ? ", the group's save, for this session" : "");
+        return;
+    }
+    if (TestOwnSave() || client.race()) {
+        g_use = false;
+        g_guest = save::GuestSession{};   // (as for the host: nothing of an earlier session's ask stays)
+        g_lines = save::GuestNotices{g_in_game};
+        g_pending.clear();
+        g_suspended = false;
+        LOG_INFO(Core, "coop: save: {}: this guest keeps its own saves",
+                 client.race() ? "race mode" : "LICHII_COOP_TEST_OWN_SAVE (a test)");
+        return;
+    }
+    AskAtTitle();
+    LOG_INFO(Core, "coop: save: a guest that joined with a file loaded: asking the host for its save; it is written "
+                   "to {} and switched to on the title's menu, the game played now keeps {}",
+             g_pending.string(), g_dir.string());
+    Say(std::string(save::GuestNotices::kJoinedPlaying));
+}
+
+// Under g_mutex (row 273): on the title with the co-op folder (the host's save) mounted, a game no live session holds
+// there goes back to its own folder: the session ended (the Leave, the server gone: solo), or it hosts alone (a lone
+// rejoiner, a host that took over during play with nobody staying). A live guest, and a new host whose group stayed
+// (g_group_save), keep the group's save for the session. The title then offers its own saves, and what it plays next
+// is saved there, never into the co-op folder that the next join empties.
+void HomeFrame() {
+    if (g_dir.empty() || g_dir == g_home_failed) return;
+    if (!save::home_due(save::is_coop_dir(g_dir), g_title_up && !g_suspended, g_in_game,
+                        g_decided && (g_use || g_group_save))) {
+        return;
+    }
+    const fs::path own = save::own_dir_of(g_dir);
+    if (RemountLocked(own)) {
+        LOG_INFO(Core, "coop: save: on the title and no session holds the co-op save here: back on this game's own "
+                       "saves");
+    } else {
+        g_home_failed = g_dir;
+        LOG_WARNING(Core, "coop: save: could not switch the save folder back to {}: this game keeps {}", own.string(),
+                    g_dir.string());
+    }
+}
 
 // Under g_mutex, each frame where the folder can be switched (Hookshot): the folder as mounted, and the choice.
 void SwitchFrame(coop::net::Client& client) {
@@ -123,39 +248,78 @@ void SwitchFrame(coop::net::Client& client) {
     }
     {
         const auto st = client.state();
-        const bool over = &client != g_decided_client || st == coop::net::State::idle ||
-                          st == coop::net::State::stopped || st == coop::net::State::refused;
+        const bool connected = st == coop::net::State::connected && client.host_number() != 0;
+        // (row 273: the same client, but this game hosts now where it was a guest, or the other way round)
+        const bool role = &client == g_decided_client &&
+                          save::role_changed(g_decided, connected, g_decided_host, connected && client.is_host());
+        bool over = &client != g_decided_client || st == coop::net::State::idle ||
+                    st == coop::net::State::stopped || st == coop::net::State::refused || role;
+        if (role && (!g_in_game || !g_ended)) {
+            LOG_INFO(Core, "coop: save: this game {} now (player {}, the host player {}): the save folder is chosen "
+                           "again{}",
+                     client.is_host() ? "hosts" : "is a guest", client.player_number(), client.host_number(),
+                     g_in_game ? " for this session (a file is loaded: no switch under it)" : "");
+        }
         if (save::decide_again(g_decided, over, g_in_game)) {
             g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
+            g_race_dir.clear();   // (row 63: a race save is one session's host's; the next host's race is not it)
             g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
             g_lines = save::GuestNotices{};
             g_pending.clear();
             g_suspended = false;
+            g_ended = false;
+            g_guest_played = false;   // (the title's ask is this session's)
+            g_title_ask = false;
+            g_group_save = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
+        } else if (g_decided && over) {
+            g_ended = true;   // (a file is loaded: the choice is kept for the title, or for a rejoin below)
+        }
+        if (!g_dir.empty() && save::rejoined_in_game(g_decided, g_ended, connected, g_in_game)) {
+            LOG_INFO(Core, "coop: save: a new session with a file loaded: it chooses again");
+            DecideInGame(client);
+            over = false;
         }
         g_live = g_decided && !over;   // (decided below in this frame: on from the next one)
+    }
+    // Race mode (coop/protocol/race.hpp): each player plays their own save. The host's setting can come a moment
+    // after the guest chose to wait for the host's save: that wait ends, and the game stays on its own folder.
+    if (client.race() && g_use && !g_pending.empty()) {
+        g_use = false;
+        g_pending.clear();
+        LOG_INFO(Core, "coop: save: race mode: this guest keeps its own saves (no host's save asked)");
     }
     if (!g_decided && !g_dir.empty()) {
         const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
         auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
-        if (choice == save::FolderChoice::wait) return;
-        if (choice == save::FolderChoice::coop && TestOwnSave()) {
-            LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
+        if (choice == save::FolderChoice::wait) {
+            HomeFrame();   // (no session: the Leave, a server gone, solo)
+            return;
+        }
+        if (choice == save::FolderChoice::coop_later) {
+            DecideInGame(client);
+            PendingFrame();
+            return;
+        }
+        if (choice == save::FolderChoice::coop && (TestOwnSave() || client.race())) {
+            LOG_INFO(Core, "coop: save: {}: this guest keeps its own saves",
+                     client.race() ? "race mode" : "LICHII_COOP_TEST_OWN_SAVE (a test)");
             choice = save::FolderChoice::own;
         }
         g_decided = true;
         g_decided_client = &client;
+        g_decided_host = connected && client.is_host();
+        g_group_save = g_decided_host && save::keeps_group_save(save::is_coop_dir(g_dir), OthersIn(client));
         // Both sides start on the game's own folder: a guest moves to the co-op one only once the host's save is
-        // whole in it (PendingFrame), never onto an empty one.
+        // whole in it (PendingFrame), never onto an empty one. A new host with others staying keeps the group's save.
         const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
-        if (own != g_dir) {
-            if (!g_remount(own.string())) {
+        if (own != g_dir && !g_group_save) {
+            if (!RemountLocked(own)) {
                 LOG_WARNING(Core, "coop: save: could not switch the save folder back to {}: this game keeps {}",
                             own.string(), g_dir.string());
                 g_use = false;
                 return;
             }
-            NoteSaveDirLocked(own);
         }
         g_use = choice == save::FolderChoice::coop;
         if (g_use) {
@@ -167,12 +331,14 @@ void SwitchFrame(coop::net::Client& client) {
             LOG_INFO(Core, "coop: save: a guest: this game plays from the co-op save folder (the host's save) in {} "
                            "once the host's save is written there; until then it stays on {}",
                      g_pending.string(), g_dir.string());
-        } else {
-            LOG_INFO(Core, "coop: save: {}", connected && client.is_host()
-                                                 ? "the host: this game uses its own saves"
-                                                 : "a save is loaded already: this game keeps its own saves");
+        } else if (g_group_save) {
+            LOG_INFO(Core, "coop: save: the host now, with other players staying: this game keeps the group's save "
+                           "in {} for this session", g_dir.string());
+        } else if (connected && client.is_host()) {
+            LOG_INFO(Core, "coop: save: the host: this game uses its own saves");
         }
     }
+    HomeFrame();
     PendingFrame();
 }
 
@@ -185,6 +351,28 @@ void PendingFrame() {
         g_suspended = false;   // (the player's own pick has loaded: back on the title's menu, the switch goes)
         LOG_INFO(Core, "coop: save: a file is loaded: the host's save is switched to when the title is back");
     }
+    if (save::old_coop_first(true, g_title_up && !g_suspended, g_in_game, g_dir == g_pending)) {
+        // (AskAtTitle while the game played an earlier host's save: that one must not be the one the title offers;
+        // with the new save in, Longshot 3.1 copies the co-op folder only when it is mounted anew: RemountLocked)
+        const fs::path own = save::own_dir_of(g_pending);
+        if (!RemountLocked(own)) {
+            LOG_WARNING(Core, "coop: save: could not switch the save folder back to {} before the host's save: the "
+                              "title may offer an earlier host's save in {}", own.string(), g_dir.string());
+            g_pending.clear();   // (no switch to it either: this game keeps the folder it has)
+            g_use = false;
+            return;
+        }
+        if (const int n = save::clear_coop_slots(g_pending); n > 0) {
+            LOG_INFO(Core, "coop: save: {} older slot(s) taken out of {}", n, g_pending.string());
+        }
+        if (g_guest.unwritten) {
+            LOG_INFO(Core, "coop: save: on the title with the host's save in: back on {} first, so the co-op folder "
+                           "is mounted anew with it", own.string());
+        } else {
+            LOG_INFO(Core, "coop: save: on the title before the host's save came: back on {} until it is in",
+                     own.string());
+        }
+    }
     switch (save::pending_step(g_guest.unwritten.has_value(), g_title_up && !g_suspended, g_in_game)) {
     case save::PendingStep::keep:
         return;   // (also while a file is played: switched on the title's menu, after it)
@@ -195,35 +383,189 @@ void PendingFrame() {
     g_guest.unwritten.reset();
     const fs::path to = std::exchange(g_pending, {});
     if (WriteSlotTo(to, slot, false) != save::WriteResult::written) return;
-    if (!g_remount(to.string())) {
+    if (!RemountLocked(to)) {
         LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
                     g_dir.string());
-        g_guest.ready = false;
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
+        g_use = false;   // keeps its own saves from now on: the title asks no more (review of #278)
         Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
         return;
     }
-    NoteSaveDirLocked(to);
     LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
+    // The host's save just written covers this return to the title (a join with a file loaded writes it on the
+    // frame the title comes up): the title asks nothing more for it (review of #278).
+    g_title_ask = false;
+    g_guest_played = false;
     Say(g_lines.on_ready(g_in_game));
+}
+
+// Under g_mutex: THE one way a guest asks for the host's save without touching the folder it plays from (a join
+// with a file loaded, Resync from host): its save session starts again, so the next OnFrame asks the host, the parts
+// come, and the slot waits for the title's menu (PendingFrame), where it is written into the co-op folder and
+// switched to. Its own saves are never touched.
+void AskAtTitle() {
+    const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
+    g_guest = save::GuestSession{};
+    g_lines = save::GuestNotices{g_in_game};   // (the file played now was loaded before this ask: never "too early")
+    g_use = true;
+    g_pending = save::coop_dir_of(own);
+    g_suspended = false;
+}
+
+// Under g_mutex: THE one way this game's save folder is switched (Hookshot): every switch (back to its own folder for
+// a new session, to the co-op folder once the host's save is in it, which Resync from host also ends in) goes through
+// here. After a switch the game's save list is stale (player report 124): the title has the game re-read it
+// (TakeSaveListStale). False: not switched, the game keeps its folder and its list.
+// Longshot 3.1 stages a save (patch 0008): the mount copies the folder into its work copy, the game reads and writes
+// only that copy, and its Commit publishes the copy's changed files back. So everything this module writes into a
+// folder is written BEFORE it is mounted (rejoin-host-273-2): the slot fixes here, the host's save (PendingFrame); a
+// file written into the folder after its mount is never seen by the game, and its next Commit of that file writes
+// over it. A remount of the folder already mounted copies it again only when nothing is open or unpublished there
+// (patch 0008, rejoin-host-273-2: RestageSaveFolder); else Longshot keeps the work copy and says so.
+bool RemountLocked(const fs::path& dir) {
+    FixSlotsLocked(dir);   // (rows 239/240/241: the folder switched to, before its list is offered; before its copy)
+    if (!g_remount || !g_remount(dir.string())) return false;
+    NoteSaveDirLocked(dir);
+    g_list_stale = true;
+    LOG_INFO(Core, "coop: save: the save folder is now {}: the game re-reads its save list on the title", dir.string());
+    return true;
+}
+
+SaveFixFn g_save_fix;   // SetSaveFix (g_mutex)
+
+// Rows 239/240/241: the host's save put right before it is written, so the game never reads a pick it has no model for.
+save::SaveSlot FixedSlotLocked(const save::SaveSlot& slot) {
+    save::SaveSlot out = slot;
+    if (!g_save_fix) return out;
+    for (auto& f : out.files) {
+        if (f.name != "progress.sav") continue;
+        if (const std::string line = g_save_fix(f.bytes); !line.empty()) {
+            LOG_INFO(Core, "coop: save: the host's save: {}", line);
+        }
+    }
+    return out;
+}
+
+// Rows 239/240/241: every slot of the folder the game plays from, each time the title comes up (the player's own saves,
+// a save set switched to, a host's save written before this fix). Only a slot that changes is written, whole, through a
+// temporary file.
+int FixSlotsLocked(const fs::path& dir) {
+    int fixed = 0;   // (the slots written: the caller re-mounts a folder already mounted, RestageSaveFolder)
+    if (!g_save_fix || dir.empty()) return 0;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code dec;
+        if (!it->is_directory(dec)) continue;
+        const fs::path file = it->path() / "progress.sav";
+        std::FILE* in = nullptr;
+#ifdef _WIN32  // (a Windows path is wide with MSVC and llvm-mingw alike: _WIN32, as ReadSaveSetLocked)
+        if (_wfopen_s(&in, file.c_str(), L"rb") != 0) in = nullptr;
+#else
+        in = std::fopen(file.c_str(), "rb");
+#endif
+        if (in == nullptr) continue;
+        std::vector<std::uint8_t> bytes;
+        std::uint8_t buf[65536];
+        for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, in)) > 0;) bytes.insert(bytes.end(), buf, buf + n);
+        std::fclose(in);
+        const std::string line = g_save_fix(bytes);
+        if (line.empty()) continue;
+        // (the slot as it was, once: progress.sav.coop-pick-backup beside it, never written over by a later fix)
+        const fs::path backup = it->path() / "progress.sav.coop-pick-backup";
+        std::error_code bec;
+        if (!fs::exists(backup, bec)) fs::copy_file(file, backup, bec);
+        if (bec) {
+            LOG_WARNING(Core, "coop: save: {}: no backup could be made ({}): left as it is",
+                        it->path().filename().string(), bec.message());
+            continue;
+        }
+        const fs::path tmp = it->path() / "progress.sav.coop-tmp";
+        std::FILE* out = nullptr;
+#ifdef _WIN32
+        if (_wfopen_s(&out, tmp.c_str(), L"wb") != 0) out = nullptr;
+#else
+        out = std::fopen(tmp.c_str(), "wb");
+#endif
+        bool ok = out != nullptr && std::fwrite(bytes.data(), 1, bytes.size(), out) == bytes.size();
+        if (out != nullptr) ok = std::fclose(out) == 0 && ok;
+        std::error_code rec;
+        if (ok) fs::rename(tmp, file, rec);
+        if (!ok || rec) {
+            fs::remove(tmp, rec);
+            LOG_WARNING(Core, "coop: save: {}: {} (could not be written: the game may not show the world with it)",
+                        it->path().filename().string(), line);
+            continue;
+        }
+        LOG_INFO(Core, "coop: save: {}: {}", it->path().filename().string(), line);
+        ++fixed;
+    }
+    return fixed;
+}
+
+// Row 63, Gold Skulltulas Not shared: the host's save keeps this game's own race with this host (at join and at
+// Resync from host; review of f36a8852): CoopGoldMode::TheRace, kept per player and per host beside coop.ini. None: a
+// race from 0 tokens. Never the host's tokens, never the player's own saves. `race_kept` says whether the slot holds
+// our race (the hook then keeps the race from what the game shows: PlaysRaceSave).
+save::SaveSlot OwnGoldLocked(const save::SaveSlot& slot_in, bool& race_kept) {
+    save::SaveSlot slot = slot_in;
+    race_kept = false;
+    if (!CoopGoldMode::NotShared()) return slot;
+    const CoopGoldMode::Race race = CoopGoldMode::TheRace();
+    for (auto& f : slot.files) {
+        if (f.name != "progress.sav") continue;
+        const CoopGoldMode::GoldKept kept =
+            CoopGoldMode::KeepRaceIn(f.bytes, &race, coop::host::gold_skulltula_keys(),
+                                     coop::host::kGoldTokenCount, coop::host::kGoldTokenGet,
+                                     coop::host::gold_race_flags());
+        race_kept = kept.done;
+        if (!kept.done) {
+            LOG_WARNING(Core, "coop: save: Gold Skulltulas not shared: {}: the host's tokens are in this save",
+                        kept.why);
+        } else {
+            LOG_INFO(Core, "coop: save: Gold Skulltulas not shared: the host's save keeps ours ({}): {} keys and "
+                           "count {}, {} rewards and items as ours (the host's: {} keys, count {}){}",
+                     race.empty() ? "none with this host: the race starts from 0" : "our race with this host",
+                     kept.own_keys, kept.own_count, kept.flags, kept.host_keys, kept.host_count,
+                     kept.keys_left ? "; our taken Skulltulas could not be kept (the save has no key set)" : "");
+        }
+    }
+    return slot;
 }
 
 // Under g_mutex: the host's slot written whole into the co-op folder `dir`.
 // `played_from`: the game already plays from `dir` (else Success is said once it is switched to: PendingFrame).
-save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, bool played_from) {
-    const auto result = save::write_coop_save(dir, slot, save::own_dir_of(dir));
+save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot_in, bool played_from) {
+    bool race_kept = false;
+    const save::SaveSlot slot = FixedSlotLocked(OwnGoldLocked(slot_in, race_kept));
+    int own_kept = -1;
+    const auto result = save::write_coop_save(dir, slot, save::own_dir_of(dir), &own_kept);
+    g_race_dir.clear();
     switch (result) {
     case save::WriteResult::written:
+        if (race_kept) {
+            g_race_dir = dir;
+            g_race_dir_id = CoopGoldMode::RaceId();
+        }
         g_guest.ready = true;
         LOG_INFO(Core, "coop: save: the host's save written to {}", dir.string());
+        // (row 249: rupees, ammo, bottles, life and magic are each player's own)
+        if (own_kept < 0) {
+            LOG_INFO(Core, "coop: save: no values of our own kept yet (a first join here): the host's rupees, ammo and "
+                           "bottles are where ours start");
+        } else {
+            LOG_INFO(Core, "coop: save: our own {} rupees/ammo/bottles/life/magic values kept in it", own_kept);
+        }
         if (played_from) Say(g_lines.on_ready(g_in_game));
         break;
     case save::WriteResult::not_coop:
         LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         break;
     case save::WriteResult::failed:
         LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         Say("The host's save could not be written (see the log): play your own save.");
         break;
@@ -261,13 +603,41 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 
 void NoteInGame(bool in_game) {
     std::lock_guard lock(g_mutex);
-    g_in_game = in_game;
+    // (the title's menu up: a Link read there is the title's own scene behind it (Link rides Epona), never a file
+    // played; read as one, a guest back on the title from a join never switched to the host's save, a test run
+    // 2026-11-20)
+    g_in_game = in_game && !g_title_up;
+    if (in_game && g_guest_live) g_guest_played = true;   // (the title's ask, TitleResync)
     Say(g_lines.on_in_game(in_game));
 }
 
 bool HostSaveReady() {
     std::lock_guard lock(g_mutex);
     return g_guest.ready;
+}
+
+void SetSaveRequests(bool on) {
+    std::lock_guard lock(g_mutex);
+    g_save_requests = on;
+}
+
+SaveRequest TakeSaveRequest() {
+    // The calc thread asks every frame: no lock unless a guest's ask opened a round (the host's game never waits on
+    // g_mutex while OnFrame packs a slot, except on the one frame that takes the request).
+    if (!g_save_request_due.exchange(false, std::memory_order_acq_rel)) return SaveRequest::none;
+    std::lock_guard lock(g_mutex);
+    const bool test = std::exchange(g_test_save_ask, false);
+    if (!g_in_game) return SaveRequest::none;   // (back on the title: no file to save; the limit sends)
+    if (g_planner.take_save_request()) return SaveRequest::guests;   // (a test's ask in the same frame: this save)
+    return test ? SaveRequest::test : SaveRequest::none;
+}
+
+bool AskOwnAutoSave() {
+    std::lock_guard lock(g_mutex);
+    if (!g_save_requests || !g_in_game) return false;
+    g_test_save_ask = true;
+    g_save_request_due.store(true, std::memory_order_release);
+    return true;
 }
 
 bool HostSaveComing() {
@@ -288,9 +658,337 @@ bool SessionLive() {
     return g_live;
 }
 
-void NoteTitle(bool title_up) {
+bool PlaysRaceSave() {
     std::lock_guard lock(g_mutex);
+    return !g_race_dir.empty() && g_dir == g_race_dir && g_race_dir_id == CoopGoldMode::RaceId();
+}
+
+namespace {
+std::atomic<unsigned> g_load_starts{0};
+std::atomic<std::uint64_t> g_load_starts_ever{0};   // (SaveLoadStarts: never taken back)
+std::atomic<long long> g_load_start_ms{0};
+std::atomic<unsigned> g_loads{0};
+std::atomic<long long> g_game_over_ms{0};  // NoteGameOverSave; 0: none, or the title came since
+std::atomic<bool> g_load_retry{false};     // the last save in came after a fresh Game Over mark
+std::atomic<bool> g_keeper_load{false};
+std::atomic<bool> g_native_loads{false};
+
+long long NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+fs::path SaveSetFile() {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop-saves.ini";
+}
+
+// Under g_mutex: the kept choice, read once ("saves = multiplayer"; anything else: solo).
+void ReadSaveSetLocked() {
+    if (g_set_read) return;
+    g_set_read = true;
+    std::FILE* f = nullptr;
+#ifdef _WIN32
+    if (_wfopen_s(&f, SaveSetFile().c_str(), L"rb") != 0) f = nullptr;
+#else
+    f = std::fopen(SaveSetFile().c_str(), "rb");
+#endif
+    if (f == nullptr) return;
+    char buf[256] = {};
+    const std::size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    g_mp_saves = std::string_view(buf, n).find("saves = multiplayer") != std::string_view::npos;
+}
+
+void KeepSaveSetLocked() {
+    std::FILE* f = nullptr;
+#ifdef _WIN32
+    if (_wfopen_s(&f, SaveSetFile().c_str(), L"wb") != 0) f = nullptr;
+#else
+    f = std::fopen(SaveSetFile().c_str(), "wb");
+#endif
+    if (f == nullptr) {
+        LOG_WARNING(Core, "coop: save: could not write {}", SaveSetFile().string());
+        return;
+    }
+    const std::string text = std::string("# Navi: the saves played, solo or multiplayer (Multiplayer tab, Settings, Saves)\n") +
+                             "saves = " + (g_mp_saves ? "multiplayer" : "solo") + "\n";
+    std::fwrite(text.data(), 1, text.size(), f);
+    std::fclose(f);
+}
+
+// Under g_mutex: the solo folder of the folder mounted now (no -coop, no -mp).
+fs::path SoloDirLocked(const fs::path& now) {
+    fs::path p = save::own_dir_of(now);
+    const std::string name = p.filename().string();
+    if (name.size() > 3 && name.compare(name.size() - 3, 3, "-mp") == 0) {
+        p = p.parent_path() / name.substr(0, name.size() - 3);
+    }
+    return p;
+}
+
+// Under g_mutex: the chosen set mounted, when that may be done now (the title's menu, no file, no session). The note.
+std::string ApplySaveSetLocked() {
+    if (!g_root || !g_remount) return "Saves can only be switched in this game's own menu.";
+    if (g_in_game || !g_title_up) return "Go back to the title screen first: the saves switch there.";
+    if (g_decided || !g_pending.empty()) return "Leave the multiplayer game first: the saves switch with no session.";
+    const auto root = g_root();
+    if (root.empty()) return "The game has not opened its saves yet.";
+    const fs::path now = fs::path(root).lexically_normal();
+    const fs::path solo = SoloDirLocked(now);
+    fs::path want = solo;
+    if (g_mp_saves) want += "-mp";
+    if (want == now) return g_mp_saves ? "Multiplayer saves." : "Solo saves.";
+    std::error_code ec;
+    if (g_mp_saves && !fs::exists(want, ec)) {   // (the first time: the solo saves as they are, to start from)
+        // Copied to a temporary folder and renamed once whole: a failed copy leaves no half folder (review of PR 236).
+        // The solo saves are only read.
+        std::string why;
+        const bool made = save::copy_dir_whole(solo, want, &why);
+        LOG_INFO(Core, "coop: save: the multiplayer saves made as a copy of the solo saves: {}{}", want.string(),
+                 made ? std::string() : " (copy failed: " + why + ")");
+        if (!made) return "The multiplayer saves could not be made (see the log).";
+    }
+    // (the one switch path: the title has the game re-read its save list, so the new set shows at once, report 124)
+    if (!RemountLocked(want)) {
+        LOG_WARNING(Core, "coop: save: could not switch the saves to {}", want.string());
+        return "The saves could not be switched (see the log).";
+    }
+    LOG_INFO(Core, "coop: save: playing the {} saves: {}", g_mp_saves ? "multiplayer" : "solo", want.string());
+    return g_mp_saves ? "Multiplayer saves: load a save to play them." : "Solo saves: load a save to play them.";
+}
+
+}  // namespace
+
+void SetSaveFix(SaveFixFn fix) {
+    std::lock_guard lock(g_mutex);
+    g_save_fix = std::move(fix);
+}
+
+void NoteTitle(bool title_up) {
+    if (title_up) {
+        g_game_over_ms.store(0, std::memory_order_relaxed);  // Game Over's Quit Game: the next load is the player's pick
+    }
+    std::lock_guard lock(g_mutex);
+    if (title_up && !g_title_up) {
+        // (rows 239/240/241: before the player can load one of them; written into the folder the game already
+        // mounted, so where it can be switched it is mounted again at the title's idle step: RestageSaveFolder)
+        if (FixSlotsLocked(g_dir) > 0 && g_remount) g_restage_due = true;
+        g_played.on_title();   // (a new pick follows: a file, or New Game)
+        coop::host::map_drop_log().game_reset("the title");   // row 269: its flags are cleared there, not dropped in play
+        if (g_playthroughs) g_playthroughs->OnTitle();
+        g_playthrough_slot.reset();   // (the next load or save is a new pick, even of the same slot)
+        g_title_seen = true;
+        if (std::exchange(g_guest_played, false)) g_title_ask = true;   // (decided by the next OnFrame: TitleResync)
+    }
     g_title_up = title_up;
+    if (title_up) g_in_game = false;   // (NoteInGame: the title's scene's Link is not a file played)
+    if (title_up && !g_set_applied && !g_in_game && g_root) {   // (Navi) the kept choice, on the first title
+        ReadSaveSetLocked();
+        g_set_applied = true;
+        if (g_mp_saves) ApplySaveSetLocked();
+    }
+}
+
+std::string ChooseSaveSet(bool multiplayer) {
+    std::lock_guard lock(g_mutex);
+    ReadSaveSetLocked();
+    const bool before = g_mp_saves;
+    g_mp_saves = multiplayer;
+    const std::string note = ApplySaveSetLocked();
+    const std::string root = g_root ? g_root() : std::string();
+    const bool done = !root.empty() && (fs::path(root).lexically_normal().filename().string().ends_with("-mp") ||
+                                        save::own_dir_of(fs::path(root)).filename().string().ends_with("-mp")) == multiplayer;
+    if (!done) {
+        g_mp_saves = before;   // (not switched: the choice stays as it was)
+        return note;
+    }
+    KeepSaveSetLocked();
+    return note;
+}
+
+bool MultiplayerSaves() {
+    std::lock_guard lock(g_mutex);
+    ReadSaveSetLocked();
+    return g_mp_saves;
+}
+
+void SetSlotOpens(SlotOpenedFn opened) {
+    g_slot_opened.store(opened, std::memory_order_release);
+}
+
+namespace {
+const char* SourceName(save::PlayedSlot::Source s) {
+    switch (s) {
+    case save::PlayedSlot::Source::write: return "the game saved into it";
+    case save::PlayedSlot::Source::load_read: return "the game loaded it";
+    case save::PlayedSlot::Source::last_read: return "the last one the game read before its load";
+    case save::PlayedSlot::Source::none: break;
+    }
+    return "not known";
+}
+
+// Under g_mutex: a change of the played slot, logged once, in a session only (solo writes no co-op save lines).
+void LogPlayed(const std::optional<fs::path>& before) {
+    if (g_played.slot() == before || !g_live) return;
+    if (g_played.slot()) {
+        LOG_INFO(Core, "coop: save: our game plays {} ({})", g_played.slot()->filename().string(),
+                 SourceName(g_played.source()));
+    }
+}
+
+// Patch 0025's opens now as the exe copied them (no lock of ours: the exe's own lock, held for a copy). No heap: the
+// present thread reads it every frame (save-crash-0118: a path built here each frame was the first co-op allocation
+// to fail at the PC's commit limit); the folder becomes a path only when a caller needs it (SlotDir).
+struct RawSlotOpens {
+    unsigned opens = 0;
+    bool write = false;
+    char buf[1024] = {};
+};
+void ReadRawSlotOpens(RawSlotOpens& o) {
+    if (const auto opened = g_slot_opened.load(std::memory_order_acquire)) {
+        int w = 0;
+        o.opens = opened(o.buf, sizeof o.buf, &w);
+        o.write = w != 0;
+    }
+}
+// The opens' slot folder as a path (empty: no open yet, or no ended folder in the buffer).
+fs::path SlotDir(const RawSlotOpens& o) {
+    if (o.opens == 0) return {};
+    const auto text = CoopBoundary::EndedText(o.buf, sizeof o.buf);
+    return text.empty() ? fs::path() : fs::path(text).lexically_normal();
+}
+SlotOpens ReadSlotOpens() {
+    RawSlotOpens raw;
+    ReadRawSlotOpens(raw);
+    SlotOpens o;
+    o.opens = raw.opens;
+    o.write = raw.write;
+    o.dir = SlotDir(raw);
+    return o;
+}
+
+// The game thread's load-window marks (NoteGameSaveLoad), each with patch 0025's opens at that moment, for the next
+// PollSlotOpens. Their own small lock: only a push or a swap under it, never g_mutex or disk work (the game's save
+// load never waits on the host's save reads).
+std::mutex g_window_mutex;
+std::vector<std::pair<bool, SlotOpens>> g_windows;
+
+void NoteLoadWindowMark(bool start) {
+    auto opens = ReadSlotOpens();
+    std::lock_guard lock(g_window_mutex);
+    if (g_windows.size() < 64) g_windows.emplace_back(start, std::move(opens));
+}
+}  // namespace
+
+void PollSlotOpens() {
+    std::vector<std::pair<bool, SlotOpens>> windows;
+    {
+        std::lock_guard lock(g_window_mutex);
+        windows.swap(g_windows);
+    }
+    RawSlotOpens now;
+    ReadRawSlotOpens(now);
+    std::lock_guard lock(g_mutex);
+    // Nothing new (most frames): no lock work, no path, no heap (g_slot_opens_seen is this thread's, under g_mutex).
+    if (windows.empty() && now.opens == g_slot_opens_seen) return;
+    const auto before = g_played.slot();
+    // The window marks first, each with the opens as they were at it: a load's read is never lost, nor a read from
+    // before the load taken as inside it, whatever the frame's timing (save::PlayedSlot counts the opens).
+    for (const auto& [start, at] : windows) g_played.on_load_window(start, at.opens, at.dir, at.write);
+    if (now.opens != g_slot_opens_seen) {
+        if (const fs::path dir = SlotDir(now); !dir.empty()) {
+            g_slot_opens_seen = now.opens;   // (several opens in one frame: the last counts; one slot per load)
+            g_played.on_open(dir, now.write, now.opens);
+        }
+    }
+    LogPlayed(before);
+}
+
+void RequestResync() {
+    std::lock_guard lock(g_mutex);
+    g_resync = true;
+}
+
+bool CanResync() {
+    std::lock_guard lock(g_mutex);
+    return g_guest_live && g_root && g_remount;
+}
+
+void NoteGameSaveLoad(bool start) {
+    NoteLoadWindowMark(start);   // player report 120: the slot the game loads (save::PlayedSlot)
+    // Row 269: the game cleared its flag table for this load a moment ago: no map or compass dropped in play.
+    coop::host::map_drop_log().game_reset(start ? "the game starts loading a save" : "the game loaded a save");
+    const long long now = NowMs();
+    if (start) {
+        g_load_starts.fetch_add(1, std::memory_order_relaxed);
+        g_load_starts_ever.fetch_add(1, std::memory_order_relaxed);
+        g_load_start_ms.store(now, std::memory_order_relaxed);
+        return;
+    }
+    const long long over = g_game_over_ms.exchange(0, std::memory_order_relaxed);
+    g_load_retry.store(over != 0 && now - over <= kGameOverFreshMs, std::memory_order_relaxed);
+    g_loads.fetch_add(1, std::memory_order_relaxed);
+    g_keeper_load.store(true, std::memory_order_relaxed);
+}
+
+void NoteGameOverSave() {
+    g_game_over_ms.store(NowMs(), std::memory_order_relaxed);
+}
+
+void SetNativeSaveLoads(bool on) {
+    g_native_loads.store(on, std::memory_order_relaxed);
+}
+
+bool NativeSaveLoads() {
+    return g_native_loads.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SaveLoadStarts() {
+    return g_load_starts_ever.load(std::memory_order_relaxed);
+}
+
+GameSaveLoads TakeGameSaveLoads() {
+    GameSaveLoads out;
+    out.starts = g_load_starts.exchange(0, std::memory_order_relaxed);
+    if (out.starts != 0 && NowMs() - g_load_start_ms.load(std::memory_order_relaxed) > kGameSaveLoadFreshMs) {
+        out.starts = 0;  // (the game's own start, before any session: no load of ours)
+    }
+    out.loads = g_loads.exchange(0, std::memory_order_relaxed);
+    out.retry = out.loads != 0 && g_load_retry.load(std::memory_order_relaxed);
+    return out;
+}
+
+bool TakeKeeperSaveLoad() {
+    return g_keeper_load.exchange(false, std::memory_order_relaxed);
+}
+
+bool RestageDue() {
+    std::lock_guard lock(g_mutex);
+    return g_restage_due && g_title_up && !g_in_game;
+}
+
+void RestageSaveFolder() {
+    std::lock_guard lock(g_mutex);
+    if (!g_restage_due || !g_title_up || g_in_game || g_dir.empty()) return;   // (kept for the next title step)
+    g_restage_due = false;
+    if (RemountLocked(g_dir)) {
+        LOG_INFO(Core, "coop: save: the slots fixed on the title are in the folder the game plays: mounted again, so the "
+                       "game reads them (Longshot copies it again when nothing is open there, else it says it kept it)");
+    } else {
+        LOG_WARNING(Core, "coop: save: the slots fixed on the title: the folder {} could not be mounted again: the game "
+                          "reads them from its next start", g_dir.string());
+    }
+}
+
+bool TakeSaveListStale() {
+    std::lock_guard lock(g_mutex);
+    return std::exchange(g_list_stale, false);
+}
+
+bool TitleUp() {
+    std::lock_guard lock(g_mutex);
+    return g_title_up;
 }
 
 void CancelPendingSwitch(std::string_view why) {
@@ -357,8 +1055,17 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     if (const auto* ask = std::get_if<proto::SaveAsk>(&event.message)) {
         if (client.is_host()) {
-            if (g_planner.on_ask(ask->player_number, CoopEvery::NowUs())) {
-                LOG_INFO(Core, "coop: save: player {} asked for our save", ask->player_number);
+            // A file played (not the title, not a new game never saved) where the game can be asked for its own
+            // autosave (Hookshot, SetSaveRequests): the ask waits for that save (save::Planner's round, case 1 of
+            // the join's state: the file on disk is only as new as our last door).
+            const bool fresh = g_save_requests && g_in_game && !g_played.new_game(g_in_game, g_title_seen);
+            const bool open = g_planner.round_open();
+            if (g_planner.on_ask(ask->player_number, CoopEvery::NowUs(),
+                                 fresh ? std::optional(fs::file_time_type::clock::now()) : std::nullopt)) {
+                if (fresh && !open) g_save_request_due.store(true, std::memory_order_release);   // (a new round)
+                LOG_INFO(Core, "coop: save: player {} asked for our save{}", ask->player_number,
+                         !fresh ? "" : open ? " (it waits for the save already asked of our game)"
+                                            : " (our game is asked for its own autosave first)");
             } else {
                 LOG_WARNING(Core, "coop: save: player {} asked for our save again within 10 s: ignored",
                             ask->player_number);
@@ -402,6 +1109,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
+        save::note_write_failed(g_guest);   // nothing is on its way now (else Resync says "already on its way")
         g_lines.on_failed();
         Say("The host's save could not be read (see the log): play your own save, or join again.");
         return;
@@ -415,13 +1123,108 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         g_guest.unwritten = *slot;
         return;
     }
+    if (g_root && g_remount && save::is_coop_dir(g_dir)) {
+        // (rejoin-host-273-2) Hookshot, the game already on the co-op folder (the host loaded a save): never written
+        // into the folder the game has mounted (Longshot 3.1 plays its work copy, and its next Commit writes over a
+        // file put under it). It waits for the title's menu, where the game leaves the folder, the save is written,
+        // and the folder is mounted anew with it (PendingFrame, save::old_coop_first): as on a join.
+        g_guest.unwritten = *slot;
+        g_pending = g_dir;
+        LOG_INFO(Core, "coop: save: the host's next save is kept for the title's menu: written and switched to there "
+                       "(never under the save folder the game has mounted)");
+        return;
+    }
     WriteSlot(*slot);
 }
+
+namespace {
+// Under g_mutex, from OnFrame: the Lobby tab's Resync from host (save::resync_check). The guest's save session starts
+// again as on joining: the next OnFrame asks the host, the parts come, the slot waits for the title's menu
+// (PendingFrame) and is then written into the co-op folder and switched to. Its own saves are never touched.
+// Under g_mutex: the host's save is on its way (whole and waiting to be written, parts coming, or asked and not yet
+// answered).
+bool SaveComingLocked() {
+    return save::save_coming(g_guest, CoopEvery::NowUs(), CoopEvery::kSaveStuckUs);
+}
+
+// Under g_mutex, from OnFrame: a guest back on the title after playing a file asks for the host's save again, the
+// same ask as Resync from host (AskAtTitle), so the next load is the host's save. Quiet when it does not go (the
+// button explains itself; this was never pressed): an ask already waiting or a save coming, no folder switch, a
+// guest that keeps its own saves (g_use off: LICHII_COOP_TEST_OWN_SAVE, a failed switch), the session over.
+void TitleResync(bool connected_guest) {
+    save::TitleResync t;
+    t.title_came = true;
+    t.connected_guest = connected_guest;
+    t.played_in_session = true;
+    t.on = EnvText("LICHII_COOP_TITLE_RESYNC") != "0";
+    t.can_switch = g_root && g_remount && !g_dir.empty();
+    t.plays_hosts_save = g_use;
+    t.ask_waiting = !g_pending.empty() || SaveComingLocked();
+    if (!save::title_resync_due(t)) return;
+    AskAtTitle();   // asks at once (OnFrame), as on joining; written and switched to on the title's menu
+    LOG_INFO(Core, "coop: save: back on the title as a guest: asking for the host's save again, so the next load is "
+                   "the host's");
+    Say(std::string(save::GuestNotices::kTitleAsked));
+}
+
+void Resync(bool connected_guest) {
+    switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), SaveComingLocked())) {
+    case save::ResyncCheck::not_guest:
+        LOG_INFO(Core, "coop: save: resync from host: refused (not a guest in a session)");
+        Say("Resync from host: only a guest in a session can ask for the host's save.");
+        return;
+    case save::ResyncCheck::no_switch:
+        LOG_INFO(Core, "coop: save: resync from host: refused (this game's save folder cannot switch)");
+        Say("Resync from host: this game cannot switch its save folder (see the log).");
+        return;
+    case save::ResyncCheck::coming:
+        LOG_INFO(Core, "coop: save: resync from host: the host's save is already on its way");
+        Say("Resync from host: the host's save is already on its way.");
+        return;
+    case save::ResyncCheck::go:
+        break;
+    }
+    AskAtTitle();   // asks again at once (OnFrame), as on joining
+    LOG_INFO(Core, "coop: save: resync from host: asking the host for its save again ({}; switched to on the "
+                   "title's menu)", g_in_game ? "a file is loaded" : "no file loaded");
+    Say(g_in_game ? "Resync from host: the host's save is coming. Go back to the title and load it once the chat "
+                    "says Success."
+                  : "Resync from host: the host's save is coming. Load a save once the chat says Success.");
+}
+}  // namespace
+
+namespace {
+// Under g_mutex, the host: the playthrough its game plays (a slot of its own, or a new game), so each has its own race
+// with each guest (row 63, CoopGoldMode::SetPlaythrough). The slot unknown: the last one stays.
+void PlaythroughLocked(bool new_game) {
+    if (!g_playthroughs) g_playthroughs.emplace(CoopGoldMode::RaceDir());
+    std::string id;
+    if (new_game && !g_playthrough_new) {
+        g_playthrough_new = true;
+        id = g_playthroughs->OnNewGame();
+        g_playthrough_slot.reset();   // (its first save, even into the slot played before, takes the new game's id)
+        if (CoopGoldMode::NotShared()) {
+            LOG_INFO(Core, "coop: save: a new game: each guest's Gold Skulltula race with it starts from 0");
+        }
+    }
+    if (!new_game) g_playthrough_new = false;
+    if (g_played.slot() && g_played.slot() != g_playthrough_slot) {
+        g_playthrough_slot = g_played.slot();
+        id = g_playthroughs->OnSlot(g_played.slot()->filename().string(),
+                                    g_played.source() == save::PlayedSlot::Source::write);
+    }
+    if (!id.empty()) CoopGoldMode::SetPlaythrough(std::move(id));
+}
+}  // namespace
 
 void OnFrame(coop::net::Client& client, bool host_reset) {
     std::lock_guard lock(g_mutex);
     SwitchFrame(client);
-    if (client.state() != coop::net::State::connected || client.host_number() == 0) {
+    const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
+    g_guest_live = connected && !client.is_host() && g_live;
+    if (std::exchange(g_resync, false)) Resync(g_guest_live);
+    if (std::exchange(g_title_ask, false)) TitleResync(g_guest_live);
+    if (!connected) {
         g_outbox.clear();
         return;
     }
@@ -463,15 +1266,55 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
         return;
     }
     if (host_reset) {
-        g_planner.on_host_load(fs::file_time_type::clock::now());
-        LOG_INFO(Core, "coop: save: we loaded a save: a guest that asks gets our newest save at once, and every "
-                       "guest gets this one after the game's next save (a door or a save point)");
+        const auto before = g_played.slot();
+        g_played.on_load_seen();
+        LogPlayed(before);
+        const bool known = g_played.slot().has_value();
+        g_planner.on_host_load(fs::file_time_type::clock::now(), known);
+        if (known) {
+            LOG_INFO(Core, "coop: save: we loaded {}: every guest gets it now", g_played.slot()->filename().string());
+        } else {
+            LOG_INFO(Core, "coop: save: we loaded a save (which slot is not known here): a guest that asks gets our "
+                           "newest save at once, and every guest gets this one after the game's next save (a door "
+                           "or a save point)");
+        }
     }
+    // A new game not saved yet: the guests hear "no save yet", never another slot of ours (player report 120).
+    const bool new_game = g_played.new_game(g_in_game, g_title_seen);
+    PlaythroughLocked(new_game);
     // Twice a second: what the host owes (it reads the folder's file times).
     if (!g_dir.empty() && !g_planner.idle() && g_folder_every.Due(CoopEvery::NowUs())) {
-        for (const auto& send : g_planner.due(save::newest_write(g_dir))) {
-            const auto slot_dir = send.no_save ? std::nullopt : save::newest_slot(g_dir);
+        const auto newest = new_game ? std::nullopt : save::newest_write(g_dir);
+        const bool round = g_planner.round_open();
+        const auto sends = g_planner.due(newest, CoopEvery::NowUs());
+        if (round && !g_planner.round_open() && !sends.empty() && !sends.front().no_save &&
+            sends.front().reason == proto::SaveReason::join) {
+            if (sends.front().fresh) {
+                LOG_INFO(Core, "coop: save: our game saved after the ask: the guests get the game as it is now");
+            } else {
+                LOG_WARNING(Core, "coop: save: our game did not save within {} s of the ask (it refused: a cutscene, "
+                                  "a boss room, just saved at a door, or a state it does not save in): sending our "
+                                  "last save on disk, not the game as it is now",
+                            save::Planner::kFreshSaveUs / 1'000'000);
+            }
+        }
+        for (const auto& send : sends) {
+            bool played = send.fresh;   // (a save written after the ask: the newest slot is the game now)
+            const auto slot_dir = send.no_save ? std::nullopt
+                                  : send.fresh ? save::newest_slot(g_dir)
+                                               : save::slot_to_send(g_dir, g_played.slot() || g_in_game ? g_played.slot()
+                                                                                             : g_played.last(),
+                                                                     &played);
             const auto slot = slot_dir ? save::read_slot(*slot_dir) : std::nullopt;
+            if (slot && !played) {
+                // Row 63: the slot played is not known (the title): the guests' race is the playthrough of the slot
+                // they get. Its id goes out before the save (RaceSendDue), and the host's load of that slot keeps it.
+                // A known played slot that could not be sent: OnSend leaves the host's own playthrough in force.
+                if (!g_playthroughs) g_playthroughs.emplace(CoopGoldMode::RaceDir());
+                const std::string id = g_playthroughs->OnSend(
+                    slot_dir->filename().string(), g_played.slot() ? g_played.slot()->filename().string() : std::string());
+                if (!id.empty()) CoopGoldMode::SetPlaythrough(id);
+            }
             const auto packed =
                 send.no_save ? save::pack_no_save() : (slot ? save::pack(*slot) : std::vector<std::uint8_t>{});
             if (packed.empty()) {
@@ -489,8 +1332,13 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                 g_planner.retry(send);
                 continue;
             }
-            LOG_INFO(Core, "coop: save: sending {} ({} bytes, {} parts) to {}",
-                     send.no_save ? std::string("'no save yet'") : slot_dir->filename().string(), packed.size(),
+            LOG_INFO(Core, "coop: save: sending {} ({}; {} bytes, {} parts) to {}",
+                     send.no_save ? std::string("'no save yet'") : slot_dir->filename().string(),
+                     send.no_save ? (new_game ? "a new game, not saved yet" : "nothing on disk")
+                                  : send.fresh ? "saved by our game after the ask: the game now"
+                                  : (played ? "the slot our game plays"
+                                            : "the newest on disk: the slot played is not known"),
+                     packed.size(),
                      parts.size(),
                      send.to_player == 0 ? std::string("every guest")
                                          : fmt::format("player {}", send.to_player));
@@ -499,7 +1347,8 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
             }
         }
     }
-    if (!g_outbox.empty()) {
+    // Not shared: the save waits until the guests have the race id of the playthrough it is (CoopGoldMode).
+    if (!g_outbox.empty() && !CoopGoldMode::RaceSendDue()) {
         if (client.send(proto::Message{g_outbox.front()})) {
             g_outbox.pop_front();
         }

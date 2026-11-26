@@ -99,6 +99,11 @@ bool RateLimit::allow(Addr from, std::uint64_t now_ms) {
   return true;
 }
 
+void HostRendezvous::set_password(const std::string& password) {
+  config_.password = password;
+  key_ = punch_key(config_.password);
+}
+
 HostRendezvous::HostRendezvous(HostConfig config) : config_(std::move(config)) {
   key_ = punch_key(config_.password);
   if (!config_.random_id) {

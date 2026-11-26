@@ -1,0 +1,29 @@
+# hs-items-share, B: see hs-items-share.A.txt. B gets the ocarina through item sharing, takes it out in the
+# Graveyard, walks into Kakariko (a scene load), and takes it out again.
+mark start
+wait 240
+setflag PouchData.Item_ZeldaLetter.StockNum 1                      # B holds Zelda's Letter
+mark bottle
+setflag PouchData.BottleA.StockNum 1                               # and an empty bottle
+setflag PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid 1
+setenum PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem Empty   # the lane saves keep a Fairy in BottleA: empty it
+wait 120
+press DLEFT 12
+wait 240
+mark out-1
+press B 12
+wait 120
+press B 12
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard (as teleport-far)
+wait 420                # Kakariko loads
+mark kakariko
+wait 300
+press DLEFT 12
+wait 240
+mark out-2
+press B 12
+wait 120
+press B 12
+wait 1200
+mark end

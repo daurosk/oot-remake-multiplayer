@@ -8,6 +8,7 @@
 #include "coop_objects_sync.h"  // QuatOf, FrameAfter
 
 #include <cmath>
+#include <limits>
 
 namespace CoopRide {
 
@@ -77,19 +78,29 @@ void Rider::Reset() {
     last_us_ = 0;
     tried_us_ = 0;
     horse_ = 0;
+    free_ = false;
+    seek_us_ = 0;
+    sent_place_ = {};
 }
 
-bool Rider::Wants(bool riding, std::uint64_t now_us) const {
-    if (!riding && off_left_ == 0 && !riding_) {
+bool Rider::Wants(bool riding, std::uint64_t now_us, bool own) const {
+    if (!riding && own) {
+        if (riding_) {
+            return true;  // just got off: she is sent free at once, no gap for the others
+        }
+        // Followed (or her off sent) 30 times a second; looked for twice a second while she is not out.
+        return seek_us_ == 0 || now_us >= seek_us_ + (free_ || off_left_ > 0 ? kEveryUs : kSeekEveryUs);
+    }
+    if (!riding && off_left_ == 0 && !riding_ && !free_) {
         return false;
     }
-    return tried_us_ == 0 || now_us >= tried_us_ + kEveryUs || (!riding && riding_);
+    return tried_us_ == 0 || now_us >= tried_us_ + kEveryUs || (!riding && (riding_ || free_));
 }
 
 std::optional<proto::PlayerRide> Rider::Tick(bool riding, const std::optional<Vec3>& position,
                                              const std::optional<Quat>& rotation,
                                              const std::vector<HorseSeen>& horses,
-                                             std::uint64_t now_us) {
+                                             std::uint64_t now_us, bool own) {
     if (riding) {
         tried_us_ = now_us;  // a walk was made for this Tick
     }
@@ -136,14 +147,74 @@ std::optional<proto::PlayerRide> Rider::Tick(bool riding, const std::optional<Ve
             m.animation = best->animation;
         }
         riding_ = true;
+        free_ = false;
         off_left_ = kOffSends;
         horse_ = best->address;
         last_us_ = now_us;
         return m;
     }
-    if (riding_ || off_left_ > 0) {
-        if (riding_) {
+    if (own) {
+        // On foot with Epona won: the Epona on our list is our own (the one we
+        // just rode, else the nearest), sent where she is in the world.
+        seek_us_ = now_us;
+        const HorseSeen* best = nullptr;
+        float best_d = std::numeric_limits<float>::infinity();
+        const bool placed = position && Finite(*position);
+        for (const HorseSeen& h : horses) {
+            if (!Finite(h.position)) {
+                continue;
+            }
+            if (h.address == horse_ && horse_ != 0) {
+                best = &h;
+                break;
+            }
+            const float d = placed ? Distance(h.position, *position) : 0.0f;
+            if (best == nullptr || d < best_d) {
+                best = &h;
+                best_d = d;
+            }
+        }
+        if (best != nullptr) {
+            const bool moved = !free_ || Distance(best->position, sent_place_) > kStillM;
+            if (free_ && !riding_ && now_us < last_us_ + (moved ? kEveryUs : kIdleEveryUs)) {
+                return std::nullopt;
+            }
+            proto::PlayerRide m;
+            m.flags = proto::kRideFree;
+            m.horse = std::string(kHorse);
+            m.place = best->position;
+            for (const float f : m.place) {
+                if (std::fabs(f) > proto::kMaxRidePlace) {
+                    return std::nullopt;
+                }
+            }
+            m.rotation = CoopObjects::QuatOf(best->rotation);
+            for (const float f : m.rotation) {
+                if (!std::isfinite(f)) {
+                    return std::nullopt;
+                }
+            }
+            if (best->animation && std::isfinite(best->animation->frame) &&
+                std::isfinite(best->animation->rate) && !best->animation->name.empty() &&
+                best->animation->name.size() <= proto::kMaxAnimationChars) {
+                m.animation = best->animation;
+            }
             riding_ = false;
+            free_ = true;
+            off_left_ = kOffSends;
+            horse_ = best->address;
+            last_us_ = now_us;
+            sent_place_ = best->position;
+            return m;
+        }
+        if ((free_ || riding_) && now_us < last_us_ + kGoneUs) {
+            return std::nullopt;  // not seen on this walk: not gone yet
+        }
+    }
+    if (riding_ || free_ || off_left_ > 0) {
+        if (riding_ || free_) {
+            riding_ = false;
+            free_ = false;
             horse_ = 0;
         } else if (now_us < last_us_ + kEveryUs) {
             return std::nullopt;
@@ -167,9 +238,10 @@ void Rides::Receive(const proto::PlayerRide& ride, std::uint64_t now_us) {
     }
     std::lock_guard lock(mutex_);
     Ride& r = rides_[ride.player_number];
-    const bool was = (r.message.flags & proto::kRideRiding) != 0 && r.at_us != 0 &&
-                     now_us < r.at_us + kStaleUs;
-    const bool is = (ride.flags & proto::kRideRiding) != 0;
+    // Ridden or free, it is the same horse: one copy from the first message
+    // until she is gone (off, or not heard of), whoever gets on or off.
+    const bool was = r.message.flags != 0 && r.at_us != 0 && now_us < r.at_us + kStaleUs;
+    const bool is = ride.flags != 0;
     if (is && (!was || r.message.horse != ride.horse)) {
         ++r.mount;
     }
@@ -191,7 +263,7 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
         std::lock_guard lock(mutex_);
         rides = rides_;
     }
-    std::map<std::uint8_t, bool> shown;
+    std::map<std::uint8_t, std::uint8_t> shown;
     for (const auto& r : remotes) {
         if (r.number < 1 || r.number > proto::kMaxPlayers) {
             continue;
@@ -201,15 +273,15 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
             continue;
         }
         const Ride& ride = it->second;
-        const bool fresh = ride.at_us != 0 && now_us < ride.at_us + kStaleUs &&
-                           (ride.message.flags & proto::kRideRiding) != 0;
+        const bool unridden = (ride.message.flags & proto::kRideFree) != 0;
+        const bool fresh = ride.at_us != 0 && now_us < ride.at_us + kStaleUs && ride.message.flags != 0;
         if (!fresh || (live_puppets & (1u << r.number)) == 0 || !(r.fade > 0.0f) || !scene) {
             continue;
         }
         const std::optional<std::string_view> theirs =
-            r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
+            coop::host::view_of(r.scene);
         const std::optional<std::string_view> anim =
-            r.anim ? std::optional<std::string_view>(r.anim->name) : std::nullopt;
+            coop::host::name_of(r.anim);
         // The rider's own game says when it rides (its fresh PLAYER_RIDE). The
         // puppet's command is a sample that can trail it or miss a frame, and
         // waiting for it to name a horse left the rider seated on nothing.
@@ -223,9 +295,15 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
         CoopSpawn::Copy c;
         c.key = kKeyBit | (std::uint64_t(r.number) << 32) | ride.mount;
         c.actor = ride.message.horse;
-        const Vec3 d = FromFrame(frame, ride.message.offset);
-        c.position = {r.position[0] + d[0], r.position[1] + d[1], r.position[2] + d[2]};
-        c.rotation = Absolute(frame, CoopPuppet::QuatToMatrix(ride.message.rotation));
+        if (unridden) {
+            // Nobody on her: where her owner's game has her, not by the puppet.
+            c.position = ride.message.place;
+            c.rotation = CoopPuppet::QuatToMatrix(ride.message.rotation);
+        } else {
+            const Vec3 d = FromFrame(frame, ride.message.offset);
+            c.position = {r.position[0] + d[0], r.position[1] + d[1], r.position[2] + d[2]};
+            c.rotation = Absolute(frame, CoopPuppet::QuatToMatrix(ride.message.rotation));
+        }
         if (ride.message.animation) {
             proto::Animation a = *ride.message.animation;
             a.frame = CoopObjects::FrameAfter(a.frame, a.rate,
@@ -233,18 +311,30 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
             c.animation = std::move(a);
         }
         out.push_back(std::move(c));
-        shown[r.number] = true;
+        shown[r.number] = unridden ? proto::kRideFree : proto::kRideRiding;
     }
-    for (const auto& [number, on] : shown) {
-        if (!shown_[number]) {
+    for (const auto& [number, how] : shown) {
+        const auto had = shown_.find(number);
+        const std::uint8_t before = had != shown_.end() ? had->second : std::uint8_t{0};
+        if (before == how) {
+            continue;
+        }
+        if (how == proto::kRideRiding) {
             changes_.push_back("P" + std::to_string(number) + " rides " +
                                rides[number].message.horse + " (horse copy " +
-                               std::string(kHorseStandIn) + ")");
+                               std::string(kHorseStandIn) + (before != 0 ? ", the same copy)" : ")"));
+        } else {
+            changes_.push_back("P" + std::to_string(number) + "'s " + rides[number].message.horse +
+                               (before != 0 ? std::string(" waits, nobody on her (the same copy)")
+                                            : " is here, nobody on her (horse copy " +
+                                                  std::string(kHorseStandIn) + ")"));
         }
     }
-    for (const auto& [number, on] : shown_) {
-        if (on && shown.count(number) == 0) {
-            changes_.push_back("P" + std::to_string(number) + " off the horse (copy deleted)");
+    for (const auto& [number, how] : shown_) {
+        if (how != 0 && shown.count(number) == 0) {
+            changes_.push_back("P" + std::to_string(number) +
+                               (how == proto::kRideRiding ? " off the horse (copy deleted)"
+                                                          : "'s horse gone (copy deleted)"));
         }
     }
     shown_ = std::move(shown);
@@ -360,7 +450,8 @@ public:
     void Frame(Core::System& system, u64 main_base, coop::host::Session* session,
                const std::optional<std::string>& scene, bool local_event,
                const std::optional<Vec3>& own_position, const std::optional<Quat>& own_rotation,
-               const std::optional<proto::Animation>& own_animation, u64 now_us, u64 server_now_us) {
+               const std::optional<proto::Animation>& own_animation, u64 now_us, u64 server_now_us,
+               const std::function<bool()>& owns_epona) {
         if (session == nullptr || main_base == 0 || now_us == 0 || server_now_us == 0) {
             if (drawing_) {
                 CoopSpawn::TheDirector().SetRides(0, {});
@@ -374,14 +465,35 @@ public:
         const bool riding =
             own_animation &&
             coop::host::activity_of(std::string_view(own_animation->name)) == coop::host::Activity::riding;
-        if (rider_.Wants(riding, now_us)) {
+        // Whether this game has won Epona (Get_Epona Complete), asked once a second: the game's own getter.
+        if (owns_epona && (owns_at_us_ == 0 || now_us >= owns_at_us_ + 1'000'000)) {
+            const bool owns = owns_epona();
+            if (owns != owns_ || owns_at_us_ == 0) {
+                LOG_INFO(Core, "coop: ride: {}",
+                         owns ? "Epona is ours (Get_Epona Complete): she is sent while nobody rides her too"
+                              : "Epona not won in this game: a horse is sent only while we ride");
+            }
+            owns_ = owns;
+            owns_at_us_ = now_us;
+        }
+        if (rider_.Wants(riding, now_us, owns_)) {
             std::vector<HorseSeen> horses;
-            if (riding) {
+            if (riding || owns_) {
                 Walk(system.ApplicationMemory(), horses);
             }
             const bool was = rider_.Riding();
-            if (auto m = rider_.Tick(riding, own_position, own_rotation, horses, now_us)) {
+            const bool was_free = rider_.Free();
+            if (auto m = rider_.Tick(riding, own_position, own_rotation, horses, now_us, owns_)) {
                 const bool sent = session->with_client([&](coop::net::Client& c) { return c.send(*m); });
+                if (rider_.Free() != was_free) {
+                    LOG_INFO(Core, "coop: ride: our Epona {}{}",
+                             rider_.Free() ? fmt::format("is out with nobody on her at {:.1f} {:.1f} {:.1f}, "
+                                                         "sending PLAYER_RIDE free",
+                                                         m->place[0], m->place[1], m->place[2])
+                                           : rider_.Riding() ? std::string("has us on her again")
+                                                             : std::string("is gone, off sent"),
+                             sent ? "" : " (not sent)");
+                }
                 if (rider_.Riding() != was || (!was && !rider_.Riding() && !logged_off_)) {
                     if (rider_.Riding()) {
                         mounted_us_ = now_us;
@@ -500,6 +612,8 @@ private:
     bool logged_none_ = false;
     bool logged_off_ = true;
     u64 mounted_us_ = 0;  // for the log: how long the ride was
+    bool owns_ = false;   // Get_Epona Complete here, as last asked
+    u64 owns_at_us_ = 0;
     std::unordered_map<u64, std::string> names_;
 };
 
@@ -519,14 +633,15 @@ std::uint64_t SteadyUs() {
 void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
            const std::optional<std::string>& scene, bool local_event,
            const std::optional<Vec3>& own_position, const std::optional<Quat>& own_rotation,
-           const std::optional<proto::Animation>& own_animation, std::uint64_t server_now_us) {
+           const std::optional<proto::Animation>& own_animation, std::uint64_t server_now_us,
+           const std::function<bool()>& owns_epona) {
     static const bool off = Off();
     if (off) {
         return;
     }
     // Steady time on both sides: Receive stamps with it too (the network thread).
     TheGlue().Frame(system, main_base, session, scene, local_event, own_position, own_rotation,
-                    own_animation, SteadyUs(), server_now_us);
+                    own_animation, SteadyUs(), server_now_us, owns_epona);
 }
 
 void OnEvent(const coop::net::Event& event) {

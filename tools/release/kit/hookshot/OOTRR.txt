@@ -1,11 +1,15 @@
 # The randomizer the kit brings (docs/mods.md "The randomizer"): OOTRR by REALAZK, GPL-3.0-or-later since 0.5.0
-# (github.com/REALAZK/ootrr; its source is that release's tag). The kit's game build downloads the file for its
-# system, checks its SHA-256 (the release's own SHA256SUMS.txt) and unpacks ootrr(.exe), LICENSE and NOTICE into
-# the game's tools\ootrr folder, where the co-op module finds it with no setting.
-# Move release= and the four lines below together, to a release (never a prerelease).
-release=v0.5.0
-url=https://github.com/REALAZK/ootrr/releases/download/v0.5.0
-windows=OOTRR-0.5.0-windows-x64.zip
-windows_sha256=14ca4fc218c01da4b3bac406fa6e1eb2335080a5ec837186e9a49a1c37425c05
-linux=OOTRR-0.5.0-linux-x86_64.tar.gz
-linux_sha256=6902f3780836e79a47a5317270479ed7a7794dc9bbc4ce745809622e5b41a613
+# (github.com/ootrando/ootrr, the repository's new home since 0.8.1; REALAZK/ootrr redirects there; its source is
+# that release's tag). The kit's game build downloads the file for its system, checks its SHA-256 (the release's own
+# SHA256SUMS.txt, which matches GitHub's asset digest) and unpacks ootrr(.exe), LICENSE and NOTICE into the game's
+# tools\ootrr folder, where the co-op module finds it with no setting. Since 0.8.1 the Windows file is the portable
+# zip (one folder with ootrr.exe, LICENSE, NOTICE, README.md and portable.txt: its caches go in a data folder beside
+# ootrr.exe); the plain windows-x64 zip is gone from the release.
+# Move release= and the four lines below together, to a release (a prerelease only on the owner's word; v0.8.2 is a
+# full release, named by the owner for 0.11.11 (v0.8.1 was in 0.11.9; v0.8.0 was in 0.11.8; 0.7.3 in 0.11.5 to 0.11.7; 0.11.4 had v0.6.2).
+release=v0.8.2
+url=https://github.com/ootrando/ootrr/releases/download/v0.8.2
+windows=OOTRR-0.8.2-windows-x64-portable.zip
+windows_sha256=0598aa5f7e3fe93e690437d936456a92c00e6d20b59a9bcd24fb2948afb6fbae
+linux=OOTRR-0.8.2-linux-x86_64.tar.gz
+linux_sha256=715ee19e1c6e2e487e1800106f8694fc7a756ebc725bd1b501e1256959c79136

@@ -26,7 +26,8 @@ std::vector<std::string> Items();
 // Queues one gift of the item flag `name`: a Bool flag or an owned item
 // (StockNum) becomes 1, a count (keys, tokens, heart pieces) goes up by one,
 // PlayerStatus.MaxLife by one heart (4). A `PouchData.<item>.StockNum` also sets
-// `IsGet.<item>` when there is one. Any thread.
+// `IsGet.<item>` when there is one, and the ammo and capacity the game gives with
+// the item are raised to their floor (coop_cheat_give.h). Any thread.
 void Give(const std::string& name);
 
 // What the last gift did, for the window. Any thread.

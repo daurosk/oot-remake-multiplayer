@@ -1,0 +1,3 @@
+# The Squadala! report bot's problem-report address. Kits look this file up at a start (raw.githubusercontent.com,
+# main), cache it and fall back to the address in their own scripts\problem-send-url.txt. First line that is not a comment.
+https://squadala-reports.taile8ce85.ts.net/v1/problem-report

@@ -1,0 +1,50 @@
+# hs-phantom-ganon-fall B side (see the A script's header): B watches A's drop, then owns him after A's down, drops
+# him itself, then hits him until he dies.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+nofairy
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+wait 600
+mark t2                 # A drops him meanwhile
+wait 60
+mark f1
+wait 600
+mark f2
+wait 600
+mark t3
+wait 600
+mark t4                 # A goes down: he is ours
+wait 600
+mark t5
+drop Enemy_DungeonBoss_PhantomGanon 60   # ours now: the fall guard puts him back
+wait 120
+mark f3
+wait 600
+mark f4
+hit Enemy_DungeonBoss_PhantomGanon 20
+wait 600
+hit Enemy_DungeonBoss_PhantomGanon 20
+wait 600
+kill Enemy_DungeonBoss_PhantomGanon
+wait 600
+mark d1
+wait 900
+mark end

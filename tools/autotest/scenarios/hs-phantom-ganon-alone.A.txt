@@ -1,0 +1,49 @@
+# hs-phantom-ganon-alone (row 178 baseline, B #43): does Phantom Ganon hold Fly in phase 2 with co-op on but nobody
+# else in his room? A is the host and fights him alone (5 hits of 6: 42 -> 12, phase change at 18), no one goes
+# down; B joins the session but warps to the Deku Tree, so no puppet, no copy and no replayed hit is in A's fight.
+# Judge from A's log: after 'PhaseChange' + 'Fly', normal = 'SpearAttack_Ready' / 'BasicAttack_Shoot' within ~5 s;
+# held = Fly with no other move (with the boss sync on also "ours held 'Fly' .. stuck"). Run 2-3 times.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-phantom-ganon-alone
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t4
+hit Enemy_DungeonBoss_PhantomGanon 6   # life 18: his phase change
+wait 900
+mark t5
+hit Enemy_DungeonBoss_PhantomGanon 6   # life 12
+wait 900
+mark t6
+wait 900
+mark t7
+wait 900
+mark t8
+kill Enemy_DungeonBoss_PhantomGanon
+wait 1800               # his death
+mark end

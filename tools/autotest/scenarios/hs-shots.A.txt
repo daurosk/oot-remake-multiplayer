@@ -1,0 +1,57 @@
+# hs-shots (Hookshot/Longshot, issue 85): the other player's boomerang and hookshot shots are seen.
+# B throws the boomerang twice as a child in the Graveyard, then both games turn adult and warp to
+# Graveyard_Adult, and B fires the hookshot twice; A stands 4 m behind B and watches (hs-seed's places).
+# No code change is needed for this run: the copies are the stand-ins of the puppet pack
+# (CoopShot_Boomerang, CoopShot_Hook), made through the game's own create (coop_spawn StandIn); on
+# Longshot held-adult already logged "sent Shootable_Hook" on A and "CoopShot_Hook: copy N is actor"
+# on B, but no screenshot caught the tip (one mark per 1.5 s hold, the tip lives ~0.65 s).
+# Since b1ef5592 (issue 232) the puppet wears the Hookshot where null reads give 0 (the module arms
+# the null page before its first puppet), so B's puppet holds it while the tip flies (held-pieces-0116).
+# Ocarina (#152, held-pieces-0116): after the boomerang B turns to face A and takes the Ocarina out
+# (D-pad Left) and plays a note; A sees the puppet's front.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-shots   (~5.5 min of game, ~10 min in all)
+# Pass, A's log: "got Weapon_Boomerang ... from P2", "CoopShot_Boomerang: create copy N",
+#   "CoopShot_Boomerang: copy N is actor", later "copy N deleted"; the same for Shootable_Hook /
+#   CoopShot_Hook; no "request dropped" for either, no "CRASH:" in either log.
+#   B's log: "sent Weapon_Boomerang" twice, "sent Shootable_Hook" twice.
+#   Shots (A's window): boom1-a..h / boom2-a..h the boomerang out from B's puppet and back;
+#   hook1-a..e / hook2-a..e the hook tip in flight. The boomerang in hand before a throw:
+#   A's log "P2 wears ... 'Item_Boomerang'" (LICHII_COOP_DEBUG_PUPPET; never seen before).
+#   Hookshot in the puppet's hand: A's log "P2 wears held 'Weapon_Range_Hookshot'" and shots hook1-aim /
+#   hook2-aim show it in the puppet's right hand; no "CRASH:" in A's log after it (the #232/#233 crash).
+#   Ocarina: A's log "P2 ocarina to the hand"; shots oca-out / oca-note show the Ocarina in the puppet's
+#   hands, right side up (mouthpiece at the mouth, as B's own Link in B's oca-out shot); oca-away: gone.
+#   Grade oca-* ONLY if B's log has "ocarina probe: our Link plays the ocarina" after oca-out: a StockNum
+#   give once left D-pad Left empty (hs-ocarina-given); without that line oca-* is UNPROVEN, not FAIL.
+#   Slingshot / Deku Stick (review N1): B, still facing A, aims the slingshot (mark aim, ZR held) and
+#   takes a Deku Stick out (stick-held): A's shots show each in the puppet's hand, the right way round.
+#   Sticks are per player: if B's log refuses the give, stick-held is UNPROVEN.
+# Fail: a copy logged but never on A's screen (the stand-in draws nothing: check the pack), or no copy.
+# If adult B's place is off the map after the warp (Graveyard_Adult's floor not at y 98), drop the
+# two place lines of the adult segment and look at the arrival shots.
+# held-pieces-0116 r2 (proof-0116 placement notes, run 20261119-092844): 'toward ... 10' never turned
+#   either Link (positions unchanged), so A's camera looked past B. Now A walks toward B's spot (goto) and
+#   recenters (ZL); B walks away from A for throws/shots and toward A for the Ocarina and held items;
+#   A's child wait covers B's segment, A's adult part lasts past B's shots; sticks by setflag; ocarina probe on.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+# B's child segment
+mark start
+wait 900
+place -35.7 98.3 7.0
+wait 30
+goto -35.7 11.0 3 120     # walk toward B's spot: A (and its camera) face B
+press ZL 10
+wait 60
+mark ready
+wait 1710                 # B's child segment (<= ~1560 from its ready) and a margin: A warps after B
+setflag Sequence_IsChildhood 0
+warp Graveyard_Adult
+wait 600
+place -35.7 98.3 7.0
+wait 30
+goto -35.7 11.0 3 120
+press ZL 10
+wait 60
+mark ready-adult-a
+wait 2400                 # stays to the end of B's hookshot segment
+mark end

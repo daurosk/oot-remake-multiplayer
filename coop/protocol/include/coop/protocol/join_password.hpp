@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace coop::protocol {
@@ -19,6 +20,32 @@ inline constexpr std::size_t kJoinProofBytes = 32;
 // Longest password, in bytes. HMAC takes any length; this only keeps
 // coop-options.ini and the command line sane.
 inline constexpr std::size_t kMaxJoinPasswordBytes = 128;
+// The same-network key (docs/protocol.md "Same network"): a game joining a
+// private address with no password typed answers with this one. A server
+// takes it only when its host lets the same network in without the password
+// (SessionConfig::same_network_open), and only from a private address
+// (10/8, 172.16/12, 192.168/16, 169.254/16), never from 127/8, where a
+// relay's or a helper's connections come from. It is no secret: the traffic
+// is still sealed with fresh keys, it is only not a password.
+inline constexpr std::string_view kSameNetworkPassword = "squadala-same-network";
+// The same-network rule, both sides' (row 251): an IPv4 address (first dotted
+// part highest) in 10/8, 172.16/12, 192.168/16 or 169.254/16. Not 127/8.
+bool is_same_network_ipv4(std::uint32_t ipv4);
+// What a game answers JOIN_CHALLENGE with: the password typed, or with none
+// typed and a host at a private address (`host_ipv4`, first dotted part
+// highest), the same-network key. The host still decides by the address the
+// game's packets really come from.
+std::string_view answer_password(std::string_view typed, std::uint32_t host_ipv4);
+
+// A public game (0.11.8, docs/play-online.md "Public games"): a host who lists the room on the relay's public list
+// hosts it with no password to type. Its join password is this one, made from the room name every joiner sees on
+// the list (kPublicPasswordTag + the name in lower case), so the join proof and the traffic keys work exactly as
+// with any password: the traffic is still sealed with fresh keys per connection, and only who may join changes
+// (anyone who knows the room). A private game's password may never have this shape (is_public_join_password), so
+// a public room's password never opens a private one.
+inline constexpr std::string_view kPublicPasswordTag = "squadala-public-game:";
+std::string public_join_password(std::string_view room);
+bool is_public_join_password(std::string_view password);
 
 using Sha256Digest = std::array<std::uint8_t, 32>;
 using JoinNonce = std::array<std::uint8_t, kJoinNonceBytes>;

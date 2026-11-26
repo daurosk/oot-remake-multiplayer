@@ -219,3 +219,27 @@ TEST_CASE("voice: the HUD icon: none while voice is off, muted wins, lit while t
     CHECK(IconFor(true, false, false, true) == Icon::idle);    // ours: on, quiet
     CHECK(IconFor(true, false, false, false) == Icon::none);   // theirs: not known whether their voice is on
 }
+
+TEST_CASE("voice microphone: chosen by its name, kept on one line, a missing one noted") {
+    std::vector<std::string> errors;
+    CHECK(From({}, errors).mic.empty());   // the game's, Longshot's Insert menu's
+    CHECK(From({{"LICHII_COOP_VOICE_MIC", "  Headset Microphone (USB)  "}}, errors).mic == "Headset Microphone (USB)");
+    CHECK(errors.empty());
+    CHECK(MicName("A\r\nB\t") == "A  B");   // no line breaks into coop-options.ini
+    CHECK(MicName("   ").empty());
+    const std::string longer(200, 'x');
+    CHECK(MicName(longer).size() == kMicNameBytes);
+    std::string wide(kMicNameBytes - 1, 'x');
+    wide += "\xC3\xA4\xC3\xA4";   // a character across the cut: dropped whole
+    CHECK(MicName(wide) == std::string(kMicNameBytes - 1, 'x'));
+    const std::vector<std::string> listed{"Headset Microphone (USB)", "Webcam"};
+    CHECK(MicMissingNote("", listed).empty());
+    CHECK(MicMissingNote("Webcam", listed).empty());
+    CHECK(MicMissingNote("Desk mic", listed) ==
+          "Microphone Desk mic is not connected: the others hear nothing until it is back (or choose another in "
+          "Settings).");
+    CHECK(MicMissingNote("Desk mic", {}) != "");
+    Settings a, b;
+    b.mic = "Webcam";
+    CHECK_FALSE(a == b);   // a change of microphone is a change of settings
+}

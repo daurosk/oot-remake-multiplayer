@@ -1,0 +1,4 @@
+# live-leave-solo B (see the A file): B stays on the title, where the host's save is switched to (LICHII_COOP_HOST_SAVE).
+mark start
+wait 600
+mark b-title

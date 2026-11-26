@@ -42,6 +42,68 @@ TEST_CASE("command line: defaults, flags and mistakes") {
   }
 }
 
+TEST_CASE("command line: --relay-max-per-address needs --relay and a number from 1 to 64 (row 264)") {
+  std::string error;
+  auto none = parse_command_line({"--relay"}, error);
+  REQUIRE(none.has_value());
+  CHECK(none->relay_max_per_address == 0u);
+  auto nine = parse_command_line({"--relay", "--relay-max-per-address", "9"}, error);
+  REQUIRE(nine.has_value());
+  CHECK(nine->relay_max_per_address == 9u);
+  for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
+           {"--relay", "--relay-max-per-address"}, {"--relay", "--relay-max-per-address", "0"},
+           {"--relay", "--relay-max-per-address", "65"}, {"--relay", "--relay-max-per-address", "x"},
+           {"--relay-max-per-address", "9"}}) {
+    error.clear();
+    CHECK(!parse_command_line(bad, error).has_value());
+    CHECK(!error.empty());
+  }
+}
+
+TEST_CASE("command line: --relay-room needs --relay-via and a room name (issue 261)") {
+  std::string error;
+  auto named = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", " Forest-Gang "}, error);
+  REQUIRE(named.has_value());
+  CHECK(named->relay_room == "Forest-Gang");  // spaces at the ends dropped, case kept
+  CHECK(!parse_command_line({"--relay-room", "forest-gang"}, error).has_value());
+  CHECK(error.find("--relay-via") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "ab"}, error).has_value());
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest gang"}, error).has_value());
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room"}, error).has_value());
+}
+
+TEST_CASE("command line: --relay-list lists the room under a name (the room's without one), and needs --relay-room") {
+  std::string error;
+  auto listed = parse_command_line(
+      {"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", "Saria"}, error);
+  REQUIRE(listed.has_value());
+  CHECK(listed->relay_list == "Saria");
+  auto unlisted = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang"}, error);
+  REQUIRE(unlisted.has_value());
+  CHECK(unlisted->relay_list.empty());  // (off unless asked)
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-list", "Saria"}, error).has_value());
+  CHECK(error.find("--relay-room") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-list"}, error).has_value());
+  CHECK(error.find("--relay-room") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", ""},
+                            error)
+             .has_value());
+  CHECK(!parse_command_line(
+             {"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", std::string(33, 'a')},
+             error)
+             .has_value());
+  // Without a name: the room name, whichever comes first; the next option is never taken as the name.
+  auto room_named =
+      parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list"}, error);
+  REQUIRE(room_named.has_value());
+  CHECK(room_named->relay_list == "forest-gang");
+  auto list_first =
+      parse_command_line({"--relay-list", "--relay-via", "relay.example.net", "--relay-room", "Lake_Gang"}, error);
+  REQUIRE(list_first.has_value());
+  CHECK(list_first->relay_list == list_first->relay_room);
+  CHECK(list_first->relay_via == "relay.example.net");
+}
+
 TEST_CASE("command line: --bind and --allow") {
   std::string error;
   auto none = parse_command_line({}, error);
@@ -129,4 +191,77 @@ TEST_CASE("command line: --pvp on or off, off by default") {
     CHECK(!parse_command_line(bad, error).has_value());
     CHECK(!error.empty());
   }
+}
+
+TEST_CASE("command line: --approve-joins, off by default (docs/protocol.md, Host approval)") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->approve_joins);
+  auto line = parse_command_line({"--approve-joins", "--port", "4000"}, error);
+  REQUIRE(line.has_value());
+  CHECK(line->approve_joins);
+  CHECK(line->port == 4000);
+  CHECK(std::string(usage()).find("--approve-joins") != std::string::npos);
+}
+
+TEST_CASE("command line: --same-network-open, off by default (docs/protocol.md, Same network)") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->same_network_open);
+  auto line = parse_command_line({"--same-network-open"}, error);
+  REQUIRE(line.has_value());
+  CHECK(line->same_network_open);
+  CHECK(std::string(usage()).find("--same-network-open") != std::string::npos);
+}
+
+TEST_CASE("command line: --public is a listed public game on the relay, with no password and no router forward") {
+  std::string error;
+  auto pub = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821", "--public"}, error);
+  REQUIRE(pub.has_value());
+  CHECK(pub->public_game);
+  CHECK(pub->relay_list == "forest-4821");   // (always listed, as the room's name)
+  CHECK(!parse_command_line({"--public"}, error).has_value());
+  CHECK(error.find("--relay-room") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821", "--public", "--upnp"},
+                            error)
+             .has_value());
+  auto priv = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821"}, error);
+  REQUIRE(priv.has_value());
+  CHECK_FALSE(priv->public_game);
+}
+
+TEST_CASE("command line: --dedicated is the always-on public game (needs --public, no --invite), --bans-file") {
+  std::string error;
+  auto ded = parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                                 "--bans-file", "/var/lib/coop/bans.txt"},
+                                error);
+  REQUIRE(ded.has_value());
+  CHECK(ded->dedicated);
+  CHECK(ded->bans_file == "/var/lib/coop/bans.txt");
+  CHECK(!parse_command_line({"--dedicated"}, error).has_value());
+  CHECK(error.find("--public") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                             "--invite"},
+                            error)
+             .has_value());
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                             "--approve-joins"},
+                            error)
+             .has_value());
+  CHECK(!parse_command_line({"--bans-file"}, error).has_value());
+  auto signed_game = parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public",
+                                         "--official-key-file", "/etc/squadala-public/official-game.key",
+                                         "--official-relay", "159.54.182.85:27530"},
+                                        error);
+  REQUIRE(signed_game.has_value());
+  CHECK(signed_game->official_key_file == "/etc/squadala-public/official-game.key");
+  CHECK(signed_game->official_relay == "159.54.182.85:27530");
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public",
+                             "--official-key-file", "k.key"},
+                            error)
+             .has_value());   // (no --official-relay)
+  CHECK(!parse_command_line({"--official-key-file", "k.key"}, error).has_value());
+  CHECK(error.find("--public") != std::string::npos);
+  auto plain = parse_command_line({}, error);
+  REQUIRE(plain.has_value());
+  CHECK_FALSE(plain->dedicated);
+  CHECK(plain->bans_file.empty());
 }

@@ -1,5 +1,7 @@
 #include "options.hpp"
 
+#include "relay_wire.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <string_view>
@@ -32,6 +34,7 @@ const char* password_problem(std::string_view password) {
 std::optional<CommandLine> parse_command_line(const std::vector<std::string>& args,
                                               std::string& error) {
   CommandLine line;
+  bool list_room = false;   // --relay-list, with a name or without (the room's)
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& arg = args[i];
     bool has_value = i + 1 < args.size();
@@ -56,6 +59,14 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.run_for_ms = ms;
+    } else if (arg == "--test-delay-ms" || arg == "--test-jitter-ms") {
+      // TEST ONLY (test_delay.hpp); main refuses them without OOT_COOP_TEST=1.
+      std::uint32_t ms = 0;
+      if (!has_value || !parse_number(args[++i], ms) || ms > 10'000) {
+        error = arg + " needs a number of milliseconds up to 10000";
+        return std::nullopt;
+      }
+      (arg == "--test-delay-ms" ? line.test_delay.round_trip_ms : line.test_delay.jitter_ms) = ms;
     } else if (arg == "--owner-hold-ms") {
       std::uint32_t ms = 0;
       if (!has_value || !parse_number(args[++i], ms)) {
@@ -126,6 +137,10 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       ++i;
+    } else if (arg == "--approve-joins") {
+      line.approve_joins = true;
+    } else if (arg == "--same-network-open") {
+      line.same_network_open = true;
     } else if (arg == "--password" || arg == "--password-env") {
       if (!has_value || args[i + 1].empty()) {
         error = arg + " needs a value";
@@ -169,6 +184,54 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.relay_via = args[++i];
+    } else if (arg == "--relay-room") {
+      std::optional<std::string> room;
+      if (has_value) room = relay::normalize_room(args[i + 1]);
+      if (!room) {
+        error = "--relay-room needs a room name: 3 to 24 letters, digits, - or _, for example forest-gang";
+        return std::nullopt;
+      }
+      line.relay_room = *room;
+      ++i;
+    } else if (arg == "--public") {
+      line.public_game = true;
+    } else if (arg == "--official-key-file") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--official-key-file needs the path of the official game's key file";
+        return std::nullopt;
+      }
+      line.official_key_file = args[++i];
+    } else if (arg == "--official-relay") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--official-relay needs the relay's address as the kits reach it, for example 159.54.182.85:27530";
+        return std::nullopt;
+      }
+      line.official_relay = args[++i];
+    } else if (arg == "--dedicated") {
+      line.dedicated = true;
+    } else if (arg == "--bans-file") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--bans-file needs the path of the file that keeps the bans";
+        return std::nullopt;
+      }
+      line.bans_file = args[++i];
+    } else if (arg == "--relay-list") {
+      // The name shown in the list is optional (the room name without one); the next option is never taken as it.
+      list_room = true;
+      if (has_value && args[i + 1].rfind("-", 0) != 0) {
+        if (!relay::listable_host_name(args[i + 1])) {
+          error = "--relay-list: the name to list the room under is 1 to 32 bytes, no control characters";
+          return std::nullopt;
+        }
+        line.relay_list = args[++i];
+      }
+    } else if (arg == "--relay-max-per-address") {
+      std::uint32_t n = 0;
+      if (!has_value || !parse_number(args[++i], n) || n < 1 || n > 64) {
+        error = "--relay-max-per-address needs a number from 1 to 64";
+        return std::nullopt;
+      }
+      line.relay_max_per_address = n;
     } else if (arg == "--relay-key" || arg == "--relay-key-env") {
       if (!has_value || args[i + 1].empty() || args[i + 1].size() > 64) {
         error = arg + " needs a value of at most 64 characters";
@@ -180,6 +243,46 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       return std::nullopt;
     }
   }
+  if (!line.relay_room.empty() && line.relay_via.empty()) {
+    error = "--relay-room is a name on a relay: it needs --relay-via";
+    return std::nullopt;
+  }
+  if (line.dedicated && !line.public_game) {
+    error = "--dedicated is the always-on public game: it needs --public";
+    return std::nullopt;
+  }
+  if (!line.official_key_file.empty() && !line.public_game) {
+    error = "--official-key-file signs the public listing: it needs --public";
+    return std::nullopt;
+  }
+  if (line.official_key_file.empty() != line.official_relay.empty()) {
+    error = "--official-key-file and --official-relay go together (the proof names the relay the kits use)";
+    return std::nullopt;
+  }
+  if (line.dedicated && line.approve_joins) {
+    error = "--dedicated has no host to let players in: leave out --approve-joins";
+    return std::nullopt;
+  }
+  if (line.dedicated && line.invite) {
+    error = "--dedicated reads commands from its console: leave out --invite";
+    return std::nullopt;
+  }
+  if (line.public_game) {
+    if (line.relay_via.empty() || line.relay_room.empty()) {
+      error = "--public is a public game on the relay's list: it needs --relay-via and --relay-room";
+      return std::nullopt;
+    }
+    if (line.upnp) {
+      error = "--public is through the relay only: leave out --upnp (it would open this PC's port)";
+      return std::nullopt;
+    }
+    list_room = true;   // (a public game is always on the list)
+  }
+  if (list_room && line.relay_list.empty()) line.relay_list = line.relay_room;
+  if (list_room && line.relay_room.empty()) {
+    error = "--relay-list lists a room: it needs --relay-room (and --relay-via)";
+    return std::nullopt;
+  }
   if (line.relay && (line.upnp || !line.relay_via.empty())) {
     error = "--relay runs a relay; it cannot also use --upnp or --relay-via";
     return std::nullopt;
@@ -188,8 +291,16 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
     error = "--join runs Join.bat's helper; it cannot also host (--upnp, --invite, --relay, --relay-via)";
     return std::nullopt;
   }
+  if (line.relay_max_per_address != 0 && !line.relay) {
+    error = "--relay-max-per-address is for a relay: it needs --relay";
+    return std::nullopt;
+  }
   if (line.relay && line.invite) {
     error = "--relay runs a relay; it cannot also use --invite";
+    return std::nullopt;
+  }
+  if (line.test_delay.on() && (line.relay || !line.join.empty())) {
+    error = "--test-delay-ms / --test-jitter-ms are for a game server, not --relay or --join";
     return std::nullopt;
   }
   if (line.relay && !line.port_given) line.port = 27530;
@@ -201,7 +312,7 @@ const char* usage() {
          "                   [--game-build ID] [--max-players N] [--max-half-open N]\n"
          "                   [--pose-upload-kbps N] [--run-for-ms N]\n"
          "                   [--password TEXT | --password-env NAME] [--pvp on|off]\n"
-         "                   [--dbno on|off]\n"
+         "                   [--dbno on|off] [--approve-joins] [--same-network-open]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -227,11 +338,32 @@ const char* usage() {
          "                   server runs\n"
          "  --relay-via ADDRESS[:PORT]  host through a relay (default port 27530)\n"
          "                   and print a join code for the players\n"
+         "  --relay-room NAME  with --relay-via, also hold this room name on the\n"
+         "                   relay (3 to 24 letters, digits, - or _): players join\n"
+         "                   with the name instead of the code\n"
+         "  --relay-list [NAME]  with --relay-room, put the room on the relay's\n"
+         "                   public room list, shown as NAME (the room name\n"
+         "                   without one; players and version shown too, never\n"
+         "                   the password)\n"
+         "  --public         a public game: with --relay-via and --relay-room,\n"
+         "                   anyone with the room name joins without a password\n"
+         "                   (still encrypted), through the relay only, listed\n"
+         "  --dedicated      with --public: always on, no hosting game; type\n"
+         "                   /players, /kick N, /ban N, /unban KEYID,\n"
+         "                   /mute N voice|chat, /unmute N voice|chat\n"
+         "  --bans-file PATH  keep bans by player key in this file across runs\n"
+         "  --official-key-file PATH  with --public: sign the listing with the\n"
+         "                   official game's key (docs/official-game.md)\n"
+         "  --official-relay HOST[:PORT]  the relay as the kits reach it (with\n"
+         "                   --official-key-file)\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"
          "                   relay, hosts must give it; with --relay-via, the one\n"
          "                   to give\n"
+         "  --relay-max-per-address N  with --relay, N sessions from one address\n"
+         "                   (1 to 64, default 2; for a test relay that one PC hosts\n"
+         "                   many rooms on, public relays keep 2)\n"
          "  --invite         learn this PC's internet address (STUN), print an invite\n"
          "                   code with it and the join password, and take answer\n"
          "                   codes typed here\n"
@@ -243,7 +375,15 @@ const char* usage() {
          "                   host can change it in the game with /pvp\n"
          "  --dbno on|off    down but not out: a player at no hearts crawls and\n"
          "                   can be revived (default: on); the host can change\n"
-         "                   it in the game with /dbno\n";
+         "                   it in the game with /dbno\n"
+         "  --approve-joins  each new player waits until the host lets them in\n"
+         "                   (/allow or /deny in the game chat; no answer in\n"
+         "                   60 s: turned away). The first player in hosts\n"
+         "  --same-network-open  players on this network (a private address)\n"
+         "                   join without the join password\n"
+         "  --test-delay-ms N --test-jitter-ms J  TESTS ONLY (needs OOT_COOP_TEST=1):\n"
+         "                   hold every packet N/2 ms each way, +- up to J ms,\n"
+         "                   in order (a bad connection for Longshot autotests)\n";
 }
 
 }  // namespace coop::server

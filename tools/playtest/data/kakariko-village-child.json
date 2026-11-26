@@ -1,0 +1,48 @@
+{
+  "kit": 1,
+  "title": "Kakariko Village as a child: the gate, Anju and her catch cuccos (row 272's real flow)",
+  "scene": "KakarikoVillage_Child",
+  "positions": {
+    "boot-arrival": {
+      "x": -119.05,
+      "y": 96.67,
+      "z": 58.7,
+      "yaw": 90,
+      "note": "Where the boot live-kakariko-child put Link: at the gate from Hyrule Field, not by the well."
+    },
+    "anju": {
+      "x": -72.7,
+      "y": 99.3,
+      "z": 74.7,
+      "note": "Anju, Npc_Hylia_049_Child, beside the steps; she says This is bad... Real bad! as Link comes near."
+    },
+    "anju-beside": {
+      "x": -72.91,
+      "y": 99.31,
+      "z": 73.22,
+      "note": "Link placed here stood beside Anju but faced away: the A prompt was empty. Face her (face tool) before talk."
+    },
+    "catch-cucco-near-gate": {
+      "x": -96.5,
+      "y": 97.4,
+      "z": 51.3,
+      "note": "One Animal_Cucco_CatchCucco near the gate; placed 0.8 m from it, A lifted it (the prompt then said Have)."
+    },
+    "children-group": {
+      "x": -77.1,
+      "y": 96.8,
+      "z": 45.6,
+      "note": "Npc_Hylia_012/013/016_Child stand here; each gave a Talk prompt."
+    }
+  },
+  "routes": {},
+  "menu_paths": {},
+  "stuck_spots": [],
+  "notes": [
+    "From two lane-1 play-test runs on 2026-11-24 (anju-discover, anju-discover2; module of branch testkit-geno), one try each.",
+    "Only one catch cucco was within 500 m of the gate at that time of day in that save.",
+    "Anju's own Talk (flow Npc_Hylia_049_Child) branches first on her AI schedule action (EventQueryAIScheduleCheckActorActionAll, 27 cases): with no talk prompt she was in an action without one (time of day).",
+    "The reward talk is Minigame_CatchCucco's Ready_Npc_Hylia_049_Complete_Talk (the minigame's Ready step), then RewardFlow if MiniGame_CatchCucco_IsCompleted is false.",
+    "RewardFlow hands the bottle over, then sets Npc_Hylia_049_Child_IsCompleted, MiniGame_CatchCucco_IsCompleted and CatchCucco_ElapsedTime. Cucco state: Npc_Hylia_049_Child_Cucco0N_IsInTheCage, MiniGame_CatchCucco_InFenceCount, HowManyCuccos 7."
+  ]
+}

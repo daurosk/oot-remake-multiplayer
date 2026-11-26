@@ -94,6 +94,18 @@ TEST_CASE("enemy shots: Ganondorf's own shots name him as a maker (native boss s
     CHECK(std::find(pg.begin(), pg.end(), "Enemy_DungeonBoss_PhantomGanon") != pg.end());
 }
 
+TEST_CASE("enemy shots: row 211: the rally balls are the boss balls a sword sends back") {
+    using CoopEnemyShots::IsRallyBall;
+    CHECK(IsRallyBall("DungeonBossGanondrof_Bullet_LightBall"));
+    CHECK(IsRallyBall("DungeonBossGanondrof_Bullet_ChargeLightBall"));
+    CHECK(IsRallyBall("DungeonBossPhantomGanon_Bullet_LightBall"));
+    CHECK_FALSE(IsRallyBall("DungeonBossGanondrof_Bullet_ShockWave"));
+    CHECK_FALSE(IsRallyBall("PhantomGanon_Bullet_Thunder"));
+    CHECK_FALSE(IsRallyBall("Octorok_Bullet"));
+    CHECK_FALSE(IsRallyBall("Twinrova_Bullet_IceBeam"));
+    CHECK_FALSE(IsRallyBall("SomeOther_LightBall"));  // (no enemy shot)
+}
+
 TEST_CASE("enemy shots: the names are known, with their makers") {
     for (const char* name :
          {"Octorok_Bullet", "Dodongo_Bullet_Fire", "DungeonBossDodongo_Bullet_Fire",
@@ -138,9 +150,12 @@ TEST_CASE("enemy shots: the nearest maker's owner decides") {
     CHECK(es::Decide("ScrubDeku_DekuNut", {41.0f, 1.0f, 2.0f}, shooters) == Verdict::keep);
     // No shooters at all (objects sync off): each game its own.
     CHECK(es::Decide("Octorok_Bullet", {0.0f, 1.0f, 2.0f}, {}) == Verdict::keep);
-    // A boss shot is given to its boss from far off.
-    const std::vector<Shooter> boss{{"Enemy_DungeonBoss_Dodongo", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
-    CHECK(es::Decide("DungeonBossDodongo_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::hide);
+    // The Flare Dancer's fireballs are split shots too (enemy survey): each game keeps its own, from far off too.
+    const std::vector<Shooter> boss{{"Enemy_MiddleBoss_FlareDancer", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
+    CHECK(es::Decide("FlareDancer_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::keep);
+    // King Dodongo's fire is a split shot: each game keeps its own.
+    const std::vector<Shooter> king{{"Enemy_DungeonBoss_Dodongo", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
+    CHECK(es::Decide("DungeonBossDodongo_Bullet_Fire", {20.0f, 0.0f, 0.0f}, king) == Verdict::keep);
     // The Lost Woods stage scrubs are each game's own (not shared): kept.
     const std::vector<Shooter> stage{{"Enemy_Scrub_Deku", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
     CHECK(es::Decide("ScrubForestStage_DekuNut", {1.0f, 0.0f, 0.0f}, stage) == Verdict::keep);
@@ -169,6 +184,78 @@ TEST_CASE("enemy shots: a copy enemy's own shot is stopped at the game's create 
     CHECK(es::StoppedAtCreate() == before + 1);
     es::NoteShooters({}, 6'000'000);  // (a new scene's walk: nobody)
     CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));
+}
+
+TEST_CASE("enemy shots: every enemy *_Bullet_* actor of the game is a known shot, Gohma makes none") {
+    // The game's Pack/Actor (romfs dump, 2026-11-24): every actor with _Bullet in its name that an enemy makes.
+    // Left out: Bubble_Green_Bullet_Aura (an aura that follows its maker), MirrorShield_Bullet_* and the
+    // *_MirrorShieldReflect beams (Link's, sent back), Item_/Pouch_BulletBag (seed bags).
+    for (const char* name :
+         {"Dodongo_Bullet_Fire", "DungeonBossDodongo_Bullet_Fire", "DungeonBossDodongo_Bullet_StrongFire",
+          "DungeonBossGanon_Bullet_ShockWave", "DungeonBossGanondrof_Bullet_ChargeLightBall",
+          "DungeonBossGanondrof_Bullet_LightBall", "DungeonBossGanondrof_Bullet_ShockWave",
+          "DungeonBossGanondrof_Bullet_StrongShockWave", "DungeonBossPhantomGanon_Bullet_LightBall",
+          "FlareDancer_Bullet_FireBall", "FlareDancer_Bullet_FireDanceBall", "Ganon_Bullet_ShockSquirt",
+          "Ganon_Bullet_ShockSquirt_Weak", "Ganon_Bullet_StrongShockSquirt", "Ganon_Bullet_Thunder",
+          "Ganondorf_Bullet_Thunder_Shockwave", "KotakeKoumeTwinrova_Bullet_GuardBreakFire",
+          "KotakeKoumeTwinrova_Bullet_GuardBreakIce", "Octorok_Bullet", "PhantomGanon_Bullet_Thunder",
+          "PhantomGanon_Bullet_Thunder_Shockwave", "PoeHyrule_Bullet_FireBall", "SkullKid_Bullet",
+          "Twinrova_Bullet_FireBeam", "Twinrova_Bullet_FireBullet", "Twinrova_Bullet_FireField",
+          "Twinrova_Bullet_GuardBreakFire", "Twinrova_Bullet_GuardBreakIce", "Twinrova_Bullet_IceBeam",
+          "Twinrova_Bullet_IceBullet", "Twinrova_Bullet_IceField"}) {
+        CAPTURE(name);
+        CHECK(es::IsEnemyShot(name));
+    }
+    // Queen Gohma has no spit: her ActorHolderParam holds only Enemy_DungeonBoss_Gohma_Egg (made minions, from
+    // the boss owner only), and no _Bullet actor is hers.
+    for (const char* name : {"Enemy_DungeonBoss_Gohma_Egg", "Enemy_Gohma_Egg", "Enemy_Gohma_Larva"}) {
+        CAPTURE(name);
+        CHECK_FALSE(es::IsEnemyShot(name));
+        CHECK_FALSE(es::IsSplitShot(name));
+    }
+}
+
+TEST_CASE("enemy shots: Phantom Ganon's thunder and rally ball are split shots: every game keeps its own") {
+    CHECK(es::IsSplitShot("PhantomGanon_Bullet_Thunder"));
+    CHECK(es::IsSplitShot("PhantomGanon_Bullet_Thunder_Shockwave"));
+    CHECK(es::IsSplitShot("DungeonBossPhantomGanon_Bullet_LightBall"));  // stage 2's rally ball
+    CHECK(es::IsSplitShot("DungeonBossGanondrof_Bullet_LightBall"));     // (Ganondorf's rally the same)
+    CHECK(es::IsSplitShot("Ganondorf_Bullet_Spread"));                   // every boss shot, each game's own
+    CHECK(es::IsSplitShot("FlareDancer_Bullet_FireBall"));               // the Flare Dancer's (enemy survey)
+    CHECK(es::IsSplitShot("FlareDancer_Bullet_FireDanceBall"));
+    CHECK(es::IsSplitShot("PoeHyrule_Bullet_FireBall"));  // the Poe's fireball, each game's own
+    CHECK_FALSE(es::IsSplitShot("SkullKid_Bullet"));
+    CHECK(es::IsSplitShot("Dodongo_Bullet_Fire"));                 // audit: Dodongo's breath is in
+    CHECK_FALSE(es::IsSplitShot("Enemy_DungeonBoss_Barinade_Beam"));  // a beam that lasts, not a shot
+    CHECK_FALSE(es::IsSplitShot("Item_Bomb"));                         // the bomb thrown in is Link's
+    CHECK_FALSE(es::IsSplitShot("Octorok_Bullet"));     // sent back by the player shot at: shared
+    CHECK_FALSE(es::IsSplitShot("ScrubDeku_DekuNut"));
+    CHECK(es::IsSplitShot("Twinrova_Bullet_IceBeam"));
+    CHECK(es::IsSplitShot("KotakeKoumeTwinrova_Bullet_GuardBreakFire"));
+    CHECK(es::IsSplitShot("Ganon_Bullet_ShockSquirt_Weak"));
+    CHECK(es::IsSplitShot("DungeonBossGanon_Bullet_ShockWave"));
+    CHECK(es::IsSplitShot("DungeonBossDodongo_Bullet_StrongFire"));
+    CHECK(es::IsSplitShot("Enemy_MoblinClub_ShockWave"));               // a mob's ground wave too
+    CHECK_FALSE(es::IsSplitShot("Twinrova_Bullet_IceBeam_MirrorShieldReflect"));  // Link's, sent back
+    CHECK_FALSE(es::IsSplitShot("Octorok_Bullet"));
+    CHECK_FALSE(es::IsSplitShot("Item_Bomb"));
+    const std::vector<es::Shooter> theirs{{"Enemy_DungeonBoss_PhantomGanon", {0.0f, 5.0f, 0.0f}, Owner::theirs, 0x1000}};
+    const std::vector<es::Shooter> ours{{"Enemy_DungeonBoss_PhantomGanon", {0.0f, 5.0f, 0.0f}, Owner::ours, 0x1000}};
+    // A copy's bolt and shockwaves: kept (not deleted), never stopped at their create.
+    CHECK(es::Decide("PhantomGanon_Bullet_Thunder", {1.0f, 5.0f, 0.0f}, theirs) == Verdict::keep);
+    es::NoteShooters(theirs, 9'000'000);
+    CHECK_FALSE(es::StopAtCreate("PhantomGanon_Bullet_Thunder", {1.0f, 5.0f, 0.0f}, 0x1000));
+    CHECK_FALSE(es::StopAtCreate("PhantomGanon_Bullet_Thunder_Shockwave", {1.0f, 0.0f, 0.0f}, 0x1000));
+    // The owner's: kept, not sent (the others make their own).
+    CHECK(es::Decide("PhantomGanon_Bullet_Thunder_Shockwave", {1.0f, 0.0f, 0.0f}, ours) == Verdict::keep);
+    // His rally ball: each game's own as well.
+    CHECK_FALSE(es::StopAtCreate("DungeonBossPhantomGanon_Bullet_LightBall", {1.0f, 5.0f, 0.0f}, 0x1000));
+    CHECK(es::Decide("DungeonBossPhantomGanon_Bullet_LightBall", {1.0f, 5.0f, 0.0f}, ours) == Verdict::keep);
+    // A shot that is no split shot is still one, shared: the copy's stopped, the owner's sent.
+    const std::vector<es::Shooter> octo{{"Enemy_Octorok", {0.0f, 0.0f, 0.0f}, Owner::theirs, 0x2000}};
+    es::NoteShooters(octo, 9'200'000);
+    CHECK(es::StopAtCreate("Octorok_Bullet", {0.5f, 0.0f, 0.0f}, 0x2000));
+    es::NoteShooters({}, 9'500'000);
 }
 
 TEST_CASE("enemy shots: the shooter the game's shoot code names decides, not the place") {

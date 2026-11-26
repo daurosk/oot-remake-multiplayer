@@ -1,0 +1,143 @@
+From 6788fb343320d06a7a9e3dec1be048e0969cf766 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 23 Nov 2026 09:53:07 -0600
+Subject: [PATCH] Co-op camera: the module may turn the player camera's yaw and
+ pitch
+
+The co-op module's Customize page turns the camera around the player's
+own Link. Through hos_coop_view (patch 0019) it can only replace the eye
+and target after the camera has placed itself, so the game's collision
+never saw the module's eye: next to a cliff the eye went inside the rock.
+
+A new optional export, hos_coop_turn (host/hos_coop_turn.h), is asked
+by hos_mouse_camera at the start of each update of the player camera
+(f_80644c80), before the Mouse camera row's check. It gets the camera's
+yaw (+0x1a4), pitch (+0x18c) and state (+0x204) and may hand back new
+angles. They are written only in states 3 and 4 (the camera follows Link
+or the player turns it), the yaw wrapped into -180..180 and the pitch
+kept in the camera's limits (+0x178). The camera's update then runs as
+always, with its own collision. While the module turns the camera, the
+native mouse does not, and its angles start from the camera's again.
+
+The bridge (host/coop_bridge.c) finds the export as the other optional
+ones. A module without it: the game's camera, as before.
+---
+ host/coop_bridge.c   |  8 ++++++++
+ host/hos_coop_turn.h | 20 ++++++++++++++++++++
+ host/mouse_native.c  | 26 ++++++++++++++++++++++++++
+ 3 files changed, 54 insertions(+)
+ create mode 100644 host/hos_coop_turn.h
+
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index 89fe118a..1f904cd6 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -8,6 +8,7 @@
+ #include "hos.h"
+ #include "hos_coop_api.h"
+ #include "hos_coop_view.h"   /* (oot-remake-multiplayer, patch 0019) */
++#include "hos_coop_turn.h" /* (oot-remake-multiplayer, patch 0040) */
+ #include "control.h"         /* (the Insert menu's settings, as the control bridge has them) */
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -86,6 +87,7 @@ static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks,
+ static hos_coop_pad_fn coop_pad;       /* (optional: the title menu, nn_hid.c and nx2/coop_title_hooks.py below) */
+ static hos_coop_title_fn coop_title;
+ static hos_coop_view_fn coop_view;     /* (optional, patch 0019: the camera, hos_main.c hos_oot_free_view) */
++static hos_coop_turn_fn coop_turn_fn; /* (optional, patch 0040: the camera's angles, mouse_native.c hos_mouse_camera) */
+ static int (*coop_title_hold)(void);   /* (optional, patch 0028: Skip title screen waits, host/oot_autoload.c) */
+ /* (optional, patch 0030: the module's pause-menu tab, host/oot_menu.c) every menu screen's update, with a ctx call() may
+    use (the game's threads, several at once); the page the module shows over the pause menu's (4: its tab), -1 (it has
+@@ -200,6 +202,7 @@ static void load(void) {
+     coop_pad = (hos_coop_pad_fn)(void *)GetProcAddress(m, "hos_coop_pad");
+     coop_title = (hos_coop_title_fn)(void *)GetProcAddress(m, "hos_coop_title");
+     coop_view = (hos_coop_view_fn)(void *)GetProcAddress(m, "hos_coop_view");
++    coop_turn_fn = (hos_coop_turn_fn)(void *)GetProcAddress(m, "hos_coop_turn");
+     coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, "hos_coop_title_hold");
+     coop_game_screen = (void (*)(void *, uint64_t))(void *)GetProcAddress(m, "hos_coop_game_screen");
+     coop_pause_page = (int (*)(void))(void *)GetProcAddress(m, "hos_coop_game_pause_page");
+@@ -273,6 +276,11 @@ int hos_coop_view_filter(double eye[3], double target[3]) {
+     return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_view ? coop_view(eye, target) : 0;
+ }
+ 
++/* mouse_native.c hos_mouse_camera: the player camera's yaw and pitch for the module first (hos_coop_turn.h); 1 = replaced */
++int hos_coop_turn_filter(float *yaw, float *pitch, int camera_state) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_turn_fn ? coop_turn_fn(yaw, pitch, camera_state) : 0;
++}
++
+ /* nvn_native.c nvnQueuePresentTexture: every present, once the module is loaded (it loads at a frame hook). */
+ void hos_coop_present(void) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
+diff --git a/host/hos_coop_turn.h b/host/hos_coop_turn.h
+new file mode 100644
+index 00000000..f96e73f2
+--- /dev/null
++++ b/host/hos_coop_turn.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The co-op module may turn the player camera (oot-remake-multiplayer, docs/hookshot.md "The camera's angles"; our patch
++   0040): the Multiplayer tab's Customize page turns the game's own camera around the player's Link, so the game's own
++   collision places the eye (a wall or a low ceiling in the way brings the eye nearer, as in play).
++
++   One optional export, hos_coop_turn, asked by hos_mouse_camera (host/mouse_native.c) on the game's thread at the start
++   of each update of the player camera (f_80644c80), before the camera reads its input, whatever the Mouse camera row is.
++   It gets the camera's yaw and pitch (degrees: yaw falls as the view turns right, pitch rises as it tilts down) and its
++   state (+0x204: 3 while it follows Link by itself, 4 while the player turns it, others: another camera owns the view).
++   1 = the camera takes the module's yaw and pitch this frame (only in states 3 and 4; the yaw is wrapped into -180..180
++   and the pitch kept in the camera's own limits), 0 = the camera as it is. A module without it: the game's camera always.
++   Generic: any module may turn the camera, with no further Hookshot build.
++   The same file is in Hookshot's host/ through our patch and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it). Plain C. */
++#ifndef HOS_COOP_TURN_H
++#define HOS_COOP_TURN_H
++
++typedef int (*hos_coop_turn_fn)(float *yaw, float *pitch, int state);   /* 1: yaw and pitch replaced */
++
++#endif
+diff --git a/host/mouse_native.c b/host/mouse_native.c
+index 2149fe0e..f0ccb09b 100644
+--- a/host/mouse_native.c
++++ b/host/mouse_native.c
+@@ -121,6 +121,25 @@ void hos_mouse_native_free(int free) { InterlockedExchange(&game_free, free ? 1
+    mouse both turn the camera instead of undoing each other. */
+ void hos_mouse_native_stick(int held) { InterlockedExchange(&stick_held, held ? 1 : 0); }
+ 
++/* (patch 0040) the co-op module's angles for this camera (hos_coop_turn.h): 1 when it turned it. Only in states 3 and 4,
++   where the camera is the view and the right stick turns it; the yaw wrapped into -180..180, the pitch kept in the
++   camera's own limits, nothing written if either is not a number. */
++int hos_coop_turn_filter(float *yaw, float *pitch, int state);   /* coop_bridge.c */
++static int coop_turns(uint64_t cam) {
++    const int32_t state = geti(cam + STATE_AT);
++    float yaw = getf(cam + YAW_AT), pitch = getf(cam + PITCH_AT);
++    if (hos_coop_turn_filter(&yaw, &pitch, state) != 1) return 0;
++    if ((state != STATE_FOLLOWS && state != STATE_PLAYER) || !isfinite(yaw) || !isfinite(pitch)) return 0;
++    yaw = fmodf(yaw, 360.0f);
++    if (yaw > 180.0f) yaw -= 360.0f;
++    if (yaw < -180.0f) yaw += 360.0f;
++    const float lo = getf(cam + LIMITS_AT), hi = getf(cam + LIMITS_AT + 4);
++    if (pitch < lo) pitch = lo;
++    if (pitch > hi) pitch = hi;
++    putf(cam + YAW_AT, yaw), putf(cam + PITCH_AT, pitch);
++    return 1;
++}
++
+ /* f_80644c80's first line (nx2/oot_patches.py): cam is the player camera, the game's thread.
+    (longshot, issue 1113) An input recording takes each update's decisions down (HOS_INPUT_RECORD: whether the mouse camera was
+    on, whether the game left the camera free, whether a stick turned it, and the degrees the mouse turned it by), and a
+@@ -128,6 +147,13 @@ void hos_mouse_native_stick(int held) { InterlockedExchange(&stick_held, held ?
+    clock: the camera then turns as it did, whatever the mouse and the settings do now */
+ void hos_mouse_camera(uint64_t cam) {
+     if (!cam) return;
++    /* (oot-remake-multiplayer, patch 0040) the co-op module may turn the camera first (hos_coop_turn.h), whatever the
++       Mouse camera row says: its angles go in before the camera's update reads them, so the game's own collision still
++       places the eye. While it does, the mouse does not turn the camera, and its angles start from the camera's again. */
++    if (looks_like_camera(cam) && coop_turns(cam)) {
++        target_ok = 0;
++        return;
++    }
+     /* (no recording written or played: as before, the mouse camera's row first, and nothing of the guest's read while it is
+        off. With one, every update goes through it, the native camera on or not) */
+     const int recorded = hos_input_movie_active();
+-- 
+2.56.0.windows.4
+

@@ -1,0 +1,45 @@
+# hs-stick-fire, B: a Deku Stick lit at room E's torch (see hs-stick-fire.A.txt), facing A after.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+# (set after the save is loaded: at the title, the save's load put them back)
+setflag PouchData.Item_DekuStick.StockNum 10   # 'give' has no stick; hash 0xb9494411
+setflag IsGet.Item_DekuStick 1
+mark after
+wait 480
+place -12.9 79.6 -8.9    # 1.6 m south of the torch
+wait 120
+goto -12.9 -10.5 0.9 120  # a short walk to it: B faces the torch (toward never turned Link)
+press ZL 10
+wait 60
+assign DekuStick
+wait 30
+press ZR 10
+wait 90
+mark stick-out
+press B 10
+wait 40
+press B 10
+wait 40
+press B 10
+wait 40
+mark lit
+goto -14.5 -6.5 2.5 150  # walk toward A: B faces A, the lit stick in front
+press ZL 10
+wait 140
+mark burning
+wait 150
+mark burning2
+wait 1500
+mark burnt
+wait 300
+mark late

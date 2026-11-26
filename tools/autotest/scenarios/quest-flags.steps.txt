@@ -1,0 +1,42 @@
+# quest-flags (#60, #61): the host has the Goron Ruby while the guest is elsewhere; the guest's
+# Get_StoneOfFire becomes Complete (Threads of Time, shared), its DoorOfTime moves on as the game's
+# DoorOfTime_CheckStoneNum would (Step2_1, or Step03 with the Zora Sapphire too), and that step
+# is asked of B's ChallengeMgr (Zelda's escape trigger in Hyrule Field reads it). Run:
+#   tools\autotest\run.ps1 -Scenario quest-flags
+# Prep, games closed (save_flags.py keeps a backup in <kit>\autotest-save-backup\; copy it back
+# over the baseline after the run). <save> = <kit>\autotest-save\<user>\0400486024DEC000\slot_0*\progress.sav
+#   A (host, has both stones):  save_flags.py set <A save> enum:0x1002b466=0x4c0a63f4 enum:0x5bca02a6=0x4c0a63f4 enum:0xdb89c1a9=0x4c0a63f4 enum:0x378913ca=0x6f917dfe bool:0xf16a3d82=1
+#   B (sent off by Impa, no stone):  save_flags.py set <B save> enum:0x1002b466=0x4011c4aa enum:0x5bca02a6=0x17bfaa46 enum:0xdb89c1a9=0x4c0a63f4 enum:0x378913ca=0x0e5afad8 bool:0xf16a3d82=0
+#   (0x1002b466 Get_StoneOfFire, 0x5bca02a6 Get_StoneOfWater, 0xdb89c1a9 Goto_HyruleCastle,
+#   0x378913ca DoorOfTime; 0x4c0a63f4 Complete, 0x6f917dfe Step03, 0x0e5afad8 Step02,
+#   0x4011c4aa KakarikoVillageNpc, 0x17bfaa46 Ready; 0xf16a3d82 Zorariver_TheWaterfallsplits.)
+#   A `set` refused because the flag is not in the save: the test save cannot show it; say so.
+# A loads first, B loads 20 s later and takes the group's quests and story flags.
+# Pass, in B's log, each once (no repeat every second):
+#   "coop: quests: Get_StoneOfFire KakarikoVillageNpc -> Complete (shared Threads of Time"
+#   "coop: quests: Get_StoneOfWater Ready -> Complete" (or B waits while in a dungeon: not here)
+#   "coop: story: quest DoorOfTime 0xe5afad8 -> 0x6f917dfe (shared story; issue 173)"
+#   "coop: story: quest DoorOfTime ... -> 0x6f917dfe asked of the game's ChallengeMgr"
+#     ("refused by the game's ChallengeMgr" or no line: FAIL, report it; "no game function at
+#     0x2cf54a0" too)
+#   "coop: flags debug: get_bool(0xf16a3d82) = 1" in B after its load, and still 1 in the
+#     5 s repeats after it (LICHII_COOP_DEBUG_BOOL, issue 61): the waterfall. Not the
+#     "bool 0xf16a3d82 ... 0 -> 1" change line: one debug scan logs only 40 changes and a
+#     save load makes hundreds, so its absence proves nothing (the 0.11.2 smoke's FAIL).
+#     A: the same line = 1 after its load (else the prep did not reach the loaded slot).
+# A's log has no "coop: story: quest DoorOfTime" line (A is at Step03 already).
+# By hand / in the big run (not scripted): B opens the pause menu's Threads of Time tab: the
+# Spiritual Stones row shows the Step03 text ("... collected all three Spiritual Stones"), no
+# MISSING TEXT; B walks from the field entrance toward the castle town: Zelda's escape
+# (Dm_HrlField_0060) starts in B's game; B at Zora's River sees the falls open.
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=0xf16a3d82
+start A
+start B
+sleep 40
+load A
+sleep 20
+load B
+sleep 30
+shot b-loaded
+sleep 10
+shot end

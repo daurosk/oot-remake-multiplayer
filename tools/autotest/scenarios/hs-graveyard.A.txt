@@ -35,7 +35,8 @@ mark poe-3
 goto 18.5 11.17 0.5 600     # in front of the grave at 21.53 11.17 (it faces -x)
 toward 21.53 11.17 15
 mark at-grave
-toward 25.0 11.17 150       # walk into it: a push toward +x
+toward 25.0 11.17 150 A     # grab and push it toward +x, A held (a walk into it never moved it: perception-on-a
+                            # proof1, Link ended past it at x 24.98 with no grave note)
 wait 120
 mark pushed
 toward 21.53 11.17 10

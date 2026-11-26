@@ -12,5 +12,5 @@ goto -25.0 20.5 0.8 900
 goto -24.6 23.6 0.5 600 # about 5 m from the Skulltula, 2.5 m from A
 toward -20.20 26.40 20
 mark watching
-wait 1800
+wait 3000                # A now closes the get message after each take (about 20 s more)
 mark end

@@ -1,0 +1,48 @@
+# hs-dc-break, A (dc-break-0118, tracker rows 165 and 167; research run, both games in Dodongo's Cavern).
+# Row 165: the bombed stairs of room 10 (Obj_DodongoCave_BrokenStair_A_01 7755736649088098775 up / 900149935771582689
+# down, Gimmick_DodongoCavern_BrokenStair: swapped by HavePlayedEvent.Dm_DodongoCave_0010, shared live, not held).
+# A sets that flag itself (stands in for a bombed chain): shots stairs-a1/-a2 say whether A's OWN loaded room swaps the
+# stairs live; B's shots (stairs-b1/-b2) say whether the flag that came swaps B's. Logs: LICHII_COOP_DEBUG_BOOL=6e021914.
+# Row 167: the Armos of room 12 (Enemy_Amos 0x17b56952c160d7fc -49 111.4 -10.5, 0xa77c50f6f6fcadbf -51.5 111.4 -8,
+# 0xdc58f4f68359bb71 -46.5 111.4 -8). A stands beside them first (A wakes and owns them), then leaves 25 m; B comes to 3 m.
+# B's shots armos-b1..b6 (every 2 s) and both logs (LICHII_COOP_DEBUG_OBJECTS: the copy's own animation, owner, wake,
+# hand-over) show whether B's copies shake without end.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=6e021914
+#! timeout 600
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 2400
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -45.0 111.0 -56.0     # room 10, the pot ledge by the stairs
+wait 900
+toward -49.0 -43.5 20       # face the stairs
+wait 120
+mark stairs-a0
+wait 600                    # B stands in place too
+setflag HavePlayedEvent.Dm_DodongoCave_0010 1
+wait 300
+mark stairs-a1
+wait 600
+mark stairs-a2
+wait 300
+place -49.0 111.5 -14.0     # room 12, 3.5 m south of the Armos
+wait 600
+toward -49.0 -10.5 20
+mark armos-a-near
+wait 600
+place -49.0 111.5 -38.0     # 25 m away, out of their room
+wait 3000                   # B comes now
+mark armos-a-away
+wait 600
+mark end

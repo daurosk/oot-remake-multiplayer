@@ -1,5 +1,7 @@
 #include "coop/net/client.hpp"
 
+#include "coop/protocol/race.hpp"
+
 // ENet pulls in windows.h on Windows; keep its min and max macros out.
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -10,14 +12,17 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <utility>
 #include <vector>
 
 #include "coop/net/enet_path.hpp"
+#include "coop/net/enet_throttle.hpp"
 #include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/join_password.hpp"
 
 namespace coop::net {
 
@@ -56,6 +61,10 @@ constexpr std::size_t kMaxPacketBytes = 4 + 0xffff + proto::kSealOverheadBytes;
 // PONGs answer at most this many PINGs at once, then one per interval.
 constexpr std::uint64_t kPongBurst = 4;
 constexpr std::uint64_t kPongIntervalUs = 125'000;
+
+// Held for the host's answer (JOIN_KNOCK): the server turns us away itself
+// when its time is up; we wait this much longer for that REFUSED.
+constexpr std::uint64_t kKnockMarginUs = 5'000'000;
 
 // Time passed since `then`; 0 when an injected clock stepped back.
 constexpr std::uint64_t elapsed(std::uint64_t now, std::uint64_t then) {
@@ -125,6 +134,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::join_timed_out: return "join timed out";
     case EventKind::host_changed: return "host changed";
     case EventKind::player_equip: return "player equip";
+    case EventKind::waiting_for_host: return "waiting for host";
   }
   return "unknown";
 }
@@ -145,12 +155,30 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::banned:
       return "the host banned you from this game: you cannot join it again until the host "
              "stops hosting";
+    case proto::RefuseReason::not_let_in:
+      return "the host did not let you in (they said no, did not answer in time, or left): "
+             "ask them, then join again";
+    case proto::RefuseReason::wrong_coop_version:
+      return "another co-op version: this game and the host's are different releases; "
+             "run Update.bat in the older kit so both have the newest";
     case proto::RefuseReason::not_encrypted:
       return "the server did not ask for the join password, so the game did not join it "
              "unencrypted (every session has a password and is encrypted): the host's server "
              "is an older build, or someone on the way answered for it";
   }
   return "unknown reason";
+}
+
+std::string_view refuse_text(const Event& event) {
+  if (event.same_network_key && event.refuse_reason == proto::RefuseReason::bad_password) {
+    return "this host asks for its join password on its own network too: type the "
+           "password the host sent you, then join again";
+  }
+  if (event.reconnecting && event.refuse_reason == proto::RefuseReason::bad_password) {
+    return "the host restarted its server (it has a new join password now): ask the host "
+           "for the new invite, then start Join.bat again with it";
+  }
+  return refuse_reason_text(event.refuse_reason);
 }
 
 Client::Client(ClientConfig config) : config_(sanitised(std::move(config))) {}
@@ -206,6 +234,7 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
+  held_until_us_ = 0;
   cipher_.reset();
   key_pair_.reset();
   hello_packet_.clear();
@@ -286,6 +315,7 @@ void Client::service(std::uint32_t wait_ms) {
     switch (event.type) {
       case ENET_EVENT_TYPE_CONNECT:
         if (event.peer == peer_ && state_ == State::connecting) {
+          steady_throttle(peer_);  // report 37: ENet's throttle never falls (enet_throttle.hpp)
           proto::Hello hello = config_.hello;
           last_receive_us_ = now_us();  // the server answered the connect
           // The token of our last place, shown before HELLO: with it the
@@ -350,7 +380,9 @@ void Client::service(std::uint32_t wait_ms) {
           if (to_small) use_small_datagrams();
           if (state_ == State::connecting || state_ == State::handshaking ||
               state_ == State::connected) {
-            end_attempt(to_small ? DropReason::small_path : DropReason::connection_lost);
+            end_attempt(to_small                          ? DropReason::small_path
+                        : event.data == kDisconnectBacklog ? DropReason::backlog
+                                                           : DropReason::connection_lost);
           }
         }
         break;
@@ -364,7 +396,9 @@ void Client::service(std::uint32_t wait_ms) {
   switch (state_) {
     case State::connecting:
     case State::handshaking:
-      if (elapsed(now, attempt_started_us_) >= ms_to_us(config_.handshake_timeout_ms)) {
+      // Held for the host's answer: the server's own time limit counts.
+      if (elapsed(now, attempt_started_us_) >= ms_to_us(config_.handshake_timeout_ms) &&
+          now >= held_until_us_) {
         end_attempt(DropReason::handshake_timeout);
       }
       break;
@@ -393,10 +427,15 @@ void Client::service(std::uint32_t wait_ms) {
     link_.loss_percent = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);
     link_.mtu = peer_->mtu;
+    const std::size_t outgoing = outgoing_bytes(*peer_);
+    link_.outgoing_bytes = static_cast<std::uint32_t>(std::min<std::size_t>(outgoing, 0xffffffffu));
     if ((state_ == State::handshaking || state_ == State::connected) &&
         full_datagrams_lost(path_mark_, *peer_, host_->serviceTime)) {
       use_small_datagrams();
       end_attempt(DropReason::small_path);
+    } else if ((state_ == State::handshaking || state_ == State::connected) && outgoing > kMaxOutgoingBytes) {
+      // Row 260: ENet would hold all we send to a server that takes less, without end; connect again.
+      end_attempt(DropReason::backlog);
     }
   }
   enet_host_flush(host_);
@@ -465,6 +504,20 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
         // (someone on the path may have taken the key out).
         refuse_unencrypted();
       }
+    } else if (const auto* knock = std::get_if<proto::JoinKnock>(&message)) {
+      // Host approval (protocol 13): the password was right and the server
+      // holds us until the host lets us in; wait as long as it says. Only on
+      // a keyed connection (it came sealed, after our proof).
+      if (cipher_ == nullptr || knock->wait_s == 0) {
+        ++rejected_;
+        return;
+      }
+      held_until_us_ = now_us() + static_cast<std::uint64_t>(knock->wait_s) * 1'000'000u + kKnockMarginUs;
+      Event event;
+      event.kind = EventKind::waiting_for_host;
+      event.message = message;
+      event.channel = channel;
+      push(std::move(event));
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {
       if (peer_ != nullptr) {
         enet_peer_disconnect_now(peer_, 0);
@@ -489,6 +542,8 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
       Event event;
       event.kind = EventKind::refused;
       event.refuse_reason = refused->reason;
+      event.reconnecting = ever_welcomed_;
+      event.same_network_key = used_same_network_key_;
       push(std::move(event));
     } else if (channel == proto::kChannelProgress &&
                early_.size() < config_.max_early_messages) {
@@ -509,6 +564,14 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
 }
 
 void Client::on_connected_message(proto::Message message, std::uint8_t channel) {
+  // Race mode (coop/protocol/race.hpp): the host's setting, as the server relays it; the world stays ours.
+  if (const auto* mods = std::get_if<proto::ModSettings>(&message)) {
+    if (const auto race = proto::race_of(mods->settings)) race_ = *race;
+  }
+  if (race_ && proto::race_private(message)) {
+    ++race_dropped_;
+    return;
+  }
   if (const auto* pong = std::get_if<proto::Pong>(&message)) {
     // Only an echo of a PING sent on this connection counts.
     const std::uint64_t now = now_us();
@@ -546,6 +609,7 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
     Event event;
     event.kind = EventKind::refused;
     event.refuse_reason = refused->reason;
+    event.same_network_key = used_same_network_key_;
     push(std::move(event));
     return;
   }
@@ -722,6 +786,9 @@ bool Client::send_on(const proto::Message& message, std::uint8_t channel) {
     return false;
   }
   if (!send_raw(message, channel)) return false;
+  if (const auto* mods = std::get_if<proto::ModSettings>(&message)) {  // the host's own race setting
+    if (const auto race = proto::race_of(mods->settings)) race_ = *race;
+  }
   if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
     if (Player* self = player_entry(player_number_)) self->status = status->flags;
   }
@@ -755,11 +822,20 @@ void Client::refuse_unencrypted() {
 bool Client::answer_challenge(const proto::JoinChallenge& challenge,
                               std::span<const std::uint8_t> packet) {
   if (!challenge.key_share || !key_pair_) return false;
+  // No password typed and a host on this network: the same-network key (row
+  // 251), for every way a game joins (the menus, coop.ini, the launcher's
+  // variables, a rejoin).
+  unsigned char b[4];
+  std::memcpy(b, &address_host_, 4);   // (ENet's form: the bytes in network order)
+  const std::string password(proto::answer_password(
+      config_.join_password, (std::uint32_t{b[0]} << 24) | (std::uint32_t{b[1]} << 16) |
+                                 (std::uint32_t{b[2]} << 8) | std::uint32_t{b[3]}));
+  used_same_network_key_ = password == proto::kSameNetworkPassword;
   std::optional<proto::TrafficKeys> keys =
-      proto::derive_traffic_keys(*key_pair_, *challenge.key_share, config_.join_password,
+      proto::derive_traffic_keys(*key_pair_, *challenge.key_share, password,
                                  hello_packet_, packet, /*is_server=*/false);
   const proto::JoinProofBytes proof = proto::join_proof(
-      config_.join_password, challenge.nonce, key_pair_->share(), *challenge.key_share);
+      password, challenge.nonce, key_pair_->share(), *challenge.key_share);
   key_pair_.reset();
   hello_packet_.clear();
   if (!keys) return false;
@@ -776,6 +852,10 @@ bool Client::answer_challenge(const proto::JoinChallenge& challenge,
 }
 
 bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {
+  if (race_ && proto::race_private(message)) {  // race mode: kept in our game, done as far as the caller goes
+    ++race_dropped_;
+    return true;
+  }
   std::vector<std::uint8_t> bytes;
   if (proto::encode(message, bytes) != proto::Error::none) return false;
   return send_packet(bytes, channel);
@@ -790,13 +870,20 @@ bool Client::send_packet(std::span<const std::uint8_t> plain, std::uint8_t chann
     if (!sealed) return false;
     bytes = *sealed;
   }
-  ENetPacket* packet =
-      enet_packet_create(bytes.data(), bytes.size(), packet_flags(channel));
+  const std::uint32_t flags = packet_flags(channel);
+  if ((flags & ENET_PACKET_FLAG_RELIABLE) == 0 && link_.outgoing_bytes > kSlowPeerBytes) {
+    // Row 260: a backlog to the server: an unreliable message (the next one replaces it) is not queued.
+    ++link_.unreliable_skipped;
+    return false;
+  }
+  ENetPacket* packet = enet_packet_create(bytes.data(), bytes.size(), flags);
   if (packet == nullptr) return false;
   if (enet_peer_send(peer_, channel, packet) != 0) {
     enet_packet_destroy(packet);
     return false;
   }
+  link_.outgoing_bytes = static_cast<std::uint32_t>(
+      std::min<std::size_t>(std::size_t{link_.outgoing_bytes} + bytes.size(), 0xffffffffu));
   link_.largest_sent = std::max<std::uint32_t>(link_.largest_sent,
                                                static_cast<std::uint32_t>(bytes.size()));
   return true;
@@ -837,6 +924,7 @@ void Client::clear_shared() {
   their_joins_.clear();
   pending_.clear();
   host_number_ = 0;
+  race_ = false;  // a new session: off until its host's settings say on
 }
 
 void Client::settle_pending(std::span<const proto::FlagEntry> flags) {

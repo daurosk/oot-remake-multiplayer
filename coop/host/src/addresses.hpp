@@ -73,6 +73,15 @@ inline constexpr std::uint64_t kActorComponents = 0x270;
 inline constexpr std::uint64_t kComponentsAs = 0x40;
 inline constexpr std::uint64_t kAsComponentInner = 0x18;
 inline constexpr std::uint64_t kAsInnerController = 0x18;
+
+// --- Life of an actor (PLAYER_STATUS dead, away-status) ----------------------
+// actor +0x270 (component table) -> +0x2b8 its Life component -> +0x1c10 the
+// value object, the life (s32, quarter hearts) at +8: the same walk as the
+// objects walk's (lichii/hook/coop_objects.cpp LifeValue, run in the game
+// since issue 88; coop_hit_replay.h kComponentLife).
+inline constexpr std::uint64_t kComponentLife = 0x2b8;
+inline constexpr std::uint64_t kLifeValue = 0x1c10;
+inline constexpr std::uint64_t kLifeValueWord = 0x8;
 // [dump] Controller: s32 slot count at +0x18, slot array at +0x20, 0x48 bytes
 // an entry, whose first 8 bytes point to the slot. Every reader bounds the
 // index by the count (0x3abebc0, 0x37b5d70, 0x2022a0). Checked.
@@ -179,6 +188,25 @@ inline constexpr std::uint32_t kArmorLinkBracelet = 9;
 // there, in state 6 while it is put away.
 // [objects] An actor's name: a char* at +0x260 (docs/objects.md).
 inline constexpr std::uint64_t kActorName = 0x260;
+// [dump] Issue 248, a lit Deku stick. A piece's effects (ELink) user: its
+// XLink component [[actor + 0x270] + 0x68], the ELink user at +0x70 (as the
+// AI node OneShotXLinkSearchAndEmit, main+0x295b740, and OneShotXLinkFadeByKey,
+// main+0x295af30, find it). What the user plays now is a list: head at
+// user + 0x28, first link at +0x30, the event at link - s32 [user + 0x3c],
+// the key of the call it plays at [[event + 0x30]], the next link at
+// [link + 8] (the walk of 0x37416c0, the find FadeByKey runs before its kill).
+// A burning stick plays `Chemical_Fire` (Item_DekuStick's ELink user, read
+// from the romfs's ELink2 file: Chemical_FireStart, Chemical_Fire with the
+// flame, heat haze and smoke, Sheathed_Extinguish, Death_Burned).
+inline constexpr std::uint64_t kComponentsXLink = 0x68;
+inline constexpr std::uint64_t kXLinkEffectUser = 0x70;
+inline constexpr std::uint64_t kUserEvents = 0x28;
+inline constexpr std::uint64_t kUserFirstLink = 0x30;
+inline constexpr std::uint64_t kUserLinkOffset = 0x3c;  // s32
+inline constexpr std::uint64_t kLinkNext = 0x08;
+inline constexpr std::uint64_t kEventCall = 0x30;       // -> {char* key, ...}
+inline constexpr std::uint32_t kMaxUserEvents = 64;     // a walk gives up after so many
+inline constexpr char kBurnKey[] = "Chemical_Fire";
 inline constexpr std::uint32_t kActorStateGoneFirst = 7;
 inline constexpr std::uint32_t kActorStateGoneLast = 11;
 
@@ -200,5 +228,17 @@ inline constexpr std::uint64_t kBancPathCapacity = 0x48;
 // as the map's peek reads.
 inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
 inline constexpr std::uint64_t kEventRunning = 0x68;
+// Row 97 / G1: that word stays 0 in a Deku Scrub's talk and AttackedEvent (scrub-sale-a's runs).
+// Whether our Link is in an event is the game's own member test (QueryEventMemberIsEventMemver
+// 0x29f3770, as lichii/hook/coop_event_member.h): M = [[actor + kActorComponents] + 0x88], its
+// record L = [M + 0x18] (0: in no event), four slots of 0x38 bytes from L + 0x10; a member when a
+// slot holds an event pointer (not 0) and bit 0 of its byte at +8. Read in the offline run
+// fable-g1-events: our Link is a member of every event of its own.
+inline constexpr std::uint64_t kEventMemberSlot = 0x88;
+inline constexpr std::uint64_t kMemberRecord = 0x18;
+inline constexpr std::uint64_t kRecordSlots = 0x10;
+inline constexpr std::uint64_t kMemberSlotSize = 0x38;
+inline constexpr std::uint64_t kMemberSlots = 4;
+inline constexpr std::uint64_t kSlotFlags = 0x8;
 
 }  // namespace coop::host::addr

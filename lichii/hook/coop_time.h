@@ -24,7 +24,7 @@ namespace CoopTime {
 // not up; `session` null when not connected.
 // `in_event`: our Link is in an event (cutscene, talk): no clock nudge then.
 void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
-           std::uint64_t server_now_us, bool in_event = false);
+           std::uint64_t server_now_us, bool in_event = false, bool paused = false);
 
 // Network thread, from the session's on_event.
 void OnEvent(const coop::net::Event& event);

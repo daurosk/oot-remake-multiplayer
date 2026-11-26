@@ -15,7 +15,9 @@
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_gold_mode.h"
 #include "coop_objects_sync.h"
+#include "coop_pickups.h"
 #include "coop_world.h"
 
 namespace proto = coop::protocol;
@@ -645,6 +647,10 @@ TEST_CASE("doors: a small-key lock is a kept breakable, a shop's night lock is n
     CHECK(CoopWorld::SmallKeyFlag("WaterTemple") == 0x877bdceeu);  // DungeonInfo.WaterTemple.SmallKeyNum
     CHECK(CoopWorld::SmallKeyFlag("InsideTheDekuTree") == 0x0914ba07u);
     CHECK(CoopWorld::SmallKeyFlag("KakarikoVillage") == 0u);
+    // A scene with a suffix is its dungeon (rows 106/107: the lock give-back was dead there).
+    CHECK(CoopWorld::SmallKeyFlag("GerudoFortress_Adult") == 0x3a28b6a4u);  // DungeonInfo.GerudoFortress.SmallKeyNum
+    CHECK(CoopWorld::SmallKeyFlag("ForestTemple") == 0x90237092u);
+    CHECK(CoopWorld::SmallKeyFlag("HyruleField_Child") == 0u);
 }
 
 TEST_CASE("doors: our lock opened next to Link goes out as a kept break") {
@@ -687,15 +693,15 @@ TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, an
     TempleWalk(w, 5000, LockAt());
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     std::vector<std::uint32_t> lent;
-    std::vector<std::string> taken;
+    std::vector<std::uint32_t> taken;
     for (std::uint64_t t = 5100; t < 9000; t += 100) {
         auto out = TempleWalk(w, t, LockAt());
         CHECK(w.Removes().empty());
         if (t < 6100) {
-            CHECK(out.key_refunds.empty());  // lent after a second at the lock
+            CHECK(out.key_lends.empty());  // lent after a second at the lock
         }
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent == std::vector<std::uint32_t>{0x877bdceeu});  // once (door-unlock: a player with no key)
     // Our player opens it: our game spends the lent key, then takes the lock.
@@ -703,14 +709,14 @@ TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, an
     for (std::uint64_t t = 9100; t < 12000; t += 100) {
         auto out = TempleWalk(w, t, {});
         CHECK(Sent<proto::WorldBreak>(out).empty());  // the scene has this break already
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent.size() == 1);  // the spend was the lent key: nothing more goes back
     CHECK(taken.empty());
 }
 
-TEST_CASE("doors: with locks deleted (the hook's default) no key is lent at a lock at our Link's feet") {
+TEST_CASE("doors: with locks deleted (LICHII_COOP_LOCK_DELETE=1) no key is lent at a lock at our Link's feet") {
     WorldSync w;
     w.SetDeleteLocks(true);
     TempleWalk(w, 1000, LockAt());
@@ -719,8 +725,8 @@ TEST_CASE("doors: with locks deleted (the hook's default) no key is lent at a lo
     for (std::uint64_t t = 5100; t < 12000; t += 100) {
         auto out = TempleWalk(w, t, LockAt());
         CHECK(w.Removes().empty());       // never from under our Link
-        CHECK(out.key_refunds.empty());   // and no key on top of our own
-        CHECK(out.give_back.empty());
+        CHECK(out.key_lends.empty());   // and no key on top of our own
+        CHECK(out.lend_returns.empty());
         for (const auto& n : out.notes) {
             CHECK(n.find("lent") == std::string::npos);
         }
@@ -750,27 +756,26 @@ TEST_CASE("doors: opening a lock another player opened within the first second g
 }
 
 TEST_CASE("doors: a lent key not used is taken back when our Link leaves the lock, the room or the scene") {
-    const std::string count = "DungeonInfo.WaterTemple.SmallKeyNum";
-    auto run = [&](auto&& leave) {
+    auto run = [](auto&& leave) {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
         TempleWalk(w, 5000, LockAt());
         w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
         std::size_t lent = 0;
         for (std::uint64_t t = 5100; t < 7000; t += 100) {
-            lent += TempleWalk(w, t, LockAt()).key_refunds.size();
+            lent += TempleWalk(w, t, LockAt()).key_lends.size();
         }
         CHECK(lent == 1);
-        std::vector<std::string> taken;
+        std::vector<std::uint32_t> taken;
         for (std::uint64_t t = 7000; t < 11000; t += 100) {
             auto out = leave(w, t);
-            lent += out.key_refunds.size();
-            taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+            lent += out.key_lends.size();
+            taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
         }
         CHECK(lent == 1);
-        CHECK(taken == std::vector<std::string>{count});  // once
+        CHECK(taken == std::vector<std::uint32_t>{0x877bdceeu});  // once
     };
-    // A step back (4 m) keeps the key and the lock; 7 m away it goes back.
+    // A step back (2 m) keeps the key and the lock; 4 m away (off that door) it goes back.
     {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
@@ -780,16 +785,23 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
             TempleWalk(w, t, LockAt());
         }
         for (std::uint64_t t = 7000; t < 9000; t += 100) {
-            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).give_back.empty());
+            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 5.0f}).lend_returns.empty());
             CHECK(w.Removes().empty());
         }
+        std::size_t back = 0;
+        for (std::uint64_t t = 9000; t < 10000; t += 100) {
+            back += TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).lend_returns.size();
+        }
+        CHECK(back == 1);
+        CHECK(w.Removes().empty());  // the lock stays
     }
     run([](WorldSync& w, std::uint64_t t) { return TempleWalk(w, t, LockAt(), kFar); });
     // The lock leaves the walk next to our Link with no key of ours spent.
     run([](WorldSync& w, std::uint64_t t) { return TempleWalk(w, t, {}); });
     // Our Link leaves the dungeon.
     run([](WorldSync& w, std::uint64_t t) { return Walk(w, t * kMs, {}, kLink, 2, kScene); });
-    // Our own take-back lowers our count: that is no key our player spent.
+    // Our own take-back is never seen as a drop (the hook's LentKeys keeps it from the watcher),
+    // so a held lock that goes beside us then gives nothing back.
     {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
@@ -800,14 +812,13 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
             TempleWalk(w, t, LockAt());
         }
         TempleWalk(w, 7000, LockAt(), kFar);
-        w.OwnCountDrop(0x877bdceeu, 7100 * kMs);  // the hook's -1 of the take-back, seen by the watcher
         // Another opened lock we stand at for a moment goes (its room unloads by us).
         const auto other = Thing(0x200, 0x12, std::nullopt, kLock, kFar);
         TempleWalk(w, 7200, {other}, kFar);
         TempleWalk(w, 7300, {other}, kFar);
         std::size_t back = 0;
         for (std::uint64_t t = 7400; t < 10000; t += 100) {
-            back += TempleWalk(w, t, {}, kFar).key_refunds.size();
+            back += TempleWalk(w, t, {}, kFar).key_lends.size();
         }
         CHECK(back == 0);
     }
@@ -821,22 +832,22 @@ TEST_CASE("doors: the two locks of one door get one lent key, and going together
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     w.Receive(BreakOf(0x12, proto::world_break::kept, kTemple));
     std::vector<std::uint32_t> lent;
-    std::vector<std::string> taken;
+    std::vector<std::uint32_t> taken;
     for (std::uint64_t t = 5100; t < 9000; t += 100) {
         auto out = TempleWalk(w, t, pair);
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
     }
     CHECK(lent.size() == 1);
     w.OwnCountDrop(0x877bdceeu, 9000 * kMs);
     // One lock goes a walk before the other.
     for (std::uint64_t t = 9100; t < 9300; t += 100) {
         auto out = TempleWalk(w, t, {pair[1]});
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
     }
     for (std::uint64_t t = 9300; t < 14000; t += 100) {
         auto out = TempleWalk(w, t, {});
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent.size() == 1);
     CHECK(taken.empty());
@@ -849,7 +860,7 @@ TEST_CASE("doors: by default a lock another player opened is never deleted, near
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     std::size_t lent = 0;
     for (std::uint64_t t = 5100; t < 13000; t += 100) {
-        lent += TempleWalk(w, t, LockAt(), kFar).key_refunds.size();
+        lent += TempleWalk(w, t, LockAt(), kFar).key_lends.size();
         CHECK(w.Removes().empty());
     }
     CHECK(lent == 0);  // nobody at it: no key
@@ -863,7 +874,7 @@ TEST_CASE("doors: by default a lock another player opened is never deleted, near
     }
     // Our Link comes to it: a key is lent.
     for (std::uint64_t t = 16000; t < 18000; t += 100) {
-        lent += TempleWalk(w, t, LockAt(0x300)).key_refunds.size();
+        lent += TempleWalk(w, t, LockAt(0x300)).key_lends.size();
     }
     CHECK(lent == 1);
     CHECK(w.Removes().empty());
@@ -904,11 +915,11 @@ TEST_CASE("doors: at most kMaxLends keys are lent for one lock") {
     std::uint64_t t = 5100;
     for (int visit = 0; visit < WorldSync::kMaxLends + 3; ++visit) {
         for (int i = 0; i < 20; ++i, t += 100) {
-            lent += TempleWalk(w, t, LockAt()).key_refunds.size();
+            lent += TempleWalk(w, t, LockAt()).key_lends.size();
         }
         // Away: the lock stays (the default), the key goes back.
         for (int i = 0; i < 20; ++i, t += 100) {
-            taken += TempleWalk(w, t, LockAt(), kFar).give_back.size();
+            taken += TempleWalk(w, t, LockAt(), kFar).lend_returns.size();
         }
     }
     CHECK(lent == static_cast<std::size_t>(WorldSync::kMaxLends));
@@ -962,7 +973,7 @@ TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it")
     for (std::uint64_t t = 6100; t < 8000; t += 100) {
         auto out = TempleWalk(w, t, {y});
         sent += Sent<proto::WorldBreak>(out).size();
-        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
+        back.insert(back.end(), out.key_lends.begin(), out.key_lends.end());
     }
     CHECK(sent == 1);  // X went out, kept
     CHECK(back.size() == 1);  // the key lent for Y, at which B stands
@@ -971,8 +982,8 @@ TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it")
     std::size_t taken = 0;
     for (std::uint64_t t = 8000; t < 11000; t += 100) {
         auto out = TempleWalk(w, t, {});
-        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken += out.give_back.size();
+        back.insert(back.end(), out.key_lends.begin(), out.key_lends.end());
+        taken += out.lend_returns.size();
     }
     CHECK(back.size() == 1);
     CHECK(taken == 1);
@@ -1036,7 +1047,8 @@ TEST_CASE("doors: both opened the lock at once: the higher player number gives i
 TEST_CASE("world: movables, grass actors and the new breakables by name") {
     for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
                              "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",
-                             "Obj_AmosStatue_A_01", "Obj_Kokiri_RollingRock_A_01", "Obj_RollingRock_A_05",
+                             "Obj_AmosStatue_A_01", "Obj_Goron_Statue_A_01", "Obj_Kokiri_RollingRock_A_01",
+                             "Obj_RollingRock_A_05",
                              "Obj_Firetemple_RollingRock_A_01", "Obj_Tombstone_A_01",
                              "Obj_Graveyard_Tombstone_A_01", "Obj_Graveyard_Tombstone_A_02"}) {
         CAPTURE(name);
@@ -1115,6 +1127,27 @@ TEST_CASE("world: another player's break takes our copy's life, then the copy if
     }
     Walk(w, 11100 * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
     CHECK(w.Removes() == std::vector<std::uint64_t>{0x200});
+}
+
+TEST_CASE("world: another player's break of a seed's one-time pot deletes ours, no second drop (row 219)") {
+    CoopPickups::OneTime list;
+    list.holders = {0x11};
+    CoopPickups::SetOneTime(list);
+    WorldSync w;
+    const auto both = [] {
+        return std::vector<Seen>{Thing(0x100, 0x11, 1, "Obj_Pot_A_01"), Thing(0x200, 0x22, 1, "Obj_Pot_A_01")};
+    };
+    Walk(w, 1000 * kMs, both());
+    Walk(w, 5000 * kMs, both());
+    w.Receive(BreakOf(0x11));
+    w.Receive(BreakOf(0x22));
+    const auto out = Walk(w, 5100 * kMs, both());
+    // The seed's pot is not broken here (its life 0 would drop the item again): deleted. A plain pot as before.
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].address == 0x200);
+    CHECK(out.send.empty());
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+    CoopPickups::SetOneTime({});
 }
 
 TEST_CASE("world: a grass tuft cut by another player is deleted when life 0 leaves it standing") {
@@ -1952,6 +1985,17 @@ TEST_CASE("world: lying small keys, shifters and hammer switches by name (breaka
     CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
     CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_02"));
     CHECK_FALSE(CoopWorld::IsShifter("Obj_ShadowTemple_FallingFloor_A_01"));
+    // Capstans (block survey): turned by a pushed bar, shared as shifters, never held for the next push.
+    for (const char* name : {"Obj_SpiritTemple_CapstanMirror_A_01", "Obj_ShadowTemple_Statue_A_01"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsCapstan(name));
+        CHECK(CoopWorld::IsShifter(name));
+        CHECK(CoopWorld::IsWorldObject(name));
+        CHECK_FALSE(CoopWorld::HoldsPlace(name));
+        CHECK_FALSE(CoopWorld::IsFallTaken(name));
+    }
+    CHECK_FALSE(CoopWorld::IsCapstan("Obj_ForestTemple_PivotedFloor_A_01"));  // by its flag (coop_pivot.h)
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_ForestTemple_PivotedFloor_A_01"));
     for (const char* name : {"Obj_InsideTheDekuTree_FallingFloor_A_01", "Obj_InsideTheDekuTree_FallingFloor_A_02",
                              "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_01",
                              "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"}) {
@@ -2247,13 +2291,12 @@ TEST_CASE("world: a Gold Skulltula's token is known by its Skulltula, taken here
             sent.push_back(b);
         }
         CHECK(out.give_back.empty());
-        CHECK(out.taken_keys.empty());  // our own game set its key itself
     }
     REQUIRE(sent.size() == 1);
     CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
 }
 
-TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key is set, and a reload does not bring it back") {
+TEST_CASE("world: a token taken elsewhere is deleted here, and no key is written from the guess") {
     WorldSync b;
     GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
     GraveWalk(b, 1100 * kMs, {Token(0x200)});  // the kill was shared: our copy left a token too
@@ -2262,8 +2305,8 @@ TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key
     b.Receive(taken);
     auto out = GraveWalk(b, 1200 * kMs, {Token(0x200)});
     CHECK(Removed(b, 0x200));
-    REQUIRE(out.taken_keys.size() == 1);
-    CHECK(out.taken_keys[0] == kGoldHash);  // the persistent "taken" state
+    // The placement key is the game's to write at the pickup; this side never
+    // writes it, or a wrong guess would take a second Skulltula away (issue 89).
     CHECK(out.give_back.empty());
     for (std::uint64_t t = 1300; t <= 3000; t += 100) {
         out = GraveWalk(b, t * kMs, {});
@@ -2286,6 +2329,123 @@ TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key
     }
 }
 
+TEST_CASE("world: a token is deleted by the place the break names, whatever id the two games picked") {
+    // The two games' distance guesses can name different Skulltulas for the
+    // same token. The token still goes: an id nobody here knows is no reason
+    // to leave it standing, or it is taken a second time (issue 89).
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {Token(0x200)});  // where the Skulltula died: its id here
+    proto::WorldBreak elsewhere = BreakOf(0x0123456789abcdefull, 0, kGrave);  // an id of no Skulltula here
+    elsewhere.position = {1.0f, 2.5f, 3.0f};
+    b.Receive(elsewhere);
+    GraveWalk(b, 1200 * kMs, {Token(0x200)});
+    CHECK(Removed(b, 0x200));
+    // A break whose place holds no token of ours deletes nothing nearby.
+    WorldSync d;
+    GraveWalk(d, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(d, 1100 * kMs, {Token(0x500)});
+    proto::WorldBreak far = BreakOf(0x0123456789abcdefull, 0, kGrave);
+    far.position = {40.0f, 2.5f, 3.0f};
+    d.Receive(far);
+    GraveWalk(d, 1200 * kMs, {Token(0x500)});
+    CHECK_FALSE(Removed(d, 0x500));
+}
+
+TEST_CASE("world: a key that goes 1 with no break at all still takes the Skulltula and its token away") {
+    // Issue 89, 2026-11-17: 4090 killed and took a token in one run. The token
+    // lived less than one walk, so the world sync never saw it and no break
+    // went out; ROGX kept a token and counted it a second time (41 -> 42).
+    // The placement key is what crosses every game, so the key alone is enough.
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt),
+                             Token(0x200)});  // dead, its token made (and about to be taken)
+    // The key is 1 now, no break was ever sent: the token goes with it.
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1200 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt), Token(0x200)});
+    CHECK(Removed(w, 0x200));
+    // The Skulltula goes too, so a room loaded again has neither.
+    CHECK(w.Removes().size() >= 1);
+    // A token the game makes later (its own copy died after the key came) is
+    // taken away as the walk sees it, without another key check.
+    GraveWalk(w, 1300 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt)});
+    GraveWalk(w, 1400 * kMs, {Token(0x300, {1.0f, 2.5f, 3.0f})});
+    CHECK(Removed(w, 0x300));
+    // A token far from that place and with no matching id is left alone.
+    GraveWalk(w, 1500 * kMs, {Token(0x400, {40.0f, 2.0f, 3.0f})});
+    CHECK_FALSE(Removed(w, 0x400));
+}
+
+TEST_CASE("world: a new session forgets what the last save took (review of #257)") {
+    // A player reconnects and loads a different save: the taken sets of the
+    // session before must not delete the Gold Skulltulas that save never took
+    // (Reset skips them otherwise).
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Token(0x200)});
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1200 * kMs, {});
+    CHECK(w.IsSkulltulaTaken(kGoldHash));
+    CHECK(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+
+    w.Reset();  // the session ended (or a new save was loaded)
+    CHECK_FALSE(w.IsSkulltulaTaken(kGoldHash));
+    CHECK_FALSE(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+
+    // The next session's save never took it: it is made and stays.
+    GraveWalk(w, 2000 * kMs, {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+    for (std::uint64_t t = 2100; t <= 5000; t += 100) {
+        const auto out = GraveWalk(w, t * kMs,
+                                   {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK_FALSE(Removed(w, 0x300));
+    }
+}
+
+TEST_CASE("world: a lying small key the group has taken is never 'back' either (review of #257)") {
+    // Lying small keys have no 64-bit flag, so a reloaded room makes them again
+    // in a game whose flag the take never set; "it came back, so the break was
+    // a lie" would undo the take for everyone and it could be taken twice.
+    const char* lying = "Obj_Dungeon_SmallKey_A_01";
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, std::nullopt, lying)});
+    Walk(w, 1100 * kMs, {});                      // gone next to Link: a break
+    for (std::uint64_t t = 1200; t <= 4000; t += 100) {
+        Walk(w, t * kMs, {});
+    }
+    // The room reloads and the game makes the key again.
+    for (std::uint64_t t = 5000; t <= 9000; t += 500) {
+        const auto out = Walk(w, t * kMs, {Thing(0x300, 0x11, std::nullopt, lying)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());   // never "restored"
+    }
+}
+
+TEST_CASE("world: a token the group has taken is never 'back' (issue 89, the Zora River double)") {
+    // Player test, 2026-11-17: ZoraRiver_Adult's Gold Skulltula was killed and
+    // its token taken (44). Out and back in, the game made the Skulltula again
+    // (it reads the placement key only when it places actors), the "it came
+    // back, so the break was a lie" rule undid the take, and the token counted
+    // a second time (45). A taken token's actor must never be restored.
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Token(0x200)});
+    GraveWalk(w, 1200 * kMs, {});  // taken: the Skulltula and its token go
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1300 * kMs, {});
+    // The room loads again and the game makes both actors again.
+    for (std::uint64_t t = 5000; t <= 9000; t += 500) {
+        const auto out = GraveWalk(w, t * kMs,
+                                   {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());  // never "restored"
+    }
+    // Both are gone (removed) rather than restored: the walk asked for their
+    // deletion, and nothing went out to undo the take.
+    CHECK(w.Removes().size() >= 1);
+    CHECK(w.IsSkulltulaTaken(kGoldHash));
+    CHECK(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+}
+
 TEST_CASE("world: both players take the same token at once: one token goes back") {
     WorldSync a;
     GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
@@ -2301,31 +2461,26 @@ TEST_CASE("world: both players take the same token at once: one token goes back"
     }
 }
 
-TEST_CASE("world: a token taken elsewhere sets its Skulltula's key, once") {
+TEST_CASE("world: a token's count is given back once, and its placement key is the game's") {
     const std::uint32_t tokens = proto::flag_hash(CoopWorld::kTokenCount);
     CountStore game;
     game.values[tokens] = 5;
     CHECK(CoopWorld::GiveBack(game, CoopWorld::kTokenCount).find("5 -> 4") != std::string::npos);
     CHECK(game.values[tokens] == 4);
-    // SetTakenKey writes a 64-bit key: the store sees it under its key.
-    struct KeyStore final : public coop::host::FlagStore {
-        std::map<std::uint64_t, std::uint32_t> keys;
-        std::optional<proto::FlagEntry> read(coop::host::FlagKey k) override {
-            const auto it = keys.find(k.key);
-            if (it == keys.end()) return proto::FlagEntry(k, proto::FlagKind::boolean, 0);
-            return proto::FlagEntry(k, proto::FlagKind::boolean, it->second);
-        }
-        bool write(const proto::FlagEntry& e) override {
-            keys[e.key.key] = e.value;
-            return true;
-        }
-    } store;
-    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("set to 1") != std::string::npos);
-    CHECK(store.keys[kGoldHash] == 1);
-    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("1 already") != std::string::npos);
-    CoopWorld::QueueTakenKey(kGoldHash);
-    CHECK(CoopWorld::TakeTakenKeys() == std::vector<std::uint64_t>{kGoldHash});
-    CHECK(CoopWorld::TakeTakenKeys().empty());
+    // The placement key is never written by this side (issue 89, 2026-11-16):
+    // a guessed id would set a second Skulltula's key and take it away for
+    // good. What the two games share is the count above; the key itself comes
+    // from the game that took the token, through the flag list.
+    CHECK(CoopWorld::IsGoldSkulltulaKey(kGoldHash));
+    CHECK_FALSE(CoopWorld::IsGoldSkulltulaKey(0x1234567890abcdefull));
+    // skulltula-0118: either of a placement's two keys names it (a token pickup
+    // sets key and key + 2); nothing else does.
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash) == kGoldHash);
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash + 2) == kGoldHash);
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash + 1) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(0) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(1) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(0x1234567890abcdefull) == 0);
 }
 
 TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, then one line, then left (breakables)") {
@@ -2441,6 +2596,117 @@ TEST_CASE("world: a block another player pushed asks for its old rest place to b
     CHECK(out.blocks.empty());
 }
 
+// Row 175: one remote push of a block, from where it rests now to `to`; the
+// walk that gives the block fix (with `others` in every walk) is returned.
+WorldSync::Out FollowPush(WorldSync& w, std::uint64_t t0_ms, std::uint64_t address, std::uint64_t hash, float from,
+                          float to, const std::vector<Seen>& others) {
+    const auto with = [&](float x) {
+        std::vector<Seen> seen = others;
+        seen.push_back(Thing(address, hash, std::nullopt, kBox, {x, 2.0f, 3.0f}));
+        return seen;
+    };
+    w.Receive(MoveOf(hash, (t0_ms + 1000) * kMs, from + 0.5f * (to - from)));
+    Walk(w, (t0_ms + 1100) * kMs, with(from));
+    w.Receive(PlaceOf(hash, to));
+    Walk(w, (t0_ms + 1300) * kMs, with(from + 0.5f * (to - from)));
+    Walk(w, (t0_ms + 1700) * kMs, with(to));
+    return Walk(w, (t0_ms + 1900) * kMs, with(to));
+}
+
+bool Said(const WorldSync::Out& out, const char* text) {
+    for (const auto& n : out.notes) {
+        if (n.find(text) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// Row 175 (Forest Temple, Amy's blocks): several blocks push on one grid from
+// ONE placed anchor. A block that comes to rest from the anchor's cell must
+// not move it: that would shift the other blocks' grid in this game.
+TEST_CASE("world: a shared grid anchor is never moved for one block's rest (row 175)") {
+    const auto grid = Thing(0x900, 0, std::nullopt, "Obj_MovableBox_BasePosAnchor", {1.0f, 2.0f, 3.0f});
+    const auto other = Thing(0x101, 0x51, std::nullopt, kBox, {7.0f, 2.0f, 3.0f});
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f}), other, grid});
+    // Onto the anchor's cell: the anchor is 1.5 m from where the block rested.
+    auto out = FollowPush(w, 1000, 0x100, 0x50, 2.5f, 1.0f, {other, grid});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0);
+    // Off it again: the anchor is near the old rest but not the block's own.
+    out = FollowPush(w, 5000, 0x100, 0x50, 1.0f, 4.0f, {other, grid});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].from[0] == doctest::Approx(1.0f));
+    CHECK(out.blocks[0].anchor == 0);
+    CHECK(Said(out, "shared grid base: left"));
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(7000 * kMs, poses);
+    CHECK(poses.empty());
+}
+
+// A block's own anchor (placed with it) stays paired with it: it follows that
+// block's next rest too, and is not moved for another block resting on it.
+TEST_CASE("world: a block's own anchor follows it, and only it (row 175)") {
+    const auto anchor = [](float x) {
+        return Thing(0x900, 0, std::nullopt, "Obj_MovableBox_BasePosAnchor", {x, 2.0f, 3.0f});
+    };
+    const auto second = [](float x) { return Thing(0x101, 0x51, std::nullopt, kBox, {x, 2.0f, 3.0f}); };
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox), second(9.0f), anchor(1.0f)});
+    auto out = FollowPush(w, 1000, 0x100, 0x50, 1.0f, 2.5f, {second(9.0f), anchor(1.0f)});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0x900);
+    // Now 1.5 m from the block's first place, the anchor still is its own.
+    out = FollowPush(w, 5000, 0x100, 0x50, 2.5f, 4.0f, {second(9.0f), anchor(2.5f)});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0x900);
+    // The second block comes to rest from where that anchor lies: not its own.
+    out = FollowPush(w, 9000, 0x101, 0x51, 9.0f, 4.0f, {Thing(0x100, 0x50, std::nullopt, kBox, {4.0f, 2.0f, 3.0f}), anchor(4.0f)});
+    out = FollowPush(w, 13000, 0x101, 0x51, 4.0f, 5.5f, {Thing(0x100, 0x50, std::nullopt, kBox, {4.0f, 2.0f, 3.0f}), anchor(4.0f)});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0);
+    CHECK(Said(out, "another block's or a shared grid base"));
+}
+
+// Row 175 review gap: a shared anchor placed exactly at one block's first place
+// (Hyrule Castle: two Lon Lon boxes link to ONE Obj_MovableBox_BasePosAnchor,
+// and the first box stands on it; romfs Banc, shared_anchors.py). It is no
+// single block's own (kSharedAnchors), so that box's rest never moves it.
+TEST_CASE("world: a shared anchor at one block's first place is never paired (Hyrule Castle boxes)") {
+    const std::string scene = "HyruleCastle";
+    const char* const box = "Obj_LonLonRanch_MovableBox_A_01";
+    const proto::Vec3 on{31.6244f, 117.0387f, -146.6301f};  // the shared anchor, and box 1's first place
+    const proto::Vec3 rest{33.1244f, 117.0387f, -146.6301f};  // 1.5 m east, where the other player left it
+    const proto::Vec3 link{31.6244f, 117.0387f, -148.0f};
+    const auto grid = Thing(0x900, 0, std::nullopt, "Obj_MovableBox_BasePosAnchor", on);
+    const auto other = Thing(0x101, 0x51, std::nullopt, box, {31.6244f, 117.0387f, -145.1301f});
+    const auto first = [&](proto::Vec3 at) { return Thing(0x100, 0x50, std::nullopt, box, at); };
+    WorldSync w;
+    Walk(w, 1000 * kMs, {first(on), other, grid}, link, 2, scene);
+    proto::WorldMove m;
+    m.player_number = 1;
+    m.scene = scene;
+    m.hash = 0x50;
+    m.time_us = 2000 * kMs;
+    m.position = {32.3744f, 117.0387f, -146.6301f};
+    w.Receive(m);
+    Walk(w, 2100 * kMs, {first(on), other, grid}, link, 2, scene);
+    proto::WorldPlace p;
+    p.player_number = 1;
+    p.scene = scene;
+    p.hash = 0x50;
+    p.position = rest;
+    w.Receive(p);
+    Walk(w, 2300 * kMs, {first(m.position), other, grid}, link, 2, scene);
+    Walk(w, 2700 * kMs, {first(rest), other, grid}, link, 2, scene);
+    const auto out = Walk(w, 2900 * kMs, {first(rest), other, grid}, link, 2, scene);
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0);
+    CHECK(Said(out, "shared grid base: left"));
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(3000 * kMs, poses);
+    CHECK(poses.empty());
+}
+
 // deku-visuals-b (0.10.1 playtest): the second player's push of a block the
 // first had moved jumped to a place between the two; that jump (our game's
 // push from the stale start) is told. It is still our push and is sent.
@@ -2548,54 +2814,12 @@ void BlockMemory(FakeGame& g) {
 
 } // namespace
 
-TEST_CASE("world: RestWords puts the new rest place where the block's memory keeps the old (issue 147)") {
-    FakeGame g;
-    BlockMemory(g);
-    PutFloats(g, kBlockActor + 0x31c, {10.0f, 20.0f, 30.0f});  // its own place: the setter's
-    PutFloats(g, kBlockActor + 0x100, {10.0f, 20.0f, 30.0f});  // a remembered place
-    PutFloats(g, kBlockComp + 0x40, {10.01f, 20.0f, 29.99f}, 16);  // a 3x4 matrix's translation
-    PutFloats(g, kBlockRoot + 0x1d0, {10.0f, 20.0f, 30.0f});   // the physics root
-    PutFloats(g, kBlockActor + 0x200, {10.0f, 20.0f, 31.0f});  // not the place (z off)
-    const proto::Vec3 from{10.0f, 20.0f, 30.0f}, to{12.0f, 20.0f, 30.0f};
-    const auto scan = CoopWorld::RestWords(g.Reader(), kBlockActor, from, to);
-    CHECK_FALSE(scan.too_many);
-    REQUIRE(scan.where.size() == 3);
-    CHECK(scan.where[0] == "actor+0x100");
-    CHECK(scan.where[1] == "c+0x10+0x40 (matrix)");
-    CHECK(scan.where[2] == "physics root+0x1d0");
-    REQUIRE(scan.writes.size() == 9);
-    for (const auto& w : scan.writes) {
-        g.Put(w.address, &w.value, 4);
-    }
-    CHECK(FloatAt(g, kBlockActor + 0x100) == 12.0f);
-    CHECK(FloatAt(g, kBlockActor + 0x104) == 20.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x40) == 12.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x50) == 20.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x60) == 30.0f);
-    CHECK(FloatAt(g, kBlockRoot + 0x1d0) == 12.0f);
-    CHECK(FloatAt(g, kBlockActor + 0x31c) == 10.0f);  // left alone
-    CHECK(FloatAt(g, kBlockActor + 0x200) == 10.0f);  // not a match
-
-    // No real move, a place near the origin (zeros would match), or too many: nothing.
-    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, from, {10.01f, 20.0f, 30.0f}).writes.empty());
-    FakeGame z;
-    BlockMemory(z);
-    CHECK(CoopWorld::RestWords(z.Reader(), kBlockActor, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}).writes.empty());
-    FakeGame many;
-    BlockMemory(many);
-    for (std::uint64_t i = 0; i <= CoopWorld::kMaxRestTriplets; ++i) {
-        PutFloats(many, kBlockActor + 0x20 * i, {10.0f, 20.0f, 30.0f});
-    }
-    const auto lots = CoopWorld::RestWords(many.Reader(), kBlockActor, from, to);
-    CHECK(lots.too_many);
-    CHECK(lots.writes.empty());
-}
-
 TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 147 review)") {
     CHECK(CoopWorld::IsPushBlock(kBox));
     CHECK(CoopWorld::IsPushBlock("Obj_MovableBox_A_01"));
     CHECK(CoopWorld::IsPushBlock("Obj_SliderBox_A_01"));
     CHECK_FALSE(CoopWorld::IsPushBlock("Obj_AmosStatue_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_Goron_Statue_A_01"));  // its moves shared, no rest fix (like Armos)
     CHECK_FALSE(CoopWorld::IsPushBlock("Obj_MovableBox_BasePosAnchor"));
     for (const char* name : {"Obj_AmosStatue_A_01", "Obj_SliderBox_A_01"}) {
         CAPTURE(name);
@@ -2606,21 +2830,6 @@ TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 14
         const auto out = Walk(w, 1700 * kMs, {Thing(0x100, 0x50, std::nullopt, name, {4.0f, 2.0f, 3.0f})});
         CHECK(out.blocks.size() == (std::string_view(name).starts_with("Obj_SliderBox_") ? 1u : 0u));
     }
-}
-
-TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a region's last float") {
-    FakeGame g;
-    BlockMemory(g);
-    // The old place has a 0.0 axis: zeros everywhere would match, so no match is taken.
-    PutFloats(g, kBlockActor + 0x100, {10.0f, 0.0f, 30.0f});
-    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 0.0f, 30.0f}, {12.0f, 0.0f, 30.0f})
-              .where.empty());
-    // A place whose last float is the component's last (0x1fc of 0x200) is found.
-    PutFloats(g, kBlockComp + 0x1f4, {10.0f, 20.0f, 30.0f});
-    const auto scan =
-        CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 20.0f, 30.0f}, {12.0f, 20.0f, 30.0f});
-    REQUIRE(scan.where.size() == 1);
-    CHECK(scan.where[0] == "c+0x10+0x1f4");
 }
 
 TEST_CASE("world: a token far from where its Skulltula was seen is its own when the Skulltula just died (items-sync)") {
@@ -2721,7 +2930,7 @@ TEST_CASE("world: two tokens after one Skulltula died: only one takes its id (it
 namespace {
 
 // The block's push node (ExecuteMovableBoxControl), as the game lays it out:
-// both vtables, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
+// its vtable, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
 // component through one more object.
 constexpr std::uint64_t kNodeMain = 0x0080004000, kNodeHolder = 0x2100600000, kNode = 0x2100700000,
                         kNodeCtx = 0x2100800000, kNodeAi = 0x2100900000;
@@ -2733,7 +2942,6 @@ void BlockNodeMemory(FakeGame& g) {
     g.Word(kBlockComp + 0x38, kNodeHolder);  // component -> holder -> node
     g.Word(kNodeHolder + 0x10, kNode);
     g.Word(kNode, kNodeMain + CoopWorld::BlockNode::kVtable);
-    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
     g.Word(kNode + 8, kNodeCtx);
     g.Word(kNodeCtx + 8, kNodeAi);
     g.Word(kNodeAi + 0x1f0, kBlockActor);
@@ -2741,23 +2949,64 @@ void BlockNodeMemory(FakeGame& g) {
 
 } // namespace
 
-TEST_CASE("world: the block's push node is found by its vtables and owner (issue 147)") {
+TEST_CASE("world: the block's push node is the one its start named, checked by vtable and owner (issue 147)") {
     FakeGame g;
     BlockNodeMemory(g);
-    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain);
+    CoopWorld::NodeStarts starts;
+    // Never started (no patch 0029, or not entered yet): none, and no heap search.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
+    starts.Push(kNode, kBlockActor);
+    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts);
     REQUIRE(node);
     CHECK(*node == kNode);
-    // Another block's node (owner is not this actor): not taken.
+    // Another actor's start does not name this block's node.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor + 0x1000, kNodeMain, starts));
+    // The node now another block's (owner is not this actor): not taken.
     g.Word(kNodeAi + 0x1f0, kBlockActor + 0x1000);
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
     g.Word(kNodeAi + 0x1f0, kBlockActor);
-    // Only the first vtable right: not taken.
-    g.Word(kNode + 0x20, 0);
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
-    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    // Freed and reused (another vtable): not taken.
+    g.Word(kNode, kNodeMain + 0x1234);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
+    // The two node classes built on ExecuteMovableBoxControl, whose Enter runs the same start: taken.
+    for (const std::uint64_t vtable : CoopWorld::BlockNode::kVtables) {
+        g.Word(kNode, kNodeMain + vtable);
+        CHECK(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts) == std::optional<std::uint64_t>(kNode));
+    }
     // Another main: not taken.
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000));
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000, starts));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0, starts));
+}
+
+TEST_CASE("world: node starts keep each actor's newest node, a torn or stale pair fails the owner check") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    CoopWorld::NodeStarts starts;
+    starts.Push(0, kBlockActor);  // (nothing kept without a node or an actor)
+    starts.Push(kNode, 0);
+    CHECK(starts.Count() == 0);
+    // An older node of this actor (since freed: its owner chain is gone) before the live one.
+    constexpr std::uint64_t kOldNode = 0x2100a00000;
+    for (std::uint64_t a = 0; a < 0x40; a += 8) g.Word(kOldNode + a, 0);
+    g.Word(kOldNode, kNodeMain + CoopWorld::BlockNode::kVtable);
+    starts.Push(kOldNode, kBlockActor);
+    starts.Push(kNode, kBlockActor);
+    starts.Push(kNode, kBlockActor);  // entered again: listed once
+    CHECK((starts.NewestFor(kBlockActor) == std::vector<std::uint64_t>{kNode, kOldNode}));
+    CHECK(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts) == std::optional<std::uint64_t>(kNode));
+    // A pair naming this actor with another actor's node (torn): its owner chain says no.
+    CoopWorld::NodeStarts torn;
+    torn.Push(kOldNode, kBlockActor);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, torn));
+    // The ring keeps the newest kSlots starts: one pushed out is not found any more.
+    for (std::size_t i = 0; i < CoopWorld::NodeStarts::kSlots; ++i) {
+        starts.Push(0x2200000000 + 0x1000 * i, 0x2300000000 + 0x1000 * i);
+    }
+    CHECK(starts.NewestFor(kBlockActor).empty());
+    starts.Push(kNode, kBlockActor);
+    CHECK((starts.NewestFor(kBlockActor) == std::vector<std::uint64_t>{kNode}));
+    starts.Clear();
+    CHECK(starts.NewestFor(kBlockActor).empty());
 }
 
 TEST_CASE("world: a followed push puts the new rest in the push node's target and start (issue 147)") {
@@ -2796,70 +3045,477 @@ TEST_CASE("world: a followed push puts the new rest in the push node's target an
     CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, to, {-51.06f, 79.27f, 45.62f}).writes.empty());
 }
 
-// ------------------------------- deku-dungeon-2: the basement's moving floor (issue 196)
-
-TEST_CASE("world: the Deku Tree's moving floor is a gimmick mover, its lifts are not") {
-    CHECK(CoopWorld::IsGimmickMover("Obj_Deku_MoveFloor_A_01"));
-    CHECK(CoopWorld::IsGimmickMover("Obj_Deku_MoveFloor_A_02"));
-    CHECK(CoopWorld::IsWorldObject("Obj_Deku_MoveFloor_A_01"));
-    // The lifts only animate (OnOffAnim): their actor place never moves.
-    CHECK_FALSE(CoopWorld::IsGimmickMover("Obj_InsideTheDekuTree_ElevatorLift_A_01"));
-    CHECK_FALSE(CoopWorld::IsGimmickMover("Obj_ForestTemple_MovableBox_A_01"));
+TEST_CASE("world: a cleared puzzle's block pulled off its answer does not start again (row 244)") {
+    // hs-block-grip diag 2 (2026-11-23): the Deku basement block loads on its answer (z 42.60) in both games, its
+    // room cleared (ForceOnState on). A pulled it to 44.85; B ran the node's start again there, took the start's
+    // room-load end and put its block back on the answer ("jumped back toward its old rest").
+    const proto::Vec3 goal{-51.06f, 79.27f, 42.6f};
+    const proto::Vec3 off{-51.06f, 79.27f, 44.85f};
+    CHECK_FALSE(CoopWorld::NodeMayStartAgain(true, goal, off));
+    CHECK_FALSE(CoopWorld::NodeMayStartAgain(true, goal, {-51.06f, 79.27f, 44.1f}));  // a whole cell off too
+    // On its answer (across; its height aside), the answer end agrees.
+    CHECK(CoopWorld::NodeMayStartAgain(true, goal, {-51.06f, 79.27f, 42.6f}));
+    CHECK(CoopWorld::NodeMayStartAgain(true, goal, {-51.0f, 82.0f, 42.65f}));
+    // Not cleared, or no goal: the start's grid end, as before (its places are put at the rest after it).
+    CHECK(CoopWorld::NodeMayStartAgain(false, goal, off));
+    CHECK(CoopWorld::NodeMayStartAgain(true, {NAN, NAN, NAN}, off));
 }
 
-TEST_CASE("world: a moving floor moved in one game is sent and held in the others until it is home (issue 196)") {
+TEST_CASE("world: a node start that aims at a grid cell is put back to the block's rest (row 244)") {
+    // hs-block-grip (2026-11-22): A let the Deku basement block go mid-pull at z 44.85, between the cells 44.1 and
+    // 45.6 of its base 47.1. B's node start set the target to the cell 44.1 and B's block slid there by itself
+    // ("jumped back toward its old rest"), as in piscesgamer97's Dodongo's Cavern block room.
+    FakeGame g;
+    BlockNodeMemory(g);
+    const proto::Vec3 to{-51.06f, 79.27f, 44.85f};
+    PutFloats(g, kNode + CoopWorld::BlockNode::kBase, {-51.06f, 79.27f, 47.1f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kGoal, {-51.06f, 79.27f, 42.6f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 44.1f});  // the start's grid cell
+    PutFloats(g, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 44.85f});  // the place
+    const auto at = CoopWorld::NodeTargetAtRest(g.Reader(), kNode, to);
+    REQUIRE(at.where.size() == 1);
+    CHECK(at.where[0] == "node+0xfc");
+    REQUIRE(at.writes.size() == 3);
+    for (const auto& w : at.writes) {
+        g.Put(w.address, &w.value, 4);
+    }
+    CHECK(FloatAt(g, kNode + 0xfc + 8) == 44.85f);
+    CHECK(FloatAt(g, kNode + 0xfc) == -51.06f);
+    CHECK(FloatAt(g, kNode + 0x108 + 8) == 44.85f);
+    CHECK(FloatAt(g, kNode + 0x40 + 8) == 47.1f);  // base left alone
+    CHECK(FloatAt(g, kNode + 0x4c + 8) == 42.6f);  // goal left alone
+    // Now idle at the rest: nothing more; a rest on a cell (the start aimed at the place) needs nothing either.
+    CHECK(CoopWorld::NodeTargetAtRest(g.Reader(), kNode, to).writes.empty());
+    CHECK(CoopWorld::NodeTargetAtRest(g.Reader(), kNode, {-51.06f, 79.27f, 44.86f}).writes.empty());  // within 2 cm
+    // Both places off (a start that read another place): both put right, target first.
+    {
+        FakeGame m;
+        BlockNodeMemory(m);
+        PutFloats(m, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 45.6f});
+        PutFloats(m, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 45.6f});
+        const auto both = CoopWorld::NodeTargetAtRest(m.Reader(), kNode, to);
+        REQUIRE(both.where.size() == 2);
+        CHECK(both.where[0] == "node+0xfc");
+        CHECK(both.where[1] == "node+0x108");
+        CHECK(both.writes.size() == 6);
+    }
+    // A NaN word (unset) is put right; an unreadable node or a rest that is not a place is left alone.
+    {
+        FakeGame m;
+        BlockNodeMemory(m);
+        PutFloats(m, kNode + CoopWorld::BlockNode::kTarget, {NAN, NAN, NAN});
+        PutFloats(m, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 44.85f});
+        CHECK(CoopWorld::NodeTargetAtRest(m.Reader(), kNode, to).writes.size() == 3);
+        CHECK(CoopWorld::NodeTargetAtRest(m.Reader(), kNode, {NAN, 0.0f, 0.0f}).writes.empty());
+        CHECK(CoopWorld::NodeTargetAtRest(m.Reader(), 0x7700000000, to).writes.empty());
+    }
+}
+
+// ------------------------------- the Deku Tree basement's moving floor (issue 196)
+
+TEST_CASE("world: the Deku Tree's moving floor is left to its own wave: never sent, never written (issue 196)") {
+    // fable-g3-objects: the floor is in one placement group with its GroundControlActor_WaveLoop (4 m, 18 s),
+    // which moves it in every game. Sending its place and holding it elsewhere gave it two masters.
     const char* floor = "Obj_Deku_MoveFloor_A_01";
-    const proto::Vec3 link{1.0f, 2.0f, 23.0f};  // 20 m off, across the basement
+    CHECK_FALSE(CoopWorld::IsWorldObject(floor));
+    CHECK_FALSE(CoopWorld::IsWorldObject("Obj_Deku_MoveFloor_A_02"));
+    CHECK_FALSE(CoopWorld::IsMovable(floor));
+    CHECK_FALSE(CoopWorld::IsShifter(floor));
+    const proto::Vec3 link{1.0f, 2.0f, 5.0f};  // next to it
     auto at = [&](float x) { return Thing(0x400, 0x71, std::nullopt, floor, {x, 2.0f, 3.0f}); };
 
-    // A: bobbing near its start is nobody's move.
+    // A: the floor waves 4 m with our Link beside it: nothing is sent.
     WorldSync a;
     Walk(a, 1000 * kMs, {at(1.0f)}, link);
-    for (int i = 1; i <= 10; ++i) {
-        const float x = 1.0f + (i % 2 == 0 ? 0.3f : -0.3f);
-        CHECK(Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs, {at(x)}, link).send.empty());
+    std::uint64_t t = 1100;
+    for (int i = 1; i <= 40; ++i, t += 100) {
+        const float x = 1.0f + 4.0f * static_cast<float>(i % 20) / 20.0f;
+        CHECK(Walk(a, t * kMs, {at(x)}, link).send.empty());
     }
-    // The water drops in A: the floor moves 4 m and stops there.
-    std::vector<proto::WorldMove> moves;
-    std::vector<proto::WorldPlace> places;
-    std::uint64_t t = 2100;
-    for (int i = 1; i <= 20; ++i, t += 100) {
-        const auto out = Walk(a, t * kMs, {at(std::min(5.0f, 1.0f + 0.25f * static_cast<float>(i)))}, link);
-        for (const auto& v : Sent<proto::WorldMove>(out)) moves.push_back(v);
-        for (const auto& p : Sent<proto::WorldPlace>(out)) places.push_back(p);
-    }
-    for (int i = 0; i < 10; ++i, t += 100) {
-        for (const auto& p : Sent<proto::WorldPlace>(Walk(a, t * kMs, {at(5.0f)}, link))) places.push_back(p);
-    }
-    REQUIRE_FALSE(moves.empty());
-    for (const auto& v : moves) {
-        CHECK(v.flags == 0);  // never "carried", also with a Link standing on it
-    }
-    REQUIRE(places.size() == 1);
-    CHECK(places[0].position[0] == doctest::Approx(5.0f));
-
-    // B: its own floor stays home (no drop there); put at A's place and held there.
+    // B: a place for that floor from an older build's game is not put on ours.
     WorldSync b;
     Walk(b, 1000 * kMs, {at(1.0f)}, link);
-    b.Receive(places[0]);
-    for (std::uint64_t u = 1100; u <= 30000; u += 1000) {
-        CHECK(Walk(b, u * kMs, {at(1.0f)}, link).send.empty());  // never sends its own home back
+    b.Receive(PlaceOf(0x71, 5.0f));
+    for (std::uint64_t u = 1100; u <= 5000; u += 500) {
+        CHECK(Walk(b, u * kMs, {at(1.0f)}, link).send.empty());
         std::vector<CoopObjects::PoseWrite> poses;
         b.Poses(u * kMs, poses);
-        REQUIRE(poses.size() == 1);
-        CHECK(poses[0].position[0] == doctest::Approx(5.0f));
+        CHECK(poses.empty());
     }
-    // A's floor back home: B lets go once it settled there.
-    b.Receive(PlaceOf(0x71, 1.0f));
-    Walk(b, 31000 * kMs, {at(1.0f)}, link);
-    Walk(b, 32000 * kMs, {at(1.0f)}, link);
-    std::vector<CoopObjects::PoseWrite> none;
-    b.Poses(32000 * kMs, none);
-    CHECK(none.empty());
+}
 
-    // Beyond 40 m it is not ours to send.
+TEST_CASE("world: a placement queued just before the session ended is dropped with it") {
+    // Another player's key write is queued for the next Tick
+    // (QueueTakenPlacement). If the session ends first, Reset drops it: applied
+    // in the next session, it would take a Skulltula that save never took.
+    WorldSync w;
+    CoopWorld::QueueTakenPlacement(kGoldHash);
+    w.Reset();
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    CHECK_FALSE(w.IsSkulltulaTaken(kGoldHash));
+    CHECK_FALSE(Removed(w, 0x100));
+}
+
+// ------------------------------------------------- row 98(2): trigger guards (Trigger::follow)
+
+TEST_CASE("world: a trigger keeper waits for another game's moves, rest place and break, then lands") {
+    // A block whose push onto a press switch would make our own asker ask that player's event here: while it is a
+    // keeper (our game has not played the event) its moves and rest place are not followed.
+    WorldSync w;
+    w.SetTriggerKeepers({0x50});
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.0f));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 2.0f));
+    w.Receive(PlaceOf(0x50, 2.5f));
+    const auto kept = Walk(w, 2200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    CHECK(kept.send.empty());
+    CHECK(std::any_of(kept.notes.begin(), kept.notes.end(),
+                      [](const std::string& n) { return n.find("waits (move)") != std::string::npos; }));
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(2300 * kMs, poses);
+    CHECK(poses.empty());
+    Walk(w, 3000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Poses(3100 * kMs, poses);
+    CHECK(poses.empty());
+    // Our game played the event: no keeper any more; their rest place lands.
+    w.SetTriggerKeepers({});
+    Walk(w, 4000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Poses(4100 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x100);
+    CHECK(poses[0].position[0] == doctest::Approx(2.5f));
+
+    // Our own push of a keeper is our own play: sent as usual.
+    WorldSync v;
+    v.SetTriggerKeepers({0x50});
+    Walk(v, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    const auto push = Walk(v, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.5f, 2.0f, 3.0f})});
+    CHECK(Sent<proto::WorldMove>(push).size() == 1);
+
+    // A hammer switch's (a faller's) press by another game waits too, then is made.
+    WorldSync b;
+    b.SetTriggerKeepers({0x11});
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    Walk(b, 5000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    b.Receive(BreakOf(0x11));
+    for (std::uint64_t t = 5100; t < 8000; t += 100) {
+        CHECK(Walk(b, t * kMs, {Thing(0x100, 0x11, 1, kPillar)}).lives.empty());
+    }
+    CHECK(b.Removes().empty());
+    b.SetTriggerKeepers({});
+    const auto felled = Walk(b, 8100 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    REQUIRE(felled.lives.size() == 1);
+    CHECK(felled.lives[0].life == 0);
+}
+
+// Row 166 (0.11.6 Dodongo playtest): a block whose room loaded after another player pushed it is first seen where
+// the map put it, then put at the shared rest; our player never touched it, so its fix is untouched.
+TEST_CASE("world: row 166: a block first seen after another's push gives an untouched fix") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {});  // in the scene, the block's room not loaded yet
+    w.Receive(PlaceOf(0x50, 2.5f));  // the server's rest place, from another player's push
+    Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});  // the room loads: seen at the map's place
+    Walk(w, 1300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    WorldSync::Out out;
+    for (std::uint64_t t = 1500; t <= 4000 && out.blocks.empty(); t += 200) {
+        out = Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    }
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].untouched);
+    CHECK(out.blocks[0].to[0] == doctest::Approx(2.5f));
+}
+
+TEST_CASE("world: row 166: a followed push our own push gave way to is not untouched") {
+    // We are player 2 and pushing; player 1's moves come in: ours stop (contested), theirs are placed.
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})});
+    w.Receive(MoveOf(0x50, 1150 * kMs, 1.6f, 1));
+    w.Receive(MoveOf(0x50, 1200 * kMs, 2.0f, 1));
+    Walk(w, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})});
+    REQUIRE(w.MoverOf(0x50) == 1);
+    w.Receive(PlaceOf(0x50, 2.5f));
+    WorldSync::Out out;
+    for (std::uint64_t t = 1400; t <= 4000 && out.blocks.empty(); t += 200) {
+        out = Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    }
+    REQUIRE(out.blocks.size() == 1);
+    CHECK_FALSE(out.blocks[0].untouched);
+}
+
+TEST_CASE("world: row 166: an untouched block's node runs its start again unless it starts from the new rest") {
+    const proto::Vec3 from{-51.06f, 79.27f, 47.3f}, to{-51.06f, 79.27f, 45.6f};
+    // Its room loaded late: the node started at the map's place (+0x108), its target the grid cell (+0xfc). The
+    // strict check calls that mid-push; untouched, the start runs.
+    FakeGame g;
+    BlockNodeMemory(g);
+    PutFloats(g, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 47.1f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 47.3f});
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).busy);
+    const auto words = CoopWorld::NodeRestWords(g.Reader(), kNode, from, to, true);
+    CHECK_FALSE(words.busy);
+    CHECK(words.writes.size() == 6);
+    // Neither place at `from` (it settled on its way in): still stale, untouched.
+    FakeGame n;
+    BlockNodeMemory(n);
+    PutFloats(n, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.0f, 47.1f});
+    PutFloats(n, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.6f, 47.3f});
+    CHECK(CoopWorld::NodeRestWords(n.Reader(), kNode, from, to).writes.empty());
+    CHECK(CoopWorld::NodeRestWords(n.Reader(), kNode, from, to, true).writes.size() == 6);
+    // Already starts from the new rest: left alone.
+    FakeGame d;
+    BlockNodeMemory(d);
+    PutFloats(d, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 45.6f});
+    PutFloats(d, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 45.6f});
+    CHECK(CoopWorld::NodeRestWords(d.Reader(), kNode, from, to, true).writes.empty());
+}
+
+TEST_CASE("world: our Link at a block another player still moves is said once every 10 s (push diagnostics)") {
+    WorldSync w;
+    const proto::Vec3 at_it{1.5f, 2.0f, 3.0f};
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, at_it);
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.2f));
+    auto out = Walk(w, 2050 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})}, at_it);
+    CHECK(Said(out, "our Link is at it while it follows another player's move (theirs is live)"));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 1.4f));
+    out = Walk(w, 2150 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}, at_it);
+    CHECK_FALSE(Said(out, "our Link is at it"));  // once every 10 s
+    // Far from it: never said.
     WorldSync far;
-    const proto::Vec3 away{1.0f, 2.0f, 50.0f};
-    Walk(far, 1000 * kMs, {at(1.0f)}, away);
-    CHECK(Walk(far, 1100 * kMs, {at(3.0f)}, away).send.empty());
+    Walk(far, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, proto::Vec3{20.0f, 2.0f, 3.0f});
+    far.Receive(MoveOf(0x50, 2000 * kMs, 1.2f));
+    CHECK_FALSE(Said(Walk(far, 2050 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})},
+                          proto::Vec3{20.0f, 2.0f, 3.0f}),
+                     "our Link is at it"));
+}
+
+// ------------------------------------- Gold Skulltulas Shared: the owed token (row 63)
+
+namespace {
+bool Has(const std::vector<std::uint64_t>& list, std::uint64_t v) {
+    return std::find(list.begin(), list.end(), v) != list.end();
+}
+// B saw its copy of the Skulltula, then the copy went with no death of its own (asleep, far, or deleted
+// after the objects sync's grace): A's kill owes B the token.
+void CopyGoesWithNoDeath(WorldSync& b) {
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {});
+    b.OweToken(kGoldHash, kGoldAt, 1100 * kMs);
+}
+} // namespace
+
+TEST_CASE("world: Shared: a Skulltula killed in another game whose copy here made no token gets one made here") {
+    CoopGoldMode::ResetForTest();
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    for (std::uint64_t t = 1200; t < 1100 + WorldSync::kTokenOwedUs / 1000; t += 100) {
+        GraveWalk(b, t * kMs, {});
+        CHECK(b.MadeTokens().empty());  // not yet: B's own death may still make it
+    }
+    const auto due = GraveWalk(b, (1100 + WorldSync::kTokenOwedUs / 1000) * kMs, {});
+    REQUIRE(b.MadeTokens().size() == 1);
+    CHECK(b.MadeTokens()[0].placement == kGoldHash);
+    CHECK(b.MadeTokens()[0].actor == 0);
+    // The director made it: bound, then it shows in the walk and is that placement's token.
+    b.BindMadeToken(kGoldHash, 0x300);
+    CHECK(b.MadeTokens()[0].actor == 0x300);
+    std::uint64_t t = 5200;
+    GraveWalk(b, t * kMs, {Token(0x300, kGoldAt)});
+    GraveWalk(b, (t += 100) * kMs, {Token(0x300, kGoldAt)});
+    // Our player takes it: one break with the placement's id, and its two keys to write here.
+    std::vector<proto::WorldBreak> sent;
+    std::vector<std::uint64_t> keys;
+    for (int i = 0; i < 20; ++i) {
+        const auto out = GraveWalk(b, (t += 100) * kMs, {});
+        for (const auto& k : Sent<proto::WorldBreak>(out)) sent.push_back(k);
+        keys.insert(keys.end(), out.token_keys.begin(), out.token_keys.end());
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
+    REQUIRE(keys.size() == 1);
+    CHECK(keys[0] == kGoldHash);
+}
+
+TEST_CASE("world: Shared: our own copy's death made the token in time: none is made, and its keys are the game's") {
+    CoopGoldMode::ResetForTest();
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    GraveWalk(b, 1500 * kMs, {Token(0x200)});  // the game's own, by the Skulltula's place
+    for (std::uint64_t t = 1600; t <= 9000; t += 100) {
+        GraveWalk(b, t * kMs, {Token(0x200)});
+    }
+    CHECK(b.MadeTokens().empty());
+    CHECK(b.Removes().empty());
+    // Taken: the break goes, no key is written by us (the game's own pickup sets them).
+    std::vector<std::uint64_t> keys;
+    std::size_t breaks = 0;
+    for (std::uint64_t t = 9100; t <= 11000; t += 100) {
+        const auto out = GraveWalk(b, t * kMs, {});
+        breaks += Sent<proto::WorldBreak>(out).size();
+        keys.insert(keys.end(), out.token_keys.begin(), out.token_keys.end());
+    }
+    CHECK(breaks == 1);
+    CHECK(keys.empty());
+}
+
+TEST_CASE("world: Shared: our game makes its own token after ours was made: the second one is deleted") {
+    CoopGoldMode::ResetForTest();
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    std::uint64_t t = 1100;
+    while (b.MadeTokens().empty() && t < 20000) {
+        GraveWalk(b, (t += 100) * kMs, {});
+    }
+    REQUIRE(b.MadeTokens().size() == 1);
+    b.BindMadeToken(kGoldHash, 0x300);
+    GraveWalk(b, (t += 100) * kMs, {Token(0x300, kGoldAt)});
+    // A late death replay here: the game's own token next to ours.
+    GraveWalk(b, (t += 100) * kMs, {Token(0x300, kGoldAt), Token(0x400, kGoldAt)});
+    GraveWalk(b, (t += 100) * kMs, {Token(0x300, kGoldAt), Token(0x400, kGoldAt)});
+    const auto removes = b.Removes();
+    CHECK(Has(removes, 0x400));
+    CHECK_FALSE(Has(removes, 0x300));
+}
+
+TEST_CASE("world: Shared: a token another player took before ours was due is never made") {
+    CoopGoldMode::ResetForTest();
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    GraveWalk(b, 1500 * kMs, {});
+    b.TakenKey(kGoldHash);  // the placement's key came 1 through the flag sync
+    for (std::uint64_t t = 1600; t <= 9000; t += 100) {
+        GraveWalk(b, t * kMs, {});
+    }
+    CHECK(b.MadeTokens().empty());
+    // And one owed after the take is refused.
+    b.OweToken(kGoldHash, kGoldAt, 9000 * kMs);
+    GraveWalk(b, 20000 * kMs, {});
+    CHECK(b.MadeTokens().empty());
+}
+
+TEST_CASE("world: a scene change forgets an owed token (the keys say the rest)") {
+    CoopGoldMode::ResetForTest();
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    GraveWalk(b, 1200 * kMs, {}, "Spot_Field");
+    GraveWalk(b, 20000 * kMs, {}, "Spot_Field");
+    CHECK(b.MadeTokens().empty());
+}
+
+TEST_CASE("world: Not shared: nothing is owed, a token taken here sends no break, and another's break is ignored") {
+    CoopGoldMode::ResetForTest();
+    CoopGoldMode::SetChoice(CoopGoldMode::Mode::own);
+    CoopGoldMode::OnConnection();
+    CoopGoldMode::OnHosting();
+    REQUIRE(CoopGoldMode::NotShared());
+    WorldSync b;
+    CopyGoesWithNoDeath(b);
+    for (std::uint64_t t = 1200; t <= 9000; t += 100) {
+        GraveWalk(b, t * kMs, {});
+    }
+    CHECK(b.MadeTokens().empty());
+
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(a, 1100 * kMs, {Token(0x200)});
+    std::size_t breaks = 0;
+    for (std::uint64_t t = 1200; t <= 3000; t += 100) {
+        breaks += Sent<proto::WorldBreak>(GraveWalk(a, t * kMs, {})).size();
+    }
+    CHECK(breaks == 0);
+
+    WorldSync c;
+    GraveWalk(c, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(c, 1100 * kMs, {Token(0x200)});
+    c.Receive(BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave));
+    GraveWalk(c, 1200 * kMs, {Token(0x200)});
+    CHECK(c.Removes().empty());
+    CoopGoldMode::ResetForTest();
+}
+
+namespace {
+// Key64 flags; the first `refuse` writes fail (the game's queue busy, issue 175).
+class BusyKeyStore final : public coop::host::FlagStore {
+public:
+    std::map<std::uint64_t, std::uint32_t> keys;
+    int refuse = 0;
+    int writes = 0;
+    std::optional<proto::FlagEntry> read(coop::host::FlagKey key) override {
+        const auto it = keys.find(key.key);
+        if (it == keys.end()) {
+            return std::nullopt;
+        }
+        return proto::FlagEntry(key, proto::FlagKind::boolean, it->second);
+    }
+    bool write(const proto::FlagEntry& e) override {
+        ++writes;
+        if (refuse > 0) {
+            --refuse;
+            return false;
+        }
+        keys[e.key.key] = e.value;
+        return true;
+    }
+};
+}  // namespace
+
+TEST_CASE("world: a made token's key write the game refuses is tried again (review of f36a8852)") {
+    CoopWorld::TakeTokenKeys();  // nothing left from another test
+    constexpr std::uint64_t kPlacement = 0x032f42f523be6425ull;
+
+    SUBCASE("written at once: one line, nothing queued") {
+        BusyKeyStore game;
+        const std::string line = CoopWorld::WriteTokenKeys(game, {kPlacement, 0});
+        CHECK(line.find("2 of its 2 keys written (0 were set)") != std::string::npos);
+        CHECK(game.keys[kPlacement] == 1);
+        CHECK(game.keys[kPlacement + 2] == 1);
+        CHECK(CoopWorld::TakeTokenKeys().empty());
+    }
+    SUBCASE("refused three times: queued again until both keys are set") {
+        BusyKeyStore game;
+        game.refuse = 3;
+        CoopWorld::QueueTokenKeys(kPlacement);
+        std::vector<std::string> lines;
+        int frames = 0;
+        for (auto jobs = CoopWorld::TakeTokenKeys(); !jobs.empty(); jobs = CoopWorld::TakeTokenKeys()) {
+            ++frames;
+            REQUIRE(frames < 10);
+            REQUIRE(jobs.size() == 1);
+            CHECK(jobs[0].placement == kPlacement);
+            if (std::string line = CoopWorld::WriteTokenKeys(game, jobs[0]); !line.empty()) {
+                lines.push_back(std::move(line));
+            }
+        }
+        CHECK(game.keys[kPlacement] == 1);
+        CHECK(game.keys[kPlacement + 2] == 1);
+        CHECK(frames == 3);  // frame 1: both refused; frame 2: one refused, one written; frame 3: the last
+        REQUIRE(lines.size() == 2);  // the first refusal and the end, no line for the silent retry
+        CHECK(lines[0].find("refused: trying again") != std::string::npos);
+        CHECK(lines[1].find("after a retry") != std::string::npos);
+    }
+    SUBCASE("refused for good: given up after kTokenKeyTries, with a line") {
+        BusyKeyStore game;
+        game.refuse = 1 << 20;
+        CoopWorld::QueueTokenKeys(kPlacement);
+        int frames = 0;
+        std::string last;
+        for (auto jobs = CoopWorld::TakeTokenKeys(); !jobs.empty(); jobs = CoopWorld::TakeTokenKeys()) {
+            ++frames;
+            REQUIRE(frames <= CoopWorld::kTokenKeyTries);
+            if (std::string line = CoopWorld::WriteTokenKeys(game, jobs[0]); !line.empty()) {
+                last = std::move(line);
+            }
+        }
+        CHECK(frames == CoopWorld::kTokenKeyTries);
+        CHECK(last.find("given up") != std::string::npos);
+        CHECK(game.keys.empty());
+    }
+    SUBCASE("a key already set is not written again") {
+        BusyKeyStore game;
+        game.keys[kPlacement] = 1;
+        const std::string line = CoopWorld::WriteTokenKeys(game, {kPlacement, 0});
+        CHECK(line.find("1 of its 2 keys written (1 were set)") != std::string::npos);
+        CHECK(game.writes == 1);
+    }
 }

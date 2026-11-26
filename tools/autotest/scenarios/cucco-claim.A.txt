@@ -1,0 +1,30 @@
+# cucco-claim (proof-0116, room-result-0116-2 43af3578 scenario 5): A lands first and stands by the Kakariko Cucco at
+# (-11.0, 28.5) so A's game owns it; B then picks it up and walks 5 m. PASS (shots): b-carry/b-carry2 the Cucco stays in
+# B's hands, no snap back; a-carry/a-carry2 it is in B's puppet's hands after the hand-over (carry claim). Then B puts it down.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark landed
+goto -8.0 30.0 1.0 900
+toward -11.04 28.49 8
+mark a-owns
+wait 1500
+mark a-carry
+wait 120
+mark a-carry2
+wait 600
+mark a-dropped
+wait 300
+mark end

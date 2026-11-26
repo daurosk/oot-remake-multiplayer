@@ -1,0 +1,37 @@
+# hs-boss-away-gohma (Hookshot/Longshot; tracker row 127): A is the HOST and stands in Kokiri Forest the whole run;
+# B (a guest) walks in through Gohma's door and kills her. Navi's report: the host, not in the boss room, crashed
+# the moment the guests killed Gohma.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-away-gohma [-Lane 1]
+# PASS (proof lines):
+#  1. B: "Dm_Deku_BossIn: our game started it", then after b-kill its death (Dm_Deku_BossOut / the death setting).
+#  2. A: "Dm_Deku_BossOut: not played here (we are not in the boss's area)" and the chat line "<B's name> beat
+#     Queen Gohma"; A's game keeps running to "test mark end" (no crash, no exit).
+#  3. A's screen a-death / a-end: A's normal picture in Kokiri Forest, A free to move.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+wait 1620               # B's setup and the walk to the door
+mark a-in
+wait 300
+mark a-intro
+wait 2220
+mark a-kill
+wait 300
+mark a-death
+rstick 1 0 60           # turn: the picture moves, A is free
+wait 2340
+mark end

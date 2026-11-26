@@ -112,3 +112,24 @@ TEST_CASE("join password: JOIN_CHALLENGE and JOIN_PROOF on the wire") {
   CHECK_FALSE(allowed_on_channel(MessageType::join_proof, kChannelProgress));
   CHECK(kProtocolVersion >= 9);
 }
+
+TEST_CASE("join password: with none typed a game answers a host on this network with the same-network key (row 251)") {
+  const auto ip = [](std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d) {
+    return (a << 24) | (b << 16) | (c << 8) | d;
+  };
+  CHECK(answer_password("", ip(192, 168, 1, 20)) == kSameNetworkPassword);
+  CHECK(answer_password("", ip(10, 0, 0, 1)) == kSameNetworkPassword);
+  CHECK(answer_password("", ip(172, 31, 255, 255)) == kSameNetworkPassword);
+  CHECK(answer_password("", ip(169, 254, 0, 1)) == kSameNetworkPassword);
+  // A typed password always goes as it is; an internet host, loopback (a relay's or a join helper's local way in) or
+  // a carrier's NAT range get the empty one, which a host refuses.
+  CHECK(answer_password("hunter2", ip(192, 168, 1, 20)) == "hunter2");
+  CHECK(answer_password("", ip(127, 0, 0, 1)).empty());
+  CHECK(answer_password("", ip(8, 8, 8, 8)).empty());
+  CHECK(answer_password("", ip(100, 64, 0, 1)).empty());
+  CHECK(answer_password("", ip(172, 32, 0, 1)).empty());
+  CHECK(answer_password("", ip(172, 15, 0, 1)).empty());
+  CHECK(answer_password("", ip(192, 169, 0, 1)).empty());
+  CHECK(is_same_network_ipv4(ip(172, 16, 0, 0)));
+  CHECK_FALSE(is_same_network_ipv4(ip(127, 255, 255, 255)));
+}

@@ -107,6 +107,26 @@ TEST_CASE("pvp: what a swing never hits") {
     CHECK(a.Swing(Swing(blade, "spot01"), self, "spot00", 1, std::vector<Target>{Other(2, {1, 0, 0})}, kS).empty());
 }
 
+TEST_CASE("pvp: the two eras of one place hit and hurt each other, another place does not (row 221)") {
+    CoopPvp::Attacker a;
+    const Vec3 self{0, 0, 0};
+    const Vec3 blade{0.8f, 1.0f, 0.0f};
+    const std::vector<Target> child{Other(2, {1, 0, 0}, "Graveyard_Child")};
+    CHECK(a.Swing(Swing(blade, "Graveyard_Adult"), self, "Graveyard_Adult", 1, child, kS).size() == 1);
+    const std::vector<Target> elsewhere{Other(2, {1, 0, 0}, "Kakariko_Child")};
+    CHECK(a.Swing(Swing(blade, "Graveyard_Adult"), self, "Graveyard_Adult", 1, elsewhere, 2 * kS).empty());
+    CoopPvp::Local me = Me();
+    me.scene = "Graveyard_Child";
+    CoopPvp::Victim v;
+    const auto d = v.Hit(HitOn(2), true, me, Them("Graveyard_Adult"), kS);
+    REQUIRE(d);
+    CHECK(d->take == 2);
+    CoopPvp::Victim w;
+    const auto e = w.Hit(HitOn(2), true, me, Them("Kakariko_Adult"), kS);
+    REQUIRE(e);
+    CHECK(e->hurt.flags == proto::pvp_hurt::guarded);
+}
+
 TEST_CASE("pvp: shots hit within their reach, and a nut never hurts") {
     CoopPvp::Attacker a;
     const Vec3 self{0, 0, 0};
@@ -120,6 +140,11 @@ TEST_CASE("pvp: shots hit within their reach, and a nut never hurts") {
     CHECK(arrow[0].amount == 4);
     CHECK(a.Shot(proto::DamageCause::nut, {10, 1, 0}, self, "spot00", 1, targets, 5 * kS).empty());
     CHECK(a.Shot(proto::DamageCause::seed, {11.5f, 1, 0}, self, "spot00", 1, targets, 5 * kS).empty());
+    // issue 133: a lifeless copy's kill report is never a PvP hit (no amount, no reach)
+    CHECK(CoopPvp::AmountOf(proto::DamageCause::killed) == 0);
+    CHECK(CoopPvp::AmountOf(proto::DamageCause::reflected) == 0);  // row 177: a notice, never a PvP hit
+    CHECK(CoopPvp::ReachOf(proto::DamageCause::killed) == 0.0f);
+    CHECK(a.Shot(proto::DamageCause::killed, {10, 1, 0}, self, "spot00", 1, targets, 7 * kS).empty());
 }
 
 TEST_CASE("pvp: the victim's game takes the life only when it may") {
@@ -187,4 +212,150 @@ TEST_CASE("pvp: chat lines") {
     CHECK(CoopPvp::HurtLine(proto::PvpHurt{2, 1, 4, 0, proto::pvp_hurt::died}, 3, "Mido", "Saria") ==
           "Saria defeated Mido");
     CHECK_FALSE(CoopPvp::HurtLine(proto::PvpHurt{2, 1, 0, 10, proto::pvp_hurt::guarded}, 1, "Mido", "Saria"));
+}
+
+TEST_CASE("pvp: a monster's hit while a replayed PvP hit waits is not booked as the PvP hit") {
+    using CoopPvp::PendingGive;
+    // Life 12, a PvP hurt of 4 replayed (expect 8); a monster takes 4 before the game takes ours.
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 8, /*own_hit*/ true, /*replay_hit*/ false, /*id_read*/ true));
+    CHECK(gives[0].expect == 4);  // still waits: life 8 > 4, so a refused replay ends in the written 4
+    // Both in one read: the replay takes its 4 first, the monster the rest.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 2, true, true, true));
+    CHECK(gives[0].expect == 2);  // life 2 <= 2: taken
+    // Our replayed id with the fall: the landing.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, true, true));
+    CHECK(gives[0].expect == 8);
+    // The id not read: a fall is the landing, as before.
+    w.Reset();
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, false, false));
+    CHECK(gives[0].expect == 8);
+    // Never below 0.
+    w.Reset();
+    gives = {PendingGive{4, 2, 100, true}};
+    w.Follow(gives, 6, 0, true, false, true);
+    CHECK(gives[0].expect == 0);
+}
+
+TEST_CASE("pvp: a heart while a PvP hit waits is not taken back by the written life") {
+    using CoopPvp::PendingGive;
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}, PendingGive{2, 6, 120, false}};
+    CHECK_FALSE(w.Follow(gives, 12, 16, false, false, true));
+    CHECK(gives[0].expect == 12);
+    CHECK(gives[1].expect == 10);
+    // Not read yet, or unchanged: nothing moves.
+    w.Follow(gives, -1, 4, true, false, true);
+    w.Follow(gives, 16, 16, true, false, true);
+    CHECK(gives[0].expect == 12);
+}
+
+TEST_CASE("pvp: a fall, fire or drowning (no hit id moved) is held one read, then not booked as the PvP hit") {
+    using CoopPvp::PendingGive;
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 10, false, false, true));  // fire 2: held (its id may come next read)
+    CHECK(gives[0].expect == 8);
+    CHECK_FALSE(w.Follow(gives, 10, 10, false, false, true));  // no id came: harm
+    CHECK(gives[0].expect == 6);
+    CHECK_FALSE(w.Follow(gives, 10, 6, false, true, true));  // then the replay lands with its id
+    CHECK(gives[0].expect == 6);  // life 6 <= 6: taken once
+    // A refused replay (its id, no fall) and a fall two reads later: that fall is the void's.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    w.Follow(gives, 12, 12, false, true, true);
+    w.Follow(gives, 12, 12, false, false, true);
+    CHECK(w.Follow(gives, 12, 9, false, false, true));
+    w.Follow(gives, 9, 9, false, false, true);
+    CHECK(gives[0].expect == 5);  // the PvP hit still owed: written to 5 after the wait
+}
+
+TEST_CASE("pvp: the replay's step landing between the life and hit id reads is taken once (review of 367e23f3)") {
+    using CoopPvp::PendingGive;
+    // Its fall read a walk after its id: the id read alone carries its take into the next read.
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 12, false, true, true));
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, false, true));
+    CHECK(gives[0].expect == 8);  // life 8 <= 8: the landing, not written again (was: lowered to 4, dealt twice)
+    // Its fall read a walk before its id: held, then paired with the id.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 8, false, false, true));  // nothing booked or written this read
+    CHECK_FALSE(w.Follow(gives, 8, 8, false, true, true));
+    CHECK(gives[0].expect == 8);  // the landing
+    // A monster's hit read before its id: held, then lowered as harm once the id is not ours.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 9, false, false, true));
+    CHECK_FALSE(w.Follow(gives, 9, 9, true, false, true));
+    CHECK(gives[0].expect == 5);
+}
+
+TEST_CASE("pvp: a held fall is booked only against the hurts waiting when it was held (review-a38-4)") {
+    using CoopPvp::PendingGive;
+    // Life 12, a replayed hurt of 4 waits (expect 8). Fire 2 with no id: held; the caller takes no new ask that read.
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 10, false, false, true));
+    // Next read no id came: harm. The ask that waited is taken now, after the waiting hurt and the harm.
+    CHECK_FALSE(w.Follow(gives, 10, 10, false, false, true));
+    CHECK(gives[0].expect == 6);
+    gives.push_back(PendingGive{4, CoopPvp::NextExpect(gives, 10, 4), 200, true});
+    CHECK(gives[1].expect == 2);  // (was: 10-4 = 6 at the hold read, lowered by the harm again to 4: 2 extra)
+    // Neither is lowered again by that harm: the first replay lands with its id, then the second.
+    CHECK_FALSE(w.Follow(gives, 10, 6, false, true, true));
+    CHECK(gives[0].expect == 6);
+    CHECK(gives[1].expect == 2);
+    gives.erase(gives.begin());  // (life 6 <= 6: the caller books the first)
+    CHECK_FALSE(w.Follow(gives, 6, 2, false, true, true));
+    CHECK(gives[0].expect == 2);  // life 2 <= 2: the second taken once
+}
+
+TEST_CASE("pvp: a held fall and our replayed id with a new fall in one read are booked as one change") {
+    using CoopPvp::PendingGive;
+    // Fire 2 held; next read the replay's id and its fall of 4: harm 2, landing 4. Not held again.
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 10, false, false, true));
+    CHECK_FALSE(w.Follow(gives, 10, 6, false, true, true));
+    CHECK(gives[0].expect == 6);  // life 6 <= 6: taken once (was: the replay's fall held again, lowered to 4)
+    CHECK_FALSE(w.Follow(gives, 6, 6, false, false, true));
+    CHECK(gives[0].expect == 6);
+    // The held fall was the landing (its id came next read with no new fall): nothing lowered.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 8, false, false, true));
+    CHECK_FALSE(w.Follow(gives, 8, 8, false, true, true));
+    CHECK(gives[0].expect == 8);
+    // With a monster's id too: the replay's part first, the rest (held 2 + 3) lowered once.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 10, false, false, true));
+    CHECK_FALSE(w.Follow(gives, 10, 3, true, true, true));
+    CHECK(gives[0].expect == 3);
+}
+
+TEST_CASE("pvp: hurts waiting together expect lives after each other") {
+    using CoopPvp::PendingGive;
+    std::vector<PendingGive> gives;
+    gives.push_back(PendingGive{4, CoopPvp::NextExpect(gives, 12, 4), 100, true});
+    gives.push_back(PendingGive{4, CoopPvp::NextExpect(gives, 12, 4), 100, true});
+    CHECK(gives[0].expect == 8);
+    CHECK(gives[1].expect == 4);  // (was 8: the first landing booked both, the second refused hit was lost)
+    // A waiting hurt already landed this read (expect above life): the new one starts from the life.
+    gives = {PendingGive{2, 10, 100, true}};
+    CHECK(CoopPvp::NextExpect(gives, 9, 3) == 6);
+    CHECK(CoopPvp::NextExpect({}, 2, 3) == 0);  // never below 0
+    // The first lands; the second still waits for its own.
+    CoopPvp::LinkLifeWatch w;
+    gives = {PendingGive{4, 8, 100, true}, PendingGive{4, 4, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, true, true));
+    CHECK(gives[0].expect == 8);
+    CHECK(gives[1].expect == 4);
 }

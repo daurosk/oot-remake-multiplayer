@@ -1,0 +1,12 @@
+# char-npc-v022: B stands in the same place and watches A's pick (header in A).
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1500
+mark arrived
+place -125.81 114.56 -8.0
+wait 600
+mark sees-pick
+wait 300
+mark sees-pick-later
+wait 600
+mark sees-link

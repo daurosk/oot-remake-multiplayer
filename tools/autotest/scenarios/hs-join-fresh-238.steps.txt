@@ -1,0 +1,26 @@
+# hs-join-fresh-238 (player row 238, the reported case): B's own save has one heart MORE than A's (MaxLife and Life =
+# A's + 4, set in B's baseline by proof-join-hearts-238.ps1 from A's baseline; the unit is a quarter heart), B never
+# joined this session; A (host) is up and in the world first, B starts, joins and loads its own save. Needs the wrapper
+# (the baseline edit), not run.ps1 alone.
+# What happens (run 20261123-030639): B takes the host's table at its title; its own save load then has the higher
+# MaxLife, which the load window puts back to the group's value (a load revert) before the game makes Link, so B's Link
+# is made at the host's count (Life held to it too) and there is nothing to lower: the walk logs "... is at or under the
+# held N (MaxLife is held lower; ...): nothing to lower". When the game made Link first, it logs "max life M -> N
+# (MaxLife is held lower: ...)". Either line passes b-lowered.
+# PASS (shots both, read them): f-joined-A / f-joined-B (~30 s after B's load) both show the host's count, A did NOT
+# rise; f-picked-A / -B after B takes a heart container: both the host's count + 1.
+# b-hud-as-link: the game's own gauge refresh (coop_life_gauge.h) left B's HUD max at its Link's own max.
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+start A
+load A
+sleep 20
+start B
+load B
+sleep 30
+lines b-lowered B min=1 coop: objects: our Link's max life .*MaxLife is held lower
+lines b-hud-as-link B min=1 coop: life gauge: the game's refresh ran: HUD max -?\d+ -> (\d+) .*our Link's life -?\d+ of \1 \(
+lines a-not-raised A max=0 coop: objects: our Link's max life \d+ -> \d+ \(from MaxLife\)
+shot f-joined
+play B hs-join-hearts-238.B2.txt
+sleep 20
+shot f-picked

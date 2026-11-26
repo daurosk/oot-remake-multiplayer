@@ -11,12 +11,19 @@
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
 #   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
 #   Build-Hookshot-Coop.bat -PackOnly               only make the puppet pack again (make-puppet-pack.cmd)
+#   Build-Hookshot-Coop.bat -Dlss                   with NVIDIA DLSS ("NVIDIA DLSS.bat"): asks you to accept NVIDIA's
+#                                                   license once, then every build of this kit fetches NVIDIA's DLSS
+#                                                   SDK and builds with it (hookshot\dlss.txt remembers the choice)
+#   Build-Hookshot-Coop.bat -NoDlss                 without DLSS again (the game is built again without it)
+#   Build-Hookshot-Coop.bat -DlssSdk <folder>       as -Dlss, starting from NVIDIA's SDK in that folder (one the Longshot
+#                                                   Builder or Launcher fetched is found by itself): only what differs is
+#                                                   downloaded
 #   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
 #   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
-#    Python, llvm-mingw, the Vulkan/FFmpeg headers, wgpu-native and the prebuilt third-party files),
+#    Python, llvm-mingw, the Vulkan/FFmpeg headers and the prebuilt third-party files),
 #    downloaded from Longshot's release (git.magicbean.dev) and checked against the SHA-256 in that release's
 #    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once. Each download is tried several
 #    times, then with curl.exe, then from the co-op mirror (TOOLS.txt mirror=); nothing unverified is used.
@@ -43,9 +50,17 @@ param(
     [ValidateRange(0, 256)][int]$Jobs = 0,
     [string]$Tools = '',
     [string]$Work = '',
+    [string]$DlssSdk = '',
+    [string]$RomfsFrom = '',   # (tools/hookshot/hs.py: another game folder of the same .nup, its game files hard-linked)
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
+    [switch]$Dlss,
+    [switch]$NoDlss,
+    # (Update.bat, after an update or when the kit is already the newest: the game's co-op parts the kit pins (module,
+    # puppet pack, the randomizer OOTRR, stale seeds) put in now when only they are missing or stale; a game build is
+    # left to the next start, which asks first)
+    [switch]$Repair,
     # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
     # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
     [string]$Longshot = ''
@@ -57,7 +72,23 @@ $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')   # (Test-KitOtherKitGame, Find-KitHookshotGameToCopy)
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
+. (Join-Path $PSScriptRoot 'console-mode.ps1')   # (Read-KitPath: the questions for a path, pasted, dragged or typed)
 Set-KitTls   # (kit-mirror: Tls12 added to what Windows enables, and Tls13 where .NET has it; was Tls12 alone)
+[void](Update-KitNucleusHandler $kit)   # (every build and every Update.bat: Nucleus's copy of the handler is the kit's)
+if ($Repair) {
+    # Velvet (2026-11-19): Update.bat updated the kit, but the game's tools\ootrr stayed broken until a start the player
+    # never watched. Now Update.bat repairs the game's co-op parts itself (the module step below, seconds) while the game
+    # is closed; what needs a game build stays with the next start ("Start Squadala.bat"), which asks first.
+    $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'offline') { Write-Host 'The game''s randomizer (OOTRR) is set up at the next start with internet.'; exit 0 }
+    if ($need -ne 'module') {
+        if ($need -eq 'mixed' -or $need -eq 'held') { Write-Host (Get-KitHookshotNeedText $need (Get-KitHookshotGame $kit) $true $kit) -ForegroundColor Yellow }
+        elseif ($need) { Write-Host "The game: $(Get-KitHookshotNeedText $need (Get-KitHookshotGame $kit) $true $kit)" -ForegroundColor Yellow; Write-Host '  ("Start Squadala.bat" does it at the next start.)' }
+        else { Write-Host 'The game: its co-op parts and the randomizer (OOTRR) are the ones this version pins.' }
+        exit 0
+    }
+    Write-Host "The game: $(Get-KitHookshotNeedText $need)"
+}
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 # (kit-friction) Anything this script did not expect: the step it was at, in plain words, and for "access denied" or a
@@ -80,7 +111,7 @@ trap {
     } elseif ($m -match '(?i)application control|blocked by|virus|potentially unwanted') {
         Write-Host '  Windows or the antivirus blocked a program of the build: Windows Security > Protection history says which; allow it, or add this kit''s folder under Exclusions. Smart App Control (Windows 11) blocks it whatever Defender''s settings (SETUP.md, "If something goes wrong").' -ForegroundColor Yellow
     }
-    Write-Host '  Start again once that is done; what was downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+    Write-Host '  Start again once that is done; what was downloaded is kept. Still stuck: scripts\collect-logs.cmd, and attach its zip to /bugreport on the Discord.'
     exit 1
 }
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
@@ -123,6 +154,31 @@ $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
 foreach ($k in 'release', 'lock_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
+
+# NVIDIA's DLSS SDK already on this PC (#229), for a kit that opted in to DLSS (-Dlss, hookshot\dlss.txt below): its
+# files are copied into the build's own SDK folder first, so make_game.py's --fetch-ngx-sdk, which checks every file's
+# SHA-256 against its pin, downloads only what differs (nothing, offline too, when it is the same SDK version).
+# -DlssSdk names one (and asks for DLSS); otherwise the folders a Longshot Builder or the Longshot Launcher fetches
+# into. Never a LONGSHOT_NGX_SDK set on the PC: the build clears that one (Invoke-MakeGame), as Longshot's Builder does.
+# Never DLSS without the opt-in: a PC with an SDK but no dlss.txt builds as before.
+function Find-NgxSdk([string]$Wanted) {
+    $lib = 'nvsdk_ngx_s.lib'
+    $tries = if ($Wanted) { @($Wanted) } elseif ($env:LOCALAPPDATA) {
+        @('LongshotBuilder', 'LongshotLauncher', 'HookshotBuilder') | ForEach-Object { Join-Path $env:LOCALAPPDATA "$_\ngx-sdk" }
+    } else { @() }
+    foreach ($t in $tries) {
+        if (-not $t -or -not (Test-Path -LiteralPath $t -PathType Container)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $t "lib\$lib")) { return (Resolve-Path -LiteralPath $t).Path }
+    }
+    return ''
+}
+if ($DlssSdk) {
+    if (-not (Find-NgxSdk $DlssSdk)) {
+        Fail "No NVIDIA DLSS SDK at ${DlssSdk}: it needs lib\nvsdk_ngx_s.lib. Longshot Builder's NVIDIA DLSS tick or the Longshot Launcher fetches one."
+    }
+    if ($NoDlss) { Fail '-DlssSdk and -NoDlss together: choose one.' }
+    $Dlss = $true
+}
 # (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
 if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
 $repoUrl = "$($Matches[1])/$($Matches[2])"
@@ -155,28 +211,49 @@ if (-not $Out) {
     if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
 }
 $Out = [System.IO.Path]::GetFullPath($Out)
+# What the game in $Out is made from: the tools' stamp, and the mods' code patches it is built with (patches 0034/0035:
+# Get-KitExefsStampLine; nothing more without code mods). The tools folder keeps $stamp.
+# Co-op's own Characters tab's code patch first, in the pack folder the build reads the mods from (in without the
+# Character Select mod's code, out with it: kit-paths.ps1 Sync-KitCharselNativePatch; the pack step writes the same).
+$charselSync = Sync-KitCharselNativePatch $kit (Join-Path $Out 'mods\contents\0400486024DEC000\coop-puppet')
+if ($charselSync -eq 'in') { Write-Host '  Characters tab: co-op''s own (Link) goes into the game''s build' }
+elseif ($charselSync -eq 'out' -and (Test-KitCharselNativeParked (Join-Path $Out 'mods\contents\0400486024DEC000\coop-puppet'))) {
+    Write-Host '  Characters tab: off this start with the menus kept aside (the size table the game reads cannot hold them), its code too'
+}
+elseif ($charselSync -eq 'out') { Write-Host '  Characters tab: Character Select''s own (his mod is in the mods)' }
+$gameWant = $stamp + (Get-KitExefsStampLine $Out)
+# --- Two guards before anything in the game folder is touched (kit-harden, 2026-11-23) ---
+# 1. A test kit (hookshot\hold-game.txt) never builds its game for patches or a pin other than the ones the game was built
+#    from: a lane kit with old patches rebuilt a newer game and left it half old, half new.
+# 2. A game whose build files are not the ones Longshot's note names (a file copied over from another build) is not built
+#    on top of, kept, or copied over: it stops here and names the file. -Rebuild is the way to build it again on purpose;
+#    it takes the wrong files and the note out first, so Longshot copies every file in again, and the finished build is
+#    checked the same way at the end.
+if (-not $CheckOnly -and -not $PackOnly) {
+    $held = Get-KitHoldGameText $kit $Out
+    if ($held) { Fail $held }
+    $bad = if (Test-KitGameUnfinished $Out) { @() } else { @(Get-KitGameBuildMismatch $Out) }
+    if ($bad.Count -and -not $Rebuild) {
+        if (Test-Path -LiteralPath (Join-Path $kit 'Start Squadala.bat')) { Fail (Get-KitGameMixedText $bad 'Start Squadala.bat asks whether to build the game again, and does it on yes') }
+        Fail (Get-KitGameMixedText $bad)
+    }
+    if ($bad.Count) {
+        Step 'The game: its files are not from one build; taking them out so the build puts every file in again'
+        $bad | ForEach-Object { Write-Host "  - $_" }
+        Start-KitGameWrite $Out 'a build of a game whose files were not from one build'
+        foreach ($line in $bad) {
+            $rel = ($line -split ' ', 2)[0]
+            $p = Join-Path $Out $rel
+            if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Item -LiteralPath $p -Force }
+        }
+        Remove-Item -LiteralPath (Join-Path $Out '.longshot_installed.json') -Force -ErrorAction SilentlyContinue
+    }
+}
 $python = Join-Path $tools 'python\python.exe'
 
 # --- A Longshot of the player's own (kit-friction) -----------------------------------------------
 # Never played or written to: co-op is a separate build (the release in hookshot\PIN with co-op's patches in its source).
 # Asked once, before the first build (hookshot\longshot-folder.txt keeps the answer; 'none' is a no).
-function Read-TimedLine([int]$Seconds) {
-    $redirected = $true
-    try { $redirected = [Console]::IsInputRedirected } catch { }
-    if ($redirected) { return "$([Console]::In.ReadLine())" }
-    $end = (Get-Date).AddSeconds($Seconds)
-    $text = ''
-    while ($text -or (Get-Date) -lt $end) {
-        if ([Console]::KeyAvailable) {
-            $key = [Console]::ReadKey($true)
-            if ($key.Key -eq 'Enter') { Write-Host ''; return $text }
-            if ($key.Key -eq 'Backspace') { if ($text) { $text = $text.Substring(0, $text.Length - 1); Write-Host -NoNewline "`b `b" } }
-            elseif ($key.KeyChar) { $text += $key.KeyChar; Write-Host -NoNewline $key.KeyChar }
-        } else { Start-Sleep -Milliseconds 50 }
-    }
-    Write-Host ''
-    return ''
-}
 # The puppet pack, from the same game files, where the co-op hook looks for it: its load folder
 # (<exe dir>\mods\contents on Hookshot)\0400486024DEC000\coop-puppet, the emulator's layout, which Hookshot's
 # host/mods.c also loads as a mod. A pack an earlier version of this script put in mods\coop-puppet goes.
@@ -189,6 +266,19 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     $mod = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet'
     $oldMod = Join-Path $exeDir 'mods\coop-puppet'
     if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
+    # (player report 210: the pack was made again at the end of every build and module step, 1 to 4 minutes each, also
+    # when nothing it is made from had changed. Now only when Test-KitPuppetPackStale says so (none, incomplete, another
+    # pack tool, other Character Select characters), and a pack kept from before for exactly these goes back in seconds.
+    # make-puppet-pack.cmd (-PackOnly) always makes it.)
+    $packDir = Join-Path $kit 'tools\puppet_pack'
+    if (-not $PackOnly -and -not (Test-KitPuppetPackStale (Join-Path $mod 'coop_puppet.json') $packDir)) {
+        Write-Host '  puppet pack: up to date (made again only when the pack tool, the Character Select characters or a pack file change)'
+        return $true
+    }
+    if (-not $PackOnly) {
+        $back = Restore-KitPuppetPack $kit $mod $packDir
+        if ($back) { Write-Host $back; return $true }
+    }
     $packFrom = $Game
     if (-not $packFrom) {
         $last = Join-Path $hs 'game-files.txt'
@@ -226,8 +316,9 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         if ($askedBefore) {
             Write-Host '  (Not asked again at every start. make-puppet-pack.cmd asks for your game file and makes the pack.)' -ForegroundColor Yellow
         } elseif ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
-            Write-Host '  Drag your game''s .nup file into this window and press Enter (Enter alone: start without the pack):'
-            $given = "$(Read-TimedLine 120)".Trim().Trim('"')
+            Write-Host '  Your game''s .nup file: paste its path with Ctrl+V or right-click, or drag the file here, then press Enter'
+            Write-Host '  (Enter alone: start without the pack):'
+            $given = Read-KitPath 120 { param($p) $p -like '*.nup' }
             if ($given -and (Test-Path -LiteralPath $given)) {
                 $packFrom = (Resolve-Path -LiteralPath $given).Path
                 [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
@@ -239,15 +330,33 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         }
     }
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
-        Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
+        # (why, in one line: Get-PuppetPackHint's reason; and about how long: 1 to 4 minutes, measured 3:19 on a fast PC)
+        $why = if (Test-Path -LiteralPath (Join-Path $mod 'coop_puppet.json')) { Get-PuppetPackHint (Join-Path $mod 'coop_puppet.json') $packDir } else { 'Puppet pack: none yet.' }
+        if ($why) { Write-Host "  $(($why -split '\. ')[0])." }
+        Write-Host '  Making the puppet pack (how you see the other players; 1 to 4 minutes, about 15 more for Character Select voices) ...'
+        # (the pack there is kept for later: switching Character Select back puts it back in seconds)
+        $keptPack = if (-not $PackOnly) { Save-KitPuppetPack $kit $mod } else { '' }
         $ErrorActionPreference = 'Continue'
-        # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # The kit's pack command (kit-paths.ps1 Get-KitPackArgs: with the title's rows and the pause menu's tab), the
+        # same one the test kits run. As the Linux kit's build.sh.
+        $packArgs = Get-KitPackArgs $packTool $packFrom $mod
+        & $python @packArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
         if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
-        if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        if ($code -ne 0) {
+            # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game had)
+            if ($keptPack -and (Test-Path -LiteralPath (Join-Path $keptPack 'coop-puppet\coop_puppet.json'))) {
+                if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Move-KitFolder (Join-Path $keptPack 'coop-puppet') $mod) {
+                    Remove-Item -LiteralPath $keptPack -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host '  The puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.' -ForegroundColor Yellow
+                    $code = -1
+                }
+            }
+            if ($code -ne -1) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        }
     } else {
         Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
     }
@@ -258,8 +367,8 @@ function Invoke-PuppetPackStep([string]$exeDir) {
 # only the puppet pack, made again in the game this kit built. Nothing is downloaded or built.
 if ($PackOnly) {
     $exe = Get-KitHookshotExe $Out
-    if (-not $exe) { Fail 'The co-op game is not built yet. Start "Start OoT Co-op.bat": it builds the game and makes the puppet pack.' }
-    if (-not (Test-Path -LiteralPath $python)) { Fail "The pack tool's Python is not in $tools. Start ""Start OoT Co-op.bat"" once (it gets it), then this again." }
+    if (-not $exe) { Fail 'The co-op game is not built yet. Start "Start Squadala.bat": it builds the game and makes the puppet pack.' }
+    if (-not (Test-Path -LiteralPath $python)) { Fail "The pack tool's Python is not in $tools. Start ""Start Squadala.bat"" once (it gets it), then this again." }
     $exeDir = Split-Path -Parent $exe
     if (Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($exeDir, [StringComparison]::OrdinalIgnoreCase) }) {
         Fail 'The co-op game is running: close it first (it reads the pack when it starts).'
@@ -267,7 +376,7 @@ if ($PackOnly) {
     Step 'The puppet pack'
     $ok = Invoke-PuppetPackStep $exeDir
     foreach ($l in @(Update-KitRandoSeeds $exeDir)) { Write-Host "  $l" }
-    if ($ok) { Write-Host ''; Write-Host 'Done: the puppet pack is made. Start "Start OoT Co-op.bat" to play.' -ForegroundColor Green; exit 0 }
+    if ($ok) { Write-Host ''; Write-Host 'Done: the puppet pack is made. Start "Start Squadala.bat" to play.' -ForegroundColor Green; exit 0 }
     exit 1
 }
 
@@ -278,10 +387,10 @@ if (-not $Longshot -and $lsFresh -and -not $env:OOT_COOP_NO_LONGSHOT_ASK) {
     else {
         Write-Host ''
         Write-Host 'Built Longshot yourself? The co-op game is a separate build (co-op is built into its source), but your own'
-        Write-Host 'Longshot can lend it your saves and its downloads. Drag your Longshot game folder (the one with longshot.exe)'
-        Write-Host 'into this window and press Enter; just Enter (or 60 s) for no. (Asked once: hookshot\longshot-folder.txt keeps the answer;'
-        Write-Host 'delete that file to be asked again before a build.)'
-        $Longshot = (Read-TimedLine 60).Trim().Trim('"')
+        Write-Host 'Longshot can lend it your saves and its downloads. Your Longshot game folder (the one with longshot.exe): paste'
+        Write-Host 'its path with Ctrl+V or right-click, or drag the folder here, then press Enter; just Enter (or 60 s) for no.'
+        Write-Host '(Asked once: hookshot\longshot-folder.txt keeps the answer; delete that file to be asked again before a build.)'
+        $Longshot = Read-KitPath 60 { param($p) Test-Path -LiteralPath (Join-Path $p 'longshot.exe') }
         try { [System.IO.File]::WriteAllText($lsNote, "$(if ($Longshot) { $Longshot } else { 'none' })`n") } catch { }
     }
 }
@@ -347,7 +456,7 @@ if ($toolsReady) {
     # tools.lock: "tool <name> <version> <system> <sha256> <size> <dest> <prefix> <url> [<url> ...]"; the URLs are
     # tried in order (Longshot's Cloudflare copy, git.magicbean.dev, then upstream). Of the windows-x64 tools, emsdk
     # is not fetched (llvm-mingw builds the game; the builder sets EMSDK only when its folder is there).
-    $wanted = @('llvm-mingw', 'python', 'cpm', 'wgpu-native', 'third-party')
+    $wanted = @('llvm-mingw', 'python', 'cpm', 'third-party')
     $parts = @()
     foreach ($line in Get-Content -LiteralPath $lock) {
         $f = $line.Trim() -split '\s+'
@@ -414,6 +523,27 @@ function Find-HookshotExe([string]$Folder) {
     }
     return $null
 }
+# NVIDIA DLSS (#234): Longshot has it only in a game built with NVIDIA's DLSS SDK, which nobody may pass on: each
+# build downloads it for itself, once NVIDIA's license is accepted. -Dlss asks once and hookshot\dlss.txt keeps the
+# answer, so the builds after an update keep DLSS; -NoDlss takes it back. Not in coop-built-from.txt: that stamp is
+# the release, pin and patches the other kits, the game cache and Get-KitHookshotNeed compare.
+# A game with DLSS has its runtime in <game>\ngx (make_game.py's place_ngx_runtime; gone again without the SDK):
+# Test-KitHookshotDlss. Decided here, before the copies below, so they take only a game with DLSS as chosen.
+$dlssNote = Join-Path $hs 'dlss.txt'
+if ($NoDlss) {
+    Remove-Item -LiteralPath $dlssNote -Force -ErrorAction SilentlyContinue
+} elseif ($Dlss -and -not (Test-Path -LiteralPath $dlssNote)) {
+    Write-Host ''
+    Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
+    Write-Host "  $(Get-KitNgxLicenseUrl $tools) (the build prints NVIDIA's notice too)."
+    Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
+    $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
+    if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
+    [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
+}
+$wantDlss = -not $NoDlss -and (Test-Path -LiteralPath $dlssNote)
+$ngxSdk = Join-Path $work 'ngx-sdk'
+
 # A second kit on this PC (unzipped twice, or a Windows copy of a kit): another kit's game made from the same
 # release, pin and patches is copied into this kit's own hookshot\game (a minute or two) instead of built again
 # (10 to 45 minutes). A copy, never the other kit's folder itself: two kits never start one game. Its coop.ini,
@@ -428,21 +558,62 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
     }
     $list = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt' } else { '' }
     if ($list -and (Test-Path -LiteralPath $list)) { $others += @(Get-Content -LiteralPath $list | Where-Object { $_ }) }
-    $from = Find-KitHookshotGameToCopy $kit $stamp $others
+    $from = Find-KitHookshotGameToCopy $kit $gameWant $others -Dlss $wantDlss
     if ($from) {
         Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
         Write-Host '  The copy starts with that kit''s saves (as they are now); from then on each kit has its own.'
         $outWas = Test-Path -LiteralPath $Out
         New-Item -ItemType Directory -Force -Path $Out | Out-Null
-        & robocopy $from $Out /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF coop.ini coop-options.ini *.log *_log.txt | Out-Null
+        # (marked first: robocopy may copy coop-built-from.txt before longshot.exe or image.bin, and a copy that stops
+        # half way must not look built: rows 239/240)
+        Start-KitGameWrite $Out 'a copy from another kit'
+        # (not that kit's other players: local co-op's local-players\playerN and Nucleus's nucleus-players hold their saves,
+        # and robocopy would follow the instances' links into romfs and mods, a second game each)
+        $xdPlayers = @('local-players', 'nucleus-players') | ForEach-Object { Join-Path $from $_ }
+        & robocopy $from $Out /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD @xdPlayers /XF coop.ini coop-options.ini coop-player.ini *.log *_log.txt $KitGameUnfinishedFile | Out-Null
         if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
             Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built here instead." -ForegroundColor Yellow
             # (only a folder this copy made: one that was there before may hold the player's own files)
             if (-not $outWas) { Remove-Item -LiteralPath $Out -Recurse -Force -ErrorAction SilentlyContinue }
         } else {
+            Complete-KitGameWrite $Out
             Write-Host "  Copied to $Out (this kit's own game from now on)."
         }
         $global:LASTEXITCODE = 0
+    }
+}
+# The game built from another stamp than this start wants (player report 210: a mod with code patches switched on or
+# off on the Mods tab, an update, Revert.bat): the build there is kept first (kit-paths.ps1 Save-KitGameVariant, a
+# copy of the files a build makes), and one of exactly this stamp kept from before is put back instead of a build
+# (seconds where a build is 5 to 45 minutes). Switching Character Select off and on again built the game twice.
+$gameStampFile = Join-Path $Out 'coop-built-from.txt'
+$stampWas = if (Test-Path -LiteralPath $gameStampFile) { [System.IO.File]::ReadAllText($gameStampFile) } else { '' }
+if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and $stampWas -and $stampWas -ne $gameWant) {
+    Write-Host ''
+    Write-Host '  Keeping the game as it is built now, for later (about 650 MB, a few seconds) ...'
+    $line = Save-KitGameVariant $kit $Out
+    if ($line) { Write-Host $line }
+    $kept = if ($wantDlss -eq (Test-KitHookshotDlss $Out)) { Find-KitGameVariant $kit $gameWant $wantDlss } else { '' }
+    if ($kept) {
+        Step 'The game: putting back the build made before with these mods (seconds, instead of building it again)'
+        $wasUnfinished = Test-KitGameUnfinished $Out
+        Start-KitGameWrite $Out 'a kept build put back'
+        if (Restore-KitGameVariant $kept $Out) { Complete-KitGameWrite $Out; Write-Host "  Put back into $Out." }
+        else {
+            # (nothing was swapped in: the game is as it was, so an earlier stopped write stays marked and nothing else)
+            if (-not $wasUnfinished) { Complete-KitGameWrite $Out }
+            Write-Host '  It could not be put back (a file in use?): the game is built again instead.' -ForegroundColor Yellow
+        }
+    }
+}
+# Rows 239/240: a build, put back or copy stopped half way (Start-KitGameWrite's marker still there). Its kept build is
+# put back when there is one; otherwise the game is built again below, never started or kept as it is.
+if (-not $Rebuild -and -not $CheckOnly -and (Test-KitGameUnfinished $Out)) {
+    $kept = if ($wantDlss -eq (Test-KitHookshotDlss $Out)) { Find-KitGameVariant $kit $gameWant $wantDlss } else { '' }
+    if ($kept) {
+        Step 'The game: its last build was stopped half way; putting back the build made before with these mods (seconds)'
+        if (Restore-KitGameVariant $kept $Out) { Complete-KitGameWrite $Out; Write-Host "  Put back into $Out." }
+        else { Write-Host '  It could not be put back (a file in use?): the game is built again instead.' -ForegroundColor Yellow }
     }
 }
 # The game built for another Longshot release or commit (a kit gone back to an older version, Revert.bat): when this
@@ -453,21 +624,26 @@ $oldStamp = Join-Path $Out 'coop-built-from.txt'
 if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-Path -LiteralPath $oldStamp)) {
     $base = { param($s) (@("$s" -replace "`r", '' -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
     if ((& $base ([System.IO.File]::ReadAllText($oldStamp))) -ne (& $base $stamp)) {
-        $from = Find-KitHookshotCachedGame $stamp
+        $from = Find-KitHookshotCachedGame $gameWant -Dlss $wantDlss
         # (the same layout only: longshot.exe at the top, or in bin\ in both)
         $flat = { param($g) (Split-Path -Parent (Find-HookshotExe $g)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($g)).TrimEnd('\') }
         if ($from -and (& $flat $from) -ne (& $flat $Out)) { $from = '' }
         if ($from) {
             Step "The game: copying the build of this version from the game cache on this PC ($from), instead of building it again"
-            $xd = @('user', 'save', 'autotest-save', 'mods') | ForEach-Object { Join-Path $from $_ }
+            $xd = @('user', 'save', 'autotest-save', 'mods', 'local-players', 'nucleus-players') | ForEach-Object { Join-Path $from $_ }
             # (its build stamp last: a copy that stops half way leaves the old stamp, and the game is built again)
             $xf = @('hookshot_coop.dll', 'coop.ini', 'coop-options.ini', 'longshot_log.txt', 'longshot_log.old.txt', 'control.json', 'longshot_options.ini', 'language.txt',
-                'coop-built-from.txt') | ForEach-Object { Join-Path $from $_ }
+                'coop-built-from.txt', $KitGameUnfinishedFile) | ForEach-Object { Join-Path $from $_ }
+            # (marked first: a copy that stops half way leaves files of two builds, never started or kept as either)
+            Start-KitGameWrite $Out 'a copy from the game cache'
             & robocopy $from $Out /E /XJD /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD @xd /XF @xf | Out-Null
             if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
                 Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built again instead." -ForegroundColor Yellow
             } else {
+                # (a copy without DLSS over a game that had it: NVIDIA's runtimes go too, as make_game.py's place_ngx_runtime does)
+                if (-not $wantDlss) { Remove-Item -LiteralPath (Join-Path $Out 'ngx') -Recurse -Force -ErrorAction SilentlyContinue }
                 Copy-Item -LiteralPath (Join-Path $from 'coop-built-from.txt') -Destination $oldStamp -Force
+                Complete-KitGameWrite $Out
                 Write-Host "  Copied into $Out; your saves and settings there are as they were."
             }
             $global:LASTEXITCODE = 0
@@ -476,7 +652,22 @@ if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-P
 }
 $gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
-$gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)
+$gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $gameWant) -and
+    -not (Test-KitGameUnfinished $Out)
+
+# Game files that could not be taken, with why: said at the next game question (hookshot\game-rejected.txt).
+$gameRejected = Join-Path $hs 'game-rejected.txt'
+function Save-KitGameRejected([string]$What, [string]$Why) {
+    try { [System.IO.File]::WriteAllText($gameRejected, "$What`r`nWhy: $Why`r`n") } catch { }
+}
+
+# (the DLSS choice was made above, before the copies: here a game that does not have it as chosen is built again)
+$gameDlss = Test-KitHookshotDlss $Out
+if ($gameReady -and ($wantDlss -ne $gameDlss) -and ($wantDlss -or $NoDlss)) {
+    Write-Host $(if ($wantDlss) { 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).' }
+        else { 'NVIDIA DLSS off: the game is built again without it.' })
+    $gameReady = $false
+}
 
 if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
     # As make-puppet-pack.cmd: the .nup in a folder of the emulator's game list.
@@ -487,33 +678,78 @@ if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
         $ErrorActionPreference = 'Stop'
         if ($found) { $Game = $found.Substring(6); Write-Host "Found your game: $Game" }
     }
-    # The game files given the last time (hookshot\game-files.txt): asked only once.
+    # The game files given the last time (hookshot\game-files.txt, written once Longshot's check took them): asked only once.
+    # Remembered files that cannot be taken any more are not used (the question comes, with the reason).
     $last = Join-Path $hs 'game-files.txt'
     if (-not $Game -and (Test-Path -LiteralPath $last)) {
         $remembered = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim()
-        if ($remembered -and (Test-Path -LiteralPath $remembered)) { $Game = $remembered; Write-Host "Your game (from the last time): $Game" }
+        if ($remembered -and (Test-Path -LiteralPath $remembered)) {
+            $a = Resolve-KitGameAnswer $remembered
+            # (refused by Longshot's check before: asked again, with that reason)
+            $refused = if (Test-Path -LiteralPath $gameRejected) { "$(Get-Content -LiteralPath $gameRejected -TotalCount 1)".Trim() } else { '' }
+            if ($refused -and $refused -ieq $remembered) { $a = @{ Why = 'Longshot''s check refused it the last time.' } }
+            if ($a.Why) { Write-Host "The game files from the last time cannot be taken: $($a.Why)" -ForegroundColor Yellow }
+            else { $Game = $remembered; Write-Host "Your game (from the last time): $Game" }
+        }
     }
     if (-not $Game) {
+        # (the usual places first, as the puppet pack does: beside the kit, Downloads, the Desktop; the right game only)
+        $dumpCheck = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
+        if ((Test-Path -LiteralPath $dumpCheck) -and (Test-Path -LiteralPath $python)) {
+            $isGame = {
+                param($p)
+                $ErrorActionPreference = 'Continue'
+                & $python -I -B $dumpCheck --user-dir (Join-Path $kit 'emulator\user') --romfs $p *> $null
+                return $LASTEXITCODE -eq 0
+            }
+            $found = Find-KitGameNup '' $kit $isGame
+            if ($found -and -not (Resolve-KitGameAnswer $found).Why) { $Game = $found; Write-Host "Found your game: $Game" }
+        }
+    }
+    if (-not $Game) {
+        # Asked until the files can be taken, each refusal with its reason. What the last start refused
+        # (hookshot\game-rejected.txt: a check that failed) is said first.
         Write-Host ''
-        Write-Host 'Drag your game''s .nup file (or its romfs folder) into this window and press Enter:'
-        $Game = "$(Read-Host)".Trim().Trim('"')
-        if (-not $Game) { Fail 'No game files given. Run this again with -Game <your .nup>.' }
+        if (Test-Path -LiteralPath $gameRejected) {
+            Write-Host 'Last time your game files were not taken:' -ForegroundColor Yellow
+            Get-Content -LiteralPath $gameRejected | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+        }
+        $why = ''
+        # In a window someone sits at: asked until given (an empty answer asks again). Input from a file: 3 tries.
+        $redirected = $true
+        try { $redirected = [Console]::IsInputRedirected } catch { }
+        $tries = if ($redirected) { 3 } else { [int]::MaxValue }
+        for ($try = 1; $try -le $tries -and -not $Game; $try++) {
+            Write-Host 'Your game''s .nup file (or its romfs folder): paste its path with Ctrl+V or right-click, or drag it here, then press Enter:'
+            $a = Resolve-KitGameAnswer (Read-KitPath 0 { param($p) $p -like '*.nup' -or (Test-Path -LiteralPath $p -PathType Container) })
+            if ($a.Why) { $why = $a.Why; Write-Host "  Not taken: $why" -ForegroundColor Yellow; Write-Host '  (Asked again; close this window to stop.)'; Write-Host '' }
+            else { $Game = $a.Path; if ($a.Note) { Write-Host "  $($a.Note)" } }
+        }
+        if (-not $Game) {
+            Save-KitGameRejected '(what was given at the question)' $why
+            Fail "No game files taken: $why Start again to give them (or run Build-Hookshot-Coop.bat -Game <your .nup>)."
+        }
     }
 }
 if ($Game) {
-    if (-not (Test-Path -LiteralPath $Game)) { Fail "Not found: $Game" }
-    $Game = (Resolve-Path -LiteralPath $Game).Path
+    $a = Resolve-KitGameAnswer $Game
+    if ($a.Why) { Save-KitGameRejected $Game $a.Why; Fail "Your game files cannot be taken: $($a.Why)" }
+    if ($a.Note) { Write-Host $a.Note }
+    $Game = $a.Path
     if ((Get-Item -LiteralPath $Game).PSIsContainer) {
         if (-not $Exefs) {
             $guess = Join-Path (Split-Path -Parent $Game) 'exefs'
             if (Test-Path -LiteralPath (Join-Path $guess 'main')) { $Exefs = $guess }
             else {
-                Write-Host 'A romfs folder needs its exefs folder too. Drag the exefs folder in and press Enter:'
-                $Exefs = "$(Read-Host)".Trim().Trim('"')
-                if (-not $Exefs) { Fail 'No exefs folder given.' }
+                Write-Host 'A romfs folder needs its exefs folder too. Paste its path with Ctrl+V or right-click, or drag it here, then press Enter:'
+                $Exefs = Read-KitPath 0 { param($p) Test-Path -LiteralPath (Join-Path $p 'main') }
+                if (-not $Exefs) { Fail 'No exefs folder given (nothing arrived: paste its path with Ctrl+V or right-click, or drag the folder in). A romfs folder is built with its exefs folder; or give the .nup file instead.' }
             }
         }
-        if (-not (Test-Path -LiteralPath (Join-Path $Exefs 'main'))) { Fail "$Exefs is not an exefs folder (no main in it)." }
+        if (-not (Test-Path -LiteralPath (Join-Path $Exefs 'main'))) {
+            Save-KitGameRejected $Exefs 'it is not an exefs folder (no file named main in it).'
+            Fail "$Exefs is not an exefs folder (no file named main in it). Give the exefs folder beside your romfs folder, or the game's .nup file instead."
+        }
         $Exefs = (Resolve-Path -LiteralPath $Exefs).Path
         $gameArgs = @('--romfs', $Game, '--exefs', $Exefs)
     } else {
@@ -524,21 +760,27 @@ if ($Game) {
 # make_game.py runs in Longshot's tools folder with the builder's own compiler, headers and
 # libraries, as Longshot Builder runs it (builder/LongshotBuilder/Runner.cs).
 function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
+    $script:MakeGameErrors = @()
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
-    $env:WGPU_NATIVE = Join-Path $tools 'wgpu-native'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
-    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
+    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS',
+             'LONGSHOT_ROMFS_FROM') {   # (a launcher's: game files hard-linked from another folder, Longshot rc.6 #360)
+    # (LONGSHOT_NGX_SDK too: Longshot Builder's Runner.cs removes it as well, a folder set on the PC is not one the
+    # player asked for. Without the opt-in the back end is built with vk_dlss.cpp's stubs, as before DLSS.)
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
+    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into this folder (--fetch-ngx-sdk) and builds the renderer with it)
+    if ($wantDlss) { $env:LONGSHOT_NGX_SDK = $ngxSdk }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
     if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
     # (the release the menu names, top left: the source archive has no git history and no VERSION file, so
     # without this the builder's nx2\version.py says "unknown")
     if ($pin.tag) { $env:LONGSHOT_VERSION = $pin.tag }
-    # (Longshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
-    # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
+    # (co-op's own OOT_COOP_* ones (the test cache, the test password) are no business of the build's: before rc.6
+    # Longshot's lift key hashed every A64_/OOT_/RX_ variable, a whole new translation for nothing; rc.6's (#22) keys
+    # only the A64_*, SUYU_RECOMP_* and RX_TARGET ones)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
     Push-Location $tools
@@ -548,7 +790,7 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
         & $python -I (Join-Path $tools 'nx2\make_game.py') @MoreArgs @logArgs 2>&1 | ForEach-Object {
             $line = "$_"
             if ($line -match '^@@stage \S+ (.*)$') { Write-Host "  -- $($Matches[1])" -ForegroundColor Cyan }
-            elseif ($line -match '^@@error (.*)$') { Write-Host "  $($Matches[1])" -ForegroundColor Red }
+            elseif ($line -match '^@@error (.*)$') { Write-Host "  $($Matches[1])" -ForegroundColor Red; $script:MakeGameErrors += $Matches[1] }
             elseif ($line -notmatch '^@@') { Write-Host "  $line" }
         }
         $code = $LASTEXITCODE
@@ -560,20 +802,58 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
 if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     Step "The game: built already ($Out)"
 } else {
-    if (-not $gameArgs) { Fail 'No game files given.' }
+    if (-not $gameArgs) { Fail 'No game files: none were found or remembered, and none could be asked for here. Start "Start Squadala.bat" again, or run Build-Hookshot-Coop.bat -Game <your .nup>.' }
     Step 'Checking your game files'
     $code = Invoke-MakeGame ($gameArgs + @('--check'))
-    if ($code -ne 0) { Fail 'Longshot cannot build from these files (it said why above). This is not the game version co-op needs: program 0400486024DEC000, update v131072, build e0f3ccfa. Dump that version of your game and give its .nup.' }
+    if ($code -ne 0) {
+        # (remembered with its reason: the next start asks again and says why these were not taken)
+        $said = @($script:MakeGameErrors | Select-Object -Last 2) -join ' '
+        $why = "Longshot's check refused $Game$(if ($said) { ": $said" } else { ' (its lines above say why)' })."
+        Save-KitGameRejected $Game $why
+        # (and forgotten: a remembered file the check refuses would be taken again at every start, with no question.
+        # The pack question and the pack step save game-files.txt unchecked.)
+        $remembered = Join-Path $hs 'game-files.txt'
+        if ((Test-Path -LiteralPath $remembered) -and "$(Get-Content -LiteralPath $remembered -TotalCount 1)".Trim() -ieq $Game) {
+            Remove-Item -LiteralPath $remembered -Force -ErrorAction SilentlyContinue
+        }
+        Fail "$why Most often the file is another version of the game: co-op needs program 0400486024DEC000, update v131072, build e0f3ccfa (dump that version and give its .nup). Start again to give other files."
+    }
+    # Taken: remembered now, so a build that stops later does not ask again.
+    if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$Game`n") }
+    Remove-Item -LiteralPath $gameRejected -Force -ErrorAction SilentlyContinue
     if ($CheckOnly) { Write-Host ''; Write-Host 'Your game files are right for Longshot. Run this again without -CheckOnly to build.' -ForegroundColor Green; exit 0 }
     $drive = [System.IO.Path]::GetPathRoot($work)
     $free = (Get-PSDrive -Name $drive.Substring(0, 1) -ErrorAction SilentlyContinue).Free
     if ($free -and $free -lt 60GB -and -not (Test-Path -LiteralPath (Join-Path $work 'sa'))) {
         Write-Host ('Warning: {0:N0} GB free on {1}; the first build wants about 60 GB.' -f ($free / 1GB), $drive) -ForegroundColor Yellow
     }
-    Step 'Building the game (10 to 45 minutes; the PC stays usable)'
+    # (why this build runs and about how long, in one line: player report 210, "a whole long process that takes forever")
+    $why = if (Test-KitGameUnfinished $Out) { 'its last build was stopped before it finished (its window was closed), so it is finished now (5 to 45 minutes).' } else { Get-KitBuildWhyText $stampWas $gameWant }
+    Step "Building the game: $why The PC stays usable."
     $buildLog = Join-Path $hs 'build.log'
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
+    # (only what is missing is downloaded; the license was accepted above, hookshot\dlss.txt)
+    if ($wantDlss) { $buildArgs += @('--fetch-ngx-sdk', '--accept-nvidia-license') }
+    # (#229: an SDK the Longshot Builder or Launcher already fetched on this PC, or -DlssSdk, seeds the build's own SDK
+    # folder; the fetch then keeps each file whose SHA-256 is the pinned one and downloads only the rest. Copied, never
+    # used in place: the fetch would otherwise write into the Builder's folder)
+    $ngxFrom = if ($wantDlss) { Find-NgxSdk $DlssSdk } else { '' }
+    if ($ngxFrom -and ([System.IO.Path]::GetFullPath($ngxFrom).TrimEnd('\') -ine [System.IO.Path]::GetFullPath($ngxSdk).TrimEnd('\'))) {
+        Write-Host "  NVIDIA DLSS: starting from the SDK already on this PC ($ngxFrom); only files that differ are downloaded."
+        & robocopy $ngxFrom $ngxSdk /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF *.part | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Host "  (not copied, robocopy $($LASTEXITCODE): the build downloads it)" }
+        $global:LASTEXITCODE = 0
+    }
+    # (-RomfsFrom: another game folder unpacked from the same .nup. Longshot's --romfs-from (since rc.6, #360) hard-links its
+    # game files instead of writing the .nup's ~26 GB again; Longshot itself checks the folder's .nup stamp and the drive,
+    # and reads the .nup when it can't. Only with a .nup, and only a Longshot that has the option)
+    $makeGame = Join-Path $tools 'nx2\make_game.py'
+    if ($RomfsFrom -and $gameArgs[0] -eq '--nup' -and (Test-Path -LiteralPath $RomfsFrom -PathType Container) -and
+        (Test-Path -LiteralPath $makeGame) -and (Select-String -LiteralPath $makeGame -SimpleMatch '"--romfs-from"' -Quiet)) {
+        $buildArgs += @('--romfs-from', $RomfsFrom)
+        Write-Host "  the game files from $RomfsFrom (hard links where the drive allows)"
+    }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
     # so the files co-op does not change are not compiled again. Only into a work folder with none yet; copied, not moved)
@@ -590,11 +870,23 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
             break
         }
     }
+    # (marked first, cleared after the new stamp: closing this window during the build leaves a game that is built again,
+    # never one started with half of its files: rows 239/240)
+    Start-KitGameWrite $Out 'a build'
     $code = Invoke-MakeGame $buildArgs $buildLog
-    if ($code -ne 0) { Fail "The build stopped (exit $code). Its log: $buildLog" }
+    if ($code -ne 0) {
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is -NoDlss)
+        $noDlssHint = if ($wantDlss) { ' This build was with NVIDIA DLSS: if NVIDIA''s SDK could not be downloaded (offline?), "NVIDIA DLSS.bat" -NoDlss builds the game without it.' } else { '' }
+        Fail "The build stopped (exit $code). Its log: $buildLog$noDlssHint"
+    }
     $exe = Find-HookshotExe $Out
     if (-not $exe) { Fail "The build finished but there is no longshot.exe in $Out. Its log: $buildLog" }
-    [System.IO.File]::WriteAllText($gameStamp, $stamp)
+    # (kit-harden: the build's own files are checked against Longshot's note before the game counts as built; a game that
+    # fails stays marked unfinished, so it is never started or kept)
+    $badAfter = @(Get-KitGameBuildMismatch $Out)
+    if ($badAfter.Count) { Fail ("The build finished but its files are not from one build (the game stays marked unfinished): " + ($badAfter -join '; ') + ". Its log: $buildLog") }
+    [System.IO.File]::WriteAllText($gameStamp, $gameWant)
+    Complete-KitGameWrite $Out
 }
 # Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
 # (relative when it is inside the kit, so a copied or moved kit keeps its own game: kit-copy)
@@ -616,6 +908,9 @@ Copy-Item -LiteralPath $module -Destination $exeDir -Force
 Get-ChildItem -LiteralPath $hs -Filter '*.dll' -File | Where-Object { $_.Name -ne 'hookshot_coop.dll' } |
     Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_.Name)) } | Copy-Item -Destination $exeDir
 Write-Host "  hookshot_coop.dll -> $exeDir"
+# the window's icon: the module (hookshot/src/coop_window_brand.cpp) sets it, with the title "Squadala!", from this png beside the exe
+$brandIcon = Join-Path $PSScriptRoot 'squadala-icon.png'
+if (Test-Path -LiteralPath $brandIcon) { Copy-Item -LiteralPath $brandIcon -Destination $exeDir -Force }
 
 # coop.ini beside longshot.exe (the module reads it there): the player's own server and name from
 # this kit's emulator when the game has none yet.
@@ -636,45 +931,13 @@ if (-not (Test-Path -LiteralPath $options)) {
     if (Test-Path -LiteralPath $kitOptions) { Copy-Item -LiteralPath $kitOptions -Destination $options }
 }
 
-# The randomizer, OOTRR (hookshot\OOTRR.txt: its release and SHA-256), into <exe dir>\tools\ootrr where the co-op
-# module finds it with no setting; it reads the game's own files beside it (<exe dir>\romfs) and never changes them.
-# A failed download only warns: co-op plays without it, and the next run of this script tries again.
-$ootrrPin = Join-Path $hs 'OOTRR.txt'
-if (Test-Path -LiteralPath $ootrrPin) {
-    $op = Read-KeyFile $ootrrPin
-    $ootrrDir = Join-Path $exeDir 'tools\ootrr'
-    $ootrrStamp = Join-Path $ootrrDir 'coop-ootrr.txt'
-    $ootrrWant = "$($op.release) $($op.windows_sha256)"
-    $ootrrHave = if (Test-Path -LiteralPath $ootrrStamp) { (Get-Content -LiteralPath $ootrrStamp -TotalCount 1).Trim() } else { '' }
-    if ($ootrrHave -eq $ootrrWant -and (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) {
-        Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir (there already)"
-    } elseif (-not ($op.url -and $op.windows -match '^[A-Za-z0-9._-]+$' -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
-        Write-Host '  hookshot\OOTRR.txt is incomplete: the randomizer is left out.' -ForegroundColor Yellow
-    } else {
-        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-        $ootrrZip = Join-Path $downloads $op.windows
-        $why = ''
-        if (-not ((Test-Path -LiteralPath $ootrrZip) -and (Get-Sha256 $ootrrZip) -eq $op.windows_sha256)) {
-            if (($env:OOT_COOP_OFFLINE -eq '1' -or $op.url -match '^https?://') -and (Test-KitOffline)) {
-                # (no internet: no download try, which would only wait for its timeout)
-                $why = 'this PC has no internet now'
-            } else {
-                # (kit-mirror: retries and curl.exe too; optional, so two tries, not four)
-                $why = Get-KitDownload @("$($op.url)/$($op.windows)") $ootrrZip $op.windows_sha256 @() 2
-                if ($why) { $why = "the download failed ($why)" }
-            }
-        }
-        if (-not $why) {
-            if (Test-Path -LiteralPath $ootrrDir) { Remove-Item -LiteralPath $ootrrDir -Recurse -Force }
-            New-Item -ItemType Directory -Force -Path $ootrrDir | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
-            & "$env:SystemRoot\System32\tar.exe" -x -f $ootrrZip -C $ootrrDir --strip-components=1
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) { $why = "unpacking $($op.windows) failed" }
-            else { [System.IO.File]::WriteAllText($ootrrStamp, "$ootrrWant`n") }
-        }
-        if ($why) { Write-Host "  The randomizer (OOTRR $($op.release)) was not set up: $why. Co-op works without it; run Build-Hookshot-Coop.bat again to retry." -ForegroundColor Yellow }
-        else { Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir" }
-    }
+# (kit-paths.ps1 Install-KitOotrr: downloaded, unpacked beside the old one, tried, then swapped; a failure keeps what was
+# there and says why in the game too, tools\ootrr-setup.txt. The old way deleted tools\ootrr first: player report 2026-11-19)
+$ootrr = Install-KitOotrr $kit $exeDir $downloads
+foreach ($l in $ootrr.Lines) { Write-Host "  $l" -ForegroundColor $(if ($ootrr.Ok -or $ootrr.Why -eq 'offline') { 'Gray' } else { 'Yellow' }) }
+# (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
+if ($ootrr.Ok -and $ootrr.Had -and $ootrr.Had -ne $ootrr.Release) {
+    foreach ($l in @(Remove-KitRandoSeeds $exeDir $ootrr.Release)) { Write-Host "  $l" }
 }
 
 # The puppet pack (Invoke-PuppetPackStep above), from the same game files.
@@ -689,16 +952,16 @@ if ($lsImage) {
     foreach ($l in (Copy-KitLongshotSaves $lsImage $ourImage)) { Write-Host "  $l" }
 }
 
-# A desktop shortcut to the kit's launcher ("Start OoT Co-op.bat"; Play-OoT-Coop.bat in an older emulator kit), once,
-# for the kit's own game (not for a game hs.py builds elsewhere).
-$launcher = Join-Path $kit 'Start OoT Co-op.bat'
-if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Play-OoT-Coop.bat' }
+# A desktop shortcut to the kit's one start file, "Start Squadala.bat", once, for the kit's own game (not for a game
+# hs.py builds elsewhere). "Play Squadala" (its name up to v0.11.2, "Play OoT Co-op", counts as there: start.ps1
+# renames it; update.ps1 Update-KitStartLinks points every older shortcut at "Start Squadala.bat").
+$launcher = Join-Path $kit 'Start Squadala.bat'
 if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path -LiteralPath $launcher) -and
     -not $env:OOT_COOP_NO_SHORTCUT) {
     try {
         $desktop = [Environment]::GetFolderPath('Desktop')
-        $link = Join-Path $desktop 'Play OoT Co-op.lnk'
-        if ($desktop -and -not (Test-Path -LiteralPath $link)) {
+        $link = Join-Path $desktop 'Play Squadala.lnk'
+        if ($desktop -and -not (Test-Path -LiteralPath $link) -and -not (Test-Path -LiteralPath (Join-Path $desktop 'Play OoT Co-op.lnk'))) {
             $shell = New-Object -ComObject WScript.Shell
             $s = $shell.CreateShortcut($link)
             $s.TargetPath = $launcher
@@ -706,19 +969,23 @@ if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path 
             $s.IconLocation = "$exe,0"
             $s.Description = 'OoT co-op on Hookshot: host or join, updates itself'
             $s.Save()
-            Write-Host "  A shortcut 'Play OoT Co-op' is on your desktop."
+            Write-Host "  A shortcut 'Play Squadala' is on your desktop."
         }
     } catch { Write-Host "  (no desktop shortcut: $($_.Exception.Message))" }
 }
 
+# Problem reports (problem-send.ps1, docs/problem-reports.md): the one-line y/n question at the first setup, when the kit
+# never answered it (Enter, no key in 20 s or no console is no; it asks again at a start). Never stops the build.
+try { & (Join-Path $PSScriptRoot 'problem-send.ps1') -AtStart } catch { }
+
 Write-Host ''
-if (Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')) {
-    Write-Host 'Done. The game is ready: "Start OoT Co-op.bat" (or the desktop shortcut) starts it; Host and Join are in the game.' -ForegroundColor Green
-    Write-Host "  The game: $exe. Its longshot_log.txt says 'coop: module loaded'."
+if (Test-Path -LiteralPath (Join-Path $kit 'Start Squadala.bat')) {
+    Write-Host 'Done. The game is ready: "Start Squadala.bat" (or the desktop shortcut) starts it; Host and Join are in the game.' -ForegroundColor Green
+    Write-Host "  The game: $exe. Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded'."
     exit 0
 }
 Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) starts the game, Host and Join are on its title screen; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
 Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
-Write-Host "  Its longshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
+Write-Host "  Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
 Write-Host '  Updates come by themselves: the launchers check for a new version and bring the game up to date.'
 exit 0

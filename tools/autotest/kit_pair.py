@@ -9,7 +9,9 @@ twice, each copy starting test lane 1's game (the same exe paths as every lane r
 mods\\ with the puppet pack and the randomizer seeds, tools\\ with the randomizer) into <kit root>\\ls\\laneN-kit-backup,
 then unzips the kit into <kit root>\\ls\\kit-A and kit-B and points each one at its game: hookshot\\game-folder.txt =
 laneN-A / laneN-B, hookshot\\game-files.txt = the game file (the puppet pack is made from it). A kit whose play.ps1
-predates the autotest's hook (OOT_COOP_TEST_KIT, 0.11.1) gets that hook put into its own play.ps1, nothing else.
+predates the autotest's hook (OOT_COOP_TEST_KIT, 0.11.1) gets that hook put into its own play.ps1, and every kit whose
+test-mode start still activates the game window (no Start-KitTestGame) gets this repo's no-activation start put in
+(the function and the title-mode start's if/else), so a test game opening never takes the focus. Nothing else.
 `restore` puts the backup back and removes it (the kits stay, for the next setup to replace). Never while a game runs
 in the lane. The lane's lock is run.ps1's, as for every lane run; this only prepares and cleans up.
 """
@@ -17,6 +19,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -44,6 +47,16 @@ HOOK_EDITS = (
 )
 
 
+# This repo's play.ps1: the one source of Start-KitTestGame (the CreateProcess start without window activation).
+PLAY_SRC = os.path.join(HERE, "..", "release", "kit", "scripts", "play.ps1")
+START_FN = re.compile(r"# The autotest's kit mode only.*?\n    return \[KitNoActivate\]::Start\(\$Exe, \$Dir\)\n\}\n", re.S)
+# The title-mode start of a kit with the hook: Start-Process, then (maybe a problem-send line and) the hook's pid line.
+START_LINE = re.compile(
+    r"(?m)^    \$game = Start-Process -FilePath \$exe -WorkingDirectory \(Split-Path -Parent \$exe\) -PassThru\n"
+    r"(?=(?:    if \(\$game\)[^\n]*\n)?    if \(\$testKit -and \$game\))")
+NO_ACTIVATE_MARK = "Start-KitTestGame"
+
+
 class Fail(Exception):
     pass
 
@@ -69,6 +82,36 @@ def add_hook(text):
         if t.count(old) != 1:
             raise Fail("this kit's play.ps1 has no line %r: the autotest's hook cannot go in" % old.strip()[:60])
         t = t.replace(old, new)
+    return t.replace("\n", "\r\n") if crlf else t
+
+
+def start_function():
+    """Start-KitTestGame's text (with its comment) from this repo's play.ps1, LF line ends."""
+    with open(PLAY_SRC, encoding="utf-8-sig", newline="") as f:
+        text = f.read().replace("\r\n", "\n")
+    m = START_FN.search(text)
+    if not m:
+        raise Fail("%s has no Start-KitTestGame" % PLAY_SRC)
+    return m.group(0)
+
+
+def add_no_activate(text):
+    """play.ps1's text (with the autotest's hook, see add_hook) whose test-mode start shows the game window without
+    activating it: this repo's Start-KitTestGame put in, and the title-mode start as `if ($testKit) { the no-activation
+    start } else { Start-Process }` (unchanged when it has it); Fail when the start's lines are not there."""
+    if NO_ACTIVATE_MARK in text:
+        return text
+    crlf = "\r\n" in text
+    t = text.replace("\r\n", "\n")
+    if len(START_LINE.findall(t)) != 1:
+        raise Fail("this kit's play.ps1 has no title-mode start line the no-activation start can replace")
+    new = (start_function() +
+           "    if ($testKit) {   # (the autotest's kit mode: no window activation, Start-KitTestGame above)\n"
+           "        $game = Get-Process -Id (Start-KitTestGame $exe (Split-Path -Parent $exe))\n"
+           "    } else {\n"
+           "        $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru\n"
+           "    }\n")
+    t = START_LINE.sub(lambda m: new, t, count=1)
     return t.replace("\n", "\r\n") if crlf else t
 
 
@@ -167,8 +210,12 @@ def setup(n, zip_path, game_file="", dry=False, say=print, kit=None, busy=lanes.
             hooked = add_hook(text)
             if hooked != text:
                 say("  %s: the autotest's hook put in (a kit before 0.11.1)" % play)
+            quiet = add_no_activate(hooked)
+            if quiet != hooked:
+                say("  %s: the test-mode start shows the window without activating it (Start-KitTestGame put in)" % play)
+            if quiet != text:
                 with open(play, "w", encoding="utf-8", newline="") as f:
-                    f.write(hooked)
+                    f.write(quiet)
     say("ready: run.ps1 -Lane %d -Kit \"%s\",\"%s\" -Scenario <name>; then kit_pair.py restore --lane %d"
         % (n, p["kitA"], p["kitB"], n))
     return p

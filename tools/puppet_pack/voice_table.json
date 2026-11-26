@@ -1,0 +1,852 @@
+{
+ "format": 1,
+ "about": "Character Select voices (docs/puppet.md): per character name, the game voice types it speaks with, first fills, later ones only where the first has no fitting clip, then default (a neutral voice of its sex and age; a creature voice for a creature). link: keeps Link own clips.",
+ "characters": {
+  "Link": {
+   "link": true
+  },
+  "Retro Link": {
+   "link": true
+  },
+  "Saria": {
+   "chain": [
+    "Custom_Saria",
+    "Kokiri_Girl_Quiet"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Mido": {
+   "chain": [
+    "Mido",
+    "Kokiri_Boy"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Zelda (child)": {
+   "chain": [
+    "Custom_Zelda_Child"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Malon (child)": {
+   "chain": [
+    "Malon_Child"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Ruto (child)": {
+   "chain": [
+    "Custom_Ruto_Child"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Fado": {
+   "chain": [
+    "Kokiri_Girl_Spry"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Zelda": {
+   "chain": [
+    "Custom_Zelda_Adult"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Sheik": {
+   "chain": [
+    "Custom_Sheik"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Impa": {
+   "chain": [
+    "Custom_Impa"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Malon": {
+   "chain": [
+    "Malon_Adult"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Ruto": {
+   "chain": [
+    "Custom_Ruto_Adult"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Nabooru": {
+   "chain": [
+    "Custom_Nabooru"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Ganondorf (child era)": {
+   "chain": [
+    "Custom_Ganondorf"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Ganondorf": {
+   "chain": [
+    "Custom_Ganondorf"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Darunia": {
+   "chain": [
+    "Custom_Darunia"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "King Zora": {
+   "chain": [
+    "KingZora"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Rauru": {
+   "chain": [
+    "Custom_Rauru",
+    "Hylia_Elderly_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Great Fairy": {
+   "chain": [
+    "GreatFairy"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Talon": {
+   "chain": [
+    "Talon"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Ingo": {
+   "chain": [
+    "Ingo"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Ingo (adult era)": {
+   "chain": [
+    "Ingo"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Dampe": {
+   "chain": [
+    "Dampe",
+    "Dampe_Ghost"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Darunia's son": {
+   "chain": [
+    "DaruniaJr",
+    "Goron_Boy_Spry"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Biggoron": {
+   "chain": [
+    "Biggoron",
+    "Custom_Darunia"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Medigoron": {
+   "chain": [
+    "Goron_Boy_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Phantom Ganon": {
+   "chain": [
+    "Enemy_DungeonBoss_PhantomGanon",
+    "Custom_Ganondorf"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Gerudo_GEN_001": {
+   "chain": [
+    "Gerudo_Normal_Soldier_1",
+    "Gerudo_Normal_Soldier_5"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Gerudo_GEN_002": {
+   "chain": [
+    "Gerudo_Rookie_Soldier"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Gerudo_GEN_003": {
+   "chain": [
+    "Gerudo_Normal_Soldier_4",
+    "Gerudo_Normal_Soldier_2"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Gerudo_GEN_004": {
+   "chain": [
+    "Gerudo_Normal_Soldier_1",
+    "Gerudo_Normal_Soldier_3"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Gerudo_GEN_011": {
+   "chain": [
+    "Gerudo_Normal_Soldier_5"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Gerudo_GEN_011_Leader": {
+   "chain": [
+    "Gerudo_Normal_Soldier_5"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Goron_GON_001": {
+   "chain": [
+    "Goron_Boy_Spry",
+    "Goron_Boy_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Goron_GON_006": {
+   "chain": [
+    "Goron_Boy_Spry"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Goron_GON_002": {
+   "chain": [
+    "Goron_Boy_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MF_001": {
+   "chain": [
+    "Hylia_Androgynous_Youth_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MF_002": {
+   "chain": [
+    "Hylia_Androgynous_Youth_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MF_003": {
+   "chain": [
+    "Hylia_Androgynous_Youth_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MF_004": {
+   "chain": [
+    "Hylia_Androgynous_Youth_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MF_005": {
+   "chain": [
+    "Hylia_MA_Man_Spry_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_ML_001": {
+   "chain": [
+    "Hylia_Man_2",
+    "Hylia_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_ML_002": {
+   "chain": [
+    "Hylia_MA_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_ML_003": {
+   "chain": [
+    "Hylia_MA_Man_Quiet"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_ML_004": {
+   "chain": [
+    "Hylia_Man_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MM_001": {
+   "chain": [
+    "Hylia_MA_Man_4",
+    "Hylia_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MM_002": {
+   "chain": [
+    "Hylia_MA_Man_Spry_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MM_003": {
+   "chain": [
+    "Hylia_MA_Man_Spry_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MM_004": {
+   "chain": [
+    "Hylia_MA_Man_2",
+    "Hylia_MA_Man_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MM_006": {
+   "chain": [
+    "Hylia_MA_Man_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_001": {
+   "chain": [
+    "Hylia_Man_Spry_1",
+    "Hylia_Man_Quiet_2",
+    "Hylia_Man_1",
+    "Hylia_Man_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_003": {
+   "chain": [
+    "Hylia_Man_Spry_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_004": {
+   "chain": [
+    "Hylia_Man_Quiet_3"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_005": {
+   "chain": [
+    "Happy_Mask_Shop"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_006": {
+   "chain": [
+    "Hylia_Man_Quiet_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_007": {
+   "chain": [
+    "Hylia_MA_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_008": {
+   "chain": [
+    "Hylia_Man_Spry_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_009": {
+   "chain": [
+    "Hylia_Man_Quiet_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_014": {
+   "chain": [
+    "Hylia_Man_Quiet_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_101": {
+   "chain": [
+    "Hylia_Man_Quiet_2",
+    "Hylia_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_102": {
+   "chain": [
+    "Hylia_MA_Man_4"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_103": {
+   "chain": [
+    "Hylia_Man_4"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MN_104": {
+   "chain": [
+    "Hylia_Man_4"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MO_001": {
+   "chain": [
+    "Hylia_Elderly_Man_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MO_002": {
+   "chain": [
+    "Hylia_Elderly_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MS_001": {
+   "chain": [
+    "Hylia_Man_1",
+    "Hylia_MA_Man_1",
+    "Hylia_Man_2",
+    "Hylia_Man_Spry_2",
+    "Hylia_Man_3",
+    "Hylia_Man_4",
+    "Hylia_Man_Quiet_2",
+    "Hylia_Man_Quiet_3",
+    "Hylia_Man_Spry_1",
+    "Hylia_Man_Quiet_1",
+    "Hylia_MA_Man_3",
+    "Hylia_MA_Man_Quiet"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MU_001": {
+   "chain": [
+    "Hylia_Boy"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Hylia_MU_003": {
+   "chain": [
+    "Hylia_MA_Man_Quiet"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MU_004": {
+   "chain": [
+    "Hylia_Elderly_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MU_005": {
+   "chain": [
+    "PoeBuyer"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MX_001": {
+   "chain": [
+    "Hylia_MA_Man_Spry_1",
+    "Hylia_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MX_002": {
+   "chain": [
+    "Hylia_MA_Man_Spry_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_MX_003": {
+   "chain": [
+    "Hylia_MA_Man_2"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Hylia_WF_001": {
+   "chain": [
+    "Hylia_MA_Woman_2",
+    "Hylia_Woman_1"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WF_002": {
+   "chain": [
+    "Hylia_MA_Woman_3"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WF_003": {
+   "chain": [
+    "Hylia_MA_Woman_1"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WF_004": {
+   "chain": [
+    "Hylia_MA_Woman_3"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WF_005": {
+   "chain": [
+    "Hylia_MA_Woman_Quiet"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WF_006": {
+   "chain": [
+    "Hylia_MA_Woman_Spry"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_001": {
+   "chain": [
+    "Hylia_Woman_1",
+    "Hylia_Woman_Spry"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_002": {
+   "chain": [
+    "Hylia_Woman_Spry"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_003": {
+   "chain": [
+    "Hylia_Woman_1"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_004": {
+   "chain": [
+    "Hylia_Woman_Quiet"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_005": {
+   "chain": [
+    "Hylia_Woman_2"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_006": {
+   "chain": [
+    "Hylia_Woman_1"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_007": {
+   "chain": [
+    "Hylia_Woman_Quiet"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WN_008": {
+   "chain": [
+    "Hylia_Woman_Spry"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WO_001": {
+   "chain": [
+    "Hylia_Elderly_Woman"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WU_001": {
+   "chain": [
+    "Hylia_Elderly_Woman"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WU_002": {
+   "chain": [
+    "Hylia_Girl_Spry"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Hylia_WX_001": {
+   "chain": [
+    "Hylia_MA_Woman_Spry"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Hylia_WX_002": {
+   "chain": [
+    "Hylia_MA_Woman_2",
+    "Hylia_Woman_1"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Kokiri_MC_001": {
+   "chain": [
+    "Kokiri_Boy_Quiet"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Kokiri_MC_002": {
+   "chain": [
+    "Kokiri_Boy_Spry_1",
+    "Kokiri_Boy"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Kokiri_MC_003": {
+   "chain": [
+    "Kokiri_Boy",
+    "Kokiri_Boy_Quiet"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Kokiri_MC_004": {
+   "chain": [
+    "Kokiri_Boy_Spry_2"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Kokiri_WC_001": {
+   "chain": [
+    "Kokiri_Girl",
+    "Kokiri_Girl_Quiet"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Kokiri_WC_002": {
+   "chain": [
+    "Kokiri_Girl_Spry"
+   ],
+   "default": "Hylia_Girl_Spry",
+   "creature": false
+  },
+  "Zora_ZN_001": {
+   "chain": [
+    "Zora_Man_3",
+    "Zora_Instructor",
+    "Zora_Man_1"
+   ],
+   "default": "Hylia_MA_Man_Quiet",
+   "creature": false
+  },
+  "Dark Link": {
+   "link": true
+  },
+  "Skull Kid": {
+   "chain": [
+    "Enemy_SkullKid",
+    "SkullKid"
+   ],
+   "default": "Hylia_Boy",
+   "creature": false
+  },
+  "Koume & Kotake": {
+   "chain": [
+    "Custom_Kotake",
+    "Custom_Koume",
+    "Hylia_Elderly_Woman"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Koume & Kotake (boss)": {
+   "chain": [
+    "Custom_Kotake",
+    "Custom_Koume",
+    "Hylia_Elderly_Woman"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Twinrova": {
+   "chain": [
+    "Custom_Twinrova",
+    "Custom_Kotake",
+    "Hylia_Elderly_Woman"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Iron Knuckle (Nabooru)": {
+   "chain": [
+    "Enemy_MiddleBoss_IronKnuckle_Nabooru",
+    "Custom_Nabooru"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Iron Knuckle (Nabooru, cutscene)": {
+   "chain": [
+    "Enemy_MiddleBoss_IronKnuckle_Nabooru",
+    "Custom_Nabooru"
+   ],
+   "default": "Hylia_Woman_1",
+   "creature": false
+  },
+  "Iron Knuckle": {
+   "chain": [
+    "Enemy_IronKnuckle"
+   ],
+   "default": "Enemy_Moblin",
+   "creature": true
+  },
+  "Gibdo": {
+   "chain": [
+    "Enemy_ReDead"
+   ],
+   "default": "Enemy_ReDead",
+   "creature": true
+  },
+  "ReDead": {
+   "chain": [
+    "Enemy_ReDead"
+   ],
+   "default": "Enemy_ReDead",
+   "creature": true
+  },
+  "Moblin": {
+   "chain": [
+    "Enemy_Moblin"
+   ],
+   "default": "Enemy_Moblin_Club",
+   "creature": true
+  },
+  "Club Moblin": {
+   "chain": [
+    "Enemy_Moblin_Club"
+   ],
+   "default": "Enemy_Moblin",
+   "creature": true
+  },
+  "Wolfos": {
+   "chain": [
+    "Enemy_Wolfos"
+   ],
+   "default": "Enemy_Wolfos",
+   "creature": true
+  },
+  "Cow": {
+   "chain": [
+    "NV_Cow"
+   ],
+   "default": "Animal_Cow",
+   "creature": true
+  },
+  "Link (opening)": {
+   "link": true
+  },
+  "Link (adult)": {
+   "link": true
+  },
+  "Lizalfos": {
+   "chain": [
+    "Enemy_Lizalfos"
+   ],
+   "default": "Enemy_Moblin",
+   "creature": true
+  }
+ }
+}

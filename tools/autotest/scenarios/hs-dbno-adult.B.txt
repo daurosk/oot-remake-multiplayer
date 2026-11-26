@@ -1,0 +1,29 @@
+# hs-dbno-adult, B: adult in Hyrule Field by Kakariko's steps, downed by three one-heart hits of the game's own (12
+# quarter hearts; the guard holds the lethal one while A is up), goes into the game's Crawl (234, as a child does),
+# pushes the stick (the crawl moves slowly), bleeds out in 10 s (A's /dbno time 10), spectates A, respawns beside A
+# and stands up (the game's Wait).
+mark start
+setflag Sequence_IsChildhood 0
+warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark field
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
+wait 360                # A's /dbno time 10 is in
+hurt 4
+wait 60
+hurt 4
+wait 60
+hurt 4
+mark downed
+wait 120
+mark lying
+stick 0 1 180           # the crawl moves slowly (a few metres at most; never a walk)
+mark stick
+wait 120
+mark still-down
+wait 330                # 10 s of bleed-out, then spectating
+mark watching
+wait 1200               # quiet 3 s (no enemy near A), then the move beside A and up
+mark after-respawn
+wait 300
+mark end

@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 987962c5e7a91771f4a20997a381cfbe27b1e6c6 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:00:23 -0900
 Subject: [PATCH] Co-op world hooks: game events and wrapped game functions to
@@ -36,7 +36,7 @@ The exports are kept once the module answers HOS_COOP_WORLD_HELLO.
 
 diff --git a/host/coop_platform_ring.c b/host/coop_platform_ring.c
 deleted file mode 100644
-index b241703..0000000
+index b2417033..00000000
 --- a/host/coop_platform_ring.c
 +++ /dev/null
 @@ -1,19 +0,0 @@
@@ -61,7 +61,7 @@ index b241703..0000000
 -}
 diff --git a/host/coop_world.c b/host/coop_world.c
 new file mode 100644
-index 0000000..ffea5b0
+index 00000000..ffea5b03
 --- /dev/null
 +++ b/host/coop_world.c
 @@ -0,0 +1,62 @@
@@ -129,7 +129,7 @@ index 0000000..ffea5b0
 +}
 diff --git a/host/hos_coop_world.h b/host/hos_coop_world.h
 new file mode 100644
-index 0000000..486456f
+index 00000000..486456f0
 --- /dev/null
 +++ b/host/hos_coop_world.h
 @@ -0,0 +1,49 @@
@@ -183,21 +183,21 @@ index 0000000..486456f
 +
 +#endif
 diff --git a/nx2/chunks.py b/nx2/chunks.py
-index de52777..d9ca299 100644
+index bd110021..f48efd9d 100644
 --- a/nx2/chunks.py
 +++ b/nx2/chunks.py
-@@ -199,7 +199,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
+@@ -211,7 +211,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
  
  # What the emit reads of the lifter besides the bodies of the functions it emits (a64_lift.Lifter.emit_function and the
  # methods it calls): sent once to each new process
--EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names")
-+EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names",
+-EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks")
++EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks",
 +               "wraps")   # (oot-remake-multiplayer's patch 0005)
  _view = None   # (a new process's view: a lifter with the tables only, and its counters)
  
  
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index 52a19bc..a866e76 100644
+index cd87977f..5f5a5f32 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
 @@ -58,6 +58,11 @@ def install(lifter, img, build_id):
@@ -213,7 +213,7 @@ index 52a19bc..a866e76 100644
      coop_puppet_guard.install(lifter, img, build_id)
      import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
 diff --git a/nx2/coop_platform_lift.py b/nx2/coop_platform_lift.py
-index 9c9944b..4d5c73f 100644
+index 9c9944b6..4d5c73f8 100644
 --- a/nx2/coop_platform_lift.py
 +++ b/nx2/coop_platform_lift.py
 @@ -3,10 +3,10 @@ counters"; method and addresses from Hot Onion).
@@ -252,7 +252,7 @@ index 9c9944b..4d5c73f 100644
      return 1
 diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
 new file mode 100644
-index 0000000..8877d6c
+index 00000000..8877d6cd
 --- /dev/null
 +++ b/nx2/coop_world_wraps.py
 @@ -0,0 +1,77 @@
@@ -334,10 +334,10 @@ index 0000000..8877d6c
 +    print("co-op wraps: %d of %d game functions wrapped" % (n, len(wraps)))
 +    return n
 diff --git a/third_party/a64-kit/lift/a64_lift.py b/third_party/a64-kit/lift/a64_lift.py
-index 3b44835..6816c21 100644
+index 5616aeee..2d961c3f 100644
 --- a/third_party/a64-kit/lift/a64_lift.py
 +++ b/third_party/a64-kit/lift/a64_lift.py
-@@ -969,6 +969,9 @@ class Lifter:
+@@ -973,6 +973,9 @@ class Lifter:
          # (hookshot) C emitted right after the instruction at a guest address ({pc: text}): a game patch that adds to an
          # instruction instead of replacing a function (nx2/oot_wide.py). Only after plain instructions (kind "op")
          self.after = {}
@@ -347,7 +347,7 @@ index 3b44835..6816c21 100644
          self.funcs = {}       # entry -> (body {pc: kind}, labels set)
          self.jt = {}          # br pc -> [targets]
          self.jt_missing = {}      # br pc -> its register, for BRs whose table address was not found
-@@ -1008,6 +1011,15 @@ class Lifter:
+@@ -1012,6 +1015,15 @@ class Lifter:
              if t is not None:
                  self.plt[e] = t
          self.find_setjmp_owners()   # (after the PLT stubs: their callees are resolved through them)
@@ -363,7 +363,7 @@ index 3b44835..6816c21 100644
  
      SETJMP_NAMES = ("__setjmp", "setjmp", "_setjmp")
  
-@@ -1479,6 +1491,8 @@ class Lifter:
+@@ -1483,6 +1495,8 @@ class Lifter:
      def fname(self, t):
          # Hooked addresses keep their f_ name too (a64_hooks.c defines it as a tail call of the hook), so hooking
          # or unhooking a function changes one small file instead of every call site in the lifted code.
@@ -372,7 +372,7 @@ index 3b44835..6816c21 100644
          return "f_%08x" % t
  
      # ---- emission ------------------------------------------------------------------------------------
-@@ -1776,7 +1790,7 @@ class Lifter:
+@@ -1780,7 +1794,7 @@ class Lifter:
          nhot = 0
          for e in sorted(self.funcs):
              text, refs = self.emit_function(e, texts)
@@ -381,7 +381,7 @@ index 3b44835..6816c21 100644
                  text = hot_text(text)
                  nhot += 1
                  if hot_chunk is not None:
-@@ -1823,6 +1837,16 @@ class Lifter:
+@@ -1827,6 +1841,16 @@ class Lifter:
              f.write('#include "a64.h"\n')
              f.write("".join("void %s(Ctx *A64_NOESC);\n" % n for n in sorted(set(self.hooks.values()))))
              f.write("".join("void f_%08x(Ctx *A64_NOESC c) { TAILCALL(%s); }\n" % (a, n) for a, n in sorted(self.hooks.items())))
@@ -398,6 +398,3 @@ index 3b44835..6816c21 100644
  
      def report(self):
          nins = sum(len(b) for b, _ in self.funcs.values())
--- 
-2.56.0.windows.4
-

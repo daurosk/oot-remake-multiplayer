@@ -17,7 +17,8 @@ namespace {
 // DungeonBossVolvagia_FireBreath, Bubble_Green_Bullet_Aura) are not shots:
 // they last and follow their maker, so they are left to each game.
 // Enemy_Scrub_Business_Seed is not a shot: it is the business scrub that
-// sells seeds (it has its own talk, Event/EventFlow), a shared enemy.
+// sells seeds (it has its own talk, Event/EventFlow), each game's own shop
+// (CoopObjects::IsOwnPuzzle, GitHub 253).
 struct Shot {
     std::string_view prefix;  // the shot's name starts with it
     std::array<std::string_view, 3> makers;
@@ -44,6 +45,29 @@ constexpr std::array<Shot, 5> kBossShots{{
     {"Ganondorf_Bullet_", {"Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon"}},
     {"DungeonBossGanon_Bullet_", {"Enemy_DungeonBoss_Ganon"}},
 }};
+
+// Split shots (docs/boss-multiplayer.md): every game keeps the shot its own copy of the boss fires and the owner's
+// is not sent, so the attack is real in every game and hits every player as it would alone. Phantom Ganon's leap
+// out of a painting (stage 1): his thunder bolt to the room's middle and the four shockwaves it sends out in a
+// cross. As copies flown on the owner's path the shockwaves hurt nobody but the owner's Link. Stage 2: his
+// rally ball (Ganondorf's the same): each player rallies their own; the owner's Ganon sends it back as alone, a
+// copy cannot (its AI runs in the owner's game), so a ball sent back into a copy stuns him there, and the stun
+// hands him to that player (the stun hand-over) for the sword: the first ball back stuns him for the group.
+// Each game sees only its own: none is sent.
+// The rest of the bosses the same way (every-stage two-game runs, 2026-11-21: each of these was one shot, sent from
+// the owner's game): Twinrova's beams, the floor they leave and the guard breakers (each player soaks their own in
+// the Mirror Shield; one sent back into her stuns her there, and the stun hand-over gives her to that player),
+// Ganondorf's and Ganon's balls, shocks and shockwaves, King Dodongo's fire breath, and the Moblin's club
+// shockwave (a ground wave like Phantom Ganon's).
+// FlareDancer_Bullet_ (FireBall, FireDanceBall, made by Enemy_MiddleBoss_FlareDancer_FireBody; enemy survey
+// 2026-11-21). PoeHyrule_Bullet_ (the Poe's fireball) the same: each player gets their own. Gohma has no shot
+// (her ActorHolderParam makes only Enemy_DungeonBoss_Gohma_Egg: made minions), Volvagia's rocks (the arena's, each game's own) and the beams are not shots. Never split: Octorok_Bullet and ScrubDeku_DekuNut (the player shot at sends them back).
+constexpr std::array<std::string_view, 13> kSplit{{"PhantomGanon_Bullet_Thunder", "DungeonBossPhantomGanon_Bullet_",
+                                                    "DungeonBossGanondrof_Bullet_", "Twinrova_Bullet_",
+                                                    "KotakeKoumeTwinrova_Bullet_", "Ganondorf_Bullet_", "Ganon_Bullet_",
+                                                    "DungeonBossGanon_Bullet_", "DungeonBossDodongo_Bullet_",
+                                                    "Enemy_MoblinClub_ShockWave", "Dodongo_Bullet_",
+                                                    "FlareDancer_Bullet_", "PoeHyrule_Bullet_"}};
 
 const Shot* Find(std::string_view name) {
     if (name.ends_with("_MirrorShieldReflect")) {
@@ -95,6 +119,10 @@ bool IsEnemyShot(std::string_view name) {
     return Find(name) != nullptr;
 }
 
+bool IsRallyBall(std::string_view name) {
+    return IsEnemyShot(name) && (name.ends_with("_Bullet_LightBall") || name.ends_with("_Bullet_ChargeLightBall"));
+}
+
 std::vector<std::string_view> MakersOf(std::string_view shot) {
     std::vector<std::string_view> out;
     if (const Shot* s = Find(shot)) {
@@ -116,9 +144,21 @@ float MakerRange(std::string_view shot) {
     return 10.0f;
 }
 
+bool IsSplitShot(std::string_view name) {
+    if (!SplitOn() || !IsEnemyShot(name)) {
+        return false;
+    }
+    for (const std::string_view s : kSplit) {
+        if (name.starts_with(s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Verdict Decide(std::string_view shot, const Vec3& at, std::span<const Shooter> shooters) {
     const auto makers = MakersOf(shot);
-    if (makers.empty()) {
+    if (makers.empty() || IsSplitShot(shot)) {
         return Verdict::keep;
     }
     const float range = MakerRange(shot);
@@ -170,11 +210,12 @@ void NoteShooters(std::vector<Shooter> shooters, std::uint64_t now_us) {
 }
 
 bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter) {
-    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn()) {
+    if (!IsEnemyShot(shot) || IsSplitShot(shot) || !On() || !HideOn() || !StopOn()) {
         return false;
     }
-    std::unique_lock lock(g_mutex, std::try_to_lock);
-    if (!lock.owns_lock() || g_at == 0 ||
+    // (waits: a busy list once let a copy's own shot be made beside the owner's; its holders only copy the list)
+    std::lock_guard lock(g_mutex);
+    if (g_at == 0 ||
         std::chrono::steady_clock::now() - g_noted > std::chrono::microseconds(kFreshUs)) {
         return false;
     }
@@ -220,6 +261,11 @@ bool On() {
 
 bool HideOn() {
     static const bool on = !EnvOff("LICHII_COOP_ENEMY_SHOTS_HIDE");
+    return on;
+}
+
+bool SplitOn() {
+    static const bool on = !EnvOff("LICHII_COOP_SPLIT_SHOTS");
     return on;
 }
 

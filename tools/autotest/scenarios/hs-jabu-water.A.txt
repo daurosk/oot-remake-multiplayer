@@ -1,0 +1,60 @@
+# hs-jabu-water (Hookshot, issue #249 / row 65, the room 14 water piece): Jabu-Jabu room 14's water level, moved by
+# the other player's step switch, the same in both games. g3-objects (5e6d0a86) shares the room's two water group
+# flags (lichii/hook/coop_dungeon.cpp): Gimmick_Insidejabujabu_Updown_MoveWater (0xc517f1b5) and
+# Gimmick_Insidejabujabu_down_MoveWater (0x4358c335). Each is the only input of its water plane / air walls (each moved
+# by its own GroundControlActor_ResidentMoveTo when the flag changes; Updown's controller at 42.4 84.2 -67.9 moves
+# Obj_WaterPlaneDynamic_A_01, coop_room_objects.cpp). The room graph writes the flag once per press, and only while
+# that game's own switch is pressed, so the watcher's game takes the shared value and never writes it back.
+# Gimmick_Insidejabujabu_Updown_MoveWaterSwitch (0x99e3b75e) arms each game's own switch: each game's own on purpose.
+# Room 14 (coop_eye_switch.cpp): upper switch Obj_InsideJabu_Jabu_StepSwitch_A_04 at 29.2 77.5 -66.7 (asker
+# InsideJabuJabuBellyRoom14StepSwitch), under switch (same type) at 28.9 74.5 -58.5 (asker
+# InsideJabuJabuBellyRoom14StepSwitch_Under). Their events (romfs switch_events wiring, review-rc-checks):
+#   UNDER: Updown_MoveWater SET, down_MoveWater clear, MoveWaterSwitch clear, PlayedSwitchEvent_Lower set; its
+#     trigger reads Updown_MoveWater negated, so it fires from the all-0 save: the first press used here.
+#   UPPER: Updown_MoveWater clear, MoveWaterSwitch clear, down_MoveWater set, PlayedSwitchEvent_Upper set (from the
+#     all-0 save only down_MoveWater, the enemy air walls, would change: not the water plane).
+# B lands on the UNDER switch and stays on it; A stands ~6 m off, between it and the water's controller, faces the
+# controller and only watches.
+# SAVE: profile jabu-14 (big-run-0115.ps1): the kit saves (base) with room 14's flags 0 in every slot of both games
+#   (the tk0114-3 kit saves already read 0 for all five, save_flags.py get 2026-11-17):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0xc517f1b5=0 bool:0x4358c335=0 bool:0x99e3b75e=0 bool:0xf036b3a1=0 bool:0xf44b79ed=0
+#   (Updown_MoveWater, down_MoveWater, Updown_MoveWaterSwitch, Room14_PlayedSwitchEvent_Upper / _Lower: the last two
+#   delete the switches' askers when set.)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-jabu-water (groups: hookshot-rc-checks.txt). Needs a tree
+#   with g3-objects merged (before it the water flags are not shared).
+# Pass:
+#  - B "bool 0xc517f1b5 (entry N) 0 -> 1" (its own switch wrote it) and A the same line (the shared flag reached A).
+#  - No "our game started the event InsideJabuJabuBellyRoom14StepSwitch_Under" in A's log: A gets the result only (owner
+#    07:40 rule 98(2), gimmick events), A's water moved by the flag.
+#  - Shots "pressed"/"water"/"late": the water plane at the same height in A's and B's shots, moving the same way;
+#    no water that rises in one game only, no flip back. FAIL: A's water still where it was in "late".
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place 33.0 79.5 -63.0     # ~6 m off the under switch, between it and the water's controller (42.4 84.2 -67.9)
+wait 240
+mark placed
+toward 42.4 -67.9 6       # face the water's controller (the plane it moves)
+wait 600
+mark ready
+wait 360
+mark pressed
+wait 600
+mark water
+wait 1200
+mark late

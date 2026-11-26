@@ -2,31 +2,36 @@
 # basement beside the push block Obj_MovableBox_A_01 7155a64297e96d5a (Banc: -51.06 79.27 47.1;
 # its goal Obj_Gimmick_AnswerPosAnchor 7ee3f23dddbf19be at -51.06 79.27 42.6, so it is pushed
 # toward -z; floor around y 79.3-79.6). A pushes it one step, steps aside; B then pushes the same
-# block from where it is now, twice. A stands well back (+z) of the block and walks into it,
-# so the block's size need not be known. If "placed" shows Link inside a wall, change the z.
-# Expect (both with LICHII_COOP_BLOCK_REST=1):
+# block from where it is now, twice. A stands well back (+z) of the block, walks up to it and grabs it (A held:
+# in this game a walk into a block only shows "Grab"), so its size need not be known. If "placed"
+# shows Link inside a wall, change the z.
+# Expect (patch 0029 in the exe; docs/world.md "Blocks: the push node"):
+#  - Both, once the basement loads: "world hooks: first AI node start from hookshot.exe (node ...,
+#    actor ...)". Missing = the exe has no patch 0029: FAIL of the push node part.
 #  - A: "world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending", then "at rest: place sent".
 #  - B: "... moved by another player", ~0.5 s after the rest "came to rest where another player
-#    left it; its base anchor is put there too" and "old rest x y z -> x y z: N places rewritten".
-#  - B (world-objects-2): "push node <address>: 2 of its places moved to the new rest: node+0xfc
-#    node+0x108" (the AI node keeps where the next push starts; docs/world.md "the push node").
-#    "push node not found" = the pointer walk missed it: FAIL of that part, report the line.
+#    left it; its base anchor is put there too".
+#  - B: "push node <address>: its own start (main+0x2751790) asked to run again, from where it
+#    rests now" (the AI node keeps where the next push starts), then every 5 s "push node starts
+#    run N, skipped M". "push node not started yet: tried again" may come first; a final
+#    "push node not found (...)" or "its next push may start from the old place" = FAIL of that
+#    part, report the line.
 #  - B's pushes ("b-push1", "b-push2"): the block moves on from where A left it in both games, no
 #    snap of B's Link or the block back to the start (shots "b-push1", "b-push2", "end"; B's log
-#    "moved here: sending" from the new place; A "moved by another player" and its own "old rest").
+#    "moved here: sending" from the new place; A "moved by another player" and its own "push node" line).
 #  - Non-owner grab, pull, push (Alex: boxes still teleport back a bit when ANOTHER player grabs
 #    them): B (who did not move it last) grabs it at "b-grab" (A held 1.5 s; shots "b-reach" and
 #    "b-grab" show the block at the same place in B, and A's copy still), pulls it one step toward
-#    +z at "b-pull", pushes it at "b-push1" (A held) and "b-push2" (walking). Each B shot vs the one
+#    +z at "b-pull", pushes it at "b-push1" and "b-push2" (A held both). Each B shot vs the one
 #    before: the block moves only the way B moves it, never back first; A's paired shots show the
 #    same place after about 0.1 s. B's log: no "moved by another player" for this block after
 #    "b-reach"; one "moved here: sending" per move; A: "moved by another player" and later its own
-#    "push node ... moved" line. If "b-reach" shows Link not touching the block, change the goto z.
+#    "push node ... asked to run again" line. If "b-reach" shows Link not touching the block, change the goto z.
 #  - FAIL = B's Link or block jumps back (to z ~47.1 or a step back) at "b-grab", "b-pull" or
 #    "b-push1", in B's shots or A's.
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_BLOCK_REST=1
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 420
 mark start
 warp InsideTheDekuTree Entrance
@@ -44,7 +49,9 @@ mark after
 place -51.06 79.9 50.2
 wait 240
 mark placed
-toward -51.06 40.0 150   # walk into the block and push it one step toward -z
+toward -51.06 40.0 60    # walk up to the block's +z face
+toward -51.06 40.0 150 A # grab and push it one step toward -z, A held: a walk into it only shows "Grab"
+                         # (deku-block-147-probe: A stood at the face 2.5 s, the block never moved, nothing sent)
 wait 120
 mark a-pushed
 place -47.5 79.9 50.2    # step aside for B

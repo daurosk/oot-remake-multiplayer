@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "oot-p1": {
+      "command": "python",
+      "args": ["-I", "tools/autotest/mcp_playtest.py", "--player", "p1", "--lane", "{LANE}", "--session", "{SESSION}", "--log-dir", "{LOG_DIR}"]
+    },
+    "oot-p2": {
+      "command": "python",
+      "args": ["-I", "tools/autotest/mcp_playtest.py", "--player", "p2", "--lane", "{LANE}", "--session", "{SESSION}", "--log-dir", "{LOG_DIR}"]
+    },
+    "oot-playtest": {
+      "command": "python",
+      "args": ["-I", "tools/autotest/mcp_playtest.py", "--session", "{SESSION}"]
+    }
+  }
+}

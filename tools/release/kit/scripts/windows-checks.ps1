@@ -1,4 +1,4 @@
-# What Windows itself may block, checked before any other script of the kit runs. "Start OoT Co-op.bat" runs this
+# What Windows itself may block, checked before any other script of the kit runs. "Start Squadala.bat" runs this
 # file's text through Invoke-Expression (powershell -Command), not as a script file: a policy that refuses script
 # files then still lets it say why. So it is written for PowerShell's Constrained Language mode too (Smart App
 # Control and other application control put PowerShell in it): cmdlets and plain strings only, no .NET calls.
@@ -45,7 +45,7 @@ function Get-WcMarked([string]$Kit, [switch]$All) {
             }
         }
     } else {
-        foreach ($n in 'Start OoT Co-op.bat', 'scripts\start.ps1', 'scripts\play.ps1', 'hookshot\hookshot_coop.dll', 'server\coop_server.exe') {
+        foreach ($n in 'Start Squadala.bat', 'scripts\start.ps1', 'scripts\play.ps1', 'hookshot\hookshot_coop.dll', 'server\coop_server.exe') {
             $p = Join-Path $Kit $n
             if (Test-Path -LiteralPath $p) { $files += Get-Item -LiteralPath $p -Force }
         }
@@ -58,6 +58,31 @@ function Get-WcSmartAppControl {
     if ($env:OOT_COOP_WC_SAC) { return $env:OOT_COOP_WC_SAC }
     $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState' -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
     switch ("$v") { '1' { 'on' } '2' { 'evaluation' } default { 'off' } }
+}
+
+# Files of this kit (its game too: hookshot\game is inside it) that Microsoft Defender detected in the last 30 days,
+# kit-relative (no user path): Velvet's kit (2026-11-19) lost tools\ootrr\ootrr.exe on every start with nothing in
+# its logs. OOT_COOP_WC_MP ('|'-separated resource strings) stands in for Defender's list in the kit tests.
+function Get-WcDefenderTaken([string]$Kit) {
+    $res = @()
+    if ($env:OOT_COOP_WC_MP) { $res = @($env:OOT_COOP_WC_MP -split '\|') }
+    else {
+        try {
+            $res = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { $_.InitialDetectionTime -gt (Get-Date).AddDays(-30) } |
+                ForEach-Object { $_.Resources })
+        } catch { }
+    }
+    $root = $Kit.TrimEnd('\').ToLower() + '\'
+    $found = @()
+    foreach ($r in $res) {
+        # ("file:_E:\kit\hookshot\game\tools\ootrr\ootrr.exe", "containerfile:_...", and with a long-path prefix
+        # "file:_\\?\E:\kit\..." (review-0116-j N2))
+        $path = ("$r" -replace '^[a-z]+:_', '') -replace '^\\\\\?\\', ''
+        if (-not $path.ToLower().StartsWith($root)) { continue }
+        $name = $path.Substring($root.Length)
+        if ($found -notcontains $name) { $found += $name }
+    }
+    $found
 }
 
 # The kit's files Windows' application control (Smart App Control, WDAC) refused in the last 14 days, from the Code
@@ -196,6 +221,13 @@ function Invoke-WcChecks([string]$Kit) {
     # 2. Smart App Control on while scripts still run: what it refused, by name.
     $blocked = @(Get-WcBlockedFiles $Kit)
     if ($blocked.Count) { $log += "blocked by code integrity: $($blocked -join ', ')" } else { $log += 'blocked by code integrity: none found' }
+    # 7. Defender took a file of the kit or its game (the randomizer's ootrr.exe, the co-op module): named, and how to get it back.
+    $taken = @(Get-WcDefenderTaken $Kit)
+    if ($taken.Count) {
+        $log += "defender detections in the kit: $($taken -join ', ')"
+        $say += "Microsoft Defender took $($taken[0]) of this kit$(if ($taken.Count -gt 1) { " (and $($taken.Count - 1) more)" }) (a false alarm on an unsigned program)."
+        $say += '  Windows Security > Virus & threat protection > Protection history: choose it, Actions > Allow (or Restore), then run Update.bat.'
+    } else { $log += 'defender detections in the kit: none found' }
     if ($sac -eq 'on' -and -not $stop) {
         if ($blocked.Count) {
             $say += "Windows Smart App Control blocked $($blocked[0]) of this kit$(if ($blocked.Count -gt 1) { " (and $($blocked.Count - 1) more)" })."
@@ -220,7 +252,7 @@ function Invoke-WcChecks([string]$Kit) {
             $say += '  Add an allowed app > All recent blocked apps: allow powershell.exe (and, later, the build''s python.exe and clang.exe).'
             $say += '  Or turn Controlled folder access off there, or move the kit to a folder it does not protect.'
         } else {
-            $say += '  Another antivirus, or the folder''s permissions, may do this. Move the kit to a short folder of your own such as C:\OoT-Coop,'
+            $say += '  Another antivirus, or the folder''s permissions, may do this. Move the kit to a short folder of your own such as C:\Squadala,'
             $say += '  or allow powershell.exe in your antivirus. Windows Security > Protection history says what was blocked.'
         }
     }
@@ -230,7 +262,7 @@ function Invoke-WcChecks([string]$Kit) {
     $log += "controlled folder access over the kit: $(if ($cfa) { Split-Path -Leaf $cfa } else { 'no' })"
     if ($cfa) {
         $say += "Controlled folder access (Windows Security) protects $cfa, where this kit is: it stops the game build writing there,"
-        $say += '  even with real-time protection off. Move the kit to a short folder such as C:\OoT-Coop and start it there.'
+        $say += '  even with real-time protection off. Move the kit to a short folder such as C:\Squadala and start it there.'
     }
     @{ Lines = $say; Log = $log; Stop = $stop }
 }

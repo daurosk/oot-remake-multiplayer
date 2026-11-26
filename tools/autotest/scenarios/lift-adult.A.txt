@@ -1,0 +1,47 @@
+# lift-adult (proof-0116, native puppets phase 3 step 4): A young tries to lift ADULT B (B warps in as adult): nothing happens.
+# PASS (shots both): no lift at lifted/lifted2; A log has no "coop: lift:" line for B (refusal 7 or nothing).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_LIFT_PLAYER=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+place 198.13 163.4 309.87
+wait 30
+toward 196.93 309.87 10
+wait 60
+mark ready
+press A
+wait 90
+mark lifted
+wait 60
+mark lifted2
+goto 203.0 309.87 1.0 600
+wait 30
+mark walked
+press A
+wait 120
+mark put-down
+toward 203.0 309.87 1
+wait 30
+press A
+wait 90
+mark lifted-again
+stick 1.0 0.0 20
+press A
+wait 180
+mark thrown
+wait 120
+mark end

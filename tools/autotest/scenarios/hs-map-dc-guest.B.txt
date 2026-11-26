@@ -1,0 +1,64 @@
+# hs-map-dc-guest, B: the guest opens the map chest (hs-map-dc.A's steps). Logs: UInt 0x46913e20 (floors),
+# bool 0xa52c3a19 (IsGetMap).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=a52c3a19
+#! timeout 420
+mark start
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 2400                 # the host's save comes and B switches to it on the title
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark mini-before
+place -24.0 100.75 -38.0   # 2.5 m in front of the map chest
+wait 240
+goto -25.5 -38.0 0.35 300   # 1 m in front of it: the walk teaches the runner the camera's angle
+toward -26.5 -38.0 20      # face the chest
+mark placed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # the get scene
+mark got
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark mini-room
+press MINUS
+wait 120
+mark panel
+press R
+wait 90
+mark panel-r1
+press R
+wait 90
+mark panel-r2
+press B
+wait 240
+place -24.0 100.75 -38.0   # the same spot again (no room load here: the panel shots are the check)
+wait 900
+mark mini-room2
+press MINUS
+wait 120
+mark panel2
+press R
+wait 90
+mark panel2-r1
+press R
+wait 90
+mark panel2-r2
+press B
+wait 240
+mark end

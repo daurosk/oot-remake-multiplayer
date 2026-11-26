@@ -1,0 +1,28 @@
+# geno-floor-race (geno-polish-ai): geno-floor-held with race = on in both games: B's switch must NOT go down while A stands on it (race mode shares no floor switch); B's log has no 'switch stand: another player is on our'.
+# geno-pickup held floor switch: A stands on the Dodongo's Cavern plate, B stays off: B's screen shows the switch down (shared floor switches on). Then A leaves, B's switch pops up. PASS: shots a-on/b-held down on both, a-off up.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -49.4 114.6 -8.0
+wait 600
+mark a-on
+wait 1800
+mark a-held
+place -43.0 114.6 -8.0
+wait 60
+wait 900
+mark a-off
+mark end

@@ -1,0 +1,57 @@
+# hs-block-grip (row 244 b/c, branch cutscene-244): a player grips or pulls a push block while another player pushes
+# the same block (piscesgamer97's camera softlock in Dodongo's Cavern's block room: blocks moved by P1/P3 were written
+# into pisces' game while pisces was at them). Our hook does not read Link's grab: a grip that has not moved the block
+# leaves it "not ours", so our game writes the other player's move into the block our Link holds. Every MovableBox
+# goes through one path (CoopWorld::WorldSync::Move), so the proven Deku Tree basement block of deku-block is used:
+# Obj_MovableBox_A_01 7155a64297e96d5a (its goal at z 42.6). On Hookshot it rests at about -51.06 79.27 44.1-44.5 (run
+# 20261122-112254: A gripped its +z face standing at z 46.32), not at deku-block's 47.1; a wall is on its -x side.
+#  Phase 1 (grip-hold): A walks into its +z face and holds A, no stick, 30 s; B grabs its +x face and pulls it
+#    toward +x (along A's grip) in the middle of that hold.
+#  Phase 2 (pull-pull): A grabs again and pulls toward +z while B pulls toward +x at the same time (two movers).
+#  After each phase the player who gripped walks away with `goto` (Link in control, camera free).
+# SAVE: any Deku Tree save of both lanes (as deku-block). Run: hookshot.py run --lane 1 --name hs-block-grip
+#   --script-a <this> --script-b <the .B file> --no-load --scenario-timeout 420
+# PASS (logs + shots):
+#  1. B: "world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending" after b-grab; A: "... moved by another
+#     player" and "our Link is at it while it follows another player's move (theirs is live)" while a-grip.
+#  2. A after a-let-go: "coop: test goto reached" for the walk away (a-free), no "goto timed out". Shot a-free: Link
+#     off the block, camera behind Link (not held on the block's face). Same for a-free2 after phase 2 and B's b-free.
+#  3. Phase 2: one of the games logs "another player moves it too; theirs" (the higher player number gives way).
+#  4. Shots end-A / end-B: the block at the same place in both games; no "jumped back toward its old rest" (row 244:
+#     a rest between grid cells; fixed games log "push node ...: its start aimed ... put at the rest place").
+#  The row 244 probe line "push node start while our Link is ... m from it" is read and reported either way.
+# FAIL: a "goto timed out" after a grip (Link stuck in the grip/pull), a shot with the camera held on the block, or the
+# block at two places at the end.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.06 79.9 50.2   # behind the block's +z face (deku-block's A spot)
+wait 240
+mark a-placed
+toward -51.06 40.0 60    # walk up to the +z face
+hold A 1800 a-grip       # GRIP, no stick, 30 s (mark at 15 s: B pushes then)
+mark a-let-go
+goto -51.06 50.5 0.5 300 # walk away: Link in control?
+mark a-free
+toward -51.06 40.0 120   # back to the face (a walk into it only shows "Grab")
+hold A 60                # grab
+toward -51.06 60.0 120 A # PULL toward +z while B pulls toward +x
+mark a-pulled
+goto -51.06 51.0 0.5 300 # walk away again
+mark a-free2
+wait 900
+mark end

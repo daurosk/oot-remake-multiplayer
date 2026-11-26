@@ -4,26 +4,42 @@
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_boss.cpp"
+    "${_coop_hook}/coop_boss_beaten.cpp"
     "${_coop_hook}/coop_boss_game.cpp"
     "${_coop_hook}/coop_boss_native.cpp"
+    "${_coop_hook}/coop_boss_orders.cpp"
     "${_coop_hook}/coop_boss_scenes.cpp"
     "${_coop_hook}/coop_teleport.cpp"
     "${_coop_hook}/coop_teleport_game.cpp"
+    "${_coop_hook}/coop_emote.cpp"
+    "${_coop_hook}/coop_emote_game.cpp"
+    "${_coop_hook}/coop_hallway.cpp"
+    "${_coop_hook}/coop_hallway_game.cpp"
+    "${_coop_hook}/coop_pivot.cpp"
     "${_coop_hook}/coop_pvp.cpp"
     "${_coop_hook}/coop_dbno.cpp"
     "${_coop_hook}/coop_dbno_game.cpp"
+    "${_coop_hook}/coop_dbno_body.cpp"
     "${_coop_hook}/coop_pvp_game.cpp"
+    "${_coop_hook}/coop_lift_player_game.cpp"
+    "${_coop_hook}/coop_pvp_native_game.cpp"
     "${_coop_hook}/coop_lobby.cpp"
     "${_coop_hook}/coop_lobby_game.cpp"
     "${_coop_hook}/coop_mod_share.cpp"
+    "${_coop_hook}/coop_gold_mode.cpp"
+    "${_coop_hook}/coop_race_mode.cpp"
+    "${_coop_hook}/coop_switch_stand_mode.cpp"
     "${_coop_hook}/coop_name_privacy.cpp"
     "${_coop_hook}/coop_scene_probe.cpp"
     "${_coop_hook}/coop_callers.cpp"
     "${_coop_hook}/coop_camera.cpp"
+    "${_coop_hook}/coop_cheat_give.cpp"
     "${_coop_hook}/coop_cheat_items.cpp"
     "${_coop_hook}/coop_cheats.cpp"
     "${_coop_hook}/coop_difficulty.cpp"
     "${_coop_hook}/coop_difficulty_game.cpp"
+    "${_coop_hook}/coop_ngplus.cpp"
+    "${_coop_hook}/coop_ngplus_rules.cpp"
     "${_coop_hook}/coop_drops.cpp"
     "${_coop_hook}/coop_chests.cpp"
     "${_coop_hook}/coop_colors.cpp"
@@ -38,6 +54,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_shared_scenes.cpp"
     "${_coop_hook}/coop_scrubs.cpp"
     "${_coop_hook}/coop_fairy.cpp"
+    "${_coop_hook}/coop_map_refresh.cpp"
     "${_coop_hook}/coop_rooms.cpp"
     "${_coop_hook}/coop_maps.cpp"
     "${_coop_hook}/coop_flags.cpp"
@@ -52,6 +69,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_save.cpp"
     "${_coop_hook}/coop_enemy_shots.cpp"
+    "${_coop_hook}/coop_shot_reflect.cpp"
     "${_coop_hook}/coop_projectiles.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_puppet_config.cpp"
@@ -60,12 +78,21 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_spawn.cpp"
     "${_coop_hook}/coop_svc.cpp"
     "${_coop_hook}/coop_world.cpp"
+    "${_coop_hook}/coop_logic_probe.cpp"
+    "${_coop_hook}/coop_lift_ride.cpp"
+    "${_coop_hook}/coop_room_objects.cpp"
+    "${_coop_hook}/coop_switch_share.cpp"
+    "${_coop_hook}/coop_eye_switch.cpp"
+    "${_coop_hook}/coop_event_result.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"
+    "${_coop_hook}/coop_char_colours.cpp"
+    "${_coop_hook}/coop_gear_params.cpp"
     "${_coop_hook}/coop_look_share.cpp"
     "${_coop_hook}/coop_voice.cpp"
     "${_coop_hook}/coop_puppet_sound.cpp"
     "${_coop_hook}/coop_link_sound.cpp"
+    "${_coop_hook}/coop_puppet_flame.cpp"
     "${_coop_hook}/coop_testinput.cpp"
     "${_coop_hook}/coop_time.cpp"
     "${_coop_hook}/coop_time_sync.cpp"
@@ -75,15 +102,19 @@ target_sources(core PRIVATE
 target_include_directories(core PUBLIC "${_coop_hook}")
 target_compile_definitions(core PUBLIC LICHII_COOP)
 target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_voice)
-# Which co-op commit is built in, for the log ("coop: build ..."). Read when
-# CMake configures, so reconfigure after a pull to keep it current.
-execute_process(COMMAND git -C "${LICHII_COOP_DIR}" describe --tags --always --dirty
-    OUTPUT_VARIABLE _coop_version OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-if(NOT _coop_version)
-    set(_coop_version "unknown")
-endif()
-set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
-    COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"${_coop_version}\"")
+# Which co-op commit is built in, for the log ("coop: build ..."). git describe runs on
+# every build (cmake/coop_version.cmake), not once at configure: a cached configure-time
+# string made 0.11.3 say v0.11.2-18-gab129f5b. The header changes only with the string.
+set(_coop_version_dir "${CMAKE_CURRENT_BINARY_DIR}/coop_version")
+add_custom_target(coop_version_emu ALL
+    COMMAND "${CMAKE_COMMAND}" "-DCOOP_GIT_DIR=${LICHII_COOP_DIR}" "-DCOOP_VERSION_PREFIX="
+            "-DCOOP_VERSION_OUT=${_coop_version_dir}/coop_version.h"
+            -P "${LICHII_COOP_DIR}/cmake/coop_version.cmake"
+    BYPRODUCTS "${_coop_version_dir}/coop_version.h"
+    COMMENT "co-op version (git describe)"
+    VERBATIM)
+add_dependencies(core coop_version_emu)
+target_include_directories(core PRIVATE "${_coop_version_dir}")
 # GCC and Clang (the Linux build, issue 127): Fritchii's src/CMakeLists.txt makes -Wall,
 # -Wextra, -Wmissing-declarations, -Wshadow and -Wunused errors for everything in core. The
 # hook is built with MSVC on Windows, which never sees them, so here they stay warnings for

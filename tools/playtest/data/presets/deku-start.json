@@ -1,0 +1,20 @@
+{
+  "preset": "deku-start",
+  "version": 1,
+  "title": "Child Link at the Deku Tree entrance, 3 hearts, sword and shield",
+  "spec": {
+    "items": [
+      "Weapon_Sword_Kokiri",
+      "Weapon_Shield_Deku"
+    ],
+    "hearts": 3,
+    "max_hearts": 3,
+    "warp": {
+      "scene": "InsideTheDekuTree",
+      "entrance": "Entrance"
+    }
+  },
+  "notes": [
+    "Start of dungeon 1. The scene and start are rows of lichii/hook/coop_start_points.inc."
+  ]
+}

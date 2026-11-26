@@ -1,0 +1,31 @@
+# giant-blade B (proof-0116): stands 2.5 m west of A (x 191.93 against 194.43) facing it, watches.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+place 191.93 163.4 309.87
+wait 30
+toward 194.43 309.87 6
+wait 30
+press ZL                # recentre the camera behind B: it looks along +x, at A (shots b-giant, b-broken)
+wait 60
+mark standing
+wait 960
+mark b-giant
+wait 360
+mark b-broken
+wait 300
+mark end

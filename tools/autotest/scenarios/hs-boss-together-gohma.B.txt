@@ -1,0 +1,68 @@
+# hs-boss-together-gohma, B: the same steps as A at the same moment, half a metre to A's side (tracker row 130).
+# See hs-boss-together-gohma.A.txt.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 67.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 68.3 1.0 600
+goto 6.7 68.3 1.5 600   # through the door together: both games' own boss trigger
+mark b-in
+wait 600
+mark b-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark b-after-intro
+goto 17.0 68.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark b-trigger
+goto 12.0 68.5 1.5 600  # inside the room, 6.5 m west of her
+mark b-moved
+wait 1200
+mark b-watch
+hold ZL 30              # a seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed
+wait 120
+hold ZL+LSTICK_UP 90    # locked on: walk up to the eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit
+wait 900
+mark b-k0
+kill Enemy_DungeonBoss_Gohma   # the owner's dies; a copy's is held at 1 and dies with the owner's
+wait 120
+mark b-k1
+wait 900
+mark b-k2
+wait 1200
+mark end

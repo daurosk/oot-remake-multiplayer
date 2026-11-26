@@ -1,0 +1,35 @@
+# hs-and-gate (deku-ladder round 3): an AND-gated switch event with a guard flag. Jabu-Jabu room 1's step switch
+# (Obj_InsideJabu_Jabu_StepSwitch_A_03 at 8.5 102.5 -51.4) starts InsideJabuJabuBellyRoom01StepSwitch through
+# AND(switch.OnState, NOT InsideJabuJabuBelly_Gimmick_Onswitch_first) (tools/puppet_pack/eye_switches.py). A steps on it;
+# B waits in the room. Needs a module with the switch path (deku-ladder) and LICHII_COOP_EYE_SWITCH=1 (switches line).
+# Saves: HavePlayedEvent.InsideJabuJabuBellyRoom01StepSwitch (0x628e6ba1) and Onswitch_first (0x73b398db) 0 in both.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-and-gate -Lane 1   (~8 min)
+# PASS (B's log): "eye switch: InsideJabuJabuBellyRoom01StepSwitch: our Obj_InsideJabu_Jabu_StepSwitch_A_03 0x...
+#   OnState set ..." then "an event started after our switch's plug", no "asked the old way" (the guard flag
+#   Onswitch_first from A was held, so B's gate was still open). FAIL: "asked the old way" (guard not held, or the
+#   plug does not reach the asker).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_DEBUG_BOOL=0x73b398db,A:LICHII_COOP_CHEATS=1,LICHII_COOP_EYE_SWITCH=1
+#! timeout 480
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place 13.0 103.0 -47.0    # 6 m from the switch, in room 1
+wait 900                  # B arrives in the room too
+mark a-before
+place 8.5 104.0 -51.4     # onto the step switch (its own AI: OnState on our contact)
+wait 1500
+mark a-on-switch
+wait 600
+mark a-end

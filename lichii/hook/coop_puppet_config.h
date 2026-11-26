@@ -4,7 +4,9 @@
 // (hookshot/src/coop_hookshot.cpp) call Configure() when the puppets start.
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -35,10 +37,19 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 
 #ifdef LICHII_COOP
 // Settings() from the process's variables and the puppet pack under
-// LoadDir/<title id>, then CoopPuppet::Configure.
-void Configure();
+// LoadDir/<title id>, then CoopPuppet::Configure. perceived_safe: false when
+// the runtime cannot make a perceived puppet's null reads give 0 (issue 150,
+// hookshot/src/coop_null_page.h Armable): a pack with perception then makes
+// every puppet its quiet copy.
+void Configure(bool perceived_safe = true);
 // A coop_puppet.json is under LoadDir/<title id> (the puppet pack is installed).
 bool HasPack();
+std::map<std::uint16_t, std::uint16_t> CharacterFiles();
+// Rows 239/240/241: CharacterFiles() with a pack; without one, an empty map when Character Select has no NPC model
+// file at all (its UI-only part), nothing when it has some (unknown: picks are kept). coop_puppet_config.cpp.
+std::optional<std::map<std::uint16_t, std::uint16_t>> KnownCharacterFiles();
+// The Character Select mod's characters.json text, or empty (coop_char_ages.h ParseCharacters reads it).
+std::string CharacterListText();
 #endif
 
 }  // namespace CoopPuppetConfig

@@ -1,0 +1,52 @@
+# boss-warp-late (proof-0116, boss-warp-136 75834fd7 scenario 1, row 136/#150): B (in the Deku Tree) kills Gohma and takes the
+# container while A is in Kokiri Forest; A then arrives late (/teleport B). PASS (shots both): a-room/a-room2 the BLUE WARP up in A's
+# room and no Gohma; a-hearts: NO second container on A's floor, A's hearts = B's (b-hearts); A log "was beaten by the group, not in
+# this game: Gohma_DefeatBoss = 1 (written)".
+# SAVE (both lanes, else no Gohma body): quest Get_StoneOfForest = GoToBossRoom and her set alive, every slot:
+#   save_flags.py set <laneN-X>\autotest-save\slot_0*\progress.sav enum:0x7d776b61=0xb5df43cb bool:0x6b093b51=0
+#   bool:0x3419ccb3=0 bool:0x00c0a2f6=0 bool:0x5882768c=0   (offline\boss-away-0115-probe.ps1 does it)
+#     (before a-walk), not at a later load.
+#     FAIL: A's room empty (no warp) or Gohma in it.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the game drops her death event as played (hs-gohma-death)
+wait 120
+wait 300
+mark a-away             # A in Kokiri Forest, outside the dungeon
+wait 6120               # B's walk, intro, her trigger (b-trigger, +45 s), fight and kill
+mark a-kill
+wait 3000               # B's death event and B takes the container
+mark a-before
+chat /teleport B        # the late arrival: A comes to B in the boss room
+wait 1500
+mark a-room
+wait 300
+mark a-room2
+goto 7.5 67.2 1.5 600   # to where the container was
+wait 300
+mark a-hearts
+wait 300
+mark end

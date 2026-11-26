@@ -91,6 +91,22 @@ std::optional<Guess> Table::Nearest(std::string_view scene, const Vec3& at, int 
     return best;
 }
 
+namespace {
+// `guess` (the nearest room) is not clearly out of `room`, whose nearest placement is `room_distance` away.
+bool StillIn(int room, float room_distance, const Guess& guess) {
+    return guess.room == room || (room_distance <= kFar && room_distance - guess.distance < kMargin);
+}
+}  // namespace
+
+Where ClearlyIn(const Table& table, std::string_view scene, const Vec3& at, int room) {
+    float room_distance = 0.0f;
+    const auto guess = table.Nearest(scene, at, room, &room_distance);
+    if (!guess) {
+        return Where::unknown;
+    }
+    return StillIn(room, room_distance, *guess) ? Where::in_room : Where::other_room;
+}
+
 std::optional<int> Tracker::Update(std::uint32_t key, std::string_view scene, const Vec3& at) {
     const auto it = rooms_.find(key);
     const int was = it != rooms_.end() && it->second.scene == scene ? it->second.room : -1;
@@ -101,8 +117,7 @@ std::optional<int> Tracker::Update(std::uint32_t key, std::string_view scene, co
         return std::nullopt;
     }
     int room = guess->room;
-    if (was >= 0 && was != room && was_distance <= kFar &&
-        was_distance - guess->distance < kMargin) {
+    if (was >= 0 && StillIn(was, was_distance, *guess)) {
         room = was;  // not clearly out of the old room yet
     }
     rooms_[key] = Kept{std::string(scene), room};

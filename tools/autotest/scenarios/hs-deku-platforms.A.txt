@@ -66,7 +66,10 @@ press A
 wait 2400
 mark after
 wait 240
-place -17.5 120.2 -2.0     # deku-test: the plate's floor (3F), 3 m off it, not by the lifts on 2F
+# events-next-a-11 (test honesty, deku-platforms-b21): A stays 5.4 m off the plate (-17.5 119.6 -4.9) on the same
+# 3F floor line. At 2.9 m (-2.0) A's Link slid onto the plate between 'mid' and 'down' and raised A's lifts by A's
+# own press, so the end shots proved nothing. A is put back at its spot at 'up2', 'mid' and 'down'.
+place -17.5 120.2 0.5      # 5.4 m off the plate, same floor
 wait 240
 mark placed
 toward -29.9 3.2 6      # face the lifts (below)
@@ -77,9 +80,14 @@ wait 300
 mark up1
 wait 300
 mark up2
+place -17.5 120.2 0.5
+toward -29.9 3.2 6
 wait 900
 mark mid
+place -17.5 120.2 0.5
+toward -29.9 3.2 6
 wait 1500
 mark down
+place -17.5 120.2 0.5
 wait 600
 mark late

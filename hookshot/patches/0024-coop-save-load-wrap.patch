@@ -1,0 +1,100 @@
+From 6aa06cf71b5fa0e3ef61cb476b1974aa143b2b71 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 16 Nov 2026 01:38:18 -0900
+Subject: [PATCH] Co-op save-load wraps: every save the game loads, to the
+ module
+
+Four more wrapped game functions in patch 0005's table
+(nx2/coop_world_wraps.py WRAPS; their ids in host/hos_coop_save_load.h), for
+oot-remake-multiplayer's shared flags (its docs/flags.md "A load window").
+Sequence/OnLoadGameSaveData.module loads every save the game loads: the
+title's Continue and load list, the System menu's Load and Game Over's Try
+Again.
+- 7, 8: main+0x32c1db0 and main+0x32c2080, the Enter of its load nodes
+  SeqExecuteLoadSaveData and SeqExecuteLoadTemporarySave (vtable slot 29):
+  a save load starts.
+- 6: main+0x32d8690, the one-shot body of SeqOneShotOnloadGameSaveDataWorldMgr
+  (vtable main+0x4bb4558 slot 39), which AfterLoadSaveData.module runs after
+  the load: the save is in.
+- 9: main+0x32bbce0, the Enter of SeqExecuteAutoSaveMgrLastGameOverSave
+  (vtable slot 29), which only Game Over's graphs run: a load after it with
+  no title between is Try Again.
+All four are only called through their vtables. The module re-bases its
+shared flags on the loaded save on these, not on a guess from the flags.
+Phase 0 only reads. Nothing else changes: the wrap machinery, the checks
+(build id, first words) and the hello's bits are 0005's.
+---
+ host/hos_coop_save_load.h | 37 +++++++++++++++++++++++++++++++++++++
+ nx2/coop_world_wraps.py   | 15 +++++++++++++++
+ 2 files changed, 52 insertions(+)
+ create mode 100644 host/hos_coop_save_load.h
+
+diff --git a/host/hos_coop_save_load.h b/host/hos_coop_save_load.h
+new file mode 100644
+index 00000000..e1b2aa57
+--- /dev/null
++++ b/host/hos_coop_save_load.h
+@@ -0,0 +1,37 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   A save loaded into the game, on Hookshot (oot-remake-multiplayer, docs/flags.md "A load window").
++
++   One wrapped game function more in the one wrap table (patch 0005's nx2/coop_world_wraps.py WRAPS; the ids are in
++   the one wrap space of hos_coop_world.h). Patch 0024 adds its row and this file (Hookshot's host/hos_coop_save_load.h
++   is the same file). The module's hos_coop_wrap gets them; Hookshot announces them in HOS_COOP_WORLD_HELLO's bits. The
++   rows:
++     (6, 0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),  # pacibsp; stp x29, x30; str x19; mov x29, sp
++     (7, 0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),  # pacibsp; stp x29, x30; str x21; stp x20, x19
++     (8, 0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),  # pacibsp; stp x29, x30; mov x29, sp; adrp x8
++     (9, 0x32bbce0, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),  # pacibsp; stp x29, x30; str x19; mov x29, sp
++   Phase 0 only reads (never skips). x0 the node. Plain C. */
++#ifndef HOS_COOP_SAVE_LOAD_H
++#define HOS_COOP_SAVE_LOAD_H
++
++/* main+0x32d8690, the one-shot body of the sequence node SeqOneShotOnloadGameSaveDataWorldMgr (its vtable
++   main+0x4bb4558, slot 39, which the one-shot base main+0x32c9ae0 calls at vtable+0x138; no direct caller). The node
++   is in Sequence/AfterLoadSaveData.module, which Sequence/OnLoadGameSaveData.module runs after its
++   SeqExecuteLoadSaveData: every save the game loads, from the title's Continue and load list
++   (TitleToMainWithLoadSave), the System menu's Load (_LocalModule_bde133631675: PlusMenu_00, SystemSaveLoad_00) and
++   Game Over's Try Again (Retry: "Continue from last save."). It calls the WorldMgr's own on-load (main+0x3452050). */
++#define HOS_COOP_WRAP_SAVE_LOADED 6u
++
++/* main+0x32c1db0 and main+0x32c2080: the Enter of SeqExecuteLoadSaveData (vtable main+0x4ba6cf8 slot 29) and of
++   SeqExecuteLoadTemporarySave (vtable main+0x4ba6e40 slot 29), the two nodes of OnLoadGameSaveData.module that load
++   the save (the second, the temporary one); no direct caller. A save load starts: the game's flags are the new
++   save's from here until HOS_COOP_WRAP_SAVE_LOADED, whether Link is still read or not. */
++#define HOS_COOP_WRAP_SAVE_LOAD_START 7u
++#define HOS_COOP_WRAP_TEMP_LOAD_START 8u
++
++/* main+0x32bbce0: the Enter of SeqExecuteAutoSaveMgrLastGameOverSave (vtable main+0x4ba4a28 slot 29; no direct caller),
++   which only Game Over's graphs run: Sequence/Retry.module (Try Again) and EventToTitle.module (Quit Game, then the
++   title). A save load that comes after it with no title menu between is Game Over's Try Again. (SeqExecuteLoadSaveData
++   also runs at the game's start, BeforeInitializeCommon.module: a start with no save in then.) */
++#define HOS_COOP_WRAP_GAME_OVER_SAVE 9u
++
++#endif
+diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
+index c50e9b55..20aca8a9 100644
+--- a/nx2/coop_world_wraps.py
++++ b/nx2/coop_world_wraps.py
+@@ -37,6 +37,21 @@ WRAPS = (
+     # AI nodes). x0 the BSA, x1 the request (0x60 bytes), w2 1 when the verb changed; returns 0 when taken. A boss's
+     # move: the same sharing
+     (5, 0xc08f0, (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),   # pacibsp; sub sp, #0x1d0; stp x29, x30; str x28
++    # HOS_COOP_WRAP_SAVE_LOADED (patch 0024): the sequence node SeqOneShotOnloadGameSaveDataWorldMgr's one-shot body
++    # (vtable main+0x4bb4558 slot 39, only called through it): runs once for every save the game loads (the title, the
++    # System menu's Load, Game Over's Try Again), after the load. x0 the node. The module re-bases its shared flags on
++    # the save (a host's FLAG_RESET; oot-remake-multiplayer's docs/flags.md "A load window"). Phase 0 reads only
++    (6, 0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),  # pacibsp; stp x29, x30; str x19; mov x29, sp
++    # HOS_COOP_WRAP_SAVE_LOAD_START, ..._TEMP_LOAD_START (patch 0024): the Enter of the sequence nodes that load a save
++    # (SeqExecuteLoadSaveData, vtable main+0x4ba6cf8 slot 29) or the temporary one (SeqExecuteLoadTemporarySave, vtable
++    # main+0x4ba6e40 slot 29), only called through them: a save load starts. x0 the node. Until 6 comes, the module
++    # takes no flag change as the player's own. Phase 0 reads only
++    (7, 0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),  # pacibsp; stp x29, x30; str x21; stp x20, x19
++    (8, 0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),  # pacibsp; stp x29, x30; mov x29, sp; adrp x8
++    # HOS_COOP_WRAP_GAME_OVER_SAVE (patch 0024): the Enter of SeqExecuteAutoSaveMgrLastGameOverSave (vtable
++    # main+0x4ba4a28 slot 29, only called through it), which only Game Over's graphs run (Retry: Try Again,
++    # EventToTitle: Quit Game). A save load after it with no title menu between is Try Again. Phase 0 reads only
++    (9, 0x32bbce0, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),  # pacibsp; stp x29, x30; str x19; mov x29, sp
+ )
+ 
+ 

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cmath>
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -49,7 +50,7 @@ inline constexpr float kMiniWindowSize = 552.0f;
 inline constexpr const char* kMiniFieldWindowPane = "S_FieldMini_00";
 inline constexpr float kMiniFieldWindowSize = 960.0f;
 inline constexpr const char* kMiniRootPane = "N_MiniMap_00";
-inline constexpr std::uint64_t kFindPane = 0x8078e2b0;  // (layout, "name") -> pane, or 0
+inline constexpr std::uint64_t kFindPane = 0x76e2b0;  // main+ (MainBase() + it): (layout, "name") -> pane, or 0
 inline constexpr std::uint64_t kScreenLayout = 0x28;     // a screen's layout
 inline constexpr std::uint64_t kPaneMatrix = 0x28;       // a pane's global matrix
 inline constexpr std::uint64_t kPaneAlpha = 0x78;        // a pane's alpha with its parents' (float; run 20261114-105315:
@@ -61,9 +62,40 @@ struct Menu {
     bool menu_open = false;  // a game menu is in front
     bool map_page = false;   // the panel's Map page is shown
     std::uint64_t hud_screen = 0, panel_screen = 0;
+    // Patch 0018 (rows 63/76): how long ago the HUD screen last ran; -1 not since it was seen, or an exe whose patch
+    // 0018 does not say (then nothing is called on the screen).
+    std::int64_t hud_ran_ns_ago = -1;
+    std::uint32_t hud_refreshes = 0;  // patch 0018: HUD refreshes run for AskHudRefresh so far
+    // Patch 0018 (row 141): the screens that ran in the last 100 ms (none from an older exe).
+    std::array<std::uint64_t, 24> screens{};
+    std::uint32_t screen_count = 0;
+    bool screens_known = false;  // this exe's patch 0018 says the running screens (row 141); else none are known
+    bool Runs(std::uint64_t screen) const {
+        for (std::uint32_t i = 0; i < screen_count && i < screens.size(); ++i) {
+            if (screens[i] == screen) return true;
+        }
+        return false;
+    }
+    // The HUD screen ran within the last 100 ms (a few frames).
+    bool HudRuns() const { return hud_screen != 0 && hud_ran_ns_ago >= 0 && hud_ran_ns_ago < 100'000'000; }
 };
 // None: the exe has no patch 0018. Any thread.
 std::optional<Menu> MenuState();
+
+// Row 164 follow-up (PR #316, pr-navi-01112): the R button's item choice, the quick-switch menu. It stops the world as
+// the pause menu does, but it has no focused button, so patch 0018's menu_open never names it. Read from the game:
+// one of the screens that ran in the last 100 ms (Menu::screens) is a UIShortCutScreen (its class's vtable,
+// docs/game-ui.md "The screens co-op cares about") opening or open (the screen state every screen has).
+inline constexpr std::uint64_t kShortCutVtable = 0x4bed430;  // main+: UIShortCutScreen (guest 0x84c0d430)
+inline constexpr std::uint64_t kScreenStateAt = 0x1a6;       // u8: 0, 1 opening, 2 open, 3 closing (coop_pause_tab.h)
+inline bool ShortCutShows(std::uint64_t vtable_offset, int state) {
+    return vtable_offset == kShortCutVtable && (state == 1 || state == 2);
+}
+// Any thread. None: this exe's patch 0018 does not say the running screens.
+std::optional<bool> QuickSwitchOpen(const Menu& menu);
+// Rows 63/76: asks patch 0018's hos_coop_hud_refresh (the HUD screen's own refresh at its next update) and logs the
+// HUD copy before, and after once the refresh has run. False when this Longshot has no such export.
+bool AskHudRefresh();
 
 // A pane's box in the layout's units (x right, y down from the top left of
 // 3840 x 2160) from its global matrix and its size; none for a matrix that
@@ -116,6 +148,34 @@ struct PageWatch {
     }
 };
 inline constexpr std::uint64_t kPadY = 1ull << 3;  // Switch NpadButton Y
+
+// Row 141, the game's own top-left HUD: the player status screen's layout,
+// PlayerStatus_00 (the hearts, the magic bar and the d-pad item slots), told
+// from the other running screens by its d-pad pane. Its panes and their
+// boxes in their own units (y up from the pane's origin), from the game's
+// layouts: Pa_HeartGauge_00 1300 x 212, Pa_MpGauge_00 1256 x 155.2 and
+// Pa_AgonyStone_00 200 x 200 (centred); in Pa_GuideCross_00 (PaGuideCross_00:
+// N_All_00 at -1680,264, N_Down_00 at -84,36, Pa_Down_00 at 0,-134) the
+// bottom slot, 257.387 square centred at -1764,166. N_HeartPos_00 and
+// N_MpGauge_00 above them move with the heart rows and the magic bar, and
+// the global matrices read at each present have that in them.
+inline constexpr const char* kStatusDpadPane = "Pa_GuideCross_00";
+inline constexpr float kDpadSlot = 257.387f, kDpadDownX = -1764.0f, kDpadDownY = 166.0f;
+inline constexpr const char* kStatusHeartsPane = "Pa_HeartGauge_00";
+inline constexpr float kHeartsW = 1300.0f, kHeartsH = 212.0f;
+inline constexpr const char* kStatusMagicPane = "Pa_MpGauge_00";
+inline constexpr float kMagicW = 1256.0f, kMagicH = 155.2f;
+inline constexpr const char* kStatusAgonyPane = "Pa_AgonyStone_00";
+inline constexpr float kAgonySize = 200.0f;
+
+// The bottom of the game's own top-left HUD this frame (the lowest of its
+// shown hearts, magic bar, d-pad bottom slot and Stone of Agony), as a
+// fraction of the picture height from its top (CoopHudLayout::HudBottom);
+// while it cannot be read (faded out, its screen stopped behind a menu), the
+// last one read (CoopHudLayout::Hold). None until the player status screen
+// has been found and read once (an exe without patch 0018's screens). Any
+// thread.
+std::optional<double> GameHudBottom();
 
 // On the game's thread with a context that may call (hos_coop_frame's): finds
 // the map panes in the screens' layouts once (and again for a new screen),

@@ -1,0 +1,3 @@
+# hs-title-menu, both games: A on Host: the game's press, then Hookshot's menu on the Multiplayer tab's Host page.
+press A
+wait 150

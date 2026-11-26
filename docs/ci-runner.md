@@ -3,7 +3,7 @@
 The Build workflow's `windows` job (MSVC build, ctest, kit script tests) can run on
 the owner's PC instead of GitHub's `windows-latest`, which queues and takes 12 to
 22 minutes. Everything else stays on GitHub: linux jobs (no WSL here),
-python-tools, content guard, release attest, Fritchii autobuild.
+python-tools, content guard, release attest.
 
 ## Who can use it
 

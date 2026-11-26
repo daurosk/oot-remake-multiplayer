@@ -2,9 +2,8 @@
 # Room 1 lifts (Banc DodongoCavern_Static): Obj_DodongoCave_MoveFloor_A_01 6aaec6828516aa4b (10.5 96.5 -23.0),
 # 51802f1732232227 (-10.5 96.5 -23.0), 765ad7b13c763297 (0.0 96.5 -12.6); _A_02 562f2db3e8559542 (10.5 100.0 -23.0);
 # GroundControlActor_SimpleMoveTo d0fca64033c988bf (10.5 101.0 -19.0). The lifts run their own AI
-# (UpDownLiftMove: a physics slider and a wait counter). Hookshot has no counter cave yet (platforms-b2), so here the clock
-# finder decides which word is their clock; expect NO "pause counter" lines on Hookshot.
-# B stands on the lift 765ad7b13c763297 (0.0 96.5 -12.6), 11.6 m from A's. Both get there at the same time ("placed"), then shots every 3 s and at each mark.
+# (UpDownLiftMove: a physics slider and a wait counter). On Hookshot the pause counters follow them (see the misc-fails-0115 note).
+# B stands on A's lift 51802f1732232227 (-10.5 96.5 -23.0), 0.8 m east of A (it stood on 765ad7b13c763297 until bigrun-0115). Both get there at the same time ("placed"), then shots every 3 s and at each mark.
 # Expect (both logs; LICHII_COOP_DEBUG_OBJECTS shows the "+ Obj_DodongoCave_MoveFloor_A_01" lines):
 #  - A: "coop: platforms: <hash> Obj_DodongoCave_MoveFloor_A_01: clock <where>, <rate> a second, cycle <c>: ours to send"
 #    (or for GroundControlActor_SimpleMoveTo), within ~2 s of "placed".
@@ -14,6 +13,12 @@
 #    under A's Link against the same lift in B's view). FAIL: keep both logs (the word picked is in them).
 #  - Inconclusive if no "+ Obj_DodongoCave_MoveFloor" line (the room did not load at the place: then
 #    warp to DodongoCavern EntrancePos and walk north by hand as an ALEX TEST).
+# misc-fails-0115 (bigrun-0115 g3/hs-platforms-dodongo/20261117-210803): Hookshot HAS the pause counters now (patch
+# 0005's world hook): A logged "pause counter <key> loops every 20.9 s" for each lift and B wrote each one once ("3.4 s
+# off player 1's: frames left 178.8 -> 1232.7"); no clock-word line came, so the old "ours to send" / "following player
+# 1's clock" expects could not match. The shots could not decide either: A and B stood on different lifts facing
+# different ways. Now B stands on A's lift, 0.8 m east of A, both facing north (toward the entrance), so at one mark
+# both games show the same lift from the same place (proofs.txt: hs-platforms-dodongo-A/-B, kind same, s3 and s4).
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1
@@ -31,8 +36,10 @@ wait 300
 press A
 wait 2400
 mark after
-place 0.0 97.6 -12.6
-wait 240
+place -9.7 97.6 -23.0           # on A's lift (51802f1732232227), 0.8 m east of A
+wait 10
+toward -9.7 40.0 6
+wait 224
 mark placed
 wait 600
 mark s1

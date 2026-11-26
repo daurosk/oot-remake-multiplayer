@@ -1,0 +1,108 @@
+# scrub-near2 (#144): B solves its own puzzle (A's moves) and finishes One's talk while A's talk is open (see scrub-near2.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 240
+mark aim-two
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark two
+toward -34.0 39.6 10     # face Three
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark three
+goto -24.0 29.5 0.6 240
+toward -23.7 40.0 10     # face One
+wait 60
+mark aim-one
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One: the talk comes when Link is near
+mark at-one
+mark talk
+wait 300                 # 5 s: A's talk is surely open
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark talk-end
+goto -27.8 20.3 1.0 600  # back to the room centre
+mark end

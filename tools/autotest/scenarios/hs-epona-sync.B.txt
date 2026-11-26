@@ -1,0 +1,57 @@
+# hs-epona-sync (Hookshot), B: the owner of the horse. Every player has their own Epona, seen by the
+# others while nobody rides her too (PLAYER_RIDE free, protocol 17; docs/puppet.md "Epona seen while
+# nobody rides her"). No script can play Epona's Song, so B gets on the field's Epona first and wins
+# her (Get_Epona Complete) while riding: from then on she is B's own and is sent free after B gets off.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-epona-sync
+# Pass lines (hookshot_log-B.txt / -A.txt):
+#   b-rides      B min=1 coop: ride: we ride Animal_Epona_Adult
+#   b-owns       B min=1 coop: ride: Epona is ours \(Get_Epona Complete\)
+#   b-free       B min=1 coop: ride: our Epona is out with nobody on her
+#   b-on-again   B min=1 coop: ride: our Epona has us on her again
+#   a-rides      A min=1 coop: ride: P\d+ rides Animal_Epona_Adult
+#   a-waits      A min=1 coop: ride: P\d+'s Animal_Epona_Adult waits, nobody on her \(the same copy\)
+#   a-same-copy  A min=1 coop: ride: P\d+ rides Animal_Epona_Adult \(horse copy CoopRide_Epona, the same copy\)
+#   a-one-copy   A: 'coop: spawn: CoopRide_Epona: create copy' exactly once (count by hand: a second one is a blink)
+# INCONCLUSIVE, not FAIL: b-rides 0 (B never got on), or b-free 0 with 'our Epona is gone' right after
+# the setenum (the game took the field's Epona away at Complete: then only the song brings her, owner check).
+# Shots (both games): by-horse, mounted, gallop, jump, dismounted (the horse stands alone in A's window,
+# B's puppet beside her), walked-away (B 8 m off, the horse still there), mounted-again, end.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+setflag Sequence_IsChildhood 0  # adult AFTER the save is loaded (run.ps1 loads it first): set at the
+# title, the save's load put the child age back and the warp landed in HyruleField_Child
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the warp lands
+mark field
+place -99.0 151.0 264.5 # beside Epona (1.5 m east of her)
+wait 240
+toward -100.47 264.55 6 # face her
+wait 30
+mark by-horse
+press A 12              # get on
+wait 240
+mark mounted
+setenum 0x92431c55 Complete   # Epona won while B sits on her: she is B's own from here
+wait 120
+stick 0 1.0 180         # gallop
+press A 6               # a carrot
+mark gallop
+stick 0 1.0 180         # on over the field (a fence here is jumped by her own AI)
+mark jump
+wait 240                # let her stop
+press A 12              # get off: she stays, sent free
+wait 300
+mark dismounted
+stick 1.0 0 90          # walk away from her on foot
+wait 120
+mark walked-away
+stick -1.0 0 90         # and back
+wait 60
+press A 12              # get on again: the others keep the same copy
+wait 240
+mark mounted-again
+stick 0 0.8 120
+wait 300
+mark end

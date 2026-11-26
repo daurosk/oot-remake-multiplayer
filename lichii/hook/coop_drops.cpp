@@ -5,6 +5,7 @@
 // glue at the end is built into the emulator only (LICHII_COOP).
 
 #include "coop_drops.h"
+#include "coop_caller_orders.h"
 
 #include <algorithm>
 #include <array>
@@ -88,6 +89,23 @@ bool SharesPlacedPickup(std::string_view name) {
     return IsDrop(name) && name != "Obj_Rupee_Silver";
 }
 
+bool IsSupply(std::string_view name) {
+    // The kinds DropGlobalParam's lottery picks from the player's own stock (its DekuStickActor,
+    // DekuNutActor, DekuSeedActor, ArrowActor, BombActor, BombchuActor and the heart and magic
+    // refills it weighs by what the player is missing). Rupees and fairies are the same roll for all.
+    constexpr std::string_view kPrefixes[] = {"Obj_Heart", "Obj_MagicJar_", "Obj_ArrowBundle_", "Obj_Arrow_Fire",
+                                              "Obj_Bomb",  "Obj_DekuNut",   "Obj_DekuSeed",     "Obj_DekuStick"};
+    if (!IsDrop(name)) {
+        return false;
+    }
+    for (const std::string_view p : kPrefixes) {
+        if (name.starts_with(p)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- Sync
 
 void Sync::Receive(const proto::Message& message) {
@@ -105,6 +123,7 @@ void Sync::Reset() {
     scene_.clear();
     first_walk_ = true;
     old_.clear();
+    own_.clear();
     drops_.clear();
     bound_.clear();
     deleting_.clear();
@@ -159,11 +178,52 @@ bool Sync::Beats(const Drop& a, const Drop& b) {
 
 bool Sync::Beaten(const Drop& d) const {
     for (const auto& [id, other] : drops_) {
-        if (id != d.id && Matches(other, d) && Beats(other, d)) {
+        if (id != d.id && !other.personal && Matches(other, d) && Beats(other, d)) {
             return true;
         }
     }
     return false;
+}
+
+bool Sync::Clash(const Drop& a, const Drop& b) {
+    return Matches(a, b) && a.name != b.name && (IsSupply(a.name) || IsSupply(b.name));
+}
+
+void Sync::Personal(Drop& d, std::uint64_t now_us, std::vector<Remove>& removes) {
+    if (d.personal) {
+        return;
+    }
+    if (self_ != 0 && d.id.maker == self_ && d.address != 0 && d.key == 0) {
+        // Ours: the game rolled it from our player's own stock. Left lying in our game alone.
+        own_.insert(d.address);
+        bound_.erase(d.address);
+        d.address = 0;
+        d.state = State::lost;
+        d.done_us = now_us;
+        ++kept_own_;
+        Note(Tag(d.id) + " " + d.name + ": our player's own supply roll (another game rolled another kind), kept here only");
+    } else {
+        // Another game's (or ours already gone): never shown here; a copy on its way or made goes.
+        if (d.state == State::live) {
+            Lose(d, nullptr, State::lost, now_us, removes);
+        }
+        Note(Tag(d.id) + " " + d.name + ": its player's own supply roll (another kind rolled here or elsewhere), not made here");
+    }
+    d.personal = true;
+}
+
+void Sync::Sort(Drop& x, std::uint64_t now_us, std::vector<Remove>& removes) {
+    for (auto& [id, other] : drops_) {
+        if (id == x.id || !Clash(x, other)) {
+            continue;
+        }
+        if (IsSupply(other.name)) {
+            Personal(other, now_us, removes);
+        }
+        if (IsSupply(x.name)) {
+            Personal(x, now_us, removes);
+        }
+    }
 }
 
 void Sync::Bind(Drop& d, std::uint64_t address) {
@@ -228,6 +288,11 @@ void Sync::Learn(const proto::DropSpawn& spawn, std::uint64_t now_us,
     d.got_us = now_us;
     d.wait_us = (spawn.flags & proto::drop_spawn::again) != 0 ? 0 : kAdoptWaitUs;
     Drop& x = drops_.emplace(spawn.id, std::move(d)).first->second;
+    // Row 168: a supply roll against another kind for the same thing is its own player's (both directions).
+    Sort(x, now_us, removes);
+    if (x.personal) {
+        return;  // another game's supply roll of another kind than a roll here or elsewhere: never made here
+    }
     if (Beaten(x)) {
         // A better roll for the same thing is known: this one never shows.
         x.state = State::lost;
@@ -235,7 +300,7 @@ void Sync::Learn(const proto::DropSpawn& spawn, std::uint64_t now_us,
         return;
     }
     for (auto& [id, other] : drops_) {
-        if (other.state == State::live && id != x.id && Matches(x, other) && Beats(x, other)) {
+        if (other.state == State::live && !other.personal && id != x.id && Matches(x, other) && Beats(x, other)) {
             if (other.id.maker == self_) {
                 x.wait_us = 0;  // our own roll was there: nothing to wait for
             }
@@ -489,6 +554,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         return true;
     });
     std::erase_if(old_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
+    std::erase_if(own_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
     // A delete that never came true (the director had let go of the copy
     // the moment we left it to it): the remover is asked. The actor stays
     // here so it is never taken for a roll of ours.
@@ -507,7 +573,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // Actors that are new on the list.
     for (const Seen& s : seen) {
-        if (old_.count(s.address) != 0 || bound_.count(s.address) != 0 ||
+        if (old_.count(s.address) != 0 || own_.count(s.address) != 0 || bound_.count(s.address) != 0 ||
             deleting_.count(s.address) != 0 || !Finite(s.position)) {
             continue;
         }
@@ -584,6 +650,24 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;
         }
         if (self == 0) {
+            continue;
+        }
+        // Row 168: a roll of another kind for the same thing is known (both directions, one a supply kind).
+        bool keep_own = false;
+        for (auto& [id, other] : drops_) {
+            if (other.personal || !Clash(mine, other)) {
+                continue;
+            }
+            if (IsSupply(other.name)) {
+                Personal(other, now_us, removes);  // their supply roll: never made here, ours is not beaten by it
+            }
+            keep_own = keep_own || IsSupply(mine.name);
+        }
+        if (keep_own) {
+            // Ours, made from our player's own stock: left lying in our game alone, never told, matched or taken.
+            own_.insert(s.address);
+            ++kept_own_;
+            Note("own " + s.name + " kept: our player's own supply roll (another game rolled another kind)");
             continue;
         }
         if (Beaten(mine)) {
@@ -794,7 +878,7 @@ constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
 constexpr u64 kDropKey = u64{1} << 62;  // the director's keys for drops
-constexpr int kCallerOrder = 40;        // after the mover (30)
+constexpr int kCallerOrder = CoopCallerOrders::kDrops;        // after the mover (30)
 
 std::string Env(const char* name) {
 #ifdef _WIN32

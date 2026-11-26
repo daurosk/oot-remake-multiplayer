@@ -1,0 +1,26 @@
+# hs-step-firston, B (see hs-step-firston.A.txt): beside the Deku web room's step switch, facing it; never steps on it.
+#! noload
+#! start coop: test warp done
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place -13.8 81.0 -9.0     # 3.6 m west of the switch
+wait 240
+toward -10.2 -9.0 20
+wait 600
+mark b-before
+wait 1500                 # A steps on the switch about now
+mark b-event
+wait 600
+mark b-end

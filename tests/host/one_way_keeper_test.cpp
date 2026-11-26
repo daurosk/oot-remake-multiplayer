@@ -188,6 +188,89 @@ TEST_CASE("one-way keeper: a refused write is tried again, a write on its way is
   CHECK(k.stats().restores == 1);
 }
 
+TEST_CASE("one-way keeper: a map the game takes back right after each write is left to it after kMaxQuickUndos (row 140)") {
+  Store s = dungeon();
+  OneWayKeeper k = given_map(s);
+  for (int n = 0; n < OneWayKeeper::kMaxQuickUndos; ++n) {
+    s.values[kDekuMap] = 0;  // the first drop, then the game's own copy undoing our write a moment later
+    play(k, s);
+    CHECK(s.values[kDekuMap] == 1);
+    play(k, s, 2);
+  }
+  CHECK(k.stats().restores == OneWayKeeper::kMaxQuickUndos);
+  s.values[kDekuMap] = 0;  // and again, from the game's own copy
+  const int writes = s.writes;
+  play(k, s, 600);
+  CHECK(s.values[kDekuMap] == 0);
+  CHECK(s.writes == writes);
+  CHECK(k.stats().left == 1);
+  CHECK(k.take_left() == std::vector{kDekuMap});
+  CHECK(k.take_left().empty());
+  // The game gives it again (a new get): kept again, with a fresh count.
+  s.values[kDekuMap] = 1;
+  play(k, s);
+  s.values[kDekuMap] = 0;
+  play(k, s);
+  CHECK(s.values[kDekuMap] == 1);
+  CHECK(k.stats().restores == OneWayKeeper::kMaxQuickUndos + 1);
+}
+
+TEST_CASE("one-way keeper: a drop at each room load (issue 146) is put back in each room, never left (row 140)") {
+  Store s = dungeon();
+  OneWayKeeper k = given_map(s);
+  CHECK_FALSE(k.take_hud_refresh());
+  constexpr int kDrops = 10;
+  for (int n = 0; n < kDrops; ++n) {
+    k.frame(s, false, kDeku);  // the next room
+    play(k, s);
+    s.values[kDekuMap] = 0;
+    play(k, s);
+    CHECK(s.values[kDekuMap] == 1);
+    CHECK(k.take_hud_refresh());  // once in each room
+    play(k, s, OneWayKeeper::kWriteWait + 1);
+  }
+  CHECK(k.stats().restores == kDrops);
+  CHECK(k.stats().left == 0);
+  CHECK(k.take_left().empty());
+}
+
+TEST_CASE("one-way keeper: drops far apart in one room are left after kMaxQuickUndos, one HUD refresh (row 183)") {
+  // proyectskye: the map flickered "like equipping and unequipping" after it was picked up: a drop that came later
+  // than the old window started the count again, so it was written back with a HUD refresh forever.
+  for (const FlagKey key : {kDekuMap, kDekuCompass}) {
+    CAPTURE(key.hash);
+    Store s = dungeon();
+    OneWayKeeper k({kDekuMap, kDekuCompass});
+    play(k, s);
+    s.values[key] = 1;  // the chest
+    play(k, s);
+    int refreshes = 0;
+    for (int n = 0; n < 20; ++n) {
+      s.values[key] = 0;
+      play(k, s);
+      if (k.take_hud_refresh()) ++refreshes;
+      play(k, s, OneWayKeeper::kWriteWait + 60);  // long after the write landed
+    }
+    CHECK(k.stats().restores == OneWayKeeper::kMaxQuickUndos);
+    CHECK(k.stats().left == 1);
+    CHECK(refreshes == 1);
+    CHECK(s.values[key] == 0);
+    CHECK(k.take_left() == std::vector{key});
+  }
+}
+
+TEST_CASE("one-way keeper: a write refused kMaxRefused times in a row is left, not tried every frame (row 140)") {
+  Store s = dungeon();
+  OneWayKeeper k = given_map(s);
+  s.refused.insert(kDekuMap);
+  s.values[kDekuMap] = 0;
+  play(k, s, OneWayKeeper::kMaxRefused + 5);
+  CHECK(k.stats().failures == static_cast<std::uint64_t>(OneWayKeeper::kMaxRefused));
+  CHECK(k.stats().left == 1);
+  play(k, s, 300);
+  CHECK(k.stats().failures == static_cast<std::uint64_t>(OneWayKeeper::kMaxRefused));
+}
+
 TEST_CASE("one-way keeper: with a clock the title screen is real time, not presented frames") {
   Store s = dungeon();
   OneWayKeeper k({kDekuMap});

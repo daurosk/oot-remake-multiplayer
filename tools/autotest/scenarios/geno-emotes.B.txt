@@ -1,0 +1,64 @@
+# geno-pickup emotes (B side, see A)
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 100
+chat /wave
+wait 30
+mark b-own-wave
+wait 210
+chat /yes
+wait 30
+mark b-own-yes
+wait 210
+chat /no
+wait 30
+mark b-own-no
+wait 210
+chat /look
+wait 30
+mark b-own-look
+wait 210
+chat /here
+wait 30
+mark b-own-here
+wait 60
+mark b-own-here-navi
+wait 150
+chat /wow
+wait 30
+mark b-own-wow
+wait 210
+chat /emote
+wait 60
+mark b-own-emote-list
+wait 700
+wait 240
+mark b-wave
+wait 240
+mark b-yes
+wait 240
+mark b-no
+wait 240
+mark b-look
+wait 240
+mark b-here
+wait 240
+mark b-wow
+wait 240
+mark b-emote-list
+mark end

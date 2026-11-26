@@ -66,6 +66,18 @@ bool IsDrop(std::string_view name);
 // placed silver rupee: the dungeon key path removes that one (docs/items.md).
 bool SharesPlacedPickup(std::string_view name);
 
+// Row 168: a drop the game rolls from its OWN player's stock (the game's
+// GameParameter/DropGlobalParam: DepletedInfoData raises an item's chance
+// while that player runs low, with a bad-luck count per player): recovery
+// hearts, magic jars, arrows, bombs, bombchus, nuts, seeds and sticks. Two
+// games' rolls for the same pot differ by what each player has. So when two
+// rolls for the same thing are of different kinds and one (or both) is a
+// supply kind, that supply roll is its own player's: kept in its maker's game
+// only, never made in another game (nobody else can take it), and out of the
+// contest; the other roll is decided between the games as before. A stick for
+// the torches when that player has none stays theirs whoever won the pot.
+bool IsSupply(std::string_view name);
+
 // One drop actor of one walk.
 struct Seen {
     std::uint64_t address = 0;
@@ -142,6 +154,7 @@ public:
     std::size_t Live() const;       // drops this game shows or is making
     std::size_t Known() const { return drops_.size(); }
     std::size_t Refused() const { return refused_; }  // own rolls deleted
+    std::size_t KeptOwn() const { return kept_own_; }  // own supply rolls kept as ours (row 168)
     std::size_t Adopted() const { return adopted_; }  // own rolls kept as another's
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
@@ -160,6 +173,9 @@ private:
         Vec3 position{};  // where it is now
         std::uint64_t time_us = 0;  // its maker's first sight
         bool owned = false;         // its maker owns what dropped it
+        // Row 168: a supply roll (IsSupply) that clashed with another kind for the same thing: its own
+        // player's, out of the contest; ours is left in our game alone, another game's is never made here.
+        bool personal = false;
         State state = State::live;
         std::uint64_t address = 0;  // our actor of it
         std::uint64_t got_us = 0;   // when we learned of it
@@ -221,6 +237,14 @@ private:
     std::uint64_t last_now_ = 0;  // `now` never goes back inside Tick
     bool first_walk_ = true;
     std::set<std::uint64_t> old_;  // on the list at the first walk of a scene
+    // Row 168: our own supply rolls that lost to another kind (IsSupply): our
+    // player's own, left alone while listed, never told or matched again.
+    std::set<std::uint64_t> own_;
+    // Row 168: two rolls for the same thing (Matches) of another kind, one or both a supply kind.
+    static bool Clash(const Drop& a, const Drop& b);
+    // Marks every supply roll that clashes with `x` (x itself or the other) personal.
+    void Sort(Drop& x, std::uint64_t now_us, std::vector<Remove>& removes);
+    void Personal(Drop& d, std::uint64_t now_us, std::vector<Remove>& removes);
     std::map<coop::protocol::ObjectId, Drop> drops_;
     std::map<std::uint64_t, coop::protocol::ObjectId> bound_;  // actor to drop
     std::map<std::uint64_t, std::pair<std::string, std::uint64_t>> deleting_;  // actor: name, since
@@ -244,6 +268,7 @@ private:
     double tokens_ = 0.0;
     std::uint64_t tokens_at_ = 0;
     std::size_t refused_ = 0;
+    std::size_t kept_own_ = 0;
     std::size_t adopted_ = 0;
     std::vector<std::string> notes_;
 

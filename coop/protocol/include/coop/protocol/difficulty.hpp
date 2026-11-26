@@ -128,4 +128,30 @@ constexpr DifficultyValues difficulty_in_force(const DifficultyChoice& choice, s
   return preset_difficulty(choice.preset);
 }
 
+// (Navi) New Game+ (lichii/hook/coop_ngplus.h): each level after Ganon is
+// beaten multiplies the values in force, on top of the players' or the
+// host's: enemy and boss life by 1 + 0.5 x level, the damage they deal by
+// 1 + 0.25 x level; the number of enemies stays. Kept within every end
+// (valid_difficulty), so the codec takes it. Level 0: unchanged.
+inline constexpr std::uint8_t kMaxNgPlus = 9;
+inline constexpr std::uint16_t kNgPlusHpStep = 50;
+inline constexpr std::uint16_t kNgPlusDamageStep = 25;
+
+constexpr DifficultyValues ngplus_difficulty(DifficultyValues v, std::uint8_t level) {
+  if (level == 0) return v;
+  const unsigned l = level < kMaxNgPlus ? level : kMaxNgPlus;
+  auto grown = [l](std::uint16_t pct, unsigned step, std::uint16_t least, std::uint16_t most) {
+    const unsigned to = static_cast<unsigned>(pct) * (100u + step * l) / 100u;
+    return static_cast<std::uint16_t>(std::clamp<unsigned>(to, least, most));
+  };
+  v.hp_pct = grown(v.hp_pct, kNgPlusHpStep, kMinHpPct, kMaxHpPct);
+  v.damage_pct = grown(v.damage_pct, kNgPlusDamageStep, kMinDamagePct, kMaxDamagePct);
+  v.boss_hp_pct = grown(v.boss_hp_pct, kNgPlusHpStep, kMinHpPct, kMaxBossHpPct);
+  v.boss_damage_pct = grown(v.boss_damage_pct, kNgPlusDamageStep, kMinDamagePct, kMaxBossDamagePct);
+  return v;
+}
+static_assert(ngplus_difficulty({100, 100, 100, 100, 100}, 1) == DifficultyValues{150, 125, 100, 150, 125});
+static_assert(ngplus_difficulty({300, 200, 200, 400, 160}, 9) == DifficultyValues{500, 400, 200, 1600, 400});
+static_assert(ngplus_difficulty({75, 50, 100, 75, 50}, 0) == DifficultyValues{75, 50, 100, 75, 50});
+
 }  // namespace coop::protocol

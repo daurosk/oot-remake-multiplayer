@@ -183,4 +183,32 @@ JoinNonce random_nonce() {
   return nonce;
 }
 
+
+bool is_same_network_ipv4(std::uint32_t ipv4) {
+  const std::uint32_t a = ipv4 >> 24, b = (ipv4 >> 16) & 255u;
+  return a == 10 || (a == 172 && (b & 0xF0u) == 16) || (a == 192 && b == 168) || (a == 169 && b == 254);
+}
+
+std::string_view answer_password(std::string_view typed, std::uint32_t host_ipv4) {
+  return typed.empty() && is_same_network_ipv4(host_ipv4) ? kSameNetworkPassword : typed;
+}
+
+std::string public_join_password(std::string_view room) {
+  std::string out(kPublicPasswordTag);
+  for (const char c : room) {
+    out.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
+  }
+  return out;
+}
+
+bool is_public_join_password(std::string_view password) {
+  if (password.size() < kPublicPasswordTag.size()) return false;
+  for (std::size_t i = 0; i < kPublicPasswordTag.size(); ++i) {
+    const char c = password[i];
+    const char lower = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    if (lower != kPublicPasswordTag[i]) return false;
+  }
+  return true;
+}
+
 }  // namespace coop::protocol

@@ -16,14 +16,19 @@ mark after
 give PouchData.Item_ZeldaLetter.StockNum
 wait 60
 give IsGet.Item_ZeldaLetter
+place -41.2 110.1 -16.0    # trail side, 3 m from the gate (the warp lands 100 m away: header in A)
+wait 120
+toward -42.36 -13.02 10
+press ZL 10
 mark b-before
 goto -42.4 2.0 1.5 300     # into the village before the letter: the gate should stop B
 mark b-stopped
 goto -41.2 -16.0 1.5 300   # back to the start
-wait 2100                  # A shows the letter (talk, then ZR)
+wait 2700                  # A shows the letter (talk, then ZR, then the rest of the talk)
 toward -42.36 -13.02 10
 press ZL 10
-mark open
+wait 60
+mark open                  # B's own view of the gate: open (proofs hs-kak-letter-B)
 wait 300
 mark b-walk
 goto -42.4 2.0 1.5 600     # through the gate now

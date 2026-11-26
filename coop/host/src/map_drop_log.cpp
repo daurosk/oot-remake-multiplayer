@@ -60,6 +60,26 @@ void MapDropLog::note_our_write(FlagKey key, std::uint32_t value, std::string_vi
                        " (" + std::string(by) + ")");
 }
 
+void MapDropLog::game_reset(std::string_view what) {
+  const std::uint64_t now = clock_();
+  std::lock_guard lock(mutex_);
+  note_locked(now, std::string(what));
+  reset_ = Event{now, std::string(what)};
+  if (!held_) return;
+  char after[32];
+  std::snprintf(after, sizeof after, "%.1f s", static_cast<double>(now - held_->at) / 1e6);
+  for (std::string& text : held_->lines) {
+    info_.push_back(std::move(text) + "; " + after + " later: " + std::string(what) +
+                    ": the game's own clear of its flags, no drop in play");
+  }
+  held_.reset();
+}
+
+std::vector<std::string> MapDropLog::take_info() {
+  std::lock_guard lock(mutex_);
+  return std::exchange(info_, {});
+}
+
 void MapDropLog::set_menu(bool menu_open, bool map_page) {
   const std::uint64_t now = clock_();
   std::lock_guard lock(mutex_);
@@ -113,12 +133,19 @@ std::string MapDropLog::context(std::uint64_t now, std::optional<FlagKey> key, s
   return out;
 }
 
-std::vector<std::string> MapDropLog::frame(FlagStore& store, std::optional<std::string_view> scene, bool in_play,
+std::vector<std::string> MapDropLog::frame(FlagStore& store, const std::optional<std::string_view>& scene, bool in_play,
                                            std::optional<std::array<float, 3>> link) {
   const std::uint64_t now = clock_();
   std::vector<std::string> lines;
   std::lock_guard lock(mutex_);
   prune(now);
+  if (held_ && now - held_->at > kHoldUs) {
+    // Nothing said why in time: the warning it always was.
+    for (std::string& text : held_->lines) {
+      lines.push_back(std::move(text) + "; no save load and no title followed in 3 s");
+    }
+    held_.reset();
+  }
   if (in_play != in_play_) {
     note_locked(now, in_play ? "load ended" : "load started (a room or scene change, or the title)");
     in_play_ = in_play;
@@ -144,11 +171,12 @@ std::vector<std::string> MapDropLog::frame(FlagStore& store, std::optional<std::
     }
   }
   const std::string_view where = scene ? *scene : std::string_view("(no scene)");
+  std::vector<std::string> drops;  // this frame's
   if (dropped.size() > kBatch) {
     // Many at once: a save load or a reset of the whole save, one line.
     std::string names;
     for (const FlagKey key : dropped) names += (names.empty() ? "" : ", ") + std::string(item_name(key));
-    lines.push_back("coop: map-drop: " + std::to_string(dropped.size()) + " map and compass flags 1 -> 0 at once (" +
+    drops.push_back("coop: map-drop: " + std::to_string(dropped.size()) + " map and compass flags 1 -> 0 at once (" +
                     names + ")" + context(now, std::nullopt, where, in_play, link));
   } else {
     for (const FlagKey key : dropped) {
@@ -156,11 +184,27 @@ std::vector<std::string> MapDropLog::frame(FlagStore& store, std::optional<std::
       if (cap.lines < kLinesPerFlag) {
         ++cap.lines;
         if (cap.lines == kLinesPerFlag) cap.summary_at = now;
-        lines.push_back(line(now, key, item_name(key), where, in_play, link) +
+        drops.push_back(line(now, key, item_name(key), where, in_play, link) +
                         (cap.lines == kLinesPerFlag ? " (more drops of this flag: one summary a minute)" : ""));
       } else {
         ++cap.hidden;
       }
+    }
+  }
+  if (in_play) {
+    for (std::string& text : drops) lines.push_back(std::move(text));  // a drop in play: a warning at once
+  } else if (!drops.empty()) {
+    // Row 269: out of play it may be the game's own clear at a save load or the title, which the game says a
+    // moment later (or said just before).
+    if (reset_ && now - reset_->at <= kHoldUs) {
+      for (std::string& text : drops) {
+        info_.push_back(std::move(text) + "; " + reset_->what + " (" + ago(now, reset_->at) +
+                        "): the game's own clear of its flags, no drop in play");
+      }
+    } else if (held_) {
+      for (std::string& text : drops) held_->lines.push_back(std::move(text));  // (the same wait)
+    } else {
+      held_ = Held{now, std::move(drops)};
     }
   }
   for (auto& [key, cap] : caps_) {

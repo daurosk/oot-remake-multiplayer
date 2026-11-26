@@ -1,0 +1,48 @@
+# bomb-handover (proof-0116, native puppets phase 2, reports/native-puppets-b.md proof job steps 1 + 4):
+# LICHII_COOP_SPAWN=1 LICHII_COOP_BOMB_SHARE=1 on both. PASS (shots both):
+#  b-holds = A's screen shows the lit bomb in B's puppet's hands, A's own bomb gone; blast = ONE explosion each, at B's hands;
+#  logs B BOMB_TAKE + HANDOVER_STATE, A OBJECT_OWNER 2, one exploded remove. Stash (unlit): b-hud-before/after B Bomb +1,
+#  A's count unchanged (a-hud), bomb gone on both, no blast; A log remove reason 4.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_SPAWN=1,LICHII_COOP_BOMB_SHARE=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 540
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+give bombs
+wait 60
+assign Bomb
+wait 60
+place 197.93 163.4 309.87
+wait 30
+toward 196.93 309.87 6
+press ZR
+wait 60
+press A
+wait 30
+mark a-put-down
+place 200.0 163.4 309.87
+wait 60
+mark a-away
+wait 90
+mark b-holds
+wait 150
+mark blast
+wait 60
+mark blast2
+wait 600
+mark a-hud
+wait 1200
+mark end

@@ -28,6 +28,15 @@ typedef struct HosCoopCall {
     float s0;
 } HosCoopCall;
 
+/* One of the Insert menu's settings (host/control.h HosControlSetting's fields): its key in the options file, its name
+   and the value as the menu shows them, its tab; the value and its range; restart: it applies at the next start;
+   fixed: nothing to choose on this PC. */
+typedef struct HosCoopSetting {
+    char key[32], name[48], text[64], tab[16];
+    int value, lo, hi, step;
+    int restart, fixed;
+} HosCoopSetting;
+
 typedef struct HosCoopApi {
     uint32_t version;             /* HOS_COOP_API_VERSION */
     uint32_t size;                /* sizeof(HosCoopApi) */
@@ -56,6 +65,14 @@ typedef struct HosCoopApi {
        0 when they do not fit. Only with the ctx of a hook that may call(), for the next call made with it. With it,
        call() also points x8 (where a function puts a result it returns in memory) at 128 free bytes of that stack. */
     uint64_t (*scratch)(void *ctx, const void *data, size_t n);
+    /* Added with the pause menu's Settings tab (check size covers it): the Insert menu's settings, as the control
+       bridge has them (host/control.h HosControlSetting, rx_backend.c rx_control_setting). setting: the index-th row,
+       to list them (0 past the last). setting_set: that key to `value`, as the menu's Left and Right do (clamped to
+       its range, the Quality preset to Custom, a restart noted, the options file saved): 1 set, 0 no such row (or no
+       key), -1 nothing to choose on this PC, -2 no step of a list row reaches value (left as it was); *out its row
+       after when not 0. Any thread. */
+    int (*setting)(int index, HosCoopSetting *out);
+    int (*setting_set)(const char *key, int value, HosCoopSetting *out);
 } HosCoopApi;
 
 /* The module's exports (extern "C"). */

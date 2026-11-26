@@ -1,0 +1,35 @@
+# hs-seed-wall (Hookshot, issue 166): the spark and the landing sound where the other player's seed hits a
+# wall IN VIEW. hs-seed never showed a landing: B's seeds flew ~105 m from the Graveyard spot (reason 3 after
+# ~4 s, bigrun-0117 g2). Here both stand in the Deku Tree's entrance room facing the map chest, which stands
+# against the wall (hs-chest-other: chest front 6.51 7.25, the wall behind it at ~7.6 8.4). B shoots from 4.4
+# 5.1 (hs-chest-other's B start), ~3 m short of the chest; A watches from 3.0 5.0, 1.4 m to B's side, so B's
+# puppet is off A's line to the chest and the hit spot (chest or the wall above/behind it) is on A's screen.
+# BEFORE the run: the pairs' puppet pack made again with this branch's pack tool (CoopShotFx_Seed's sound user
+# is ReactionHit now: the pack's member Component/SLink/CoopShotFx_Seed.engine__component__SLinkParam.bgyml).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-seed-wall
+# Pass, A's log: "CoopShotFx_Seed: copy N played its hit effect through the game's own emit" AND
+# "CoopShotFx_Seed: copy N played its landing sound through the game's own emit" (the sound is log proof
+# only), and A's shots B-hitNx-A show the spark at the hit spot (compare B's own B-hitNx-B: the shooter's
+# own seed's spark/debris). No "has no sound user", no "its sound user has no such key".
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 300
+place 3.0 108.9 5.0
+wait 30
+toward 6.51 7.25 4        # face the chest (a step, not a walk)
+press ZL 10
+wait 60
+mark ready
+wait 1500
+mark end

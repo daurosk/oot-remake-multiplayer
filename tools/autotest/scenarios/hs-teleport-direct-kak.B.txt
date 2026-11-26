@@ -1,0 +1,19 @@
+# hs-teleport-direct-kak's B: standing at Kakariko's entrance.
+#! noload
+#! start coop: test warp done
+#! timeout 420
+mark start
+warp KakarikoVillage_Child KakarikoVillage_Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 3600
+mark b-end

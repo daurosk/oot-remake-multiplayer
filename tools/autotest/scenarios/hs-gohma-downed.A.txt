@@ -1,0 +1,74 @@
+# hs-gohma-downed (boss-gameover db8f7045, B #45 17:32): the last cases: B downed mid-fight, co-op's respawn (to the
+# entrance: no teleport in a boss fight; its map change unloads Gohma in B's game: the guess that run 074938 sent), B back
+# in through the door, then the real kill: her death and the warp in BOTH games. Entry and fight as hs-heart-181.
+# PASS (logs + shots, both games):
+#  1. B: 'dbno: respawn' + the map change, then NO 'boss beaten' line before the kill; A: NO 'boss beaten in another game'
+#     before the kill; A stays in phase fight.
+#  2. After the kill: 'boss beaten (Dm_Deku_BossOut)' (a reading at life 0) in the killer's game and the death on the other;
+#     a-death/b-death shots: Gohma's death (or gone) on both; a-warp/b-warp: the blue warp on both.
+#  VOID: no fight before b-down, or B not downed (no 'dbno' downed line).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 1500
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (side by side)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door together: both games' own boss trigger
+mark a-in
+wait 600
+mark a-intro
+wait 1800               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
+rstick 0 1 60
+press ZL 10             # look up at her
+wait 900
+mark a-trigger
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her
+mark a-moved
+wait 1500
+mark a-fight
+wait 600                 # B goes down and respawns meanwhile
+mark a-b-down
+wait 4500                # B: respawn to the entrance, back in through the door
+mark a-b-back
+kill Enemy_DungeonBoss_Gohma   # the real kill, by the game's own hit (with B's: whichever owns her)
+wait 120
+mark a-kill
+wait 900
+mark a-death
+wait 1800                # her death and its event
+mark a-warp
+wait 1800
+mark a-end

@@ -1,0 +1,325 @@
+address	name	kind	status	note
+0x8002a4c0	ItemEntry key, step 3	function	code	(result, 0): the third call, a string with its text first; Longshot's oot_menu.c
+0x8002a520	ItemEntry key, step 1	function	code	(entry, 0): the first of three chained calls for an entry's key; Longshot's oot_menu.c
+0x8005ebe0	GameHeap::Alloc	function	checked	(size, heap, alignment): the game's allocator; a screen's create calls it
+0x800634b0	GfxManager::RegisterTexture	function	notes	(texture, view or 0, flags): gives a texture its descriptor slot (+104)
+0x801939e0	MurmurHash3_x86_32	function	checked	(text, seed): screen names are looked up by this hash, seed 0
+0x80229650	BalloonPart::GetRootPane	function	notes	(part+0x40) -> the balloon's root pane
+0x8022a3e0	BalloonPart::Move	function	notes	writes +0x6c x, y and tells the layout
+0x8022aea0	BalloonPart::Show	function	notes	shows the balloon's pane
+0x8022b900	UIBalloonMessageScreen::Step	function	notes	places each balloon over its actor (0x80235ec0)
+0x80235ec0	Camera::WorldToScreen	function	notes	(out xy, &world xyz, &depth) -> bool
+0x802ebd20	PlusMenu Items page focus	function	code	the Items page's info panel for a focused pane; Longshot's oot_menu.c
+0x802ecc10	SeqExecuteTransitionPlusMenu::Update	function	checked	slot 30: waits for the transition animations, then copies +0x538 to +0x530
+0x802ecf60	MenuOverlayTab::SetCurrent	function	checked	(tab, on, instant): plays CurrentIn or CurrentOut
+0x802ed660	UIPlusMenuScreen::OnFocus	function	checked	slot 46: matches the pane's name against the pages; Longshot's oot_menu.c hooks it
+0x802eda10	UIScreen::SetOpenState	function	checked	slot 72 of every screen looked at: sets +0x1a6 (2 = open)
+0x802eda70	UIAnim::Play	function	checked	(animation, 0, speed): a tab's CurrentIn
+0x802edef0	MenuOverlayTab::Hide	function	checked	hides a tab (tab 3 in Minus mode)
+0x802ee030	UIAnim::Start	function	checked	plays an animation (the pause menu's page transitions)
+0x802f0f00	UIAnim::PlayInstant	function	checked	plays an animation at once (a tab's CurrentIn when instant); the notes use it as a part's in animation
+0x802f0fe0	UIAnim::Stop	function	checked	stops an animation (a tab's CurrentOut); the notes use it as a part's out animation
+0x802f12b0	UIScreen::GetStepDelta	function	checked	slot 40 of every screen: a delta from *(screen+0x20)+0x68; the message window counts its timer down by it (that use: notes)
+0x802f1380	UIScreen::Update	function	checked	slot 17 of every screen: each frame, before the UI controller runs the buttons' requests; Longshot's oot_menu.c hooks it
+0x802f2d90	UIScreen::SetAnimFrame	function	notes	sets an animation's frame (the system window's BtnNum frame 1 or 2)
+0x802f6990	UIScreen::Close	function	checked	slot 6 of every screen: (screen, -1)
+0x802f69b0	UIPlusMenuScreen::Step	function	checked	slot 96: closes the three pages not shown (tables 0x83f36c90, 0x83f36cc0, 0x83f36cf0)
+0x80459520	TextPane::SetString	function	checked	calls 0x80459680 on the pane's text box
+0x80459680	TextBox::SetString	function	notes	(text box, pointer, length, -1): keeps the pointer (+0xf0) and the length (+0x124)
+0x8045b1f0	Layout::GetPane	function	checked	(layout, i): layout+0x100 + i * 0xb0
+0x8045b700	PicturePane::GetMaterialHolder	function	notes	material = *(result + 32)
+0x8045b970	Layout::SetText	function	notes	(layout, "Pane", &ref, 1, 0); matches a text pane's @ alias (checked); not run in a game
+0x8045c3e0	Layout::FindPart (pause pages)	function	checked	UIPlusMenuScreen's set-up finds its page parts with it
+0x8045c4a0	Layout::FindPart (overlay set-up)	function	checked	(name, layout); the tab strip counts Pa_Category_%02d with it
+0x8045c7a0	Layout::FindAnimation	function	notes	(layout, name) -> animation; the title's set-up uses it
+0x8045dc00	Pane::WritePath	function	notes	(dst, name, parent, separator)
+0x8045e140	Layout::FindPane (title set-up)	function	notes	(layout, name) -> pane or 0; the title counts Pa_Button_%02d with it
+0x8045e1e0	Layout::FindPane (map set-up)	function	notes	(layout, name) -> pane; the map set-up finds its 18 panes with it
+0x804d6100	UIScreen::Open	function	checked	slot 5 of every screen: (screen, mode)
+0x8059af30	GameData::SetUInt	function	notes	the game's UInt flag setter
+0x805a5c40	Material::TextureEntry	function	notes	(material, index) -> the entry's address (+72)
+0x805c2760	UIScreen row parser	function	checked	reads a UIScreen table row (+0x28 DrawUnitId ... +0x36 IsEnableControl)
+0x8078e2b0	Layout::FindPaneByName	function	run	(layout, name) -> pane or 0; Longshot's oot_menu.c, co-op's map page (docs/overlay.md)
+0x8078fcb0	Pane::GetPosition	function	code	(pane, 0, &x, &y); Longshot's oot_menu.c
+0x807906c0	UIBalloonMessageScreen::MakeParts	function	notes	makes the 16 Pa_BalloonMessage_%02d parts
+0x80793b80	UIScreen::Init	function	checked	slot 16 of every screen looked at: calls 0x80793b90
+0x80793b90	UIScreen::InitBody	function	checked	stores +0x1a4 from its argument w6
+0x80795090	UIScreen::SetFocus caller	function	code	one of the game's own calls of 0x8088ffc0; Longshot's oot_menu.c
+0x80795ef0	UIPlusMenuScreen::OnCursorEdge	function	checked	slot 106: a cursor move past the edge: the button at +0x330, the direction at +0x32c
+0x8088ffc0	UIScreen::SetFocus	function	checked	(screen, button, flag): needs bit 0 of fm+0x22 (fm = *(*(screen+0x20)+0x60)), then calls fm's slot 6; Longshot's oot_menu.c
+0x80890240	UIScreenTable slot 7	function	checked	always 0: the focus gate's bit index
+0x80966440	GfxManager texture pool set-up	function	notes	sets up the texture pool
+0x80997670	SeqOneShotOpenScreen::BindProperties	function	checked	slot 28: binds ScreenName and Option
+0x80a86f70	MessageRef::Init	function	notes	(ref): 0, 0, -1 (24 bytes); co-op's title code uses it
+0x80a87d30	Layout::SetTextByPath	function	notes	(layout, "Part/Pane", &ref, 1, 0); co-op's title code uses it
+0x80a88810	SeqOneShotOpenAppMenuOverlay::Execute	function	checked	slot 39: SystemOverlay_00 for presets 9, 12, 13, 14, else 0x80a88a40 on MenuOverlay_00
+0x80a88a40	UIMenuOverlayScreen::SetPreset	function	checked	(overlay, preset, from system child): +0x354 preset, +0x358 category; fills the guide and the tabs, opens it
+0x80a88f60	UIMenuOverlayScreen::CountGuide	function	checked	counts the Pa_Guide_%02d parts
+0x80a89220	UIMenuOverlayScreen::FillTabs	function	checked	Plus mode: tab i shows category [0, 3, 4, 5][i]; highlights the one at +0x358
+0x80a897b0	UIMenuOverlayScreen::FillGuide	function	checked	the control guide (0x80a88f60, 0x80a8acb0)
+0x80a8ab50	MenuOverlayTab::SetCategory	function	checked	(tab, category, enabled): T_Text_00 from LayoutMsg/MenuOverlay_00, the category's name as label
+0x80a8acb0	UIMenuOverlayScreen::SetGuideEntry	function	checked	fills one control guide entry
+0x80a8afe0	MessageRef::SetLabel	function	notes	(ref, "LayoutMsg/<layout>", label, 1); co-op's title code uses it
+0x80a8f690	ItemDatabase::GetList	function	code	(database, which) -> a list: +8 count, +16 entries; Longshot's oot_menu.c
+0x80a963c0	ItemEntry::PaneName	function	code	(entry, 0): an entry's pane name, its text first; Longshot's oot_menu.c
+0x80aa2ad0	UICommonScreen dtor	function	checked	slot 0 of UICommonScreen; takes +0x1a6 1 and 2 as open
+0x80aaf200	UIScreenTable::MakeScreen	function	checked	slot 4: (table, heap, index): finds the factory named by the row's Class, calls its create
+0x80aaf320	UIScreenTable::GetClass	function	checked	slot 17: a row's Class (entry +8)
+0x80ac65d0	UISound::PlayByName	function	notes	x0 = *(*(screen+0x198)+8), x1 = name, x8 = a result buffer
+0x80ad2660	SeqOneShotOpenAppMenuOverlay::BindProperties	function	checked	slot 28
+0x80b1e140	LetterAnimControl::Step	function	code	the letter animation step of a dialogue text pane; Longshot's oot_text_size.c
+0x80b4a840	UIMapMenuScreen::LoadCustomTex	function	notes	loads a .bntx picture into a P_Replace pane
+0x80b4fce0	CustomTex path	function	notes	makes a CustomTex picture's path
+0x80bc72d0	AutoSaveMgr::CanSave	function	notes	the autosave's own gate (docs/hookshot.md)
+0x80bc7730	AutoSaveMgr::Request	function	notes	(manager, 5, 0): marks an autosave request (docs/hookshot.md)
+0x80bc7880	GameSystem::GetComponent	function	notes	(system, 0xc) -> the AutoSaveMgr (docs/hookshot.md)
+0x80bcd4f0	SLink::SetProperty	function	checked	sets a sound-link property; the overlay sets 7 and 8 (0x83f3669c)
+0x80bcfd40	CaptionMgr::ResetList	function	notes	the list reset callback: back to state 0 (docs/hookshot.md)
+0x80c86420	SeqOneShotOpenScreen::Execute	function	checked	slot 39: hashes ScreenName, looks the screen up, calls its slot 5
+0x80d666a0	ItemEntry key, step 2	function	code	(result, 0): the second call for an entry's key; Longshot's oot_menu.c
+0x80dc4920	SeqOneShotSetEnableScreenButtonHitTest::Execute	function	checked	slot 39: posts a request on the screen
+0x80df5410	UIController::MakeButton	function	notes	(the screen's UI controller, pane) -> button; the title's set-up
+0x80e4ea00	UIScreenFactory ctor	function	checked	the factory base constructor: links the factory into the global list
+0x80e4ee00	UITitleScreen factory init	function	checked	makes the title's factory at start-up
+0x80e6b650	TexRef from resource	function	notes	(resource) -> TexRef at resource+56
+0x80e6b660	Material::SetTexture	function	notes	(material, &slot, index): stores a texture descriptor slot, marks the material dirty
+0x80e6b700	TexRef from texture	function	notes	(&ref, texture object, 0): fills {u16 w, u16 h, u32, i64 slot}
+0x80e7f5f0	UIPlusMenuScreen::ClearEdgeMove	function	checked	slot 104: clears +0x32c and +0x338
+0x80f8da00	SeqOneshotRequestLoadAndSerializeCaption body	function	checked	reads 0x84ca1660 and calls 0x80f8da40 (docs/hookshot.md)
+0x80f8da40	CaptionMgr::Read	function	checked	(manager): the save list's re-read; starts only from state 0 (docs/hookshot.md)
+0x80f99400	UIPlusMenuScreen::SetUp	function	checked	slot 93: binds the four page parts by name
+0x80f9b1d0	UIPlusMenuScreen Pa_Collect_00 user	function	checked	also reads the Pa_Collect_00 part
+0x81006110	UIScreen::PostRequest	function	checked	(screen+0xb8, request): a Sequence node posts a request on a screen; the list head is at screen+0xe8
+0x812be290	NVN proc loader	function	notes	loads the NVN function pointers below
+0x814e6c90	GameMalloc	function	notes	the game's malloc (main+0x14c6c90)
+0x8150a1d0	Material::MarkTextureDirty	function	notes	(material, index, 1)
+0x8151a210	Picture float4 setter (+0x78)	function	checked	on a picture pane's material object; inferred: a vertex colour
+0x8151a270	Picture float4 setter (+0x8c)	function	checked	on a picture pane's material object; inferred: a vertex colour
+0x8151a2d0	Picture float4 setter (+0xa0)	function	checked	on a picture pane's material object; inferred: a vertex colour
+0x8151a330	Picture float4 setter (+0xb4)	function	checked	on a picture pane's material object; inferred: a vertex colour
+0x8152c740	TextBox::SetColor0	function	checked	(text box, float rgba[4]): +0x1d4..+0x1e0, marks the pane dirty; inferred: the gradient's top
+0x8152c810	TextBox::SetColor1	function	checked	(text box, float rgba[4]): +0x1e4..+0x1f0, marks the pane dirty; inferred: the gradient's bottom
+0x8152e200	TextBox::GetColor0	function	checked	returns s0..s3
+0x8152e220	TextBox::GetColor1	function	checked	returns s0..s3
+0x815457d0	Pane::NotifyLayout (a)	function	notes	tells the layout a pane changed; also the set-texture call's tail
+0x8154ac30	Pane::GetDrawnSize	function	code	a pane's size as drawn (s0, s1); Longshot's hos_wide_ui.c
+0x8154b220	Pane::SetSize	function	checked	sets a pane's +0x58 / +0x5c (minimum 0) and marks it dirty (0x8154b260)
+0x8154b260	Pane::MarkSizeDirty	function	checked	called by 0x8154b220
+0x8154caa0	Pane::UpdateMatrix	function	code	tests the pane's dirty bit 6 and falls into 0x8154cab0; Longshot's hos_wide_ui.c
+0x8154cab0	Pane::CalcGlobalMatrix	function	code	an entry inside 0x8154caa0, not a function start: makes a pane's 3x4 matrix (+0x28) from its own and its parent's; Longshot's hos_wide_ui.c, oot_wide.py
+0x8154d540	Pane::NotifyLayout (b)	function	notes	tells the layout a pane moved
+0x815509c0	Layout anim target switch	function	checked	dispatches an animation's targets (text colours through 0x81555e40, 0x81555f00)
+0x81555e40	Layout anim: text colour 0	function	checked	the animation applier's call of 0x8152c740
+0x81555f00	Layout anim: text colour 1	function	checked	the animation applier's call of 0x8152c810
+0x82919fb0	UIManager::GetScreen	function	notes	(*(*0x84c9e098), name hash) -> screen; used for the system windows
+0x8293b200	OneShotRequestBalloonMessage name	function	checked	slot 19 of 0x84a45f98
+0x83212f50	EventTriggerRequestAutoSave body	function	notes	the event node's body (docs/hookshot.md)
+0x832e4ed0	UIManager::FindScreen	function	notes	(manager, name hash) -> screen; the hash the notes give with it, 0xc5a49707, is ShortCutBG_00's
+0x832e5400	SeqExecuteTransitionPlusMenu::Enter	function	checked	slot 29: steps the page 0-3-4-5 with no wrap, writes manager+0x538, calls 0x83417190
+0x832e8ad0	SeqExecuteWaitScreenButtonInput::Enter	function	notes	slot 29 of 0x84bcabc0 (checked): posts a request on the screen (0x81006110)
+0x832e8cb0	SeqExecuteWaitScreenButtonInput name	function	checked	slot 19 of 0x84bcabc0
+0x832f8820	OpenAppMenuOverlay SystemOverlay step (a)	function	checked	the first of two calls 0x80a88810 makes to close MenuOverlay_00 and open SystemOverlay_00
+0x832fedb0	SystemOption key name (OcarinaKeyAssign)	function	notes	names the OcarinaKeyAssign key
+0x83300b10	SeqOneShotSetCurrentMinusMenuCategory::Execute	function	checked	slot 39; tests the Plus-menu categories (0x39, <= 5)
+0x83308980	SeqOneShotSetSLinkPropertyTitleBtnArrangementType name	function	checked	slot 19 of 0x84bdfa58
+0x83311580	SeqQueryGetButtonInputDirection::Execute	function	checked	slot 39: reads PlusMenu_00's +0x32c: 1 left, 2 right
+0x83312250	SeqQueryGetCurrentMinusMenuCategory::Execute	function	checked	slot 39; tests the Plus-menu categories (0x39, <= 5)
+0x83322e90	SeqMenuTabChangeDirectionSelector::Execute	function	checked	slot 39: ToRight, ToLeft, PlusMinusChange or NoChange
+0x83399160	UIScreen::TryHandleRequest	function	notes	reads the UI controller's decided button for a waiting request
+0x833cd380	CaptionMgr::IsBusy	function	notes	(manager) -> bool: still reading (docs/hookshot.md)
+0x833d25c0	MessageInGame::Show	function	notes	(manager = **0x84c9e908, &file, &label, &speaker, s0 = time); needs a message label
+0x833d2690	MessageInGame::GetScreen	function	notes	(*0x84ea4518) -> the message window screen
+0x833f4eb0	UIAttentionLockOnScreen factory name	function	checked	slot 2 of its factory vtable 0x84c042b8
+0x833f52c0	UIBalloonMessageScreen factory name	function	checked	slot 2 of its factory vtable 0x84c04650
+0x833fed60	UIMapMenuScreen::SetUp	function	checked	slot 93: keeps 18 map panes from +0x1470
+0x83404200	UIMapMenuScreen::RefreshMap	function	notes	re-reads the HUD's map copy; called from co-op's module in a run (maintainer's notes)
+0x83405cc0	UIMenuOverlayScreen::SetUp	function	checked	slot 93: counts the Pa_Category_%02d tab parts
+0x834090e0	MessageDialogScreen factory name	function	checked	slot 2 of 0x84c095d8
+0x834091d0	UIMessageInGameScreen::SetMessage	function	notes	the label into +0x2b0, the speaker into T_Name_00, the time into +0x408
+0x83409410	UIMessageInGameScreen::MarkText	function	notes	sets +0x2d0 = 1
+0x83409420	UIMessageInGameScreen::Step	function	checked	slot 96: puts +0x2b0 into T_Message_00 when +0x2d0 is 1
+0x83409510	UIMessageInGameScreen::PutText	function	notes	puts the ref at +0x2b0 into T_Message_00
+0x834096e0	UIMessageInGameScreen factory name	function	checked	slot 2 of its factory vtable 0x84c099e0
+0x8340cc00	UIMessageLogScreen01 factory name	function	checked	slot 2 of its factory vtable 0x84c09d78
+0x83414eb0	UIPlayerStatus3DScreen factory name	function	checked	slot 2 of its factory vtable 0x84c0b348
+0x83416ee0	UIPlusMenuScreen::OnDecide	function	checked	slot 50
+0x83417190	UIPlusMenuScreen::PlayTransition	function	checked	(screen, from, to): plays the page transition animation (0x802ee030)
+0x83419b10	UISimpleInfoScreen::SetText	function	notes	(screen, type, &str, flag): the banner's text from LayoutMsg/SimpleInfo_00 by type
+0x83419de0	UISimpleInfoScreen factory name	function	checked	slot 2 of its factory vtable 0x84c0db40
+0x83424890	OpenAppMenuOverlay SystemOverlay step (b)	function	checked	the second of those two calls
+0x834251f0	UISystemSaveLoadScreen::Step	function	checked	slot 96: calls UIButton::Decide (0x83791db0) at 0x83425280
+0x83425320	UISystemSaveLoadScreen::OnDecide	function	checked	slot 50: plays one of two decide sounds
+0x834258b0	UISystemWindowScreen::Step	function	checked	slot 96: calls UIButton::Decide (0x83791db0) at 0x83425930
+0x83425a00	UISystemWindowScreen::OpenPreset	function	notes	(screen, preset, is title): sets T_Text_00 and the buttons, opens it
+0x83425bc0	UISystemWindowScreen::SetButton	function	notes	(screen, button, n): Pa_Button_NN/T_Btn_00 from label 10NN
+0x83426710	UITitleScreen ctor	function	checked	stores the vtable 0x84c106e8 (docs/hookshot.md: main+0x3406710)
+0x83426790	UITitleScreen dtor	function	checked	slot 0
+0x834267a0	UITitleScreen deleting dtor	function	checked	slot 1; patch 0004 calls the module from it
+0x834267d0	UITitleScreen::SetUp	function	checked	slot 93: animations, one button per Pa_Button_NN part, focus on button 0; patch 0004 calls the module from it
+0x83426d70	UITitleScreen::ActiveStep	function	checked	slot 96: the buttons' enabled bits, the active sound once; patch 0004 calls the module from it
+0x83426f40	UITitleScreen::OnFocus	function	checked	slot 46: plays the focus sound, keeps the focused button at +0x2e0
+0x834270a0	UITitleScreen factory deleting dtor	function	checked	slot 1 of 0x84c10a50
+0x834270d0	UITitleScreen factory name	function	checked	slot 2 of 0x84c10a50: returns the class name
+0x834270e0	UITitleScreen factory create	function	checked	slot 3 of 0x84c10a50: (factory, heap): allocates 0x2f0 bytes and calls the ctor
+0x8342b720	MenuMgr::SetCurrent	function	checked	(manager, category)
+0x8342b780	MenuMgr::GetCurrent	function	checked	(manager, is Minus)
+0x8342b7a0	MenuMgr::SetRequested	function	checked	(manager, category): categories 0, 3, 4, 5 to +0x538, the others to +0x534 (0x83f37530)
+0x8342b7d0	MenuMgr::GetRequested	function	checked	(manager, is Minus)
+0x8342b7f0	MenuMgr::IsMinus	function	checked	a Minus-menu category is current
+0x8342b800	MenuMgr::SetFlag	function	checked	(manager, bit, on): the flag bits at +0x588
+0x83791db0	UIButton::Decide	function	notes	(button, 0): decides a button without input
+0x83793090	UIController::GetDecidedButton	function	notes	the button the player decided; its state +0x38 is 4 or 5
+0x837930f0	UIController::IsEnabled	function	notes	(controller): the title sets bit 0x4 of each button+0x40 from it
+0x8379bd50	UIScreen::OnDecide (base)	function	checked	slot 50: a no-op in the base class
+0x837a2450	UIScreenFactory::Unlink	function	checked	takes a factory out of the global list
+0x837a24c0	UIScreenFactory dtor	function	checked	slot 0 of every factory vtable: unlinks it
+0x837a28f0	UIButton::GetPanePath	function	notes	the button's pane path: parent path, '/', name (0x8045dc00)
+0x83beb570	UIScreenTable::GetName	function	checked	slot 5: a row's Name (entry +0)
+0x83beb590	UIScreenTable::Count	function	checked	slot 6: the row count
+0x83beb5a0	UIScreenTable::FindHash	function	checked	slot 8: looks a name hash up
+0x83c61ee0	strlen	function	notes	the C library's strlen
+0x83c62460	GfxManager lock	function	notes	taken around a texture's registration
+0x83c62470	GfxManager unlock	function	notes	released after a texture's registration
+0x83cd6111	Pa_Item_00	string	checked	the Items page part
+0x83ce30d7	Unopened	string	checked	the MenuOverlay_00 label a disabled tab shows
+0x83cefc97	Pa_Category_%02d	string	checked	the tab strip's part name format
+0x83d141c6	T_Name_00	string	checked	pane name
+0x83d20bda	Pa_System_00	string	checked	the System page part
+0x83d2da2e	Pa_Collect_00	string	checked	the Collection page part
+0x83d46f80	Pa_Equip_00	string	checked	the Equipment page part
+0x83d4fef3	T_Message_00	string	checked	pane name; in MessageInGame_00 the @ alias of T_MessageWhiteOut_00
+0x83de2306	T_Text_00	string	checked	pane name
+0x83f2e5ac	Menu category tab position table	global	checked	7 ints: each category's tab position
+0x83f32720	Menu category name table	global	checked	the 7 category names (CollectMenu ... ImportantMenu), offsets at +0x58
+0x83f33790	SystemOption key enum	global	notes	the options screen's keys: a compiled enum, not data
+0x83f35220	MenuOverlayTab animation names	global	checked	Type, CurrentIn, CurrentOut
+0x83f36250	UIMapMenuScreen pane name table	global	notes	relative string table of the 18 map pane names (offsets at +324)
+0x83f3669c	MenuOverlay sound-link table	global	checked	used with 0x80bcd4f0
+0x83f36c90	UIPlusMenuScreen page table (a)	global	checked	per-category offsets used by slot 96
+0x83f36cc0	UIPlusMenuScreen page table (b)	global	checked	per-category offsets used by slot 96
+0x83f36cf0	UIPlusMenuScreen page table (c)	global	checked	per-category offsets used by slot 96
+0x83f36d20	UIPlusMenuScreen ArrowState frames	global	checked	floats for the ArrowState animation's frame
+0x83f37530	MenuMgr request offset table	global	checked	per category: +0x538 or +0x534
+0x849d3058	ExecuteOpenScreen vtable	vtable	checked	AI node
+0x84a17c88	OneShotCloseScreen vtable	vtable	checked	AI node
+0x84a2b688	OneShotLoadScreen vtable	vtable	checked	AI node
+0x84a32c88	OneShotOpenScreen vtable	vtable	checked	AI node
+0x84a32f28	OneShotOpenSystemWindow vtable	vtable	checked	AI node
+0x84a45f98	OneShotRequestBalloonMessage vtable	vtable	checked	AI node
+0x84a48310	OneShotRequestOpenSimpleInfo vtable	vtable	checked	AI node
+0x84a61c70	OneShotUnloadScreen vtable	vtable	checked	AI node
+0x84bba110	UIChallengeAttentionScreen vtable	vtable	checked	107 slots; screen class
+0x84bc4cb8	SeqExecuteCloseAndUnloadScreen vtable	vtable	checked	Sequence node
+0x84bc67d8	SeqExecuteLoadAndOpenScreen vtable	vtable	checked	Sequence node
+0x84bc7360	SeqExecuteOpenScreen vtable	vtable	checked	Sequence node
+0x84bc8bb8	SeqExecuteTransitionPlusMenu vtable	vtable	checked	Sequence node; inputs FromMenu (+0x20), IsInputRight (+0x28)
+0x84bcabc0	SeqExecuteWaitScreenButtonInput vtable	vtable	checked	Sequence node; waits for a button of a screen
+0x84bcad08	SeqExecuteWaitScreenButtonInputIgnoreDecideAnim vtable	vtable	checked	Sequence node; the pause menu waits on PlusMenu_00 with it
+0x84bce368	SeqOneShotCloseScreen vtable	vtable	checked	Sequence node
+0x84bd3448	SeqOneShotLoadScreen vtable	vtable	checked	Sequence node
+0x84bd46a8	SeqOneShotOpenAppMenuOverlay vtable	vtable	checked	Sequence node; properties Preset, IsTitle, IsFromSystemChild
+0x84bd4a98	SeqOneShotOpenScreen vtable	vtable	checked	properties ScreenName and Option
+0x84bd4be8	SeqOneShotOpenSystemWindow vtable	vtable	checked	Sequence node; property Preset
+0x84bd75e8	SeqOneShotRequestStopAnimationScreen vtable	vtable	checked	Sequence node; stops an animation at a frame
+0x84bda528	SeqOneShotSetCurrentMinusMenuCategory vtable	vtable	checked	Sequence node
+0x84bdb248	SeqOneShotSetEnableScreenButtonHitTest vtable	vtable	checked	Sequence node; turns a screen's buttons on or off
+0x84bdcb80	SeqOneShotSetIsEnableMessageDialogCtrl vtable	vtable	checked	Sequence node
+0x84bdd750	SeqOneShotSetMessageScreen vtable	vtable	checked	Sequence node; sets a pane's text from a message label
+0x84bdd8a0	SeqOneShotSetMoveCursorControllerMask vtable	vtable	checked	Sequence node
+0x84bdfa58	SeqOneShotSetSLinkPropertyTitleBtnArrangementType vtable	vtable	checked	Sequence node
+0x84be15f8	SeqOneShotStartSound vtable	vtable	checked	Sequence node; plays an SLink sound key on a screen
+0x84be25b0	SeqOneShotUnloadScreen vtable	vtable	checked	Sequence node
+0x84be4560	SeqQueryControllerGetMask vtable	vtable	checked	Sequence node; reads a controller user's keys (the pause menu: user UI)
+0x84be4a80	SeqQueryControllerTrigMaskChecker vtable	vtable	checked	Sequence node
+0x84be5648	SeqQueryGetButtonInputDirection vtable	vtable	checked	Sequence node
+0x84be5cd0	SeqQueryGetCurrentMinusMenuCategory vtable	vtable	checked	Sequence node; gives the page step its FromMenu
+0x84bef960	SeqMenuTabChangeDirectionSelector vtable	vtable	checked	Sequence node
+0x84c02d48	UIActionGuideScreen vtable	vtable	checked	107 slots; screen class
+0x84c030e0	UIActionGuideTipsScreen vtable	vtable	checked	107 slots; screen class
+0x84c03478	UIActionGuideTutorialScreen vtable	vtable	checked	107 slots; screen class
+0x84c03820	UIAmiiboWindowScreen vtable	vtable	checked	107 slots; screen class
+0x84c03bb8	UIAppOptionIconScreen vtable	vtable	checked	107 slots; screen class
+0x84c03f50	UIAttentionLockOnScreen vtable	vtable	checked	107 slots; screen class
+0x84c042b8	UIAttentionLockOnScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c042e8	UIBalloonMessageScreen vtable	vtable	checked	107 slots; the balloons over actors (BalloonMessage_00)
+0x84c04650	UIBalloonMessageScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c04680	UIBoxCursorScreen vtable	vtable	checked	107 slots; screen class
+0x84c04a18	UIChallengeMenuScreen vtable	vtable	checked	107 slots; the Threads of Time panel
+0x84c04fb0	UICommonScreen vtable	vtable	checked	107 slots; screen class
+0x84c05318	UICtrlGuideScreen vtable	vtable	checked	107 slots; screen class
+0x84c056b8	UIDemoNicknameScreen vtable	vtable	checked	107 slots; screen class
+0x84c05a50	UIDoCommandScreen vtable	vtable	checked	107 slots; screen class
+0x84c05e30	UIEnemyInfoScreen vtable	vtable	checked	107 slots; screen class
+0x84c061c8	UIEventFadeScreen vtable	vtable	checked	107 slots; screen class
+0x84c06560	UIEventFadeWipeScreen vtable	vtable	checked	107 slots; screen class
+0x84c068f8	UIEventSkipScreen vtable	vtable	checked	107 slots; screen class
+0x84c06c90	UIFinishScreen vtable	vtable	checked	107 slots; screen class
+0x84c07068	UIGameOverScreen vtable	vtable	checked	107 slots; screen class
+0x84c07400	UIHorseGaugeScreen vtable	vtable	checked	107 slots; screen class
+0x84c07798	UIImportantMenuScreen vtable	vtable	checked	107 slots; the Key Items panel
+0x84c07b30	UILoadingFadeScreen vtable	vtable	checked	107 slots; screen class
+0x84c07ec8	UILocationScreen vtable	vtable	checked	107 slots; screen class
+0x84c08300	UIMapMenuScreen vtable	vtable	checked	107 slots; the HUD and its maps (layout MapMenu_00)
+0x84c08708	UIMenuInstantTipsScreen vtable	vtable	checked	107 slots; screen class
+0x84c08aa0	UIMenuOverlayScreen vtable	vtable	checked	107 slots; the pause menu's tab strip and panel frame (MenuOverlay_00)
+0x84c08e60	UIMessageDemoScreen vtable	vtable	checked	107 slots; screen class
+0x84c091f8	MessageDialogScreen vtable	vtable	checked	107 slots; the message dialog (MessageDialog_00)
+0x84c095d8	MessageDialogScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c09678	UIMessageInGameScreen vtable	vtable	checked	107 slots; the message window (MessageInGame_00)
+0x84c099e0	UIMessageInGameScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c09a10	UIMessageLogScreen01 vtable	vtable	checked	107 slots; the dialogue log (MessageLog_01)
+0x84c09d78	UIMessageLogScreen01 factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c09da8	UINumDisplayMiniGameScreen vtable	vtable	checked	107 slots; screen class
+0x84c0a140	UINumDisplayScreen vtable	vtable	checked	107 slots; screen class
+0x84c0a4f8	UIOcarinaScreen vtable	vtable	checked	107 slots; screen class
+0x84c0a890	UIOpeningTitleScreen vtable	vtable	checked	107 slots; screen class
+0x84c0ac28	UIPickUpScreen vtable	vtable	checked	107 slots; screen class
+0x84c0afe0	UIPlayerStatus3DScreen vtable	vtable	checked	107 slots; screen class
+0x84c0b348	UIPlayerStatus3DScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c0b378	UIPlayerStatusMiniGameScreen vtable	vtable	checked	107 slots; screen class
+0x84c0b710	UIPlayerStatusScreen vtable	vtable	checked	107 slots; screen class
+0x84c0baa8	UIPlusMenuScreen vtable	vtable	checked	107 slots; the pause menu (PlusMenu_00)
+0x84c0bea0	UIPointerScreen vtable	vtable	checked	107 slots; screen class
+0x84c0c238	UIReadyGoScreen vtable	vtable	checked	107 slots; screen class
+0x84c0c5d0	UISaveLoadIconScreen vtable	vtable	checked	107 slots; screen class
+0x84c0cd00	UIShopBuyScreen vtable	vtable	checked	107 slots; screen class
+0x84c0d098	UIShortCutBGScreen vtable	vtable	checked	107 slots; screen class
+0x84c0d430	UIShortCutScreen vtable	vtable	checked	107 slots; the R button's item choice
+0x84c0d7c8	UISimpleInfoScreen vtable	vtable	checked	107 slots; the banner (SimpleInfo_00)
+0x84c0db40	UISimpleInfoScreen factory vtable	vtable	checked	4 slots, as the title's factory
+0x84c0db70	UIStaffRollEndScreen vtable	vtable	checked	107 slots; screen class
+0x84c0df08	UIStaffRollScreen vtable	vtable	checked	107 slots; screen class
+0x84c0e2a0	UIStaffRollTimeLineTextScreen vtable	vtable	checked	107 slots; screen class
+0x84c0e638	UISystemActionGuideScreen vtable	vtable	checked	107 slots; screen class
+0x84c0eba0	UISystemLoadListScreen vtable	vtable	checked	107 slots; the save list
+0x84c0f108	UISystemOptionScreen vtable	vtable	checked	107 slots; the options (SystemOption_00)
+0x84c0f4a0	UISystemOverlayScreen vtable	vtable	checked	107 slots; screen class
+0x84c0f840	UISystemSaveLoadScreen vtable	vtable	checked	107 slots; screen class
+0x84c0fbf8	UISystemWindowScreen vtable	vtable	checked	107 slots; the system dialogs (SystemWindow_00, TitleSystemWindow_00)
+0x84c0ffb0	UITalkScreen vtable	vtable	checked	107 slots; screen class
+0x84c10348	UITimerScreen vtable	vtable	checked	107 slots; screen class
+0x84c106e8	UITitleScreen vtable	vtable	checked	107 slots; the title (Title_00)
+0x84c10a50	UITitleScreen factory vtable	vtable	checked	4 slots: dtor, deleting dtor, name, create
+0x84c945d8	UIScreenTable vtable	vtable	checked	30 slots, not named by the game; rows of 0x38 bytes (+8 count, +0x10 array)
+0x84c94708	UIScreenTable vtable (second)	vtable	checked	30 slots; slots 4 to 29 hold the same functions as 0x84c945d8; not named by the game
+0x84c9d190	engine__rsdb__UIScreenTable vtable	vtable	checked	named by the game's name function
+0x84c9d240	eui__UIScreenBaseTable vtable	vtable	checked	named by the game's name function
+0x84c9e098	UIManager pointer	global	checked	**0x84c9e098 is the UI manager: +8 screen count, +0x10 the screens' array
+0x84c9e0d0	ItemDatabase pointer	global	code	**0x84c9e0d0 is the item database; Longshot's oot_menu.c
+0x84c9e178	GameSystem GOT entry	global	notes	-> the game system (docs/hookshot.md)
+0x84c9e2a8	MenuMgr GOT entry	global	checked	-> 0x84e9cfa8
+0x84c9e908	MessageInGame manager pointer	global	notes	**0x84c9e908, locked at +0x6218
+0x84ca1660	CaptionMgr GOT entry	global	checked	-> the global that holds the save list's caption manager (docs/hookshot.md)
+0x84cacc00	MenuOverlayTab animation names GOT entry	global	checked	-> 0x83f35220
+0x84cacc98	GfxManager pointer	global	notes	**0x84cacc98 is the graphics manager
+0x84cae028	nvnTexturePoolInitialize pointer	global	notes	NVN function pointer
+0x84cae040	nvnTexturePoolRegisterTexture pointer	global	notes	NVN function pointer
+0x84cae2a0	nvnTextureWriteTexels pointer	global	notes	NVN function pointer
+0x84e9ce18	UITitleScreen factory	global	checked	the title's static factory object
+0x84e9cfa8	MenuMgr holder	global	checked	*0x84e9cfa8 is the menu manager: +0x530 current Plus page, +0x538 requested; +0x52c / +0x534 the Minus pair
+0x84ea1cf0	Camera holder	global	notes	the game's camera is *(*0x84ea1cf0+0x28)
+0x84ea4518	MessageInGame screen holder	global	notes	passed to 0x833d2690
+0x84ea4530	UIScreenFactory list head	global	checked	the first factory; next at +8
+0x84ea4540	UIScreenFactory list count	global	checked	how many factories are linked
+0x84ea4544	UIScreenFactory list node offset	global	checked	8: a factory's list node is at factory+8
+0x84ea4548	UIScreenFactory list guard	global	checked	the list's guard word

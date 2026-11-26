@@ -1,0 +1,42 @@
+# hs-twinrova-orders2, B (see hs-twinrova-orders2.A.txt): B pauses first (p1), A second (p2); both lock on at shots.
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 1800
+hold ZL 240
+hold ZL 60 b-1
+hold ZL 300
+hold ZL 60 b-2
+press PLUS 12           # p1: B pauses 9 s
+wait 540
+press B 12
+wait 150
+hold ZL 60 b-p1
+wait 12
+wait 540                # A's pause (p2)
+wait 162
+hold ZL 60 b-3
+hold ZL 300
+hold ZL 60 b-4
+kill Enemy_DungeonBoss_Koume
+wait 60
+kill Enemy_DungeonBoss_Kotake
+wait 600
+mark b-k
+wait 2400
+hold ZL 240
+hold ZL 60 m-1b
+hold ZL 600
+hold ZL 60 m-2b
+wait 600
+mark end

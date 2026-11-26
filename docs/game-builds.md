@@ -74,7 +74,7 @@ Both now exist: the scan above runs at every game start and logs what it found; 
 
 ### Steps for one new build
 
-1. Get the build's main (from your own game; never add game files to the repo) and run `..\integration`'s `tools/nso_index.py` on it for the string, reference and call index.
+1. Get the build's main (from your own game; never add game files to the repo) and build the string, reference and call index of it (the deleted recomp project had `tools/nso_index.py` for this; no copy is kept in this repository).
 2. Find each `MainOffsets` field. Most have a string or a call chain written next to them in `docs/puppet.md`, `docs/objects.md`, `docs/flags.md`, `docs/time.md`, `docs/world.md` and `addresses.hpp` (for example `ExecuteWmSetTime` for `set_time`, the AI node names for the AS calls). A tool that takes the 1.1.1 function's bytes with the relocations masked and finds the same function in the new main would do most of it; this tool does not exist yet.
 3. Check the object offsets (the "maybe not" row): read the functions those offsets came from in the new build and compare.
 4. Re-link the caves at the new addresses (`coop_svc.s`, `coop_hold.s` say how) and give `CoopSvc`/`CoopHold` per-build cave bytes and hook words.

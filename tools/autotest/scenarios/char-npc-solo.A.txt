@@ -1,0 +1,13 @@
+# char-npc-solo (snail-pr312): ONE game, co-op OFF (run.ps1 -NoCoop). Does the Character Select ui part load the world, and does an NPC pick
+# fall back? Counts to read in the log: 'coop: objects: + ' lines (a loaded world has hundreds), 'characters: pick 7 has no model here'.
+mark start
+wait 600
+mark loaded-world
+setflag CharacterMenu_SelectedCharacter 7
+wait 600
+mark picked-7
+wait 300
+mark picked-7-later
+setflag CharacterMenu_SelectedCharacter 0
+wait 600
+mark back-to-link

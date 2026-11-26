@@ -1,0 +1,52 @@
+# hs-map-deku-walkin, B: the guest (real guest path) walks into the Deku Tree a moment after A, looks at its
+# minimap and Map page, then at the map chest after A, and again after a room load.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395
+#! timeout 540
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 2400                 # B: the host's save comes and B switches to it on the title
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+place 90.04 115.48 -27.90  # StartPos FrontDekuTree
+wait 600                  # after A: the host walks in first
+mark b-tree
+goto 98.0 -28.8 0.5 600
+wait 2400
+mark b-mini-in
+press MINUS
+wait 120
+mark b-panel
+press R
+wait 90
+mark b-panel-r1
+press R
+wait 90
+mark b-panel-r2
+press B
+wait 2400                 # A at the chest
+place 4.4 108.9 6.5        # beside A, the chest in view
+wait 240
+toward 6.51 7.25 20
+mark b-chest
+wait 600
+place -29 117.6 0         # room 3: a room load (the map is read again)
+wait 900
+mark b-mini-room3
+press MINUS
+wait 120
+mark b-panel3
+press R
+wait 90
+mark b-panel3-r1
+press B
+wait 240
+mark end

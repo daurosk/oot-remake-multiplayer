@@ -1,0 +1,41 @@
+{
+  "preset": "before-bongo-bongo",
+  "version": 1,
+  "title": "Shadow Temple (Bongo Bongo): adult Link in the dungeon, boss key, 8 hearts",
+  "spec": {
+    "items": [
+      "Weapon_Sword_Master",
+      "Weapon_Shield_Hylian",
+      "bow",
+      "PouchData.Armor_Adult_HoverBoot.StockNum"
+    ],
+    "hearts": 8,
+    "max_hearts": 8,
+    "boss_keys": [
+      "ShadowTemple"
+    ],
+    "magic": 1,
+    "age": "adult",
+    "flags": {
+      "0x7a91dbd5": "DefeatBoss",
+      "HavePlayedEvent.ShadowTemple_BossWin": 0,
+      "HavePlayedEvent.Dm_ShadowTemple_BossOut": 0,
+      "HavePlayedEvent.Dm_ShadowTemple_BossIn": 0
+    },
+    "warp": {
+      "scene": "ShadowTemple",
+      "entrance": "Entrance"
+    },
+    "place": {
+      "x": -138.26,
+      "y": -11.46,
+      "z": 22.01
+    }
+  },
+  "notes": [
+    "Link loads in the dungeon (ShadowTemple), not the boss rush room BongoBongoStage (a free-play warp into a rush room left both games black with no control; the Gohma preset goes through the dungeon too).",
+    "Link is put at the boss room's arrival point (docs/dungeons-boss.md, the eight rooms: the same coordinates as the rush start -138.26 -11.46 22.01). A place skips the door's own trigger, so the intro may not run from here: if no boss comes, walk out of the room through its door and in again (`look` lists the doors). The place before the door is not in the repository; the first lane run records it.",
+    "The age is set before the warp (Sequence_IsChildhood, then 30 frames), so a save of either age works.",
+    "The boss is made alive as docs/dungeons-boss.md (the boss set table) has it: the shared quest SageOfShadow is put back to its step DefeatBoss, and the boss room's played flags (the intro and the death among them) and Bools to their before values."
+  ]
+}

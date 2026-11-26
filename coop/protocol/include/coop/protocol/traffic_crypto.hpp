@@ -97,6 +97,11 @@ SealedPlayerKey seal_player_key(const std::array<std::uint8_t, 32>& client_to_se
 std::optional<PlayerKey> open_player_key(const std::array<std::uint8_t, 32>& client_to_server,
                                          const SealedPlayerKey& sealed);
 
+// A public tag of the player key for one use `label` (BLAKE2b keyed by the key, 8 bytes): the same key and label give
+// the same tag, and the tag tells nothing of the key. The Gold Skulltula race (CoopGoldMode::RaceId) names a host's
+// game with it.
+std::array<std::uint8_t, 8> player_key_tag(const PlayerKey& key, std::string_view label);
+
 std::optional<TrafficKeys> derive_traffic_keys(const KeyPair& own, const KeyShare& peer,
                                                std::string_view password,
                                                std::span<const std::uint8_t> hello,

@@ -118,9 +118,13 @@ TEST_CASE("map drop log: a drop away from its dungeon is logged too, no new base
   s.values[kDekuMap] = 1;
   log.frame(s, std::nullopt, false);
   s.values[kDekuCompass] = 0;
+  CHECK(log.frame(s, std::nullopt, false).empty());  // (row 269: out of play it waits for the game to say why)
+  now += MapDropLog::kHoldUs + 1;
   const auto none = log.frame(s, std::nullopt, false);
   REQUIRE(none.size() == 1);
   CHECK(has(none[0], "IsGetCompass 1 -> 0 (outside its dungeon InsideTheDekuTree) in (no scene), loading"));
+  CHECK(has(none[0], "no save load and no title followed in 3 s"));
+  CHECK(log.take_info().empty());
   // Back in the dungeon: the value it had there is not a new baseline.
   s.values[kDekuMap] = 0;
   CHECK(log.frame(s, "InsideTheDekuTree", true).size() == 1);
@@ -168,11 +172,88 @@ TEST_CASE("map drop log: many flags at once (a save load) make one line") {
   for (FlagKey k : {kFireCompass, kShadowCompass, kIceMap}) s.values[k] = 1;
   log.frame(s, std::nullopt, false);
   for (auto& [k, v] : s.values) v = k == kGotBomb ? v : 0;
-  const auto lines = log.frame(s, std::nullopt, false);
+  // Row 269 (a tester's log, 13 times): the game clears its table, then says it loads a save. Not a warning.
+  CHECK(log.frame(s, std::nullopt, false).empty());
+  CHECK(log.take_info().empty());
+  now += 200'000;
+  log.game_reset("the game starts loading a save");
+  CHECK(log.frame(s, std::nullopt, false).empty());
+  const auto lines = log.take_info();
   REQUIRE(lines.size() == 1);
   CHECK(has(lines[0], "coop: map-drop: 5 map and compass flags 1 -> 0 at once ("));
   CHECK(has(lines[0], "DungeonInfo.IceCavern.IsGetMap"));
   CHECK(has(lines[0], "our code wrote it: no"));
+  CHECK(has(lines[0], "; 0.2 s later: the game starts loading a save: the game's own clear of its flags, no drop in play"));
+  CHECK(log.take_info().empty());  // (said once)
+  now += MapDropLog::kHoldUs + 1;
+  CHECK(log.frame(s, std::nullopt, false).empty());  // (and never as a warning after all)
+}
+
+TEST_CASE("map drop log: a save's one map cleared at a save load or the title is no warning either (row 269)") {
+  std::uint64_t now = 0;
+  MapDropLog log([&now] { return now; });
+  Store s;
+  log.frame(s, "InsideTheDekuTree", true);
+  // Back to the title: the load starts, the flags are cleared, the title comes up.
+  CHECK(log.frame(s, std::nullopt, false).empty());
+  s.values[kDekuMap] = 0;
+  now += 100'000;
+  CHECK(log.frame(s, std::nullopt, false).empty());
+  now += 2'000'000;
+  log.game_reset("the title");
+  const auto told = log.take_info();
+  REQUIRE(told.size() == 1);
+  CHECK(has(told[0], "DungeonInfo.InsideTheDekuTree.IsGetMap 1 -> 0"));
+  CHECK(has(told[0], "; 2.0 s later: the title: the game's own clear"));
+  // The game said it first (a load node before the clear): the same.
+  s.values[kDekuMap] = 1;
+  log.frame(s, std::nullopt, false);
+  log.game_reset("the game starts loading a save");
+  now += 300'000;
+  s.values[kDekuMap] = 0;
+  CHECK(log.frame(s, std::nullopt, false).empty());
+  const auto after = log.take_info();
+  REQUIRE(after.size() == 1);
+  CHECK(has(after[0], "; the game starts loading a save (-0.3 s): the game's own clear"));
+}
+
+TEST_CASE("map drop log: a drop in play is a warning at once, many at once too, whatever was loaded before") {
+  std::uint64_t now = 0;
+  MapDropLog log([&now] { return now; });
+  Store s;
+  constexpr FlagKey kFireCompass{0x0aa068b6u, 0}, kShadowCompass{0x1e2feec5u, 0}, kIceMap{0x322f2a94u, 0};
+  for (FlagKey k : {kFireCompass, kShadowCompass, kIceMap}) s.values[k] = 1;
+  log.frame(s, "InsideTheDekuTree", true);
+  log.game_reset("the game loaded a save");
+  now += 1'000'000;
+  for (auto& [k, v] : s.values) v = k == kGotBomb ? v : 0;
+  const auto lines = log.frame(s, "InsideTheDekuTree", true);
+  REQUIRE(lines.size() == 1);
+  CHECK(has(lines[0], "5 map and compass flags 1 -> 0 at once ("));
+  CHECK(has(lines[0], ", in play"));
+  CHECK(has(lines[0], "[-1.0 s the game loaded a save]"));
+  CHECK(log.take_info().empty());
+}
+
+TEST_CASE("map drop log: a drop in a room load with no save load after it is still a warning, 3 s later") {
+  std::uint64_t now = 0;
+  MapDropLog log([&now] { return now; });
+  Store s;
+  log.frame(s, "InsideTheDekuTree", true);
+  CHECK(log.frame(s, "InsideTheDekuTree", false).empty());  // a room load
+  s.values[kDekuMap] = 0;
+  CHECK(log.frame(s, "InsideTheDekuTree", false).empty());
+  now += 500'000;
+  s.values[kDekuCompass] = 0;
+  CHECK(log.frame(s, "InsideTheDekuTree", true).size() == 1);  // in play again: this one at once
+  now += MapDropLog::kHoldUs;
+  const auto lines = log.frame(s, "InsideTheDekuTree", true);
+  REQUIRE(lines.size() == 1);
+  CHECK(has(lines[0], "DungeonInfo.InsideTheDekuTree.IsGetMap 1 -> 0 in InsideTheDekuTree, loading"));
+  CHECK(has(lines[0], "no save load and no title followed in 3 s"));
+  // A save load long after it explains nothing.
+  log.game_reset("the game starts loading a save");
+  CHECK(log.take_info().empty());
 }
 
 TEST_CASE("map drop log: events older than the window fall out") {

@@ -248,10 +248,330 @@ TEST_CASE("host sampler: turning, scene and age changes send a sample while stil
   CHECK(next(r) == 0);
 }
 
-TEST_CASE("host sampler: no reading, no sample") {
+TEST_CASE("host sampler: held, the last sample again each keep-alive, standing, with a new sequence") {
   Sampler s;
-  CHECK(s.frame(std::nullopt, kStart).empty());
+  for (int i = 0; i < 10; ++i) s.frame(at(0.1f * static_cast<float>(i)), kStart + i * kFrameUs);
+  const std::uint64_t moved = kStart + 9 * kFrameUs;
+  REQUIRE(s.last_sample());
+  const auto last = *s.last_sample();
+  CHECK(last.velocity != Vec3{0, 0, 0});
+  // The game is held from here: no frame() comes.
+  CHECK_FALSE(s.hold(moved + 100'000));  // keep-alive time not passed yet
+  const std::uint32_t seq = s.next_sequence();
+  const auto again = s.hold(moved + 200'000);
+  REQUIRE(again);
+  const auto d = decode({*again});
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].position == last.position);
+  CHECK(d.samples[0].rotation == last.rotation);
+  CHECK(d.samples[0].scene == last.scene);
+  CHECK(d.samples[0].velocity == Vec3{0, 0, 0});  // standing, not sliding on
+  CHECK(d.samples[0].time.server_time_us == moved + 200'000);
+  CHECK(d.samples[0].time.sequence == seq);
+  CHECK(s.next_sequence() == seq + 1);  // presence drops a repeated sequence
+  CHECK_FALSE(s.hold(moved + 300'000));
+  CHECK(s.hold(moved + 400'000));
+  // Ten held seconds: never a gap longer than the keep-alive and a step.
+  std::uint64_t at_us = moved + 400'000, sent = at_us;
+  for (int i = 0; i < 1000; ++i) {
+    at_us += 10'000;
+    if (s.hold(at_us)) {
+      CHECK(at_us - sent <= 210'000);
+      sent = at_us;
+    }
+  }
+  // Released: the frames go on with a higher sequence (Link walks on).
+  const auto next = decode(s.frame(at(1.5f), at_us + kFrameUs));
+  REQUIRE(next.samples.size() == 1);
+  CHECK(next.samples[0].time.sequence > seq);
+}
+
+TEST_CASE("host sampler: frames after a hold stamp after the last held sample") {
+  Sampler s;
+  std::uint64_t now = kStart;
+  s.frame(at(1.0f), now);
+  const auto held = s.hold(now + 1'000'000);
+  REQUIRE(held);
+  const std::uint64_t held_at = decode({*held}).samples.at(0).time.server_time_us;
+  // Released: the game frame's time is up to 250 ms older than the held sample (frame_aligned_us).
+  std::uint64_t frame_us = held_at - 200'000;
+  std::uint64_t last = held_at;
+  int sent = 0;
+  for (int i = 0; i < 40; ++i, frame_us += kFrameUs) {
+    for (const auto& p : decode(s.frame(at(1.0f + 0.1f * static_cast<float>(i)), frame_us)).samples) {
+      CHECK(p.time.server_time_us > last);  // presence would drop an older one as too old
+      last = p.time.server_time_us;
+      ++sent;
+    }
+  }
+  CHECK(sent > 0);
+}
+
+TEST_CASE("host sampler: a reconnect while held sends the status, the equipment and the sample") {
+  Sampler s;
+  s.set_color(0x00ff00ffu);
+  s.frame(at(1.0f), kStart);
+  CHECK(s.hold_reconnected(kStart).size() == 3);
+  const auto d = decode(s.hold_reconnected(kStart + 1));
+  CHECK(d.statuses.size() == 1);
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == std::optional<std::uint32_t>(0x00ff00ffu));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].position == at(1.0f).position);
+  CHECK(d.samples[0].velocity == Vec3{0, 0, 0});
+  // In a load: nothing.
+  s.frame(std::nullopt, kStart + kFrameUs);
+  CHECK(s.hold_reconnected(kStart + 2 * kFrameUs).empty());
+}
+
+TEST_CASE("host sampler: a reconnect while held to a new server uses its clock") {
+  Sampler s;
+  const std::uint64_t old_clock = 3'600'000'000ull;  // the old server ran an hour
+  s.frame(at(1.0f), old_clock);
+  REQUIRE(s.hold(old_clock + 1'000'000));
+  // The new server started a second ago.
+  const std::uint64_t now = 1'000'000;
+  const auto d = decode(s.hold_reconnected(now));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].time.server_time_us == now);
+  // Still held: the keep-alive goes on.
+  CHECK(s.hold(now + 100'000) == std::nullopt);
+  REQUIRE(s.hold(now + 200'000));
+  // Released, without and with the WELCOME's reset: frames send as Link moves, at their own times.
+  for (const bool reset : {false, true}) {
+    Sampler r = s;
+    if (reset) r.reset();
+    std::uint64_t frame_us = now + 300'000;
+    int sent = 0;
+    for (int i = 0; i < 30; ++i, frame_us += kFrameUs) {
+      for (const auto& p : decode(r.frame(at(2.0f + 0.1f * static_cast<float>(i)), frame_us)).samples) {
+        CHECK(p.time.server_time_us == frame_us);
+        ++sent;
+      }
+    }
+    CHECK(sent >= 5);
+  }
+}
+
+TEST_CASE("host sampler: the floor after a hold covers only a frame's age") {
+  // A held sample in one clock, then frames in a clock far behind it (a new server).
+  for (const bool reset : {false, true}) {
+    Sampler s;
+    s.frame(at(1.0f), 3'600'000'000ull);
+    REQUIRE(s.hold(3'601'000'000ull));
+    if (reset) s.reset();  // the WELCOME's reset
+    std::uint64_t frame_us = 1'000'000;
+    int sent = 0;
+    for (int i = 0; i < 30; ++i, frame_us += kFrameUs) {
+      for (const auto& p : decode(s.frame(at(2.0f + 0.1f * static_cast<float>(i)), frame_us)).samples) {
+        CHECK(p.time.server_time_us == frame_us);
+        ++sent;
+      }
+    }
+    CHECK(sent >= 5);
+  }
+}
+
+TEST_CASE("host sampler: held in a load or before any sample, nothing") {
+  Sampler s;
+  CHECK_FALSE(s.hold(kStart));  // nothing sent yet
+  s.frame(at(1.0f), kStart);
+  s.frame(std::nullopt, kStart + kFrameUs);  // a load: no Link
+  CHECK_FALSE(s.hold(kStart + 2'000'000));
+}
+
+TEST_CASE("host sampler: no reading, no sample, the status loading") {
+  Sampler s;
+  const auto d = decode(s.frame(std::nullopt, kStart));
+  CHECK(d.samples.empty());
+  REQUIRE(d.statuses.size() == 1);
+  CHECK(d.statuses[0].flags == proto::status::loading);
   CHECK(s.next_sequence() == 0);
+  CHECK(s.frame(std::nullopt, kStart + kFrameUs).empty());  // no change, nothing
+}
+
+TEST_CASE("host sampler: status_bits, every away bit (issue 150, away-status)") {
+  namespace st = proto::status;
+  PlayerReading r = at(1.0f, false);
+
+  SUBCASE("play, nothing away") { CHECK(status_bits(0, r, false) == 0); }
+  SUBCASE("no Link: loading, the menus clear, the cutscene and dead keep") {
+    const std::uint8_t all = st::paused | st::in_menu | st::in_cutscene | st::dead;
+    CHECK(status_bits(all, std::nullopt, false) == (st::loading | st::in_cutscene | st::dead));
+    CHECK(status_bits(0, std::nullopt, false) == st::loading);
+  }
+  SUBCASE("the title's menu up with a Link read: loading, its menus are not the pause menu") {
+    r.in_menu = true;
+    CHECK(status_bits(0, r, true) == st::loading);
+  }
+  SUBCASE("Link read again: loading clears") {
+    CHECK(status_bits(st::loading | st::dead, r, false) == st::dead);
+  }
+  SUBCASE("a game menu in front, no event: in_menu and paused") {
+    r.in_menu = true;
+    CHECK(status_bits(0, r, false) == (st::in_menu | st::paused));
+    r.in_menu = false;
+    CHECK(status_bits(st::in_menu | st::paused, r, false) == 0);
+  }
+  SUBCASE("a menu inside our event (a talk's choices): in_menu, not paused") {
+    r.in_menu = true;
+    r.event_running = true;
+    CHECK(status_bits(0, r, false) == (st::in_cutscene | st::in_menu));
+  }
+  SUBCASE("a menu during another player's event replayed here: paused (our world stops)") {
+    r.in_menu = true;
+    r.event_running = true;
+    r.event_whose = EventWhose::others;
+    CHECK(status_bits(0, r, false) == (st::in_menu | st::paused));
+  }
+  SUBCASE("menu state not known (emulator, Linux): never set") {
+    r.in_menu = std::nullopt;
+    CHECK(status_bits(0, r, false) == 0);
+    CHECK(status_bits(st::in_menu | st::paused, r, false) == 0);
+  }
+  SUBCASE("dead: set, cleared, unknown keeps") {
+    r.dead = true;
+    CHECK(status_bits(0, r, false) == st::dead);
+    r.dead = false;
+    CHECK(status_bits(st::dead, r, false) == 0);
+    r.dead = std::nullopt;
+    CHECK(status_bits(st::dead, r, false) == st::dead);
+    CHECK(status_bits(0, r, false) == 0);
+  }
+}
+
+TEST_CASE("host sampler: a world standing still with no menu named is paused (row 164 follow-up, quick switch)") {
+  namespace st = proto::status;
+  PlayerReading r = at(1.0f, false);
+  SUBCASE("paused, not in_menu, cleared when it runs again") {
+    r.world_still = true;
+    CHECK(status_bits(0, r, false) == st::paused);
+    r.world_still = false;
+    CHECK(status_bits(st::paused, r, false) == 0);
+  }
+  SUBCASE("in our event: not paused (a cutscene may hold Link)") {
+    r.world_still = true;
+    r.event_running = true;
+    CHECK(status_bits(0, r, false) == st::in_cutscene);
+  }
+  SUBCASE("no Link: loading only") {
+    CHECK(status_bits(st::paused, std::nullopt, false) == st::loading);
+  }
+}
+
+TEST_CASE("host sampler: WorldStill is opt-in, a held frame is no pause by default (pr-navi-01112)") {
+  // Aiming at a boss's eye, a ledge, a ladder, ice, a Like-Like's hold, a shock: each holds Link's frame while the
+  // world runs; as `paused` it would hand the boss away after fight_owner_paused_us. The quick-switch menu comes
+  // from the game's own screens (in_menu) instead.
+  CHECK_FALSE(world_still_on(nullptr));
+  CHECK_FALSE(world_still_on(""));
+  CHECK_FALSE(world_still_on("0"));
+  CHECK(world_still_on("1"));
+  namespace st = proto::status;
+  PlayerReading r = at(1.0f, false);
+  r.animation = proto::Animation{"Bow_Aim", 12.0f, 1.0f};  // a held aim frame, Link's place unchanged
+  CHECK(status_bits(0, r, false) == 0);                    // world_still not set: playing
+  SUBCASE("the quick-switch menu read from the game: in_menu, paused") {
+    r.in_menu = true;
+    CHECK(status_bits(0, r, false) == (st::in_menu | st::paused));
+  }
+}
+
+TEST_CASE("host sampler: WorldStill reads our Link's animation frame and place") {
+  constexpr std::uint64_t kStep = 16'667;
+  PlayerReading r = at(1.0f, false);
+  r.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+  WorldStill w;
+  std::uint64_t now = 1'000'000;
+  SUBCASE("a frame that steps every reading: running") {
+    for (int i = 0; i < 60; ++i) {
+      r.animation->frame += 1.0f;
+      CHECK_FALSE(w.step(r, now += kStep));
+    }
+  }
+  SUBCASE("a frame held 0.3 s: still, until it steps again") {
+    CHECK_FALSE(w.step(r, now));
+    CHECK_FALSE(w.step(r, now + WorldStill::kStillUs - 1));
+    CHECK(w.step(r, now + WorldStill::kStillUs));
+    CHECK(w.step(r, now + 10'000'000));   // a long pause stays still
+    r.animation->frame += 1.0f;
+    CHECK_FALSE(w.step(r, now + 10'000'000 + kStep));
+  }
+  SUBCASE("rate 0 (a pose held on purpose): never still") {
+    r.animation->rate = 0.0f;
+    CHECK_FALSE(w.step(r, now));
+    CHECK_FALSE(w.step(r, now + 5'000'000));
+  }
+  SUBCASE("our event: never still, and judged anew after it") {
+    r.event_running = true;
+    CHECK_FALSE(w.step(r, now));
+    CHECK_FALSE(w.step(r, now + 5'000'000));
+    r.event_running = false;
+    CHECK_FALSE(w.step(r, now + 5'000'001));
+    CHECK(w.step(r, now + 5'000'001 + WorldStill::kStillUs));
+  }
+  SUBCASE("a new animation or a move starts the count again") {
+    CHECK_FALSE(w.step(r, now));
+    r.animation->name = "Run";
+    CHECK_FALSE(w.step(r, now + 200'000));
+    CHECK_FALSE(w.step(r, now + 400'000));   // 0.2 s since the change
+    r.position[0] += 0.5f;
+    CHECK_FALSE(w.step(r, now + 600'000));
+    CHECK(w.step(r, now + 900'000));
+  }
+  SUBCASE("no animation read: not judged") {
+    r.animation.reset();
+    CHECK_FALSE(w.step(r, now));
+    CHECK_FALSE(w.step(r, now + 5'000'000));
+  }
+  SUBCASE("pr-navi-01112: a carried Link (its reading's pose is not the game's own) is not judged, and anew after") {
+    // The hook passes no animation while our Link is lifted (CoopLiftPlayerGame::Carried): the carried pose is
+    // 'Eaten' at frame 0, rate 1, unmoved while the carrier stands.
+    const proto::Animation carried{"Eaten", 0.0f, 1.0f};
+    CHECK_FALSE(w.step(&carried, r.position, false, now));  // (were it judged, this would start the count)
+    CHECK_FALSE(w.step(nullptr, r.position, false, now));
+    CHECK_FALSE(w.step(nullptr, r.position, false, now + 5'000'000));
+    CHECK_FALSE(w.step(&*r.animation, r.position, false, now + 5'000'001));
+    CHECK(w.step(&*r.animation, r.position, false, now + 5'000'001 + WorldStill::kStillUs));
+  }
+}
+
+TEST_CASE("host sampler: each away bit goes out once on its change and back") {
+  namespace st = proto::status;
+  Sampler s;
+  std::uint64_t now = kStart;
+  auto statuses = [&](const std::optional<PlayerReading>& r, bool title = false) {
+    return decode(s.frame(r, now += kFrameUs, title)).statuses;
+  };
+  PlayerReading r = at(1.0f, false);
+  REQUIRE(statuses(r).size() == 1);
+
+  r.in_menu = true;  // the pause menu opens
+  auto paused = statuses(r);
+  REQUIRE(paused.size() == 1);
+  CHECK(paused[0].flags == (st::in_menu | st::paused));
+  CHECK(statuses(r).empty());
+  r.in_menu = false;  // and closes
+  auto back = statuses(r);
+  REQUIRE(back.size() == 1);
+  CHECK(back[0].flags == 0);
+
+  r.dead = true;  // Game Over
+  auto dead = statuses(r);
+  REQUIRE(dead.size() == 1);
+  CHECK(dead[0].flags == st::dead);
+  auto load = statuses(std::nullopt);  // Try Again: the reload
+  REQUIRE(load.size() == 1);
+  CHECK(load[0].flags == (st::dead | st::loading));
+  r.dead = false;  // Link back with his hearts
+  auto up = statuses(r);
+  REQUIRE(up.size() == 1);
+  CHECK(up[0].flags == 0);
+
+  auto title = statuses(r, true);  // the title's menu (Quit Game)
+  REQUIRE(title.size() == 1);
+  CHECK(title[0].flags == st::loading);
+  CHECK(s.last_sample().has_value());
 }
 
 TEST_CASE("host sampler: status on every change") {

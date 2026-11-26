@@ -1,0 +1,17 @@
+# lan-nopw (row 251): a join to a host on this network needs no password. Both games join a coop_server started
+# with --same-network-open at this PC's LAN address with an EMPTY password (the games answer with the same-network
+# key); the server takes it only because the connection comes from a private address. Used for A and B.
+# Run (lane 1; <LAN-IP> = this PC's 192.168.x.x / 10.x.x.x, never 127.0.0.1):
+#   python tools\autotest\hookshot.py run --lane 1 --server <coop_server.exe> --server-arg=--same-network-open
+#     --password gate-251 --env LICHII_COOP_SERVER=<LAN-IP>:27520 --env LICHII_COOP_PASSWORD=
+#     --name lan-nopw --script-a tools\autotest\scenarios\lan-nopw.A.txt --script-b tools\autotest\scenarios\lan-nopw.A.txt
+# PASS: server-out.txt has "a player on this network joins without the join password" twice and no "reason 6";
+# each game's log has "coop: welcomed as player"; the joined shots show both players.
+# Still asks (same command, plus --env B:LICHII_COOP_SERVER=127.0.0.1:27520): B is refused, server-out.txt
+# "refused a connection, reason 6: wrong join password", B's log "refused: wrong join password" (loopback is where
+# the relay and the join helper hand internet players in, so it never skips the password).
+mark start
+wait 600
+mark joined
+wait 300
+mark joined-later

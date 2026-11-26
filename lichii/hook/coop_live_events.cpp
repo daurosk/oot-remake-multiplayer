@@ -36,7 +36,8 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
         }
         if (link_room) {
             // Near, but through a wall: that room is not loaded here.
-            const auto place_room = (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
+            const auto place_room = p.room >= 0 ? std::optional<int>(p.room)
+                                                : (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
             if (place_room && *place_room != *link_room) {
                 continue;
             }
@@ -47,6 +48,34 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
 }
 
 } // namespace
+
+bool SpansRooms(std::string_view event, std::string_view scene) {
+    // Two places in two rooms: by their rooms when both are known (round 5: a room-22 event's two doors are one
+    // room), else by distance (kOneRoomM).
+    std::vector<const Place*> mine;
+    for (const Place& p : Places()) {
+        if (p.event == event && p.scene == scene) {
+            mine.push_back(&p);
+        }
+    }
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        for (std::size_t j = i + 1; j < mine.size(); ++j) {
+            const Place& a = *mine[i];
+            const Place& b = *mine[j];
+            if (a.room >= 0 && b.room >= 0) {
+                if (a.room != b.room) {
+                    return true;
+                }
+                continue;
+            }
+            const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+            if (dx * dx + dy * dy + dz * dz > kOneRoomM * kOneRoomM) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
                                          bool event_running, std::optional<std::array<float, 3>> link,
@@ -71,6 +100,9 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         }
         if (asked_.contains(name)) {
             continue;
+        }
+        if (SpansRooms(name, scene)) {
+            continue;  // deku-ladder: one played flag for two rooms; which one played is not known here
         }
         const auto near = NearPlace(name, scene, link, room_of);
         if (near ? !*near : !named) {
@@ -276,7 +308,8 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     return out;
 }
 
-void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us) {
+void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us,
+                     std::optional<int> room) {
     if (name.empty()) {
         notes_.push_back("live event with no name not asked");
         return;
@@ -288,13 +321,13 @@ void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, s
     const bool waiting =
         std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
     if (!waiting && name != current_) {
-        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0});
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0, false, room});
     }
 }
 
-void Requester::WantFromRoom(std::string name, std::string scene) {
+void Requester::WantFromRoom(std::string name, std::string scene, std::optional<int> room) {
     const std::string key = name;
-    Want(std::move(name), std::move(scene));  // no age limit: started when near, as before
+    Want(std::move(name), std::move(scene), 0, 0, room);  // no age limit: started when near, as before
     for (Wanted& w : wanted_) {
         if (w.name == key) {
             w.room_asker = true;
@@ -503,10 +536,13 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                       return CoopFairy::ActorNamed(guest, current_starter_, n);
                   }))) {
                 // Found when the event was picked, a frame ago: deleted since (its Logic_Delete, the room unloaded)?
-                // Never hand the game's link a freed actor.
-                notes_.push_back("live event " + current_ + ": our room's asker went away before the link; asked by "
-                                 "name alone");
-                current_starter_ = 0;
+                // Never hand the game's link a freed actor. cutscene-bleed (#251): and never ask it by name alone
+                // either (the rule of the no-asker case in the pick below): without its asker the event only plays
+                // its camera for a room that is gone, holds our game's event system and Link with it, and nothing
+                // in our room moves. Not asked; its played flag stays held until we leave or load.
+                notes_.push_back("live event " + current_ + ": our room's asker went away before the link: not asked "
+                                 "(by name alone it would only hold our game; it stays held until we leave or load)");
+                return FreeFirst(guest, main);  // the build made its members: free them
             }
             if (current_starter_ != 0) {
                 c.function = main + addr::kSetLink;
@@ -523,6 +559,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::own_request:
             notes_.push_back("live event " + current_ + " asked by our room's asker itself (result " +
                              std::to_string(result & 0xff) + ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             current_.clear();
             current_args_.clear();
             current_starter_ = 0;
@@ -531,6 +570,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             return FreeFirst(guest, main);
         }
         case Next::free1: {
@@ -563,28 +605,50 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         next_ = Next::malloc;
         return c;
     }
-    if (current_.empty() && wanted_.empty()) {
-        return std::nullopt;
+    // cutscene-bleed (#251, #197): the first waiting start that may be asked now: none while our teleport is under
+    // way, and not one held because our Link is in another room than the one it was decided in (Expire).
+    auto pick = wanted_.end();
+    if (current_.empty()) {
+        if (!paused_) {
+            pick = std::find_if(wanted_.begin(), wanted_.end(), [](const Wanted& w) { return !w.held; });
+        }
+        if (pick == wanted_.end()) {
+            return std::nullopt;
+        }
     }
     if (EventRunning(guest, main)) {
         return std::nullopt;  // an event began since it was asked: wait, it stays queued
     }
     if (current_.empty()) {
-        current_ = std::move(wanted_.front().name);
-        current_args_ = std::move(wanted_.front().args);
-        current_starter_ = wanted_.front().starter;
+        current_ = std::move(pick->name);
+        current_args_ = std::move(pick->args);
+        current_starter_ = pick->starter;
         current_room_asker_ = false;
-        if (wanted_.front().room_asker && current_starter_ == 0) {
+        if (pick->room_asker && current_starter_ == 0) {
             std::string where;
-            current_starter_ = FindAsker(guest, main, current_, wanted_.front().scene, where);
+            current_starter_ = FindAsker(guest, main, current_, pick->scene, where);
             current_room_asker_ = current_starter_ != 0;
-            notes_.push_back(current_starter_ != 0
-                                 ? "live event " + current_ + ": started by our room's asker at " + where +
-                                       " (its EventBool moves the room)"
-                                 : "live event " + current_ + ": no asker actor within 1 m of its places here; "
-                                       "asked by name alone (its room may not move)");
+            if (current_starter_ == 0) {
+                // dungeon-sync-b (#62, #72): no asker here. Asked by name alone the event only plays its
+                // camera (the room moves on its asker's outputs), and where the asker went because the
+                // room's clear flag deleted it (the Dodongo's Cavern Lizalfos rooms'
+                // Gimmick_TreasureBoxAppear module: Logic_Delete <- Clear) the room has its result already.
+                // That camera kept our event system busy just as the shared clear flag unlocked the room's
+                // shutters, and the door stayed shut. Not asked: its played flag stays held until we leave
+                // or load, as before live events.
+                notes_.push_back("live event " + current_ +
+                                 ": no asker actor within 1 m of its places here: not asked (the room moves only "
+                                 "on its asker; it stays held until we leave or load)");
+                wanted_.erase(pick);
+                current_.clear();
+                current_args_.clear();
+                return std::nullopt;
+            }
+            notes_.push_back("live event " + current_ + ": started by our room's asker at " + where +
+                             " (camera only: the room moves on its asker's EventBool, which the asker's own AI "
+                             "keeps 0 until its own trigger rises)");
         }
-        wanted_.pop_front();
+        wanted_.erase(pick);
         // deku-sync-fix: the asker asks the event itself, as its room graph's node does, so the event is its own.
         if (current_room_asker_ && current_args_.empty()) {
             if (const std::uint64_t performer = PerformerOf(guest, current_starter_); performer != 0) {

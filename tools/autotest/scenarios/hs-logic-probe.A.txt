@@ -1,0 +1,43 @@
+# hs-logic-probe (Hookshot, jabu-lifts, player report #65 and #176): the logic plugs of Jabu-Jabu's lifts and of
+# the Deku Tree slingshot room's ladder and pillar, as the game's set-bool (ExecuteLogicSetBool, main+0x2727540)
+# sees them. Reads only (LICHII_COOP_LOGIC_PROBE=1). A stands on the lift, waits, steps off, then visits the ladder.
+# Look at A's log: "coop: logic probe: <name> plugs (key type value): ..." once per actor, then
+# "plug <key> (type 7) 0 -> 1" lines. The plug that goes 1 when A stands on the lift and 0 when A steps off is
+# RideOnCharacter (or RideOnPlayer); how fast it falls back says whether the lift's AI rewrites it every frame.
+# Kit saves (lane 1). B only idles.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_LOGIC_PROBE=1
+#! timeout 420
+mark start
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+place 0.32 92.5 -42.63     # on the moving floor (Obj_InsideJabu_Jabu_MoveFloor_A_01 at 0.32 91.0 -42.63)
+wait 600
+mark on-floor
+place 3.5 91.5 -42.63      # off it
+wait 600
+mark off-floor
+place -32.36 84.5 -93.31   # on the lift (Obj_InsideJabu_Jabu_ElevatorLift_A_01 at -32.36 83.0 -93.31)
+wait 900
+mark on-lift
+place -29.0 84.5 -93.31    # off it
+wait 900
+mark off-lift
+warp InsideTheDekuTree Entrance
+wait 900
+place -38.5 116.5 12.5     # beside the slingshot room's ladder and pillar (-37.12 115.52 10.83)
+wait 600
+mark ladder
+wait 300
+mark end

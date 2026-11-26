@@ -1,0 +1,14 @@
+# hs-customize, B: adult in Kakariko, the Customize page opened there (see hs-customize.A.txt).
+wait 300                # the save loaded, Link standing (a warp asked earlier was not taken in the first run)
+setflag Sequence_IsChildhood 0
+warp KakarikoVillage_Adult
+wait 900
+mark arrived
+menu customize
+wait 240
+mark adult-open
+wait 180
+mark adult-turned
+menu close
+wait 600                # while A finishes
+mark done

@@ -1,0 +1,375 @@
+# Screenshot checks for groups.py see=<name> (tools/autotest/proof.py; docs/testing.md "Screenshot proof").
+# name  shot  region(x,y,w,h of 1280x720)  kind  [margin= max= min= from= refs= cells=WxH]
+# shot: <scenario>-<shot>.png in the run folder: <script>-<mark>-<game> (A-up1-B: script A's 'mark up1', game B's
+# picture). refs: <kit root>\proof-refs\<refs or name>\good-*.png / bad-*.png (local only: game screenshots never go
+# in the repo; add with proof.py ref add).
+
+# hs-deku-platforms (#176): at the A script's 'up1' B (who pressed) plays the event's camera on the lifts: lifts up
+# (cylinders) = good, down (flat discs in the floor) = bad. A plays NO camera on a g1-events module (result only, no
+# replay): A's shot is A's own view from 5.4 m off the plate, facing the lifts (hs-deku-platforms.A 'toward -29.9 3.2'),
+# so A has its own reference set (stub, UNPROVEN until refs are captured from that view; same good/bad meaning).
+deku-lifts-A   A-up1-A  160,80,960,520   refs
+deku-lifts-B   A-up1-B  330,300,580,280  refs  refs=deku-lifts
+
+# --- stub checks (proof-shots, 2026-11-18): region is the play area; references come from the
+# reference-capture run (reports/proof-shots-a.md). Good = what the comment says, in that game's shot. ---
+# hs-deku-torch (#176 #177): at the B script's 'lit' A's torch (centre, behind where the web was) must burn as B's
+# does; 'web': the web gone in A. Bad refs: bigrun-0115 A (torch dark).
+deku-torch-A   B-lit-A  680,140,100,110  refs
+deku-web-A     B-web-A  600,0,280,240    refs
+# deku-block: the block pushed to the same place in both games
+deku-block-A               A-a-watch-A        160,80,960,520  refs
+deku-block-B               A-a-watch-B        160,80,960,520  refs
+# hs-barinade-native: Barinade in the same pose/place in both games
+hs-barinade-native-A       A-a-3-A            160,80,960,520  refs
+hs-barinade-native-B       A-a-3-B            160,80,960,520  refs
+# hs-bongobongo-native: Bongo Bongo in the same pose/place in both games
+hs-bongobongo-native-A     A-a-3-A            160,80,960,520  refs
+hs-bongobongo-native-B     A-a-3-B            160,80,960,520  refs
+# hs-ganon-native: Ganon in the same pose/place in both games
+hs-ganon-native-A          A-a-3-A            160,80,960,520  refs
+hs-ganon-native-B          A-a-3-B            160,80,960,520  refs
+# hs-ganondorf-native: Ganondorf in the same pose/place in both games
+hs-ganondorf-native-A      A-a-3-A            160,80,960,520  refs
+hs-ganondorf-native-B      A-a-3-B            160,80,960,520  refs
+# hs-morpha-native: Morpha in the same pose/place in both games
+hs-morpha-native-A         A-a-3-A            160,80,960,520  refs
+hs-morpha-native-B         A-a-3-B            160,80,960,520  refs
+# hs-phantomganon-native: Phantom Ganon in the same pose/place in both games
+hs-phantomganon-native-A   A-a-3-A            160,80,960,520  refs
+hs-phantomganon-native-B   A-a-3-B            160,80,960,520  refs
+# hs-twinrova-native: Twinrova in the same pose/place in both games
+hs-twinrova-native-A       A-a-3-A            160,80,960,520  refs
+hs-twinrova-native-B       A-a-3-B            160,80,960,520  refs
+# hs-volvagia-native: Volvagia in the same pose/place in both games
+hs-volvagia-native-A       A-a-3-A            160,80,960,520  refs
+hs-volvagia-native-B       A-a-3-B            160,80,960,520  refs
+# hs-dodongo-native: King Dodongo swallowing/stunned alike in both games
+hs-dodongo-native-A        A-a-bomb1-A        160,80,960,520  refs
+hs-dodongo-native-B        A-a-bomb1-B        160,80,960,520  refs
+# hs-gohma-native: Gohma stunned (on the floor) in both games
+hs-gohma-native-A          A-a-stun1-A        160,80,960,520  refs
+hs-gohma-native-B          A-a-stun1-B        160,80,960,520  refs
+# hs-gohma: Gohma stunned in both games, the fight past Pre_Battle
+hs-gohma-A                 A-a-stun1-A        160,80,960,520  refs
+hs-gohma-B                 A-a-stun1-B        160,80,960,520  refs
+# hs-boss-cutscenes-gohma: Gohma's intro cutscene on screen in both games (and a-death: the death)
+hs-boss-cutscenes-gohma-A  A-a-intro-A        160,80,960,520  refs
+hs-boss-cutscenes-gohma-B  A-a-intro-B        160,80,960,520  refs
+# hs-boss-cutscenes-dodongo: King Dodongo's intro cutscene on screen in both games
+hs-boss-cutscenes-dodongo-A A-a-intro-A        160,80,960,520  refs
+hs-boss-cutscenes-dodongo-B A-a-intro-B        160,80,960,520  refs
+# hs-boss-far-gohma: A: the intro plays; B (far away): no cutscene, the chat line shows
+hs-boss-far-gohma-A        A-a-intro-A        160,80,960,520  refs
+hs-boss-far-gohma-B        A-a-intro-B        160,80,960,520  refs
+# hs-boss-fix-gohma: the copy Gohma reacts to B's hit in B (and in A)
+hs-boss-fix-gohma-A        A-a-hit1-A         160,80,960,520  refs
+hs-boss-fix-gohma-B        A-a-hit1-B         160,80,960,520  refs
+# hs-boss-fix-gohma-rev: the copy Gohma reacts to A's hit in A (and in B)
+hs-boss-fix-gohma-rev-A    A-a-hit1-A         160,80,960,520  refs
+hs-boss-fix-gohma-rev-B    A-a-hit1-B         160,80,960,520  refs
+# hs-gohma-death: the boss room in both games after Gohma's death (not black)
+hs-gohma-death-A           A-a-d3-A           160,80,960,520  refs
+hs-gohma-death-B           A-a-d3-B           160,80,960,520  refs
+# hs-gohma-door: both Links past the boss door, the door shut, Gohma in the room
+hs-gohma-door-A            B-b-in-A           160,80,960,520  refs
+hs-gohma-door-B            B-b-in-B           160,80,960,520  refs
+# hs-chest-other: the map chest open in both games after B opened it (room-actor-replay-0116: B's own 'opened' view,
+# A's 'a-look' now faces the chest; good = lid open, bad = closed lid or no chest at all, the #195 vanish)
+hs-chest-other-A           A-a-look-A         160,80,960,520  refs
+hs-chest-other-B           B-opened-B         160,80,960,520  refs
+# hs-crawl: the puppet crawls (low, in the hole) in the other game
+hs-crawl-A                 A-through-A        160,80,960,520  refs
+hs-crawl-B                 A-through-B        160,80,960,520  refs
+# hs-deku-torch-away: web burned and torch lit in A too (A was out of the room)
+hs-deku-torch-away-A       A-web-A            160,80,960,520  refs
+hs-deku-torch-away-B       A-web-B            160,80,960,520  refs
+# hs-deku-water-floor: the water low and the floors moved alike in both games
+hs-deku-water-floor-A      A-moved-A          160,80,960,520  refs
+hs-deku-water-floor-B      A-moved-B          160,80,960,520  refs
+# #196 itself (review-room-actor-replay-r1): the floor B rides at the same place of its wave in both games. B's 'ride2'
+# and 'ride3' views (B on the floor) against references cut from runs where both games' floors are known: good = the
+# floor where A's game has it at that moment, bad = elsewhere (coop-kit\ls\shots-lane1\hs-deku-water-floor\20261118-135608
+# is a bad run: the floors ran free). Until refs exist these are UNPROVEN, never PASS.
+hs-deku-water-floor-ride-A  A-ride2-A         160,80,960,520  refs  refs=deku-water-floor-ride
+hs-deku-water-floor-ride-B  A-ride2-B         160,80,960,520  refs  refs=deku-water-floor-ride
+# hs-door: the puppet hidden during its door cutscene, then shown again
+hs-door-A                  A-a-watch-A        160,80,960,520  refs
+hs-door-B                  A-a-watch-B        160,80,960,520  refs
+# hs-epona: the puppet on Epona in the other game
+hs-epona-A                 A-riding-A         160,80,960,520  refs
+hs-epona-B                 A-riding-B         160,80,960,520  refs
+# hs-fishing: the fish near A's lure in both games; B holds the rod
+hs-fishing-A               A-a-reel-A         160,80,960,520  refs
+hs-fishing-B               A-a-reel-B         160,80,960,520  refs
+# hs-goron-rock: the rock broken in both games
+hs-goron-rock-A            A-boom-A           160,80,960,520  refs
+hs-goron-rock-B            A-boom-B           160,80,960,520  refs
+# hs-hud: the co-op blocks drawn over the HUD (label 'HUD off': none)
+hs-hud-A                   A-a-hud-A          160,80,960,520  refs
+hs-hud-B                   A-a-hud-B          160,80,960,520  refs
+# hs-jabu-water: Jabu's room 14 water level the same in both games
+hs-jabu-water-A            A-water-A          160,80,960,520  refs
+hs-jabu-water-B            A-water-B          160,80,960,520  refs
+# hs-kak-letter: the Kakariko gate open in both games (room-actor-replay-0116: B's own 'open' mark faces the gate;
+# A-open-B was B 65 m away in bigrun-0115). Good = shutter up, bad = shutter down (B's b-before view).
+hs-kak-letter-A            A-open-A           160,80,960,520  refs
+hs-kak-letter-B            B-open-B           160,80,960,520  refs
+hs-kak-letter-B-moved      B-open-B           160,80,960,520  change  from=B-b-before-B  min=8
+# kak-gate: the Kakariko gate open in both games (as hs-kak-letter)
+kak-gate-A                 A-open-A           160,80,960,520  refs
+kak-gate-B                 B-open-B           160,80,960,520  refs
+kak-gate-B-moved           B-open-B           160,80,960,520  change  from=B-b-before-B  min=8
+# hs-deku-bridge (#177, room-actor-replay-0116): A watches B break the slingshot room's bridge. Good = pieces falling
+# or breaking (a-w2..a-w4); bad = the whole bridge then nothing (vanish). Bad refs: none yet (the first run makes them).
+hs-deku-bridge-A           A-a-w3-A           160,80,960,520  refs
+hs-deku-bridge-B           B-b-fall1-B        160,80,960,520  refs
+hs-deku-bridge-gone-A      A-a-late-A         160,80,960,520  change  from=A-a-before-A  min=8
+# hs-ladder: the ladder down in both games
+hs-ladder-A                A-ladder-A         160,80,960,520  refs
+hs-ladder-B                A-ladder-B         160,80,960,520  refs
+# hs-lift-ride: the lift carries both Links in both games
+hs-lift-ride-A             A-a-during-A       160,80,960,520  refs
+hs-lift-ride-B             A-a-during-B       160,80,960,520  refs
+# hs-masks: the puppet wears the Skull Mask in the other game
+hs-masks-A                 A-skull-A          160,80,960,520  refs
+hs-masks-B                 A-skull-B          160,80,960,520  refs
+# hs-npc-anim: the NPC plays the same talk animation in both games
+hs-npc-anim-A              A-talk-A           160,80,960,520  refs
+hs-npc-anim-B              A-talk-B           160,80,960,520  refs
+# hs-npc-walk: the townspeople walking (legs moving) the same in both games
+hs-npc-walk-A              A-w5-A             160,80,960,520  refs
+hs-npc-walk-B              A-w5-B             160,80,960,520  refs
+# hs-ocarina-given: B holds and plays the Ocarina
+hs-ocarina-given-A         B-saria-A          160,80,960,520  refs
+hs-ocarina-given-B         B-saria-B          160,80,960,520  refs
+# hs-ocarina-show: the puppet holds the Ocarina while playing, in the other game
+hs-ocarina-show-A          A-playing2-A       160,80,960,520  refs
+hs-ocarina-show-B          A-playing2-B       160,80,960,520  refs
+# hs-panel: chat lines and name tags drawn in both games
+hs-panel-A                 A-a-chat-A         160,80,960,520  refs
+hs-panel-B                 A-a-chat-B         160,80,960,520  refs
+# hs-platforms-dodongo: A and B on the SAME lift facing the same way (misc-fails-0115), so at one mark both games show
+# that lift from beside it: the cave above the Links (top band, the puppets stay below it) must match. s3 and s4 come
+# after B's one-time counter fix (about 21 s after placed). A lift up in one game and down in the other moves the
+# camera about 3.5 m (a different band). max= is a first guess: check it on the first run's distances.
+hs-platforms-dodongo-A     A-s3-A             0,0,1280,300    same  max=12
+hs-platforms-dodongo-B     A-s4-B             0,0,1280,300    same  max=12
+# hs-players: the player list panel drawn
+hs-players-A               A-a-list-A         160,80,960,520  refs
+hs-players-B               A-a-list-B         160,80,960,520  refs
+# hs-pot-drops: the pot's drop lying in both games, then picked
+hs-pot-drops-A             A-pick2-A          160,80,960,520  refs
+hs-pot-drops-B             A-pick2-B          160,80,960,520  refs
+# hs-puppets: the other player's puppet standing in each game
+hs-puppets-A               A-spawned-A        160,80,960,520  refs
+hs-puppets-B               A-spawned-B        160,80,960,520  refs
+# hs-seed: the seed copy flying in the other game
+# (misc-fails-0115: A-ready was before any shot; now in flight on A's screen, A placed off B's line)
+hs-seed-A                  B-fly1b-A          160,80,960,520  refs
+hs-seed-B                  B-aim3-B           160,80,960,520  refs
+# spawn-seed (#166): A's seed copy in A's puppet's sling / in flight on B's screen (B placed beside, spawn-seed.B.txt)
+spawn-seed-B               A-aim5-B           160,80,960,520  refs
+# hs-sign-late: the sign cut in the late loader's game too
+hs-sign-late-A             A-cut3-A           160,80,960,520  refs
+hs-sign-late-B             A-cut3-B           160,80,960,520  refs
+# hs-skulltula-token: the token gone in both games
+hs-skulltula-token-A       A-taken-A          160,80,960,520  refs
+hs-skulltula-token-B       A-taken-B          160,80,960,520  refs
+# hs-spawn: the puppet appears where the player is, no pop from elsewhere
+hs-spawn-A                 A-reading-A        160,80,960,520  refs
+hs-spawn-B                 A-reading-B        160,80,960,520  refs
+# hs-teleport-room: A arrived by the other player. teleport-197: good = A on 2F beside B (map 2F); bad = A at the
+# 1F entrance (big-run-0117 g3). Old refs show the entrance: capture new ones (proof.py ref add).
+hs-teleport-room-A         A-arrived-A        160,80,960,520  refs
+hs-teleport-room-B         A-arrived-B        160,80,960,520  refs
+# hs-tunic: own Link blue, the puppet in its colour
+hs-tunic-A                 A-a-still-A        160,80,960,520  refs
+hs-tunic-B                 A-a-still-B        160,80,960,520  refs
+# pvp: B's Link hit (knocked back/flash) by A's sword
+pvp-A                      A-on1-A            160,80,960,520  refs
+pvp-B                      A-on1-B            160,80,960,520  refs
+# teleport-other: A in the other overworld scene by the other player
+teleport-other-A           A-arrived-A        160,80,960,520  refs
+teleport-other-B           A-arrived-B        160,80,960,520  refs
+# stray: after B rejoins: the puppet back in each game
+stray-A                    s*-b-rejoined-A    160,80,960,520  refs
+stray-B                    s*-b-rejoined-B    160,80,960,520  refs
+# screens: both back in: each game shows the other's puppet
+screens-A                  s*-a-back-in-A     160,80,960,520  refs
+screens-B                  s*-a-back-in-B     160,80,960,520  refs
+# threads-of-time: the Threads of Time menu open
+threads-of-time-A          *.A2-A-opened-A      160,80,960,520  refs
+threads-of-time-B          *.A2-A-opened-B      160,80,960,520  refs
+# world-reset: the same grass and objects in each game after B's load
+world-reset-A              s*-still-60s-A     160,80,960,520  refs
+world-reset-B              s*-still-60s-B     160,80,960,520  refs
+# sign (#90): after A's three sword cuts the post by the Graveyard gate is in pieces in A, and the same in B. A: script A
+# 'after-cut' (A's own camera on the post); B: B's 'framed' shot of its own post (B stands ~6 m away facing it).
+# Region = the post's area. refs: good = post in pieces, bad = post whole (bigrun-0115: B's post stands whole, yellow top).
+sign-A   A-after-cut-A  300,100,500,520  refs
+sign-B   B-framed-B     400,150,500,450  refs
+# stalchild (#124, misc-fails-0115): at A's fight3 A fights a Stalchild on the open field in front of the Market; B,
+# 18 m away facing A, shows A's puppet and the same Stalchild (refs from the first run of the new spots)
+stalchild-A                A-fight3-A         160,80,960,520  refs
+stalchild-B                A-fight3-B         160,80,960,520  refs
+
+# --- expect steps of the steps files (proof-shots-a-3, 2026-11-18): each step counts puppets and fairies from
+# the log; its shot s<step>-<name>-<game> must show the same: N=1 the other player's puppet Link (and its fairy)
+# in view, N=0 none. Stub region (the play area); references from the reference-capture run. ---
+# crawl.steps.txt
+crawl-end-A                              s*-end-A                       160,80,960,520  refs
+crawl-end-B                              s*-end-B                       160,80,960,520  refs
+# cutscene.steps.txt
+cutscene-both-in-A                       s*-both-in-A                   160,80,960,520  refs
+cutscene-both-in-B                       s*-both-in-B                   160,80,960,520  refs
+cutscene-after-A                         s*-after-A                     160,80,960,520  refs
+cutscene-after-B                         s*-after-B                     160,80,960,520  refs
+# ocarina.steps.txt
+ocarina-both-in-A                        s*-both-in-A                   160,80,960,520  refs
+ocarina-both-in-B                        s*-both-in-B                   160,80,960,520  refs
+ocarina-after-A                          s*-after-A                     160,80,960,520  refs
+ocarina-after-B                          s*-after-B                     160,80,960,520  refs
+# screens.steps.txt
+screens-b-on-title-A                     s*-b-on-title-A                160,80,960,520  refs
+screens-b-on-title-B                     s*-b-on-title-B                160,80,960,520  refs
+screens-both-in-A                        s*-both-in-A                   160,80,960,520  refs
+screens-both-in-B                        s*-both-in-B                   160,80,960,520  refs
+screens-b-paused-back-A                  s*-b-paused-back-A             160,80,960,520  refs
+screens-b-paused-back-B                  s*-b-paused-back-B             160,80,960,520  refs
+screens-a-paused-back-A                  s*-a-paused-back-A             160,80,960,520  refs
+screens-a-paused-back-B                  s*-a-paused-back-B             160,80,960,520  refs
+screens-a-on-title-A                     s*-a-on-title-A                160,80,960,520  refs
+screens-a-on-title-B                     s*-a-on-title-B                160,80,960,520  refs
+screens-a-back-in-A                      s*-a-back-in-A                 160,80,960,520  refs
+screens-a-back-in-B                      s*-a-back-in-B                 160,80,960,520  refs
+# stray-diag-nocallers.steps.txt
+stray-diag-nocallers-both-loaded-A       s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nocallers-both-loaded-B       s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nocallers-server-down-1-A     s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-1-B     s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-1-A     s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-1-B     s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nocallers-server-down-2-A     s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-2-B     s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-2-A     s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-2-B     s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nocallers-server-down-3-A     s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-3-B     s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-3-A     s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-3-B     s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nohit.steps.txt
+stray-diag-nohit-both-loaded-A           s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nohit-both-loaded-B           s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nohit-server-down-1-A         s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nohit-server-down-1-B         s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nohit-server-back-1-A         s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nohit-server-back-1-B         s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nohit-server-down-2-A         s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nohit-server-down-2-B         s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nohit-server-back-2-A         s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nohit-server-back-2-B         s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nohit-server-down-3-A         s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nohit-server-down-3-B         s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nohit-server-back-3-A         s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nohit-server-back-3-B         s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-noobj.steps.txt
+stray-diag-noobj-both-loaded-A           s*-both-loaded-A               160,80,960,520  refs
+stray-diag-noobj-both-loaded-B           s*-both-loaded-B               160,80,960,520  refs
+stray-diag-noobj-server-down-1-A         s*-server-down-1-A             160,80,960,520  refs
+stray-diag-noobj-server-down-1-B         s*-server-down-1-B             160,80,960,520  refs
+stray-diag-noobj-server-back-1-A         s*-server-back-1-A             160,80,960,520  refs
+stray-diag-noobj-server-back-1-B         s*-server-back-1-B             160,80,960,520  refs
+stray-diag-noobj-server-down-2-A         s*-server-down-2-A             160,80,960,520  refs
+stray-diag-noobj-server-down-2-B         s*-server-down-2-B             160,80,960,520  refs
+stray-diag-noobj-server-back-2-A         s*-server-back-2-A             160,80,960,520  refs
+stray-diag-noobj-server-back-2-B         s*-server-back-2-B             160,80,960,520  refs
+stray-diag-noobj-server-down-3-A         s*-server-down-3-A             160,80,960,520  refs
+stray-diag-noobj-server-down-3-B         s*-server-down-3-B             160,80,960,520  refs
+stray-diag-noobj-server-back-3-A         s*-server-back-3-A             160,80,960,520  refs
+stray-diag-noobj-server-back-3-B         s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nopose.steps.txt
+stray-diag-nopose-both-loaded-A          s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nopose-both-loaded-B          s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nopose-server-down-1-A        s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nopose-server-down-1-B        s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nopose-server-back-1-A        s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nopose-server-back-1-B        s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nopose-server-down-2-A        s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nopose-server-down-2-B        s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nopose-server-back-2-A        s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nopose-server-back-2-B        s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nopose-server-down-3-A        s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nopose-server-down-3-B        s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nopose-server-back-3-A        s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nopose-server-back-3-B        s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nowake.steps.txt
+stray-diag-nowake-both-loaded-A          s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nowake-both-loaded-B          s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nowake-server-down-1-A        s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nowake-server-down-1-B        s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nowake-server-back-1-A        s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nowake-server-back-1-B        s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nowake-server-down-2-A        s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nowake-server-down-2-B        s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nowake-server-back-2-A        s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nowake-server-back-2-B        s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nowake-server-down-3-A        s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nowake-server-down-3-B        s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nowake-server-back-3-A        s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nowake-server-back-3-B        s*-server-back-3-B             160,80,960,520  refs
+# stray.steps.txt
+stray-both-loaded-A                      s*-both-loaded-A               160,80,960,520  refs
+stray-both-loaded-B                      s*-both-loaded-B               160,80,960,520  refs
+stray-a-in-kakariko-A                    s*-a-in-kakariko-A             160,80,960,520  refs
+stray-a-in-kakariko-B                    s*-a-in-kakariko-B             160,80,960,520  refs
+stray-a-back-A                           s*-a-back-A                    160,80,960,520  refs
+stray-a-back-B                           s*-a-back-B                    160,80,960,520  refs
+stray-b-left-A                           s*-b-left-A                    160,80,960,520  refs
+stray-b-rejoined-A                       s*-b-rejoined-A                160,80,960,520  refs
+stray-b-rejoined-B                       s*-b-rejoined-B                160,80,960,520  refs
+stray-b-crashed-A                        s*-b-crashed-A                 160,80,960,520  refs
+stray-b-back-A                           s*-b-back-A                    160,80,960,520  refs
+stray-b-back-B                           s*-b-back-B                    160,80,960,520  refs
+stray-server-down-A                      s*-server-down-A               160,80,960,520  refs
+stray-server-down-B                      s*-server-down-B               160,80,960,520  refs
+stray-server-back-A                      s*-server-back-A               160,80,960,520  refs
+stray-server-back-B                      s*-server-back-B               160,80,960,520  refs
+stray-b-adult-A                          s*-b-adult-A                   160,80,960,520  refs
+stray-b-adult-B                          s*-b-adult-B                   160,80,960,520  refs
+# teleport-free.steps.txt
+teleport-free-loaded-A                   s*-loaded-A                    160,80,960,520  refs
+teleport-free-loaded-B                   s*-loaded-B                    160,80,960,520  refs
+teleport-free-together-A                 s*-together-A                  160,80,960,520  refs
+teleport-free-together-B                 s*-together-B                  160,80,960,520  refs
+# teleport.steps.txt
+teleport-loaded-A                        s*-loaded-A                    160,80,960,520  refs
+teleport-loaded-B                        s*-loaded-B                    160,80,960,520  refs
+teleport-same-scene-A                    s*-same-scene-A                160,80,960,520  refs
+teleport-same-scene-B                    s*-same-scene-B                160,80,960,520  refs
+teleport-together-A                      s*-together-A                  160,80,960,520  refs
+teleport-together-B                      s*-together-B                  160,80,960,520  refs
+# teleport2.steps.txt
+teleport2-loaded-A                       s*-loaded-A                    160,80,960,520  refs
+teleport2-loaded-B                       s*-loaded-B                    160,80,960,520  refs
+teleport2-together-A                     s*-together-A                  160,80,960,520  refs
+teleport2-together-B                     s*-together-B                  160,80,960,520  refs
+
+# hs-title-menu (owner 2026-11-19: the title's Host, Join and Co-op Settings rows on): the highlight moved down the
+# list to Host (the list's lower half against 'top'), Hookshot's menu over the title after A on Host, and the title
+# again after the menu closed. Thresholds are a first guess until the first run (proof.py dist) and refs.
+title-on-host-A   s*-on-host-A   320,330,640,390  change  from=s*-top-A      min=4
+title-on-host-B   s*-on-host-B   320,330,640,390  change  from=s*-top-B      min=4
+# the highlight one row lower, Host to Join (v3.0.0 title: Host ~y606, Join ~y646, 1280x720 shot; proof-0116 s27-on-host-A)
+title-on-join-A   s*-on-join-A   480,590,320,80   change  from=s*-on-host-A  min=4
+title-on-join-B   s*-on-join-B   480,590,320,80   change  from=s*-on-host-B  min=4
+title-pressed-A   s*-pressed-A   0,0,1280,720     change  from=s*-on-host-A  min=8
+title-pressed-B   s*-pressed-B   0,0,1280,720     change  from=s*-on-host-B  min=8
+title-closed-A    s*-closed-A    0,0,1280,720     change  from=s*-pressed-A  min=8
+title-closed-B    s*-closed-B    0,0,1280,720     change  from=s*-pressed-B  min=8
+# hs-teleport-direct (teleport-direct-0116): A arrived by the map change event, not black; teleport-197: then moved beside B on 2F
+# (same view as hs-teleport-room's arrival: its references)
+hs-teleport-direct-A       A-arrived-A        160,80,960,520  refs  refs=hs-teleport-room-A
+hs-teleport-direct-B       A-arrived-B        160,80,960,520  refs  refs=hs-teleport-room-B
+# hs-teleport-direct-kak: A in Kakariko next to B, not black (stub, UNPROVEN until refs are captured from that run)
+hs-teleport-direct-kak-A   A-end-A            160,80,960,520  refs

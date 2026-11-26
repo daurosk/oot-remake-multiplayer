@@ -1,0 +1,105 @@
+From 88af7bc2de9b5906526dc1b7cbf5350200e51896 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 08:39:40 -0900
+Subject: [PATCH] Co-op typing: the menu leaves the keyboard to a text field
+ the module has
+
+gpu/vk/vk_menu.cpp menu_tick: while the co-op module has the keyboard
+(hos_coop_keys_taken: a tab's text field or the chat box, typed into),
+the menu drops its keyboard presses (Q, E, Tab, Esc, Enter, the arrows
+and their repeats; not Insert or F1) and Shift is no compact-menu key.
+On Windows those keys never reach take_key_press: host/display.c gives
+them to the module first. Linux has no such queue (host->take_key_press
+is NULL there) and the menu read the keys' state, so typing a q or an e
+changed the tab and the tab's hide ended the typing (player report: the
+Join code and password could not be typed on Linux and Steam Deck).
+gpu/vk/vk_coop.cpp finds hos_coop_keys_taken with the menu's other
+exports (coop::keys_taken; false without the module).
+---
+ gpu/vk/vk_coop.cpp |  7 +++++++
+ gpu/vk/vk_coop.h   |  2 ++
+ gpu/vk/vk_menu.cpp | 12 +++++++++++-
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/gpu/vk/vk_coop.cpp b/gpu/vk/vk_coop.cpp
+index 9d638362..d3a26732 100644
+--- a/gpu/vk/vk_coop.cpp
++++ b/gpu/vk/vk_coop.cpp
+@@ -168,6 +168,7 @@ std::atomic<hos_coop_menu_page_fn> menu_page_fn{nullptr};
+ std::atomic<hos_coop_menu_input_fn> menu_input_fn{nullptr};
+ std::atomic<hos_coop_menu_wanted_fn> menu_wanted_fn{nullptr};
+ std::atomic<hos_coop_menu_picture_fn> menu_picture_fn{nullptr};   // (patch 0019: optional)
++std::atomic<int (*)(void)> keys_taken_fn{nullptr};   // (patch 0022: hos_coop_keys_taken, hos_coop_api.h)
+ 
+ void find_menu() {
+     static std::atomic<int> wait{0};
+@@ -191,6 +192,7 @@ void find_menu() {
+     menu_input_fn.store(i, std::memory_order_release);
+     menu_wanted_fn.store((hos_coop_menu_wanted_fn)look("hos_coop_menu_wanted"), std::memory_order_release);
+     menu_picture_fn.store((hos_coop_menu_picture_fn)look("hos_coop_menu_picture"), std::memory_order_release);
++    keys_taken_fn.store((int (*)(void))look("hos_coop_keys_taken"), std::memory_order_release);
+     menu_tabs_fn.store(t, std::memory_order_release);
+     logf("vk: co-op: the module's menu tabs found");
+ }
+@@ -230,6 +232,11 @@ int menu_wanted() {
+     return w ? w() : HOS_COOP_MENU_WANT_NOTHING;
+ }
+ 
++bool keys_taken() {
++    const auto k = keys_taken_fn.load(std::memory_order_acquire);
++    return k && k() != 0;
++}
++
+ bool menu_picture(int tab, HosCoopMenuPicture *out, const float window[4], float aspect) {
+     const auto p = menu_picture_fn.load(std::memory_order_acquire);
+     if (!p || !out) return false;
+diff --git a/gpu/vk/vk_coop.h b/gpu/vk/vk_coop.h
+index a3931bcb..449e94f3 100644
+--- a/gpu/vk/vk_coop.h
++++ b/gpu/vk/vk_coop.h
+@@ -31,6 +31,8 @@ bool menu_page(int tab, HosCoopMenuPage *out);
+ bool menu_input(int tab, int event, int arg = 0, int arg2 = 0);
+ /// What the module wants of the menu now: HOS_COOP_MENU_WANT_NOTHING, _CLOSE, or a tab to open on
+ int menu_wanted();
++/// (patch 0022) The module has the keyboard (hos_coop_keys_taken: a tab's text field or the chat box, typed into)
++bool keys_taken();
+ /// (patch 0019) The picture beside the tab's page (hos_coop_menu_picture.h), told where its square is (fractions of the
+ /// window) and the window's aspect; false: none (an older module, or none now)
+ bool menu_picture(int tab, HosCoopMenuPicture *out, const float window[4], float aspect);
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index c4b8953f..33a59085 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -5249,6 +5249,15 @@ void menu_tick() {
+         held[i] = down;
+         if (press[i]) pad_last = false;   // (the keys: their names in the prompts)
+     }
++    // (oot-remake-multiplayer, patch 0022) While the co-op module has the keyboard (a tab's text field or the chat box,
++    // typed into: coop::keys_taken) its keys are the module's, Q, E, Tab, Esc and Enter too: they type or end the typing,
++    // and never change the tab. On Windows they never reach take_key_press (host/display.c gives them to the module
++    // first); Linux has no such queue and reads the keys' state, so the presses are dropped here. Insert and F1 stay the
++    // menu's (the module leaves them: the menu closes, the typing with it).
++    const bool coop_typing = coop::keys_taken();
++    if (coop_typing)
++        for (int i = 0; i < K_N; i++)
++            if (keys[i] != VK_INSERT && keys[i] != VK_F1) press[i] = false;
+     // (longshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows; the
+     // buttons the Switch's A and B are bound to as Enter and Esc, as in the game (vk_menu_keys.h; with the Nintendo layout A
+     // is the right face button), not while a binding waits for its button
+@@ -5281,6 +5290,7 @@ void menu_tick() {
+     tune_held = tune_down;
+     if (!open_now.load() || page != 0 || listening != 0 || (tune_down && (GetAsyncKeyState(VK_TAB) & 0x8000)))
+         tune_cancelled = true;
++    if (coop_typing) tune_cancelled = true;   // (patch 0022: Shift while typing a capital is no compact-menu key)
+     if (tune_release) pad_last = false;
+     {   // (RX_VK_UI_PROMPTS=pad or keys: the prompts for screenshots of test runs, which have no controller and no focus)
+         static const char* force = getenv("RX_VK_UI_PROMPTS");
+@@ -5303,7 +5313,7 @@ void menu_tick() {
+         const int pads[5] = {0, HOS_PAD_UP, HOS_PAD_DOWN, HOS_PAD_LEFT, HOS_PAD_RIGHT};
+         const int64_t t = prof_now();
+         for (int i = 1; i <= 4; i++) {
+-            const bool down = held[i] || (open_now.load() && listening != 1 && (raw >> pads[i] & 1));
++            const bool down = (held[i] && !coop_typing) || (open_now.load() && listening != 1 && (raw >> pads[i] & 1));
+             if (!down) { held_since[i] = 0; continue; }
+             if (!held_since[i]) { held_since[i] = t, next_repeat[i] = t + 350000000LL; continue; }
+             if (t >= next_repeat[i] && open_now.load() && listening == 0) {

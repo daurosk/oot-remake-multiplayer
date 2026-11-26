@@ -1,0 +1,60 @@
+# hs-deku-bridge (Hookshot; issue #177, room-actor-replay-0116): the Deku Tree slingshot room's wooden bridge (the
+# trap by the chest) breaks under B; A, watching, must see it FALL or BREAK, not just vanish.
+# The bridge: Obj_InsideTheDekuTree_FallingFloor_A_01 e9f286aa47fef9b1 at -39.84 109.80 11.01 and _A_02
+# 61f7b4da35494840 (keyed, coop_dungeon.cpp; a DestructionParam with a fracture model: they break apart; their own
+# AI drops them when Link stands on them, reports/breakables-2.md, review-world-objects.md). The chest ledge:
+# Obj_TBox_A_01 b4ca60d52ca4d05f at -42.92 116.20 19.35.
+# Co-op path today (ac226d37): the breaking game sends the floor's moves as a shifter (coop_world.cpp IsShifter:
+# 'world: <hash> ... moved here: sending'), the other game moves its copy ('moved by another player'); the key lands
+# and the copy is removed kTakeFallUs (4 s) later (coop_objects_sync.cpp IsFallTaken). Whether that shows a fall or a
+# vanish has never been seen in a game: this is the probe. LICHII_COOP_GIMMICK_PROBE=1 logs the floors' words.
+# SAVE: profile pre-deku (the owner's checkpoint '1. Deku Tree', both games): the bridge stands.
+# Run: offline job room-actor-replay-0116 (lane 1), or tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-deku-bridge
+# Look (no PASS from logs): A's shots a-w1 .. a-w8 (every 0.75 s from about B's landing, 6 s) show the bridge
+# falling/breaking apart in A (pieces in the air or lower than at a-before), as B's b-fall1/b-fall2 do in B; FAIL =
+# whole bridge at a-w1 and nothing at a-w2 (vanished). a-late (A) and b-late (B): the bridge gone in both.
+# Log: B 'FallingFloor_A_0[12] moved here: sending' (B's floor broke), A 'moved by another player', then the key.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 360
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -42.0 116.4 17.4     # the chest ledge, 2 m from the chest, 6.5 m above and 6.5 m from the bridge
+wait 240
+toward -39.84 11.01 4      # face the bridge (a step, not off the ledge)
+press ZL 10
+wait 270
+mark a-before              # B lands on the bridge at about after+600
+wait 60
+mark a-w1
+wait 45
+mark a-w2
+wait 45
+mark a-w3
+wait 45
+mark a-w4
+wait 45
+mark a-w5
+wait 45
+mark a-w6
+wait 45
+mark a-w7
+wait 45
+mark a-w8
+wait 45
+wait 400
+mark a-late
+wait 300
+mark end

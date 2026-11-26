@@ -1,0 +1,55 @@
+# deku-block-late B (tracker row 166, dc-world-0118 a788f276): a push block is not there (or snaps back) for a
+# player who was NOT in its room when another player pushed it. Generic fix (every MovableBox / SliderBox), so the
+# proven block of deku-block is used (Deku Tree basement Obj_MovableBox_A_01 7155a64297e96d5a, Banc -51.06 79.27
+# 47.1, pushed toward -z; the same block hiddenblitz's 0.11.6 log showed busy mid-push). B stays at the Deku Tree
+# entrance (another room, the basement not loaded) while A pushes it one step; 10 s after A's push B is put in the
+# basement beside it and pushes it on.
+# SAVE: as deku-block (any Deku Tree save of both lanes). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario deku-block-late
+# PASS (logs + shots):
+#  1. A: "world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending", then "at rest: place sent".
+#  2. B after b-arrived: "7155a64297e96d5a Obj_MovableBox_A_01 put where another player left it" and "push node
+#     .* asked to run again" (or no push-node line at all: the node already held the new rest). FAIL: "push node
+#     still busy: its next push may start from the old place" (the row 166 case).
+#  3. Shots b-arrived: the block one step on (z ~45.6), the same as a-watch. b-push1: it moves on from there toward -z
+#     in BOTH games, no snap of the block or B's Link back to z ~47.1.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag InsideTheDekuTree_Level_RoomH_ClearBlock 0   # the lane save had the block solved at its goal (run 20261120-010147 VOID)
+warp InsideTheDekuTree Entrance   # same-map warp = reload: the room loads unsolved (run 010533: a set alone left it at its goal)
+wait 900
+wait 240                # A is put in the basement now; B stays at the entrance (another room)
+mark b-away
+wait 1200               # A pushes the block one step meanwhile
+mark b-away2
+place -46.0 79.9 49.7   # into the basement now (deku-block's B spot, beside the block's start)
+wait 360
+toward -51.06 47.0 10
+press ZL 10
+mark b-arrived
+place -51.06 79.9 48.7  # behind the block's new place (one step on, about 45.6)
+wait 240
+goto -51.06 47.4 0.3 300
+mark b-reach
+toward -51.06 40.0 150 A # PUSH it on, A held (grab and push)
+wait 120
+mark b-push1
+toward -51.06 40.0 150 A
+wait 120
+mark b-push2
+wait 1200
+mark b-end

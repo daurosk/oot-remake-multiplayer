@@ -36,6 +36,16 @@ extern const int kLangCount;
 // each time: a change of the Menu language row shows at once).
 const Lang* Current();
 
+// Tests only: pins the language Current() answers to the table for `code` ("en" or an unknown code: English), so a
+// test can read the Chinese a row would show; nullptr gives the settings back.
+void ForceLanguage(const char* code);
+
+// A line of ours built around a player's, a room's or a mod's own text: `before` + the text + `after`, the template
+// ("Let in {}", "{} (you)") in the table's language and the text put in as it is. The text is never looked up and never
+// seen by the table's shapes, whatever it reads like ("Link", "On", "Hyrule Field", "x left"): translate the line this way,
+// not by Tr() of the finished line.
+std::string TrAround(std::string_view before, std::string_view text, std::string_view after = {});
+
 // The Menu language row's value in longshot_options.ini's text (0 Auto), -1
 // when the text has no such line (empty, or cut short while Longshot writes
 // it); the value after a read, `last` kept when the read had none (`good`
@@ -45,6 +55,19 @@ int MenuLanguageSetting(std::string_view ini);
 int MenuLanguageAfterRead(int last, std::string_view ini, bool* good);
 const char* MenuLanguageCode(int setting);
 
+// The game's font sets (romfs Font2/*.bfarc, row 139, ui-fit-139-2): the game loads ONE at its start for its own
+// language (language.txt / HOS_LANGUAGE), and every native pane (the - menu's tabs and rows, the title's buttons, the
+// captions) draws with it. Their Normal.buif: the base Font = CetraDisplayPro (Latin) + OT-UDTypos510 (Japanese, JIS);
+// Font_CNzh adds FZYASHJW_Zhun (Simplified Chinese), Font_TWzh FZLTHB (Traditional), Font_KRko AsiaKKRST (Hangul),
+// Font_EUru ClarimoUDPE (Cyrillic). A Simplified line in the base set shows boxes for 联/设/你 (JIS has 机/置/的).
+enum class FontSet { kBase, kCNzh, kTWzh, kKRko, kEUru };
+// The set the game loads for its language code ("zh-CN" / "zh-Hans": kCNzh, "zh-TW" / "zh-Hant": kTWzh, "ko": kKRko,
+// "ru": kEUru, anything else, Japanese and English included: kBase).
+FontSet FontSetFor(std::string_view game_code);
+// The table the native panes show: the Menu language's table (`menu`, nullptr English) when the game's font set
+// (`game_code`) holds its letters, else English (nullptr): never boxes for missing letters.
+const Lang* Shown(const Lang* menu, std::string_view game_code);
+
 // The table for a language code (any case; "zh-Hans-CN" takes "zh-Hans"), or
 // nullptr for English and codes with no table.
 const Lang* ForCode(std::string_view code);
@@ -52,6 +75,12 @@ const Lang* ForCode(std::string_view code);
 // `en` in that language; `en` itself when the table has no line for it, and
 // when `en` is built around something the table's shapes do not know.
 std::string Tr(std::string_view en);
+
+// A place's name (places.json's English, lichii/hook/coop_hud_places.h) in the
+// table's language; the name as it is when that language has no line for it,
+// and for English. Separate from Tr(): a place is the game's data, not a line of
+// the module's source, so the table of them is separate too.
+std::string Place(std::string_view en);
 // The same in `lang` (nullptr: English).
 std::string Tr(const Lang* lang, std::string_view en);
 

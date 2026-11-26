@@ -1,0 +1,14 @@
+# live-twinrova-room B (see the A file): adult save to the Twinrova room (same boot as hs-twinrova-orders2).
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in

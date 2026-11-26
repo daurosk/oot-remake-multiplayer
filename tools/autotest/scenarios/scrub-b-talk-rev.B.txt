@@ -1,0 +1,101 @@
+# scrub-b-talk-rev (#144, event-owner-0116): room B's lone Deku Scrub (Enemy_Scrub_Deku
+# 0xaa6f22763e99e851 at -22.67 109.30 9.68, Deku Tree 2F, Talk_Deku_01_Attacked) is ONE SHARED actor. B beats it
+# with the slingshot and opens its talk, leaving the text up for 60 s; meanwhile A shoots the same
+# scrub and talks through its own talk. The talk sets InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_001
+# (0x1c594551) and InsideTheDekuTree_RoomB_Cleared (0x64edd2f3); room B's graph deletes the scrub from them.
+# Saves: clear 0x1c594551 and 0x64edd2f3 in both autotest-save baselines first (save_flags.py set), put back after.
+# Expect (shots on BOTH games; the scrub is graded by the pictures, not the log):
+#  - B at mark talk: the scrub's talk text on B's screen; A's shot at the same time: A's scrub
+#    is NOT frozen in B's talk (it reacts to A's shots, then A's own talk text at A's mark talk).
+#  - B's log: 'coop: dungeon: our Link is in an event' (or 'scrub near (room B's scrub)') holding the two flags.
+#  - Both talks end: at mark talk-end each Link walks off (shot end: Link moved, no text box) on both games.
+#  - At mark end on both games: the scrub gone (both flags 1).
+#  - The fix's sign in A's log while B talks: no owner pose put on the scrub copy (no 'aggro'/'wake' claim
+#    of the scrub); f16f02a6+ only.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -16.0 109.3 13.0
+wait 240
+mark placed
+toward -22.67 9.68 10     # face the scrub (x z)
+wait 240
+mark aim
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark hit
+wait 300
+goto -20.2 9.6 1.0 600  # to the scrub: the talk comes when Link is near
+mark at-scrub
+mark talk
+press A
+wait 120
+press A
+wait 3600                # the text stays up while the other player beats and talks to the same scrub
+mark hold
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark talk-end
+goto -16.0 13.0 1.0 600  # back: the talk is over, Link moves
+mark end

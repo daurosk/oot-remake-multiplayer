@@ -96,8 +96,14 @@ public:
     // cutscene, a talk). No nudge is made while one runs; a nudge still due
     // runs after it.
     void SetEvent(bool running) { in_event_ = running; }
+    // Row 164 follow-up: our game is paused (a game menu in front, no event of ours). Present thread, before Tick,
+    // same clock as Tick's now_us. A host back from a pause moves its own clock on by what it missed (only the
+    // reads where a clock that ran before the pause stood), so the guests, whose clocks ran on, are not nudged back to it (their sky ran backwards after every pause).
+    void SetPaused(bool paused, std::uint64_t now_us);
+    static constexpr double kDefaultRate = 120.0;  // in-game seconds a real second (docs/time.md), until measured
     // Nudges stopped for this session (they did not hold).
     bool NudgesOff() const { return nudges_off_; }
+    std::uint64_t CatchUps() const { return catch_ups_; }  // a host's catch-ups after its pause, all told
     // Present thread: a save was loaded in our game just now (the hook's
     // "save load seen"). Same clock as Tick's now_us.
     void SaveLoaded(std::uint64_t now_us);
@@ -127,6 +133,12 @@ private:
     std::optional<std::uint32_t> nudge_;  // to write, taken by TakeNudge
     std::uint64_t nudge_at_ = 0;
     bool in_event_ = false;
+    bool paused_ = false;             // SetPaused
+    bool pause_from_moving_ = false;  // our clock ran just before the pause began (not indoors, no time change)
+    bool moving_ = false;             // our clock's last step outside a pause moved forward
+    std::uint64_t catch_up_us_ = 0;  // real time our clock stood in a pause that stopped it, to make up
+    std::uint64_t catch_ups_ = 0;
+    double rate_ = 0;  // our clock's in-game seconds a real second while it runs (0: not measured yet)
     int nudge_tries_ = 0;  // nudges in a row without getting within kNudgeSeconds
     bool nudges_off_ = false;
 

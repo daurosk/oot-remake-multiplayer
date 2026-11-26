@@ -1,0 +1,71 @@
+# Row 178 probe: hs-phantom-ganon-p2 without B's 3 hits. A's test hits push no attacker, so A's boss gets no
+# puppet attacker (expect its Fly to move on); B's copy still replays A's hits with A's puppet as attacker.
+# hs-phantom-ganon-p2 (row 178: Phantom Ganon free-fell ~3 km after his owner went down in phase 2, mid RushAttack,
+# and never came back: soft-lock). A is the host and owns him all along, B the guest. Both warp into
+# PhantomGanonStage as hs-phantom-ganon. Then, 600 frames a turn, the same on both sides:
+#   t1..t4 A hits 6 a turn (his life 40 -> 16: phase 2, his rides and RushAttack dives)
+#   t1..t3 B hits 2 halfway through each turn (row 177 review MUST 1: A owns him, A's game replays the hit with
+#          B's puppet as the attacker: "P2's hit replayed with their puppet .. as the attacker" in A's log, no crash,
+#          the flinch on both screens, his life 40 -> 10 by t4)
+#   t5     nothing (phase 2 runs)
+#   t6     A goes down (`hurt 80`, down-but-out): the server hands him to B mid-move
+#   t7, t8 B watches (no hits: B's own AI runs him from the move he was in)
+#   t9     B `kill`s him
+# PASS (grep both logs; screenshots both games every mark):
+#  1. B's log after t6: "Enemy_DungeonBoss_PhantomGanon: made ours mid-move: its move (slot S verb V) starts over as
+#     ours (row 178)" or, when the hand-over came between moves, "its AI did not run its body as a copy: it chooses
+#     again" (then not a mid-rush case: run again), and "became ours: a boss on the brain path, its own AI goes on
+#     (no '...' replay, row 178)"; never "became ours: plays its own AI's '...' again (issue 157)" for him.
+#  2. No "fell N m below its fight start" line and no share line of him with "moved" over 100 m from a Link.
+#  3. Screenshots t7/t8 on BOTH games: Phantom Ganon in the arena (riding, in a painting, or attacking), the same move.
+#  4. His death in B's game after t9, and on A's screen.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-phantom-ganon-p2
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t4
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t5
+wait 600
+mark t6
+hurt 80                 # the owner goes down mid-fight
+wait 600
+mark t7
+wait 600
+mark t8
+wait 600
+mark t9
+wait 600
+mark after-turns
+wait 1800               # his death, if it came
+mark d1
+wait 1800
+mark end

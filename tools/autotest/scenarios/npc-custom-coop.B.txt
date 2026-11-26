@@ -1,0 +1,8 @@
+# npc-custom-coop B: Link; stays, looks ahead at A's puppet (A walks ahead and turns back).
+mark start
+wait 1800
+mark b-sees-a
+wait 300
+mark b-sees-a-2
+wait 300
+mark end

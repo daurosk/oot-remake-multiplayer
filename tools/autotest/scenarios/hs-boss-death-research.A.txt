@@ -1,0 +1,58 @@
+# hs-boss-death-research (Hookshot, branch boss-fix; seed N2BTEYKM report, B's 0.11.2 goal "one boss death for
+# everyone"). RESEARCH, no PASS/FAIL: what a copy Gohma does when the owner's Gohma dies. A walks in first (A owns
+# her), B about 25 s later (a copy). Then A's test kill writes its own Gohma's life to 0 (the owner's death, its
+# game's own death step from there). Watch B: does its copy die (the owner's death brain verb put in, or the
+# ObjectRemove 'dead in its owner's game' hit through B's Life step), or stand on at life > 0?
+# Look for in B: "dead in its owner's game: Enemy_DungeonBoss_Gohma", "a hit the boss's game did not take",
+# "boss beaten", the objects debug life lines of Enemy_DungeonBoss_Gohma, shots b-k1..b-k3 vs a-k1..a-k3.
+# Same save as hs-boss-fix-gohma (header there).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-death-research -Server <auto-B server>
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 720
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 2400               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 0.0 67.5 1.5 600   # CONTROL: 7.5 m west of the room's centre, facing in
+mark a-moved
+wait 2700               # B's intro (B walks in now)
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # the owner's Gohma: life 0 by a direct write
+wait 120
+mark a-k1
+wait 600
+mark a-k2
+wait 1200
+mark a-k3
+wait 1200
+mark end

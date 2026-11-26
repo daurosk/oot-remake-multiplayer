@@ -1,4 +1,4 @@
-From 754bd04fcb900f7bd86ed15004d79b474b1ab9a7 Mon Sep 17 00:00:00 2001
+From 735b1f86f538abecbed834868d8153de2d4af5be Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 01:29:09 -0900
 Subject: [PATCH] Co-op sound wrap: the sounds the game starts, to the module
@@ -20,7 +20,7 @@ the hello's bits are 0005's.
 
 diff --git a/host/hos_coop_sound.h b/host/hos_coop_sound.h
 new file mode 100644
-index 0000000..2cbc9b9
+index 00000000..2cbc9b9d
 --- /dev/null
 +++ b/host/hos_coop_sound.h
 @@ -0,0 +1,17 @@
@@ -42,7 +42,7 @@ index 0000000..2cbc9b9
 +
 +#endif
 diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
-index 8877d6c..e01eda7 100644
+index 03c7d916..c50e9b55 100644
 --- a/nx2/coop_world_wraps.py
 +++ b/nx2/coop_world_wraps.py
 @@ -14,6 +14,11 @@ import os

@@ -34,6 +34,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/host/bounded_queue.hpp"
@@ -100,6 +101,12 @@ struct Place {
     std::string_view event;
     std::string_view scene;
     float x, y, z;
+    // deku-ladder: the room the place is in (its asker's room graph: the room most of the graph's placements carry;
+    // tools/puppet_pack/place_rooms.py), or -1 when not known (then guessed from the nearest placement, as a
+    // player's room is). The guess put 46 of the 204 places in another room (an asker high on a wall is nearer
+    // another room's placements: Jabu-Jabu's room-1 switch asker guessed in room 5, it is in room 17), and the
+    // decider then waited forever for our Link to be in that room.
+    int room = -1;
 };
 std::span<const Place> Places();
 
@@ -108,6 +115,16 @@ std::span<const Place> Places();
 // 11 and 17 m from the ladder's asker; the compass room's asker is 20 m
 // from that door, so that room's event waits until we are in it.
 inline constexpr float kNearM = 18.0f;
+
+// deku-ladder (Water Temple): an event asked from places farther apart than this in one scene is asked from more
+// than one room under ONE played flag (WaterTemple_EyeSwitch_Focus, a camera shot asked by the eye in room 0 and in
+// room 21; WaterTemple_DarkLink_DoorMovement, the two doors of the Dark Link room). The flag is shared as the game
+// keeps it (one flag), but the decider never starts such an event here: which room's eye or door played it is not
+// known, and starting it near ours plays the other room's camera or door in the wrong room. Each room's own state
+// has its own flags (WaterTemple_Room00_ShootSwitchOnce, WaterTemple_Room21_OpenShutterBySwitch), shared as usual.
+// With both places' rooms known (Place::room) their rooms decide instead; the distance is for a place of room -1.
+inline constexpr float kOneRoomM = 20.0f;  // same-room pairs: 13.8 m (GTG room 10), 11.2 m (Spirit room 19)
+bool SpansRooms(std::string_view event, std::string_view scene);
 
 // The actors that ask a room's gimmick event (the Banc placements of Places() are these): the room graph's
 // ActorLogicEventRequestActor / ActorLogicEventProxyRequestActor. An actor stands where it is placed, so it is
@@ -215,7 +232,10 @@ class Requester {
 public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
-    void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // `room`: cutscene-bleed (#251) the dungeon room our Link was in when it was decided (the decider's and the joiner's
+    // "same room" check), if known; it is not asked while our Link is clearly in another room (see Expire).
+    void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0,
+              std::optional<int> room = std::nullopt);
     // One argument of an event: a string (text) or a bool.
     struct Arg {
         std::string name;
@@ -233,16 +253,37 @@ public:
     // (EventTriggerSetEventBool on its `EventRequestActor` member). Asked by name alone, the event plays its camera
     // and nothing in the room moves. So when the event is asked, the asker (an actor named in kAskerNames, within
     // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
-    // member request does (kSetLink). None found: asked by name alone, as before, and a note says so.
-    void WantFromRoom(std::string name, std::string scene);
+    // member request does (kSetLink). None found: not asked at all (dungeon-sync-b), and a note says so: a start
+    // by name only plays the camera, and it can keep the event system busy when the room needs it.
+    // deku-platforms-b21 (proven for the Deku Tree compass room): linked or asked through the asker's performer, the
+    // event STILL plays its camera only. The asker's own AI (AI/EventRequestActor.root.ainb) writes EventBool,
+    // EventBoolEX1 and EventFinish 0 every tick until its own EventRequestTrigger rises, so the flow's
+    // EventTriggerSetEventBool does not reach the room graph: the lifts never go on and the asker is not deleted.
+    // Held gimmick events no longer come here (row 98(2), coop_event_result.h); the eye switch's fallbacks still do.
+    void WantFromRoom(std::string name, std::string scene, std::optional<int> room = std::nullopt);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
     // that was decided in another scene than `scene` (empty: not known, kept),
     // that is older than its max age, or that `played(name)` says our game has
     // played already (HavePlayedEvent.<name>).
+    //
+    // cutscene-bleed (#251, #197): every "may it start here" rule (the decider's room and near-place check, the
+    // joiner's same-room check, "no event runs") is checked when a start is decided, but it is asked later, at the
+    // first frame no event runs. A door is an event: a start that waited behind the door we walked through was asked
+    // the moment the door's event ended, with our Link already in the next room, so the event played for a room that
+    // is not loaded here (its actors absent), never ended, and held our Link and our room (its enemies did not come
+    // out). So a start decided in a room (Wanted::room) WAITS while `away(room)` says our Link is in another room, and
+    // is asked once our Link is back in it (review-0116-c item 1: dropping it lost it for the visit, as the decider
+    // and the joiner start each event once per visit). `away` keeps CoopRooms::kMargin slack (no flicker in a door).
+    // Scene, age and played rules are unchanged: a held start still goes when we leave the scene, when it gets too
+    // old (story joins: kJoinUs) or once our game has it played.
     template <typename Played>
     void Expire(const std::string& scene, std::uint64_t now_us, Played&& played) {
+        Expire(scene, now_us, std::forward<Played>(played), [](int) { return false; });
+    }
+    template <typename Played, typename Away>
+    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played, Away&& away) {
         for (auto it = wanted_.begin(); it != wanted_.end();) {
             const char* why = nullptr;
             if (!scene.empty() && !it->scene.empty() && it->scene != scene) {
@@ -253,6 +294,14 @@ public:
                 why = "our game has it played already";
             }
             if (why == nullptr) {
+                const bool held = it->room.has_value() && away(*it->room);
+                if (held != it->held) {
+                    notes_.push_back("live event " + it->name +
+                                     (held ? " waits: our Link is in another room than the one it was decided in "
+                                             "(asked once our Link is back there)"
+                                           : " may be asked again: our Link is back in the room it was decided in"));
+                    it->held = held;
+                }
                 ++it;
                 continue;
             }
@@ -264,6 +313,18 @@ public:
     // Drops the events still waiting (not the one being asked now: its
     // calls finish and free the block as usual).
     void Clear() { wanted_.clear(); }
+    // cutscene-bleed (#197): while `on` (our /teleport trip under way: travelling, settling, asking again) no waiting
+    // start is asked (an event asked then would take the game's event system from the map change, or play in the
+    // scene we arrive in). They are kept: on arrival Expire drops those of the scene we left and holds those of
+    // another room; one of our room is asked as usual (review-0116-c item 1: a same-scene trip must not lose them for
+    // the visit). The one being asked now finishes its calls.
+    void Pause(bool on) {
+        if (on != paused_) {
+            notes_.push_back(on ? "live events paused: our teleport is under way"
+                                : "live events resume: teleport done");
+            paused_ = on;
+        }
+    }
     // CoopSvc::Caller's contract: asked once a frame with after_call false,
     // then again after each call it returned, with the call's x0.
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -271,6 +332,10 @@ public:
     // Log lines since the last call.
     std::vector<std::string> TakeNotes();
     std::uint64_t Block() const { return block_; }
+    // G1: called with the event's name on the calc thread when the game took one of our asks
+    // (the hook logs it). Not set: no call (the teleport's own trip).
+    void OnTaken(std::function<void(const std::string&)> taken) { on_taken_ = std::move(taken); }
+
 
 private:
     enum class Next { none, malloc, build, link, request, free1, free2, own_request };
@@ -293,7 +358,10 @@ private:
         std::vector<Arg> args;
         std::uint64_t starter = 0;
         bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
+        std::optional<int> room;  // cutscene-bleed: our Link's room when it was decided, if known
+        bool held = false;        // cutscene-bleed: our Link is in another room now (Expire): not asked yet
     };
+    bool paused_ = false;  // cutscene-bleed (#197): our teleport is under way (Pause)
     bool current_room_asker_ = false;  // current_starter_ is a room asker: checked again just before the link
     // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.
     static std::uint64_t FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
@@ -306,6 +374,7 @@ private:
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;
     std::vector<std::string> notes_;
+    std::function<void(const std::string&)> on_taken_;
 };
 
 // The game's own event requests, on Hookshot (docs/hookshot.md "World hooks", HOS_COOP_WRAP_EVENT_REQUEST): every

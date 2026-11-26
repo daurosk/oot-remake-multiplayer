@@ -4,14 +4,19 @@
 #include "coop_testinput.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include "coop_teleport.h"
 
 namespace CoopTestInput {
 
@@ -64,7 +69,63 @@ bool Ticks(std::string_view word, std::uint32_t& out) {
     return true;
 }
 
+// One scenario grammar for both readers (row 325 review): tools/autotest/hookshot.py's parse takes the same words for
+// TICKS and numbers as this parser (its _ticks, _await_ticks, _number, _whole_in, _int32), so a line one of them
+// plays is never refused by the other.
+//
+// A runner-only step's TICKS (await): hookshot.py's _await_ticks, any whole number from 0 up (the most it waits; 0: no
+// wait). Not Ticks: that is the rule of the module's own timed steps (1 up to kMaxStepTicks), and a line the runner
+// plays must not be refused here.
+bool RunnerTicks(std::string_view word) {
+    if (word.empty()) {
+        return false;
+    }
+    for (const char c : word) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A plain decimal: [+-] digits [. digits] or [+-] . digits, then an optional exponent (e [+-] digits); hookshot.py's
+// _DECIMAL. strtod alone also takes hex ("0x10"), "inf" and "nan", which Python's float() reads otherwise or not.
+bool Decimal(std::string_view word) {
+    std::size_t i = 0;
+    const auto digits = [&] {
+        const std::size_t from = i;
+        while (i < word.size() && word[i] >= '0' && word[i] <= '9') {
+            ++i;
+        }
+        return i - from;
+    };
+    if (i < word.size() && (word[i] == '+' || word[i] == '-')) {
+        ++i;
+    }
+    std::size_t mantissa = digits();
+    if (i < word.size() && word[i] == '.') {
+        ++i;
+        mantissa += digits();
+    }
+    if (mantissa == 0) {
+        return false;
+    }
+    if (i < word.size() && (word[i] == 'e' || word[i] == 'E')) {
+        ++i;
+        if (i < word.size() && (word[i] == '+' || word[i] == '-')) {
+            ++i;
+        }
+        if (digits() == 0) {
+            return false;
+        }
+    }
+    return i == word.size();
+}
+
 bool Axis(std::string_view word, std::int32_t& out) {
+    if (!Decimal(word)) {
+        return false;
+    }
     const std::string s(word);
     char* end = nullptr;
     const double v = std::strtod(s.c_str(), &end);
@@ -131,6 +192,9 @@ bool Keys(std::string_view word, Step& step, std::string& bad) {
 }
 
 bool Number(std::string_view word, float& out) {
+    if (!Decimal(word)) {
+        return false;
+    }
     const std::string s(word);
     char* end = nullptr;
     const double v = std::strtod(s.c_str(), &end);
@@ -170,6 +234,40 @@ std::optional<std::string> WearFlag(std::string_view slot) {
     return std::nullopt;
 }
 
+// dress: the slot kinds of the game's GameData equip call 0x2df6c80, as the puppet director's kGearKinds
+// (coop_puppet.h) names them: sword 0, shield 6, head 7, tunic 8, boots 9, hand 10.
+std::optional<std::uint32_t> DressKind(std::string_view slot) {
+    std::string low(slot);
+    for (auto& ch : low) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (low == "weapon") return 0;
+    if (low == "shield") return 6;
+    if (low == "head") return 7;
+    if (low == "armor") return 8;
+    if (low == "boots") return 9;
+    if (low == "hand") return 10;
+    return std::nullopt;
+}
+
+namespace {
+std::mutex g_dress_mutex;
+std::deque<std::uint32_t> g_dress;
+}  // namespace
+
+void DressAsk(std::uint32_t kind) {
+    std::lock_guard lock(g_dress_mutex);
+    g_dress.push_back(kind);
+}
+
+std::optional<std::uint32_t> DressNext() {
+    std::lock_guard lock(g_dress_mutex);
+    if (g_dress.empty()) return std::nullopt;
+    const std::uint32_t kind = g_dress.front();
+    g_dress.pop_front();
+    return kind;
+}
+
 // assign: the values of PlayerStatus.AssignableItem.Child / .Adult (Enum,
 // GameDataList of build e0f3ccfaf50065ae).
 bool AssignableItem(std::string_view name) {
@@ -196,6 +294,59 @@ constexpr float kMovedM = 0.4f;            // movement that teaches the camera m
 constexpr double kMinMagnitude = 0.45;     // slower near the point, never a crawl
 
 } // namespace
+
+std::string WarpProblem(std::string_view scene, std::string_view start) {
+    if (!CoopTeleport::IsKnownScene(scene)) {
+        std::string why = "unknown scene '" + std::string(scene) + "'";
+        const auto like = CoopTeleport::ScenesLike(scene);
+        if (!like.empty()) {
+            why += " (did you mean ";
+            for (std::size_t i = 0; i < like.size(); ++i) {
+                why += (i ? ", " : "") + like[i];
+            }
+            why += "?)";
+        }
+        return why;
+    }
+    if (!start.empty()) {
+        const bool plain = start.size() <= 63 && std::all_of(start.begin(), start.end(), [](unsigned char c) {
+            return std::isalnum(c) || c == '_';
+        });
+        if (!plain) {
+            return "bad start name '" + std::string(start) + "' (letters, digits and _ only, at most 63)";
+        }
+    }
+    return {};
+}
+
+std::string WarpGiveUpLine(std::string_view target, double seconds, const std::optional<std::string>& scene) {
+    std::string line = "coop: test warp to " + std::string(target) + " did not happen in " +
+                       std::to_string(static_cast<int>(seconds)) + " s (";
+    line += scene ? "scene " + *scene : std::string("no save loaded: Link is in no scene");
+    return line + ")";
+}
+
+bool AllDigits(std::string_view s) {
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
+// The words of "kill [ID] NAME" and "hit [ID] NAME N": a first word that is all digits is the actor's id (its address, as
+// get_world lists it), and then the actor's name must follow (never a number). `at` is where the NAME is; `id` the id
+// (0: none given). False for an id of 0 or too long, or an id with no name after it.
+bool StrikeId(const std::vector<std::string_view>& w, std::size_t& at, std::uint64_t& id) {
+    at = 1;
+    id = 0;
+    if (w.size() < 2 || !AllDigits(w[1])) {
+        return true;
+    }
+    const std::string_view n = w[1];
+    const auto r = std::from_chars(n.data(), n.data() + n.size(), id);
+    if (r.ec != std::errc{} || r.ptr != n.data() + n.size() || id == 0 || w.size() < 3 || AllDigits(w[2])) {
+        return false;
+    }
+    at = 2;
+    return true;
+}
 
 std::optional<Script> Parse(std::string_view text, std::string& error) {
     Script script;
@@ -291,10 +442,27 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             if (w.size() == 3) {
                 step.start = std::string(w[2]);
             }
+            if (const auto problem = WarpProblem(w[1], step.start); !problem.empty()) {
+                return fail(problem);
+            }
         } else if (cmd == "PLACE") {
             step.kind = Kind::place;
+            // #196: "place PLATFORM UP": UP metres over the live place of the moving platform of that name nearest
+            // our Link (CoopObjects::TestPlatformPlace), for a rider on a floor that waves.
+            if (w.size() == 3 && !Number(w[1], step.x) && Number(w[2], step.y)) {
+                step.mark = std::string(w[1]);
+            } else if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
+                return fail("want: place X Y Z, or place PLATFORM UP");
+            }
+        } else if (cmd == "FACE") {
+            step.kind = Kind::face;
+            if (w.size() != 3 || !Number(w[1], step.x) || !Number(w[2], step.z)) {
+                return fail("want: face X Z");
+            }
+        } else if (cmd == "AIM") {
+            step.kind = Kind::aim;
             if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
-                return fail("want: place X Y Z");
+                return fail("want: aim X Y Z");
             }
         } else if (cmd == "CHAT") {
             if (w.size() < 2) {
@@ -304,29 +472,139 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             const auto from = static_cast<std::size_t>(w[1].data() - line.data());
             const auto to = static_cast<std::size_t>(w.back().data() + w.back().size() - line.data());
             step.mark = std::string(line.substr(from, to - from));
+        } else if (cmd == "MENU") {
+            // menu customize|close|host|paste: the Customize page opened, the menu closed, the game hosts through the
+            // Multiplayer page's Host (hookshot.py --host-in-game: LICHII_COOP_TEST_HOST), or joins with the clipboard's
+            // code as the page's "Paste code and join" (private-lobby-fix). Test only.
+            std::string page = w.size() == 2 ? std::string(w[1]) : std::string{};
+            std::transform(page.begin(), page.end(), page.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (page != "customize" && page != "close" && page != "host" && page != "paste") {
+                return fail("want: menu customize|close|host|paste");
+            }
+            step.kind = Kind::menu;
+            step.mark = page;
         } else if (cmd == "KILL") {
-            if (w.size() != 2) {
-                return fail("want: kill ACTOR");
+            // kill NAME, or kill ID NAME (the ID is the address get_world lists; the NAME is the one it lists with it)
+            std::size_t at = 1;
+            if (!StrikeId(w, at, step.id)) {
+                return fail("want: kill [ID] ACTOR (an ID needs the actor's name after it)");
+            }
+            if (w.size() != at + 1) {
+                return fail("want: kill [ID] ACTOR");
             }
             step.kind = Kind::kill;
+            step.mark = std::string(w[at]);
+        } else if (cmd == "DROP") {
+            // drop ACTOR METRES: test only (row 178's fall guard): the nearest boss of that name that our game owns
+            // is put METRES straight down by the set-matrix call the copies are placed with (a copy: not moved).
+            int metres = 0;
+            const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), metres);
+            if (w.size() != 3 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || metres < 1 || metres > 500) {
+                return fail("want: drop ACTOR METRES (1 to 500)");
+            }
+            step.kind = Kind::drop;
             step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
+        } else if (cmd == "HIT") {
+            int amount = 0;
+            std::size_t at = 1;
+            if (!StrikeId(w, at, step.id)) {
+                return fail("want: hit [ID] ACTOR N (1 to 80; an ID needs the actor's name after it)");
+            }
+            const std::string_view n = w.size() == at + 2 ? std::string_view(w[at + 1]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), amount);
+            if (w.size() != at + 2 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || amount < 1 || amount > 80) {
+                return fail("want: hit [ID] ACTOR N (1 to 80)");
+            }
+            step.kind = Kind::hit;
+            step.mark = std::string(w[at]);
+            step.start = std::to_string(amount);
+        } else if (cmd == "STUN") {
+            if (w.size() != 2) {
+                return fail("want: stun BOSS");
+            }
+            step.kind = Kind::stun;
+            step.mark = std::string(w[1]);
+        } else if (cmd == "HURT") {
+            int quarters = 0;
+            const std::string_view n = w.size() == 2 ? std::string_view(w[1]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), quarters);
+            if (w.size() != 2 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || quarters < 1 ||
+                quarters > 80) {
+                return fail("want: hurt QUARTER_HEARTS (1 to 80)");
+            }
+            step.kind = Kind::hurt;
+            step.mark = std::to_string(quarters);
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");
             }
             step.kind = Kind::give;
             step.mark = std::string(w[1]);
+        } else if (cmd == "EVENT") {
+            // event NAME: our game asked to play the event setting NAME (an RSDB EventSetting row) by name, through
+            // the hook's live-event requester (the path the shared boss intros take). Test only. boss-route-01112:
+            // a boss rush stage reached by `warp` misses the boot event the game's own rematch reserves with the
+            // scene change (DreamBossStage's BossStageEnterBase calls: BootEventName), and Barinade and Ganondorf
+            // appear only through theirs (DreamBossStage_Rematch_<Boss>_Start: DreamWorld_BossAppear on, the
+            // boss's EventTriggerSetWasAppearInEvent); their stages have no asker of their own.
+            if (w.size() != 2) {
+                return fail("want: event NAME");
+            }
+            step.kind = Kind::event;
+            step.mark = std::string(w[1]);
+        } else if (cmd == "AUTOSAVE") {
+            // autosave: our game asked for its own autosave, the call its EventTriggerRequestAutoSave node makes
+            // (Hookshot; CoopSave::AskOwnAutoSave). Test only. rejoin-host-273-2: a `warp` is a scene change the game
+            // never saves on (no save in any run after one), so a scenario that checks a save on disk asks for it.
+            if (w.size() != 1) {
+                return fail("want: autosave");
+            }
+            step.kind = Kind::autosave;
         } else if (cmd == "SETFLAG") {
             // setflag NAME VALUE: this game's Int or Bool flag NAME (a GameDataList
             // name) to VALUE, through the game's queue. Test only.
-            int value = 0;
-            const auto* end = w.size() == 3 ? w[2].data() + w[2].size() : nullptr;
-            if (w.size() != 3 || std::from_chars(w[2].data(), end, value).ptr != end) {
-                return fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number)");
+            // (ec checked too: a number past int32 is all digits, so the end alone passed it and the hook's
+            // conversion then threw on the game's thread; review-01111-b)
+            std::int32_t value = 0;
+            const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), value);
+            if (w.size() != 3 || n.empty() || r.ec != std::errc{} || r.ptr != n.data() + n.size()) {
+                return fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number that fits 32 bits)");
             }
             step.kind = Kind::setflag;
             step.mark = std::string(w[1]);
-            step.start = std::string(w[2]);
+            step.start = std::to_string(value);
+        } else if (cmd == "NOFAIRY") {
+            // nofairy: every bottle emptied (each BottleItem Enum, coop/host game_items.hpp letters::kBottles, set to
+            // Empty: five setenum steps). A bottled fairy makes a lethal hit the game's own death and revive, never
+            // down-but-out, so a scenario that downs a player starts with it (tools/autotest/hookshot.py the same).
+            if (w.size() != 1) {
+                return fail("want: nofairy (no arguments)");
+            }
+            static constexpr std::string_view kBottleItems[] = {"0x7d48df76", "0x1edd164a", "0xb80c70a8",
+                                                                "0xe4c1b1fc", "0x365e1953"};
+            step.kind = Kind::setenum;
+            step.start = "Empty";
+            for (std::size_t i = 0; i + 1 < std::size(kBottleItems); ++i) {
+                Step bottle = step;
+                bottle.mark = std::string(kBottleItems[i]);
+                script.steps.push_back(std::move(bottle));
+            }
+            step.mark = std::string(kBottleItems[std::size(kBottleItems) - 1]);
+        } else if (cmd == "DUMP") {
+            // dump TAG: this game's shared dungeon and story flags (their values now) written as JSON next to the
+            // commands file (<file>.dump-TAG.json), for tools/autotest/desync_check.py. Test only (play-test kit).
+            const auto tag_char = [](char c) {
+                return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_';
+            };
+            if (w.size() != 2 || w[1].empty() || !std::all_of(w[1].begin(), w[1].end(), tag_char)) {
+                return fail("want: dump TAG (letters, digits, - and _)");
+            }
+            step.kind = Kind::dump;
+            step.mark = std::string(w[1]);
         } else if (cmd == "SETENUM") {
             // setenum NAME VALUE: this game's Enum flag NAME (a GameDataList name,
             // or 0x and its hash: a Threads of Time quest's name is not in the
@@ -345,6 +623,17 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::wear;
             step.start = std::string(w[1]);
             step.mark = std::string(w[2]);
+        } else if (cmd == "DRESS") {
+            std::string low;
+            if (w.size() == 2) {
+                low = std::string(w[1]);
+                for (auto& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            if (w.size() != 2 || (low != "all" && !DressKind(w[1]))) {
+                return fail("want: dress weapon|shield|head|armor|boots|hand|all");
+            }
+            step.kind = Kind::dress;
+            step.start = low;
         } else if (cmd == "ASSIGN") {
             if (w.size() != 2 || !AssignableItem(w[1])) {
                 return fail("want: assign ITEM (Bow, Hookshot, Hammer, SlingShot, Bomb, ...: "
@@ -366,6 +655,15 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::mark;
             step.mark = std::string(w[1]);
+        } else if (cmd == "AWAIT") {
+            // tools/autotest/hookshot.py's own step (row 325): it reads the game's log until a new line matches, the
+            // module is never asked anything for it (never in the commands file). One scenario grammar for both
+            // readers: its shape is checked here and it makes no module step (test_hookshot.py checks that every
+            // verb the runner reads is one of this parser's).
+            if (w.size() < 3 || !RunnerTicks(w[1])) {
+                return fail("want: await TICKS REGEX (the runner's own step)");
+            }
+            continue;
         } else {
             return fail("unknown command " + std::string(w[0]));
         }
@@ -466,14 +764,16 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
-            s.kind == Kind::setflag || s.kind == Kind::setenum) {
-            requests_.push_back(Request{s.kind, s.mark, s.start});
+            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::drop || s.kind == Kind::hurt ||
+            s.kind == Kind::hit || s.kind == Kind::stun ||
+            s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu || s.kind == Kind::dump ||
+            s.kind == Kind::event || s.kind == Kind::autosave) {
+            requests_.push_back(Request{s.kind, s.mark, s.start, {}, s.id});
             ++index_;
             continue;
         }
-        if (s.kind == Kind::place) {
-            requests_.push_back(Request{s.kind, {}, {}, {s.x, s.y, s.z}});
+        if (s.kind == Kind::place || s.kind == Kind::face || s.kind == Kind::aim) {
+            requests_.push_back(Request{s.kind, s.mark, {}, {s.x, s.y, s.z}});
             ++index_;
             continue;
         }
@@ -590,10 +890,88 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
     Hold(angle, now_s);
 }
 
+std::optional<AimNudged> AimNudge(const std::array<float, 3>& at, const std::array<float, 3>& flight,
+                                  const std::array<float, 3>& target, float max_deg, float max_side_m) {
+    const float d[3] = {target[0] - at[0], target[1] - at[1], target[2] - at[2]};
+    const float dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    const float fl = std::sqrt(flight[0] * flight[0] + flight[1] * flight[1] + flight[2] * flight[2]);
+    if (!std::isfinite(dl) || !std::isfinite(fl) || !std::isfinite(max_deg) || !std::isfinite(max_side_m) || dl < 1e-3f || fl < 1e-6f) {
+        return std::nullopt;
+    }
+    const float f[3] = {flight[0] / fl, flight[1] / fl, flight[2] / fl};
+    const float along = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];   // how far along the flight the target is passed
+    AimNudged out;
+    out.off_deg = std::acos(std::clamp(along / dl, -1.0f, 1.0f)) * 57.2957795f;
+    out.side_m = dl * std::sin(out.off_deg / 57.2957795f);
+    if (along <= 0.0f || out.off_deg > max_deg || out.side_m > max_side_m) return out;
+    // The place whose line along f goes through the target, `along` before it: only the sideways miss is taken away.
+    std::array<float, 3> p{};
+    for (int i = 0; i < 3; ++i) p[i] = target[i] - f[i] * along;
+    out.put = p;
+    return out;
+}
+
+} // namespace CoopTestInput
+
+namespace CoopTestInput {
+
+const std::vector<Kind>& ActKinds() {
+    static const std::vector<Kind> kinds = {Kind::kill, Kind::hit,  Kind::hurt,    Kind::place, Kind::face,
+                                            Kind::aim,  Kind::wear, Kind::dress,   Kind::assign, Kind::chat,
+                                            Kind::menu, Kind::setflag, Kind::setenum};
+    return kinds;
+}
+
+const char* KindWord(Kind kind) {
+    switch (kind) {
+    case Kind::timed: return "timed";
+    case Kind::mark: return "mark";
+    case Kind::go: return "goto";
+    case Kind::toward: return "toward";
+    case Kind::warp: return "warp";
+    case Kind::give: return "give";
+    case Kind::wear: return "wear";
+    case Kind::assign: return "assign";
+    case Kind::dress: return "dress";
+    case Kind::chat: return "chat";
+    case Kind::place: return "place";
+    case Kind::face: return "face";
+    case Kind::aim: return "aim";
+    case Kind::kill: return "kill";
+    case Kind::hurt: return "hurt";
+    case Kind::hit: return "hit";
+    case Kind::stun: return "stun";
+    case Kind::drop: return "drop";
+    case Kind::setflag: return "setflag";
+    case Kind::setenum: return "setenum";
+    case Kind::event: return "event";
+    case Kind::sync: return "sync";
+    case Kind::menu: return "menu";
+    case Kind::dump: return "dump";
+    case Kind::autosave: return "autosave";
+    }
+    return "?";
+}
+
+std::string NotAllowed(const Script& script, const std::vector<Kind>& allowed) {
+    for (const Step& s : script.steps) {
+        if (std::find(allowed.begin(), allowed.end(), s.kind) != allowed.end()) {
+            continue;
+        }
+        std::string list;
+        for (const Kind k : allowed) {
+            list += (list.empty() ? "" : " ") + std::string(KindWord(k));
+        }
+        return "line " + std::to_string(s.line) + ": " + KindWord(s.kind) + " is not allowed here (allowed: " + list + ")";
+    }
+    return {};
+}
+
 } // namespace CoopTestInput
 
 #ifdef LICHII_COOP
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -605,13 +983,17 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop/host/flags.hpp"
 #include "coop/host/game_flags.hpp"
 #include "coop/host/player_reader.hpp"
+#include "coop_cheat_give.h"
 #include "coop_cheats.h"
 #include "coop_every.h"
 #include "coop_boss.h"
 #include "coop_camera.h"
 #include "coop_flags.h"
+#include "coop_dungeon.h"
 #include "coop_hook.h"
 #include "coop_objects.h"
+#include "coop_save.h"
+#include "coop_story.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
@@ -629,6 +1011,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr double kWarpGiveUpS = 90.0;
+
+MenuOpener g_menu_opener;  // (set once at the module's start, before any script runs)
 
 // What the injector gives the pad: written on the present thread, read on
 // the input thread.
@@ -663,9 +1047,14 @@ struct State {
         double since = 0.0;
         double asked = 0.0;
         std::optional<std::array<float, 2>> from;  // Link before the warp
+        int asks = 1;                              // times the request was written (the first one logs)
+        bool said_waiting = false;                 // "no save loaded yet" said once
     };
     std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
+// g_state's lock: OnFrame (the present thread) and the play-test bridge (PlayNow on the held calc thread; the flag
+// reads on its own thread). Recursive: PlayNow's dump reads the flags.
+std::recursive_mutex g_play_mu;
 
 // The emulator plays LICHII_COOP_TEST_SCRIPT whole, input and all. Hookshot's
 // driver (tools/autotest/hookshot.py) gives the input through Hookshot's
@@ -682,7 +1071,7 @@ struct State {
 #define COOP_WIDEN(x) COOP_WIDEN2(x)
 
 std::filesystem::path EnvPath() {
-#ifdef _MSC_VER
+#ifdef _WIN32
     wchar_t* value = nullptr;
     std::size_t size = 0;
     if (_wdupenv_s(&value, &size, COOP_WIDEN(COOP_TEST_ENV)) != 0 || value == nullptr) {
@@ -767,7 +1156,13 @@ std::optional<Runner::Camera> CameraXZ() {
 // changes scene when Sequence_ReservedNextBanc is set (and clears it);
 // ChangeBancOnEvent also reads Sequence_ReservedNextStartPosName. The start
 // name is written first, so it is there when the scene is read.
-void Warp(Core::System& system, const std::string& scene, const std::string& start) {
+// Nothing is written for a scene the game does not have (WarpProblem), whoever asked: false then. `log`: the
+// request's own line; a re-ask (every 0.5 s) writes the same and says nothing.
+bool Warp(Core::System& system, const std::string& scene, const std::string& start, bool log) {
+    if (const auto problem = WarpProblem(scene, start); !problem.empty()) {
+        LOG_ERROR(Core, "coop: test warp to {} refused, nothing written: {}", scene, problem);
+        return false;
+    }
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
     coop::host::GameFlags flags(memory);
     const auto banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
@@ -791,6 +1186,9 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
     }
     const bool era_ok = child && coop::host::GameFlags::set_bool(memory, childhood, *child);
     const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
+    if (!log) {
+        return true;
+    }
     LOG_INFO(Core,
              "coop: test warp to {} (start {}): scene {} (type {}), start {} (type {}), "
              "position type {}, childhood {} {} (type {})",
@@ -799,6 +1197,7 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
              start_type.value_or(-1), flags.find_type(position).value_or(-1),
              !child ? "-" : *child ? "child" : "adult", era_ok ? "set" : "NOT set",
              flags.find_type(childhood).value_or(-1));
+    return true;
 }
 
 // wear: writes the String64 flag PlayerStatus.Equip<slot> straight into the
@@ -836,6 +1235,16 @@ void Assign(Core::System& system, const std::string& item) {
 // in this game (FlagWatcher max_drops_kept). Test only.
 void SetFlag(Core::System& system, const std::string& name, int value) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    // setflag key64:0xKEY 1: a placement's saved key (a silver rupee token, a counter), as the game's own taking
+    // of it writes it (row 98(2) probe hs-event-result).
+    if (name.starts_with("key64:0x") || name.starts_with("key64:0X")) {
+        std::uint64_t key = 0;
+        const char* end = name.data() + name.size();
+        const bool parsed = std::from_chars(name.data() + 8, end, key, 16).ptr == end && key != 0;
+        const bool ok = parsed && coop::host::GameFlags::set_key64(memory, key, value != 0);
+        LOG_INFO(Core, "coop: test setflag {} (key64) {}: {}", name, value, ok ? "set" : "NOT set");
+        return;
+    }
     const std::uint32_t hash = coop::host::flag_hash(name);
     coop::host::GameFlags flags(memory);
     bool ok = false;
@@ -850,9 +1259,139 @@ void SetFlag(Core::System& system, const std::string& name, int value) {
     LOG_INFO(Core, "coop: test setflag {} ({}) {}: {}", name, type, value, ok ? "set" : "NOT set");
 }
 
+}  // namespace (SharedFlags and the flag reads are public: the play-test bridge's state and dump)
+
+std::vector<std::pair<std::string, std::int32_t>> SharedFlags(Core::System& system) {
+    std::lock_guard play_lock(g_play_mu);
+    PlayerXZ(system);  // (finds main once a process runs)
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::GameFlags flags(memory);
+    std::vector<std::pair<std::string, std::int32_t>> out;
+    for (const auto& f : CoopDungeon::Flags()) {
+        if (f.is_int) {
+            if (const auto v = flags.get_int(f.hash)) out.emplace_back(f.name, *v);
+        } else if (const auto b = flags.get_bool(f.hash)) {
+            out.emplace_back(f.name, *b ? 1 : 0);
+        }
+    }
+    for (const auto& f : CoopStory::Flags()) {
+        if (const auto v = flags.get_bool(f.hash)) out.emplace_back(f.name, *v ? 1 : 0);
+    }
+    return out;
+}
+
+std::optional<std::int32_t> FlagInt(Core::System& system, std::string_view name) {
+    std::lock_guard play_lock(g_play_mu);
+    PlayerXZ(system);
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::GameFlags flags(memory);
+    const auto hash = coop::host::flag_hash(std::string(name));
+    if (const auto v = flags.get_int(hash)) return v;
+    if (const auto b = flags.get_bool(hash)) return *b ? 1 : 0;
+    return std::nullopt;
+}
+
+std::optional<std::string> FlagText(Core::System& system, std::string_view name) {
+    std::lock_guard play_lock(g_play_mu);
+    PlayerXZ(system);
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    return coop::host::GameFlags(memory).get_string64(coop::host::flag_hash(std::string(name)));
+}
+
+namespace {
+// A 0x name (0x and 1 to 8 hex digits, not 0) as its hash; else the flag_hash of the name.
+std::uint32_t NameHash(std::string_view name) {
+    if (name.size() > 2 && name.size() <= 10 && name[0] == '0' && (name[1] == 'x' || name[1] == 'X')) {
+        std::uint32_t hash = 0;
+        const char* end = name.data() + name.size();
+        if (std::from_chars(name.data() + 2, end, hash, 16).ptr == end && hash != 0) return hash;
+        return 0;
+    }
+    return coop::host::flag_hash(std::string(name));
+}
+}  // namespace
+
+FlagReading ReadFlag(Core::System& system, std::string_view name) {
+    std::lock_guard play_lock(g_play_mu);
+    PlayerXZ(system);
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::GameFlags flags(memory);
+    FlagReading out;
+    if (name.starts_with("key64:0x") || name.starts_with("key64:0X")) {
+        std::uint64_t key = 0;
+        const char* end = name.data() + name.size();
+        if (std::from_chars(name.data() + 8, end, key, 16).ptr == end && key != 0) {
+            if (const auto v = flags.get_key64(key)) {
+                out.kind = "key64";
+                out.number = *v ? 1 : 0;
+            }
+        }
+        return out;
+    }
+    const std::uint32_t hash = NameHash(name);
+    if (hash == 0) return out;
+    if (const auto v = flags.get_int(hash)) {
+        out.kind = "int";
+        out.number = *v;
+        out.live = flags.get_int_live(hash);
+    } else if (const auto b = flags.get_bool(hash)) {
+        out.kind = "bool";
+        out.number = *b ? 1 : 0;
+    } else if (const auto e = flags.get_enum(hash)) {
+        out.kind = "enum";
+        out.hash = *e;
+    } else if (const auto u = flags.get_uint(hash)) {
+        out.kind = "uint";
+        out.number = *u;
+    } else if (auto t = flags.get_string64(hash)) {
+        out.kind = "text";
+        out.text = std::move(*t);
+    }
+    return out;
+}
+
+bool SetEnumHash(Core::System& system, std::string_view name, std::uint32_t value) {
+    std::lock_guard play_lock(g_play_mu);
+    PlayerXZ(system);
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    const std::uint32_t hash = NameHash(name);
+    const bool ok = hash != 0 && value != 0 && coop::host::GameFlags::set_enum(memory, hash, value);
+    LOG_INFO(Core, "coop: test setenum {} {:#010x}: {}", name, value, ok ? "set" : "NOT set");
+    return ok;
+}
+
+namespace {
+
+// dump TAG (play-test kit): the value in this game of every flag in the shared dungeon and story lists
+// (CoopDungeon::Flags, CoopStory::Flags; not the live-only or autogen lists), as JSON next to the commands file,
+// so tools/autotest/desync_check.py can compare two games' checkpoints of one tag.
+void Dump(Core::System& system, const std::string& tag) {
+    const std::filesystem::path commands = EnvPath();
+    if (commands.empty()) {
+        LOG_INFO(Core, "coop: test dump {}: no commands file to write next to", tag);
+        return;
+    }
+    std::ostringstream out;
+    out << "{\"tag\": \"" << tag << "\", \"flags\": {";
+    bool first = true;
+    std::size_t count = 0;
+    for (const auto& [name, value] : SharedFlags(system)) {
+        out << (first ? "" : ", ") << "\"" << name << "\": " << value;
+        first = false;
+        ++count;
+    }
+    out << "}}\n";
+    std::filesystem::path path = commands;
+    path += ".dump-" + tag + ".json";
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << out.str();
+    LOG_INFO(Core, "coop: test dump {}: {} flags written{}", tag, count, file ? "" : " (NOT written)");
+}
+
 // setenum: this game's Enum flag (a name, or 0x and its hash) to the value of
 // that name, through the game's own queue (issue 193: a Threads of Time
-// quest's step). Test only.
+// quest's step). Test only. The value it had is logged too (as a hash), and
+// the value "?" only reads it (issue 91: which unnamed Enum holds a worn mask).
 void SetEnum(Core::System& system, const std::string& name, const std::string& value) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
     std::uint32_t hash = 0;
@@ -862,36 +1401,49 @@ void SetEnum(Core::System& system, const std::string& name, const std::string& v
     } else {
         hash = coop::host::flag_hash(name);
     }
-    const bool known = hash != 0 && coop::host::GameFlags(memory).get_enum(hash).has_value();
+    const auto was = hash != 0 ? coop::host::GameFlags(memory).get_enum(hash) : std::nullopt;
+    const bool known = was.has_value();
+    if (value == "?") {
+        LOG_INFO(Core, "coop: test setenum {} ?: {}", name,
+                 known ? fmt::format("{:#010x}", *was) : std::string("unknown"));
+        return;
+    }
     const bool ok = known && coop::host::GameFlags::set_enum(memory, hash, coop::host::flag_hash(value));
-    LOG_INFO(Core, "coop: test setenum {} {}: {}", name, value, ok ? "set" : known ? "NOT set" : "unknown");
+    LOG_INFO(Core, "coop: test setenum {} {}: {} (was {})", name, value, ok ? "set" : known ? "NOT set" : "unknown",
+             known ? fmt::format("{:#010x}", *was) : std::string("-"));
 }
 
-// give: bombs, bow and hookshot are the item flags of each; any other name is
-// given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
-void Give(const std::string& item) {
-    std::vector<std::string> names;
-    if (item == "bombs") {
-        names = {"PouchData.Item_BombBag_Small.StockNum", "PouchData.Item_Bomb.StockNum"};
-    } else if (item == "bow") {
-        names = {"PouchData.Weapon_Range_Bow.StockNum", "PouchData.Item_Quiver_Small.StockNum",
-                 "PouchData.Item_Arrow_Normal.StockNum"};
-    } else if (item == "hookshot") {
-        names = {"PouchData.Item_Hookshot.StockNum"};
+// give: bombs, bow and hookshot are the item flags of each; any other name is given as it is. Needs
+// LICHII_COOP_CHEATS=1. The flags are written at once, into the game's own store (as setflag does), not queued for
+// the co-op frame: the bridge's held call (and a script step) sees the new value as soon as this returns, and a game
+// with no co-op session gets it too. What it did is logged and kept for LastGive.
+std::mutex g_give_mu;
+std::string g_last_give;
+
+void Give(Core::System& system, const std::string& item) {
+    std::string said;
+    {
+        std::lock_guard lock(g_give_mu);
+        g_last_give.clear();  // so a give that never got to run cannot show the last one's text
+    }
+    if (!CoopCheats::On()) {
+        said = item + ": NOT given (LICHII_COOP_CHEATS is off)";
+        LOG_INFO(Core, "coop: test give {}", said);
     } else {
-        names = {item};
-    }
-    const auto known = CoopCheats::Items();
-    for (const auto& name : names) {
-        const bool listed = std::find(known.begin(), known.end(), name) != known.end();
-        if (listed && CoopCheats::On()) {
-            CoopCheats::Give(name);
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+        coop::host::GameFlagStore store(memory);
+        for (const auto& name : CoopCheatGive::Names(item)) {
+            const auto done = CoopCheatGive::Give(store, name);
+            // "PARTLY given": the item is in but its IsGet or a grant failed (the bridge answers ok, with the text).
+            const std::string line = done.ok ? (done.changed ? "" : "no change: ") + done.text
+                                   : done.wrote ? "PARTLY given: " + done.text
+                                                : "NOT given: " + done.text;
+            LOG_INFO(Core, "coop: test give {}: {}", name, line);
+            said += (said.empty() ? "" : "; ") + line;
         }
-        LOG_INFO(Core, "coop: test give {}: {}", name,
-                 !CoopCheats::On() ? "NOT given (LICHII_COOP_CHEATS is off)"
-                 : listed          ? "queued"
-                                   : "NOT given (unknown item flag)");
     }
+    std::lock_guard lock(g_give_mu);
+    g_last_give = said;
 }
 
 void StopRunning() {
@@ -1005,9 +1557,175 @@ void CheckFile(Core::System& system) {
     Begin(system, std::move(*script));
 }
 
+// A step's number, already checked by Parse; never throws (Do runs on the game's threads, where an exception
+// ends the game): 0 for anything that is not a whole int32.
+int Whole(std::string_view text) {
+    std::int32_t v = 0;
+    const auto r = std::from_chars(text.data(), text.data() + text.size(), v);
+    return r.ec == std::errc{} && r.ptr == text.data() + text.size() ? v : 0;
+}
+
+// The steps PlayNow does at once: the test-only ones that need no frames to pass (mark too).
+bool NowKind(Kind k) {
+    switch (k) {
+    case Kind::mark: case Kind::give: case Kind::wear: case Kind::assign: case Kind::dress: case Kind::chat:
+    case Kind::place: case Kind::face: case Kind::aim: case Kind::kill: case Kind::hurt: case Kind::hit:
+    case Kind::stun: case Kind::drop: case Kind::setflag: case Kind::setenum: case Kind::menu: case Kind::dump:
+    case Kind::event: case Kind::autosave:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// One test-only step the runner (or the play-test bridge's PlayNow) asked for, done now. `now`: the running
+// script's clock (a warp's retries count from it); `player`: Link's x, z this frame.
+void Do(Core::System& system, const Runner::Request& request, double now,
+        std::optional<std::array<float, 2>> player) {
+    if (request.kind == Kind::warp) {
+        if (Warp(system, request.name, request.start, true)) {
+            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
+        }
+    } else if (request.kind == Kind::wear) {
+        Wear(system, request.start, request.name);
+    } else if (request.kind == Kind::assign) {
+        Assign(system, request.name);
+    } else if (request.kind == Kind::dress) {
+        // The game's own equip call, from the flags `wear` wrote (docs/items.md, "The game's own equip"):
+        // the svc caller makes it on the calc thread (CoopCallerOrders::kTestDress).
+        const char* const slots[] = {"weapon", "shield", "head", "armor", "boots", "hand"};
+        int asked = 0;
+        for (const char* slot : slots) {
+            if (request.start == "all" || request.start == slot) {
+                DressAsk(*DressKind(slot));
+                ++asked;
+            }
+        }
+        LOG_INFO(Core, "coop: test dress {}: {} asked", request.start, asked);
+    } else if (request.kind == Kind::setflag) {
+        SetFlag(system, request.name, Whole(request.start));
+    } else if (request.kind == Kind::setenum) {
+        SetEnum(system, request.name, request.start);
+    } else if (request.kind == Kind::dump) {
+        Dump(system, request.name);
+    } else if (request.kind == Kind::event) {
+        // Asked when no event runs and our game is in a session with live events on (coop_hook.cpp); the
+        // requester's own lines say when it was asked and whether the game took it.
+        CoopBoss::WantEvent(request.name);
+        LOG_INFO(Core, "coop: test event {}: handed to the live-event requester", request.name);
+    } else if (request.kind == Kind::autosave) {
+        // (the game's own gate may still refuse it: its autosave off, its cooldown, a state it does not save in; the
+        // save itself shows as "fs: save: published" (a second one after the load's))
+        LOG_INFO(Core, "coop: test autosave: {}", CoopSave::AskOwnAutoSave()
+                                                      ? "our game is asked for its own autosave at its next step"
+                                                      : "not asked (no file played, or no way to ask in this runtime)");
+    } else if (request.kind == Kind::place && !request.name.empty()) {
+        const auto on = CoopObjects::TestPlatformPlace(request.name);
+        const bool ok = on && CoopBoss::MoveLink(system, g_state.main,
+                                                 CoopBoss::Vec{(*on)[0], (*on)[1] + request.at[1], (*on)[2]});
+        if (on) {
+            LOG_INFO(Core, "coop: test place on {} at {:.2f} {:.2f} {:.2f} + {:.2f}: {}", request.name, (*on)[0],
+                     (*on)[1], (*on)[2], request.at[1], ok ? "done" : "failed");
+        } else {
+            LOG_INFO(Core, "coop: test place on {}: failed (no such moving platform here)", request.name);
+        }
+    } else if (request.kind == Kind::place) {
+        const bool ok = CoopBoss::MoveLink(system, g_state.main,
+                                           CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
+        LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
+                 request.at[2], ok ? "done" : "failed");
+    } else if (request.kind == Kind::face) {
+        const bool ok = CoopBoss::FaceLink(system, g_state.main, request.at[0], request.at[2]);
+        if (!ok) {
+            LOG_INFO(Core, "coop: test face {:.2f} {:.2f}: failed", request.at[0], request.at[2]);
+        }  // done: logged where it is turned
+    } else if (request.kind == Kind::aim) {
+        // Row 173: our next arrow is watched and, when its flight already points at the target, nudged the last bit.
+        // Link is not turned here: the tester aims with the sticks (kit_move.shoot).
+        CoopObjects::QueueTestAim(request.at[0], request.at[1], request.at[2]);
+    } else if (request.kind == Kind::kill) {
+        CoopObjects::QueueTestKill(request.name, request.id);  // logged where it is done
+    } else if (request.kind == Kind::hit) {
+        CoopObjects::QueueTestHit(request.name, Whole(request.start), request.id);  // logged where it is done
+    } else if (request.kind == Kind::stun) {
+        CoopObjects::QueueTestStun(request.name);  // logged where it is done
+    } else if (request.kind == Kind::drop) {
+        CoopObjects::QueueTestDrop(request.name, static_cast<float>(Whole(request.start)));  // logged there
+    } else if (request.kind == Kind::hurt) {
+        if (g_state.link) {
+            const std::array<float, 3> at = *g_state.link;
+            const std::array<float, 3> from{at[0] + 1.0f, at[1], at[2]};  // a hit from a metre east
+            CoopObjects::HurtOurLink(Whole(request.name), at, from);
+            LOG_INFO(Core, "coop: test hurt {}: asked", request.name);
+        } else {
+            LOG_INFO(Core, "coop: test hurt {}: no Link", request.name);
+        }
+    } else if (request.kind == Kind::menu) {
+        const bool asked = g_menu_opener && g_menu_opener(request.name);
+        LOG_INFO(Core, "coop: test menu {}: {}", request.name,
+                 asked ? "asked" : "NOT asked (no menu in this build)");
+    } else if (request.kind == Kind::chat) {
+        const bool sent = CoopHook::SendChat(request.name);
+        LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");
+    } else {
+        Give(system, request.name);
+    }
+}
+
 } // namespace
 
+std::string LastGive() {
+    std::lock_guard lock(g_give_mu);
+    return g_last_give;
+}
+
+void SetMenuOpener(MenuOpener opener) {
+    g_menu_opener = std::move(opener);
+}
+
+bool PlayNow(Core::System& system, std::string_view lines, std::string& error, const std::vector<Kind>* allowed) {
+    auto script = Parse(lines, error);
+    if (!script) {
+        return false;
+    }
+    if (allowed) {
+        error = NotAllowed(*script, *allowed);
+        if (!error.empty()) {
+            return false;
+        }
+    }
+    std::lock_guard play_lock(g_play_mu);
+    const auto player = PlayerXZ(system);
+    bool warp = false;
+    for (const Step& s : script->steps) {
+        if (s.kind == Kind::warp) {
+            warp = true;
+        } else if (!NowKind(s.kind)) {
+            error = "line " + std::to_string(s.line) + ": not a step done at once (the bridge's input moves Link)";
+            return false;
+        }
+    }
+    if (warp) {
+        // A warp is asked again until Link is in that scene, from the running script (OnFrame, as frames run).
+        if (script->steps.size() != 1) {
+            error = "a warp goes alone";
+            return false;
+        }
+        Begin(system, std::move(*script));
+        return true;
+    }
+    Runner runner(std::move(*script));
+    std::vector<std::string> log;
+    runner.Advance(0.0, player, log, std::nullopt);
+    for (const auto& line : log) LOG_INFO(Core, "coop: test {}", line);
+    for (const auto& request : runner.TakeRequests()) {
+        Do(system, request, 0.0, player);
+    }
+    return true;
+}
+
 void OnFrame(Core::System& system) {
+    std::lock_guard play_lock(g_play_mu);
     if (!g_state.checked_env) {
         g_state.checked_env = true;
         g_state.path = EnvPath();
@@ -1020,11 +1738,11 @@ void OnFrame(Core::System& system) {
             LOG_INFO(Core, "coop: test {} file {}", kWhat, g_state.path.string());
         }
     }
-    if (g_state.path.empty()) {
-        return;
+    if (g_state.path.empty() && !g_state.running) {
+        return;  // (no commands file: only a script the play-test bridge began)
     }
     const bool quarter = g_state.check.Due(CoopEvery::NowUs());
-    if (quarter) {
+    if (quarter && !g_state.path.empty()) {
         CheckFile(system);
     }
     if (!g_state.running) {
@@ -1056,30 +1774,7 @@ void OnFrame(Core::System& system) {
         }
     }
     for (const auto& request : r.runner->TakeRequests()) {
-        if (request.kind == Kind::warp) {
-            Warp(system, request.name, request.start);
-            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
-        } else if (request.kind == Kind::wear) {
-            Wear(system, request.start, request.name);
-        } else if (request.kind == Kind::assign) {
-            Assign(system, request.name);
-        } else if (request.kind == Kind::setflag) {
-            SetFlag(system, request.name, std::stoi(request.start));
-        } else if (request.kind == Kind::setenum) {
-            SetEnum(system, request.name, request.start);
-        } else if (request.kind == Kind::place) {
-            const bool ok = CoopBoss::MoveLink(system, g_state.main,
-                                               CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
-            LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
-                     request.at[2], ok ? "done" : "failed");
-        } else if (request.kind == Kind::kill) {
-            CoopObjects::QueueTestKill(request.name);  // logged where it is done
-        } else if (request.kind == Kind::chat) {
-            const bool sent = CoopHook::SendChat(request.name);
-            LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");
-        } else {
-            Give(request.name);
-        }
+        Do(system, request, now, player);
     }
     // A warp is asked again every 0.5 s until Link is in that scene: the game
     // takes the request only while an event runs (the one after a save is
@@ -1090,15 +1785,21 @@ void OnFrame(Core::System& system) {
         coop::host::PlayerReader reader(memory);
         const auto scene = reader.read_scene();
         if (scene && *scene == w.scene) {
-            LOG_INFO(Core, "coop: test warp done after {:.1f} s, Link at {:.2f} {:.2f}", now - w.since,
-                     player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f);
+            LOG_INFO(Core, "coop: test warp done after {:.1f} s ({} asks), Link at {:.2f} {:.2f}", now - w.since,
+                     w.asks, player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f);
             g_state.warp.reset();
         } else if (now - w.since > kWarpGiveUpS) {
-            LOG_ERROR(Core, "coop: test warp to {} did not happen in {} s (scene {})", w.scene,
-                      kWarpGiveUpS, scene.value_or("?"));
+            LOG_ERROR(Core, "{} after {} asks", WarpGiveUpLine(w.scene, kWarpGiveUpS, scene), w.asks);
             g_state.warp.reset();
         } else if (now - w.asked >= 0.5) {
-            Warp(system, w.scene, w.start);
+            // The request stays written until the game takes it, so a re-ask is silent: at the title (no save
+            // loaded) it used to print its line twice a second for the whole 90 s.
+            if (!scene && !w.said_waiting) {
+                w.said_waiting = true;
+                LOG_INFO(Core, "coop: test warp to {}: no save loaded yet, asking again every 0.5 s", w.scene);
+            }
+            Warp(system, w.scene, w.start, false);
+            ++w.asks;
             w.asked = now;
         }
     }

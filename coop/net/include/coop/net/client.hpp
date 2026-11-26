@@ -24,6 +24,9 @@
 // - the retry delay goes back to the first one only after a connection that
 //   lasted stable_after_ms, so a server that welcomes and drops at once is
 //   retried ever more slowly;
+// - a server that holds the join for the host's answer (JOIN_KNOCK, protocol
+//   13) is waited for as long as it says, plus 5 s, instead of
+//   handshake_timeout_ms; the server ends the wait itself (REFUSED);
 // - the client retries for as long as it runs; the host decides when to give
 //   up (failed_attempts(), then stop()).
 // The event queue grows only by what one service() handles, so a host that
@@ -216,6 +219,11 @@ enum class EventKind : std::uint8_t {
   // PLAYER_EQUIP from `player`: `equipment` is what that player now wears,
   // the fields the message left out kept from before (also in players()).
   player_equip,
+  // Host approval (protocol 13): the server holds our join until the host
+  // lets us in; `message` is its JOIN_KNOCK (our name, `wait_s` seconds). The
+  // attempt waits that long (and a little more) for WELCOME or REFUSED. A
+  // host gets the others' JOIN_KNOCKs as plain `message` events.
+  waiting_for_host,
 };
 
 std::string_view to_string(EventKind kind);
@@ -229,6 +237,9 @@ enum class DropReason : std::uint8_t {
   // Full datagrams did not get through while small ones did (we saw it, or
   // the server said so): connecting again with small ones (enet_path.hpp).
   small_path,
+  // Too much waited to go between us and the server (enet_waiting.hpp kMaxOutgoingBytes): the server dropped us
+  // (kDisconnectBacklog) or we stopped (our own send backlog). Reconnecting as for connection_lost (row 260).
+  backlog,
 };
 
 // How the link to the server looked (issue 143), for the log. Read from
@@ -240,6 +251,10 @@ struct LinkInfo {
   std::uint32_t mtu = 0;            // the datagram size both sides agreed
   std::uint32_t largest_sent = 0;   // our largest message on this connection, bytes
   std::uint32_t waiting_bytes = 0;  // what ENet holds for us now (enet_waiting.hpp)
+  // What ENet holds to send to the server (enet_waiting.hpp outgoing_bytes, row 260), as of the last service() and
+  // what was queued since; unreliable messages not queued while it was over kSlowPeerBytes, on this connection.
+  std::uint32_t outgoing_bytes = 0;
+  std::uint64_t unreliable_skipped = 0;
   // What ENet counted for unassembled messages it threw away and we took off
   // again on this connection (lost fragments; issue 175).
   std::uint64_t mended_bytes = 0;
@@ -249,6 +264,14 @@ struct Event {
   EventKind kind = EventKind::message;
   protocol::Welcome welcome;          // welcomed, reconnected
   protocol::RefuseReason refuse_reason{};  // refused; raw value kept
+  // refused: during an automatic reconnect (this client was welcomed before),
+  // not on the join the player started.
+  bool reconnecting = false;
+  // refused: this client answered with the same-network key
+  // (protocol::kSameNetworkPassword: a host on this network, no password
+  // typed), so a wrong password means that host asks for its password on its
+  // own network too (docs/protocol.md "Same network").
+  bool same_network_key = false;
   DropReason drop_reason = DropReason::none;  // connect_failed, disconnected
   protocol::Message message;          // message
   std::uint8_t channel = 0;           // message, and the four after it
@@ -297,6 +320,13 @@ inline constexpr std::size_t kMaxChatChars = protocol::kMaxChatChars;
 // Text to show for a refusal, "unknown reason" for one this build does not know.
 std::string_view refuse_reason_text(protocol::RefuseReason reason);
 
+// Text to show for a `refused` event. A wrong join password on an automatic
+// reconnect means the host started its server again (each start makes a new
+// password and invite; issue 85), so it says that; a wrong password for the
+// same-network key means the host on this network asks for its password
+// (row 251), so it says that; else refuse_reason_text.
+std::string_view refuse_text(const Event& event);
+
 class Client {
  public:
   explicit Client(ClientConfig config);
@@ -306,6 +336,9 @@ class Client {
 
   // Starts the first attempt. False when ENet could not start.
   bool start();
+  // The join password from the next connection on (the host changed it while
+  // this game is in: a reconnect proves the new one). Same thread as service().
+  void set_join_password(std::string password) { config_.join_password = std::move(password); }
   // Says goodbye to the server if connected and stops for good.
   void stop();
 
@@ -428,6 +461,10 @@ class Client {
   // True once the path to the server lost full datagrams (DropReason
   // small_path): every connection from then on uses ENet's smallest, 576.
   bool small_datagrams() const { return small_datagrams_; }
+  // Race mode (coop/protocol/race.hpp): on while the session's host says so (its MOD_SETTINGS, sent or
+  // received). While on, no world message is sent or taken in; race_dropped() counts them.
+  bool race() const { return race_; }
+  std::size_t race_dropped() const { return race_dropped_; }
 
  private:
   void use_small_datagrams();
@@ -474,8 +511,11 @@ class Client {
 
   bool address_known_ = false;
   std::uint32_t address_host_ = 0;  // ENet's form, network byte order
+  bool used_same_network_key_ = false;  // the last JOIN_PROOF was the same-network key's
 
   std::uint64_t attempt_started_us_ = 0;
+  // Held for the host's answer (JOIN_KNOCK): the attempt waits until then; 0: not held.
+  std::uint64_t held_until_us_ = 0;
   std::uint64_t hello_sent_us_ = 0;
   // This attempt has answered its JOIN_CHALLENGE: a second one is refused.
   bool challenge_answered_ = false;
@@ -504,6 +544,8 @@ class Client {
   std::vector<Player> players_;  // sorted by number
   std::deque<Event> events_;
   std::size_t rejected_ = 0;
+  bool race_ = false;
+  std::size_t race_dropped_ = 0;
 
   std::map<FlagKey, protocol::FlagEntry> flags_;
   std::map<FlagKey, protocol::FlagEntry> pending_;  // our unanswered FLAG_SETs

@@ -1,4 +1,4 @@
-# Reading and writing coop.ini, shared by play.ps1 and make_kit.ps1. Dot-source it.
+# Reading and writing coop.ini, shared by play.ps1 and make_kit_hookshot.ps1. Dot-source it.
 # The rules match the emulator's own (lichii/hook/coop_settings.cpp), so a value this
 # accepts is never turned down by the emulator.
 

@@ -1,4 +1,4 @@
 runtime=Longshot
 repo=https://git.magicbean.dev/MagicBeanDev/Longshot
-commit=0c74253d4c6ed08d57e4f3aa8ce8634c4c017085
-tag=v3.0.0-rc.3
+commit=79d192c655b52ef69a42918e385ff79b6dfabd1f
+tag=v3.2.0

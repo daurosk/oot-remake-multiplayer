@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "bind_host.hpp"
+
 namespace coop::server::relay {
 
 namespace {
@@ -48,6 +50,181 @@ bool parse_relay_address(const std::string& text, std::string& host, std::uint16
   return true;
 }
 
+std::optional<RelayJoin> parse_relay_join(std::string_view text) {
+  while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+  while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
+  const std::size_t at = text.find('@');
+  if (at == std::string_view::npos) return std::nullopt;
+  const std::string_view what = text.substr(0, at);
+  RelayJoin join;
+  if (!parse_relay_address(std::string(text.substr(at + 1)), join.relay_host, join.relay_port)) return std::nullopt;
+  if (auto code = normalize_code(what); code && what.find('_') == std::string_view::npos) join.code = *code;
+  if (auto room = normalize_room(what); room && *room == what) join.room = *room;
+  if (join.code.empty() && join.room.empty()) return std::nullopt;
+  return join;
+}
+
+namespace {
+
+// One lookup: three tries a second apart, from `s`. Nothing when no answer came.
+std::optional<LookupResult> ask_relay(ENetSocket s, const ENetAddress& relay, const Message& lookup,
+                                      const std::function<bool()>& stop) {
+  const std::vector<std::uint8_t> bytes = encode(lookup);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (stop && stop()) return std::nullopt;
+    ENetBuffer out;
+    out.data = const_cast<std::uint8_t*>(bytes.data());
+    out.dataLength = bytes.size();
+    enet_socket_send(s, &relay, &out, 1);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (std::chrono::steady_clock::now() < until) {
+      if (stop && stop()) return std::nullopt;
+      enet_uint32 wait = ENET_SOCKET_WAIT_RECEIVE;
+      if (enet_socket_wait(s, &wait, 100) != 0 || !(wait & ENET_SOCKET_WAIT_RECEIVE)) continue;
+      std::uint8_t data[64];
+      ENetAddress from{};
+      ENetBuffer in;
+      in.data = data;
+      in.dataLength = sizeof data;
+      const int got = enet_socket_receive(s, &from, &in, 1);
+      if (got <= 0 || from.host != relay.host || from.port != relay.port) continue;
+      const auto m = decode(std::span<const std::uint8_t>(data, static_cast<std::size_t>(got)));
+      if (m && m->kind == Kind::kFound) return static_cast<LookupResult>(m->status);
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<LookupResult> lookup_on_relay(const ENetAddress& relay, const RelayJoin& join,
+                                            const std::function<bool()>& stop, std::optional<std::uint32_t> bind) {
+  ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+  if (s == ENET_SOCKET_NULL) return std::nullopt;
+  std::optional<LookupResult> result;
+  if (bind_socket(s, bind, 0) == 0) {
+    enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
+    if (!join.code.empty()) {
+      Message m;
+      m.kind = Kind::kLookup;
+      m.code = join.code;
+      result = ask_relay(s, relay, m, stop);
+    }
+    if (!join.room.empty() && (join.code.empty() || result == LookupResult::kUnknown)) {
+      Message m;
+      m.kind = Kind::kLookupName;
+      m.name = join.room;
+      const auto by_room = ask_relay(s, relay, m, stop);
+      // An old relay does not answer the room: keep what the code got.
+      if (by_room || join.code.empty()) result = by_room;
+    }
+  }
+  enet_socket_destroy(s);
+  return result;
+}
+
+namespace {
+
+// One page of the room list (kListRooms, start) or the proofs (kListProofs): `tries` tries, `wait_ms` apart, from `s`.
+std::optional<Message> ask_page(ENetSocket s, const ENetAddress& relay, std::uint8_t start,
+                                const std::function<bool()>& stop, Kind kind = Kind::kListRooms, int tries = 3,
+                                int wait_ms = 1000) {
+  Message ask;
+  ask.kind = kind;
+  ask.start = start;
+  const std::vector<std::uint8_t> bytes = encode(ask);
+  const Kind answer = kind == Kind::kListProofs ? Kind::kRoomProofs : Kind::kRoomList;
+  for (int attempt = 0; attempt < tries; ++attempt) {
+    if (stop && stop()) return std::nullopt;
+    ENetBuffer out;
+    out.data = const_cast<std::uint8_t*>(bytes.data());
+    out.dataLength = bytes.size();
+    enet_socket_send(s, &relay, &out, 1);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+    while (std::chrono::steady_clock::now() < until) {
+      if (stop && stop()) return std::nullopt;
+      enet_uint32 wait = ENET_SOCKET_WAIT_RECEIVE;
+      if (enet_socket_wait(s, &wait, 100) != 0 || !(wait & ENET_SOCKET_WAIT_RECEIVE)) continue;
+      std::uint8_t data[2048];
+      ENetAddress from{};
+      ENetBuffer in;
+      in.data = data;
+      in.dataLength = sizeof data;
+      const int got = enet_socket_receive(s, &from, &in, 1);
+      if (got <= 0 || from.host != relay.host || from.port != relay.port) continue;
+      auto m = decode(std::span<const std::uint8_t>(data, static_cast<std::size_t>(got)));
+      if (m && m->kind == answer && (answer == Kind::kRoomProofs || m->start == start || m->total <= start)) return m;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std::function<bool()>& stop,
+                                            bool ask_proofs, std::optional<std::uint32_t> bind) {
+  ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+  if (s == ENET_SOCKET_NULL) return std::nullopt;
+  std::optional<RoomList> result;
+  if (bind_socket(s, bind, 0) == 0) {
+    enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
+    for (int page = 0; page < 8; ++page) {
+      const std::size_t start = result ? result->rooms.size() : 0;
+      if (result && start >= result->total) break;
+      const auto m = ask_page(s, relay, static_cast<std::uint8_t>(start), stop);
+      if (!m) break;  // (the rooms so far: a later page lost, or the list got shorter)
+      if (!result) result.emplace();
+      result->total = m->total;
+      if (m->rooms.empty()) break;
+      result->rooms.insert(result->rooms.end(), m->rooms.begin(), m->rooms.end());
+    }
+    // The proofs: two tries 500 ms apart (one lost datagram does not cost the mark; a relay before 0.11.8 never
+    // answers, and the list is shown without them).
+    if (ask_proofs && result && !result->rooms.empty()) {
+      if (const auto p = ask_page(s, relay, 0, stop, Kind::kListProofs, 2, 500)) {
+        result->proofs = p->proofs;
+        result->proofs_answered = true;
+      }
+    }
+  }
+  enet_socket_destroy(s);
+  return result;
+}
+
+std::string lookup_text(std::optional<LookupResult> result, const RelayJoin& join) {
+  const std::string relay = join.relay_host + ":" + std::to_string(join.relay_port);
+  const bool room = join.code.empty();
+  if (!result) {
+    return "no answer from the relay " + relay + ": is the address right, and is the relay running?" +
+           (room ? std::string(" (a relay from before room names does not answer room names: ask the host "
+                               "for the join code)")
+                 : std::string());
+  }
+  switch (*result) {
+    case LookupResult::kOk:
+      if (!join.room.empty() && !join.code.empty()) return "the relay let this game in: connecting through it";
+      return room ? "room \"" + join.room + "\" found on the relay: connecting through it"
+                  : "the relay took the join code: connecting through it";
+    case LookupResult::kUnknown:
+      if (!join.room.empty() && !join.code.empty()) {
+        return "the relay knows no join code or room \"" + join.room +
+               "\" right now: check it with the host (a join code changes each time the host starts; a room is free "
+               "again 30 seconds after its host stops)";
+      }
+      if (!join.room.empty()) {
+        return "the relay has no room \"" + join.room +
+               "\" right now: check the name with the host (a room is free again 30 seconds after its host stops)";
+      }
+      return "the relay does not know this join code: it changes each time the host starts, and ends when the "
+             "host stops";
+    case LookupResult::kSlowDown:
+      return "the relay had too many wrong codes or room names from your address: wait 10 minutes";
+    case LookupResult::kFull:
+      return "that host already has the most players the relay lets in";
+  }
+  return "the relay refused";
+}
+
 RelayLink::RelayLink(RelayLinkConfig config) : config_(std::move(config)) {
   if (!config_.random) {
     auto device = std::make_shared<std::random_device>();
@@ -78,6 +255,14 @@ void RelayLink::say(const std::string& text) const {
 }
 
 bool RelayLink::start(std::string& error) {
+  if (!config_.room.empty()) {
+    const auto room = normalize_room(config_.room);
+    if (!room) {
+      error = "'" + config_.room + "' is not a room name: 3 to 24 letters, digits, - or _";
+      return false;
+    }
+    config_.room = *room;
+  }
   if (enet_address_set_host(&relay_, config_.relay_host.c_str()) != 0) {
     error = "cannot find the relay " + config_.relay_host + " (is the name right, and is this PC online?)";
     return false;
@@ -90,10 +275,7 @@ bool RelayLink::start(std::string& error) {
     error = "cannot open a network socket for the relay";
     return false;
   }
-  ENetAddress any{};
-  any.host = ENET_HOST_ANY;
-  any.port = 0;
-  if (enet_socket_bind(socket_, &any) != 0) {
+  if (bind_socket(socket_, config_.bind, 0) != 0) {
     error = "cannot open a network socket for the relay";
     return false;
   }
@@ -131,9 +313,15 @@ void RelayLink::close_flow(std::uint16_t flow, bool tell_relay) {
 void RelayLink::handle(const Message& m, std::uint64_t now) {
   switch (m.kind) {
     case Kind::kRegistered:
+    case Kind::kRegisteredName:
       if (m.token != token_) return;
       last_heard_ms_ = now;
       refused_hard_ = false;
+      if (m.kind == Kind::kRegisteredName && m.name != room_) {
+        room_ = m.name;
+        last_list_ms_ = 0;  // (listed at once with the room)
+        if (config_.on_room) config_.on_room(room_);
+      }
       if (!registered_ || m.code != code_) {
         registered_ = true;
         if (m.code != code_) {
@@ -155,6 +343,8 @@ void RelayLink::handle(const Message& m, std::uint64_t now) {
         }
         registered_ = false;
         code_.clear();
+        room_.clear();
+        last_list_ms_ = 0;
         std::vector<std::uint16_t> ids;
         for (const auto& [id, flow] : flows_) ids.push_back(id);
         for (const std::uint16_t id : ids) close_flow(id, false);
@@ -177,10 +367,7 @@ void RelayLink::handle(const Message& m, std::uint64_t now) {
         Flow flow;
         flow.socket = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
         if (flow.socket == ENET_SOCKET_NULL) return;
-        ENetAddress local{};
-        enet_address_set_host_ip(&local, "127.0.0.1");
-        local.port = 0;
-        if (enet_socket_bind(flow.socket, &local) != 0) {
+        if (bind_socket(flow.socket, net::kLoopbackIp, 0) != 0) {
           enet_socket_destroy(flow.socket);
           return;
         }
@@ -251,16 +438,21 @@ void RelayLink::service() {
     if (last_register_ms_ == 0 || now - last_register_ms_ >= every) {
       last_register_ms_ = now;
       Message m;
-      m.kind = Kind::kRegister;
+      m.kind = config_.room.empty() ? Kind::kRegister : Kind::kRegisterName;
       m.token = token_;
       m.key = config_.key;
+      m.name = config_.room;
       send_relay(m);
     }
     if (!refused_hard_ && now - first_try_ms_ >= 10'000 &&
         (last_waiting_note_ms_ == 0 || now - last_waiting_note_ms_ >= 30'000)) {
       last_waiting_note_ms_ = now;
       say("no answer from the relay at " + config_.relay_host + ":" + std::to_string(config_.relay_port) +
-          " yet: is it running, and is its UDP port open to the internet? Still trying.");
+          " yet: is it running, and is its UDP port open to the internet?" +
+          (config_.room.empty() ? std::string()
+                                : std::string(" A relay from before room names does not answer a host with one "
+                                              "(update it, or host without a room name).")) +
+          " Still trying.");
     }
     return;
   }
@@ -280,6 +472,30 @@ void RelayLink::service() {
     m.kind = Kind::kKeepalive;
     m.token = token_;
     send_relay(m);
+  }
+  // The room list: listed (or not) again with each keepalive, so a restarted
+  // relay has it back and the players' number stays right.
+  if (config_.listing && !room_.empty() && (last_list_ms_ == 0 || now - last_list_ms_ >= kKeepaliveEveryMs)) {
+    last_list_ms_ = now;
+    const std::optional<RoomEntry> entry = config_.listing();
+    Message m;
+    m.kind = Kind::kListRoom;
+    m.token = token_;
+    m.listed = entry.has_value();
+    if (entry) {
+      m.entry = *entry;
+      m.entry.host = listing_name(m.entry.host);
+    }
+    send_relay(m);
+    if (entry && config_.proof) {
+      if (const std::optional<RoomProof> proof = config_.proof(room_, m.entry)) {
+        Message p;
+        p.kind = Kind::kRoomProof;
+        p.token = token_;
+        p.proof = *proof;
+        send_relay(p);
+      }
+    }
   }
 }
 

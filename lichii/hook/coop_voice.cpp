@@ -71,6 +71,7 @@ Settings SettingsFrom(const std::function<std::string(const char*)>& env,
             errors.push_back("LICHII_COOP_VOICE_RANGE '" + range + "' is not 5 to 100 (metres)");
         }
     }
+    s.mic = MicName(env("LICHII_COOP_VOICE_MIC"));
     if (const std::string test = Lower(env("LICHII_COOP_VOICE_TEST")); !test.empty()) {
         if (test == "tone") {
             s.test = Test::tone;
@@ -81,6 +82,36 @@ Settings SettingsFrom(const std::function<std::string(const char*)>& env,
         }
     }
     return s;
+}
+
+std::string MicName(std::string_view name) {
+    std::string s(name);
+    for (char& c : s) {   // (one line of coop-options.ini: no line breaks in it)
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) {
+            c = ' ';
+        }
+    }
+    if (s.size() > kMicNameBytes) {
+        std::size_t at = kMicNameBytes;
+        while (at > 0 && (static_cast<unsigned char>(s[at]) & 0xc0) == 0x80) {   // (not inside a character)
+            --at;
+        }
+        s.resize(at);
+    }
+    const auto first = s.find_first_not_of(' ');
+    if (first == std::string::npos) {
+        return {};
+    }
+    return s.substr(first, s.find_last_not_of(' ') - first + 1);
+}
+
+std::string MicMissingNote(const std::string& chosen, const std::vector<std::string>& listed) {
+    if (chosen.empty() || std::any_of(listed.begin(), listed.end(),
+                                      [&](const std::string& n) { return MicName(n) == chosen; })) {
+        return {};
+    }
+    return "Microphone " + chosen + " is not connected: the others hear nothing until it is back (or choose another "
+           "in Settings).";
 }
 
 const char* ModeName(coop::voice::Mode mode) {
@@ -256,6 +287,8 @@ bool g_mic_on = false;
 std::atomic<bool> g_host_muted{false};   // the host muted our voice (SetHostMuted)
 bool g_tip_given = false;   // the turned-on tip: once a run
 std::string g_notice;       // for the chat (TakeNotice)
+std::string g_mic_notice;   // the chosen microphone not connected at the start (TakeNotice, after g_notice)
+bool g_mic_checked = false; // (whether it is there: looked once, when voice is first on with one chosen)
 std::atomic<std::uint64_t> g_mic_said{0};
 std::atomic<bool> g_mic_opened{false};
 
@@ -345,6 +378,12 @@ void SetBackend(Backend backend) {
                        "(LICHII_COOP_VOICE_TEST=tone); the microphone is never opened");
     }
     g_engine.store(new coop::voice::Engine(g_backend.codecs, EngineSettings(g_settings, false)));
+    if (!g_settings.mic.empty() && g_backend.mic_choose) {   // (opens nothing: the stream is not started)
+        g_backend.mic_choose(g_settings.mic);
+    } else if (!g_settings.mic.empty()) {
+        LOG_WARNING(Core, "coop: voice: LICHII_COOP_VOICE_MIC needs a newer game (patch 0009); the Insert menu's "
+                          "microphone is used");
+    }
     if (g_settings.mode == coop::voice::Mode::off) {
         LOG_INFO(Core, "coop: voice: off (the default: no microphone, nothing heard) until it is turned on "
                        "in the co-op settings");
@@ -373,7 +412,14 @@ void SetLocked(const Settings& settings) {
         return;
     }
     const bool mode_changed = next.mode != g_settings.mode;
+    const bool mic_changed = next.mic != g_settings.mic;
     g_settings = next;
+    if (mic_changed && g_backend.mic_choose) {
+        g_backend.mic_choose(g_settings.mic);
+        g_mic_checked = true;   // (chosen in the menu, which shows whether it is there)
+        LOG_INFO(Core, "coop: voice: microphone now {}",
+                 g_settings.mic.empty() ? std::string("the game's (the Insert menu's)") : g_settings.mic);
+    }
     if (auto* e = g_engine.load()) {
         e->configure(EngineSettings(g_settings, g_camera_known));
     }
@@ -407,11 +453,35 @@ void SetMode(coop::voice::Mode mode) {
     SetLocked(next);
 }
 
+void SetMicrophone(const std::string& name) {
+    std::lock_guard lock(g_mutex);
+    ReadSettingsOnce();
+    Settings next = g_settings;
+    next.mic = MicName(name);
+    SetLocked(next);
+}
+
 void SetHostMuted(bool muted) { g_host_muted.store(muted); }
 
 std::string TakeNotice() {
     std::lock_guard lock(g_mutex);
-    return std::exchange(g_notice, {});
+    return std::exchange(!g_notice.empty() ? g_notice : g_mic_notice, {});
+}
+
+std::optional<std::vector<std::string>> Microphones() {
+    {
+        std::lock_guard lock(g_mutex);
+        if (g_engine.load() == nullptr || !g_backend.mic_list || !g_backend.mic_choose) {
+            return std::nullopt;
+        }
+    }
+    std::vector<std::string> out;   // (g_backend is set once, before g_engine: listed without the lock)
+    for (const std::string& n : g_backend.mic_list()) {
+        if (std::string m = MicName(n); !m.empty()) {
+            out.push_back(std::move(m));
+        }
+    }
+    return out;
 }
 
 void OnEvent(const coop::net::Event& event) {
@@ -435,7 +505,7 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
     if (e == nullptr) {
         return;
     }
-    // Who we hear and from where: presence's place of each Link not hidden.
+    // Who we hear and from where: presence's place of each Link heard (voice_heard: the scene alone).
     std::array<bool, kMaxSpeakers + 1> placed{};
     std::array<std::optional<float>, kMaxSpeakers + 1> distance{};  // ours to each, for the test log
     if (our_feet) {
@@ -470,10 +540,15 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
     // Our microphone, sent while connected and in the game.
     std::vector<coop::protocol::VoiceFrame> out;
     Settings now_set;
+    bool check_mic = false;
     {
         std::lock_guard lock(g_mutex);
         ReadSettingsOnce();
         now_set = g_settings;
+        // (the chosen microphone there? Looked once, when voice is first on with one: listing opens none)
+        check_mic = !g_mic_checked && g_settings.mode != coop::voice::Mode::off && !g_settings.mic.empty() &&
+                    g_backend.mic_list;
+        g_mic_checked = g_mic_checked || check_mic;
         if (view.has_value() != g_camera_known) {
             g_camera_known = view.has_value();
             e->configure(EngineSettings(g_settings, g_camera_known));
@@ -512,6 +587,13 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
                     break;
                 }
             }
+        }
+    }
+    if (check_mic) {   // (outside the lock: the system's list may take a moment)
+        if (std::string note = MicMissingNote(now_set.mic, g_backend.mic_list()); !note.empty()) {
+            LOG_WARNING(Core, "coop: voice: microphone {} is not connected; silence until it is back", now_set.mic);
+            std::lock_guard lock(g_mutex);
+            g_mic_notice = std::move(note);
         }
     }
     if (!out.empty() && session != nullptr) {

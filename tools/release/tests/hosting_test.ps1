@@ -130,9 +130,46 @@ Check ($j -and $j.Code -eq 'ABCDEFGH' -and $j.Relay -eq 'relay.example.net' -and
 $j = ConvertTo-RelayJoin 'ABCDEFGH@1.2.3.4'
 Check ($j -and $j.Port -eq 27530 -and $j.Relay -eq '1.2.3.4') 'relay: no port is the relay port 27530'
 Check ((Format-RelayJoin $j) -eq 'ABCD-EFGH@1.2.3.4:27530') 'relay: shown as the host''s window shows it'
-foreach ($bad in @('ABCD-EFG@1.2.3.4', 'ABCD-EFGI@1.2.3.4', 'ABCD-EFGH', 'ABCD-EFGH@', 'ABCD-EFGH@1.2.3.4:0', '26.1.2.3', 'ABCD-EFGH@bad;host')) {
-    Check (-not (ConvertTo-RelayJoin $bad)) "relay: '$bad' is not a join code with a relay"
+foreach ($bad in @('ABCD-EFGH', 'ABCD-EFGH@', 'ABCD-EFGH@1.2.3.4:0', '26.1.2.3', 'ABCD-EFGH@bad;host',
+        'ab@1.2.3.4', 'forest.gang@1.2.3.4', ('x' * 25) + '@1.2.3.4')) {
+    Check (-not (ConvertTo-RelayJoin $bad)) "relay: '$bad' is not a join code or room name with a relay"
 }
+$r = ConvertTo-RelayJoin 'lake-gang@1.2.3.4'
+Check ($r -and $r.Code -eq 'LAKEGANG' -and $r.Room -eq 'lake-gang') 'relay: laid out as a code and a room name too: both, the code first'
+$r = ConvertTo-RelayJoin 'bird-song@1.2.3.4'
+Check ($r -and -not $r.Code -and $r.Room -eq 'bird-song') 'relay: laid out as a code, but I and O are no code letters: a room'
+Check ((Get-RelayLookupHelp 'unknown' (ConvertTo-RelayJoin 'lake-gang@1.2.3.4')) -join ' ' -match "no join code or room 'lake-gang'") 'relay: unknown as both is said once'
+
+# The game's host copies its relay line with the join password after it (private-lobby-fix): Join.bat takes both.
+$r = ConvertTo-RelayJoin ' Drumstick@159.54.182.85:27530 KQ7MZ3XAHN4PWR8TBC2D '
+Check ($r -and $r.Room -eq 'Drumstick' -and $r.Relay -eq '159.54.182.85' -and $r.Port -eq 27530 -and $r.Password -eq 'KQ7MZ3XAHN4PWR8TBC2D') 'relay: a room line with its password after it'
+$r = ConvertTo-RelayJoin 'abcd-efgh @ relay.example.net pw@x!'
+Check ($r -and $r.Code -eq 'ABCDEFGH' -and $r.Relay -eq 'relay.example.net' -and $r.Password -eq 'pw@x!') 'relay: a code line with a password (an @ in it too)'
+$r = ConvertTo-RelayJoin 'forest-gang@1.2.3.4'
+Check ($r -and $null -eq $r.Password) 'relay: a line without a password has none'
+Check (-not (ConvertTo-RelayJoin 'forest-gang@1.2.3.4 two words')) 'relay: a password with a space is no line'
+$r = ConvertTo-RelayJoin 'forest-gang@relay.example.net :27600'
+Check ($r -and $r.Port -eq 27600 -and $null -eq $r.Password) 'relay: a port apart from its relay is the port, not a password'
+$r = ConvertTo-RelayJoin 'forest-gang@relay.example.net : 27600 pw:1'
+Check ($r -and $r.Port -eq 27600 -and $r.Password -eq 'pw:1') 'relay: a port apart from its relay, then the password'
+
+# Room names (issue 261): name@relay, kept as typed; a name shaped like a code gets both.
+$r = ConvertTo-RelayJoin ' Forest-Gang@relay.example.net:27600 '
+Check ($r -and -not $r.Code -and $r.Room -eq 'Forest-Gang' -and $r.Relay -eq 'relay.example.net' -and $r.Port -eq 27600) 'relay: a room name with its relay and port'
+Check ((Format-RelayJoin $r) -eq 'Forest-Gang@relay.example.net:27600') 'relay: a room is shown as typed'
+$r = ConvertTo-RelayJoin 'ABCD-EFG@1.2.3.4'
+Check ($r -and -not $r.Code -and $r.Room -eq 'ABCD-EFG' -and $r.Port -eq 27530) 'relay: seven letters and a dash is a room name, not a code'
+$r = ConvertTo-RelayJoin 'zeldafan@1.2.3.4'
+Check ($r -and $r.Code -eq 'ZELDAFAN' -and $r.Room -eq 'zeldafan') 'relay: a room name shaped like a code is tried as both'
+$r = ConvertTo-RelayJoin 'lake_gang_01@1.2.3.4'
+Check ($r -and -not $r.Code -and $r.Room -eq 'lake_gang_01') 'relay: underscores and digits are room letters'
+$rb = Get-RelayRoomLookupBytes 'forest-gang'
+Check ($rb.Length -eq 17 -and $rb[4] -eq 0x11 -and $rb[5] -eq 11 -and $rb[6] -eq [byte][char]'f') 'relay: the room lookup datagram (server/relay_wire.hpp)'
+$roomJoin = ConvertTo-RelayJoin 'forest-gang@1.2.3.4'
+Check ((Get-RelayLookupHelp 'ok' $roomJoin) -join ' ' -match "Room 'forest-gang' found") 'relay: a found room is said'
+Check ((Get-RelayLookupHelp 'unknown' $roomJoin) -join ' ' -match "no room 'forest-gang'") 'relay: an unknown room is explained'
+Check ((Get-RelayLookupHelp 'no-answer' $roomJoin) -join ' ' -match 'before room names') 'relay: an old relay is named for a room'
+Check ((Invoke-RelayRoomLookup '127.0.0.1' 9 'forest-gang') -eq 'no-answer') 'relay: nobody on the port is no answer for a room too'
 Check (-not (ConvertTo-JoinAddress 'ABCD-EFGH@1.2.3.4')) 'relay: a join code is not taken as a plain address'
 $bytes = Get-RelayLookupBytes 'ABCDEFGH'
 Check ($bytes.Length -eq 13 -and $bytes[0] -eq 0x4F -and $bytes[4] -eq 0x10 -and $bytes[5] -eq [byte][char]'A') 'relay: the lookup datagram (server/relay_wire.hpp)'
@@ -148,6 +185,9 @@ New-Item -ItemType Directory -Path $kitDir | Out-Null
 Save-RelayJoin $kitDir $j '1.2.3.4'
 $saved = Read-RelayJoin $kitDir
 Check ($saved -and $saved.Text -eq 'ABCD-EFGH@1.2.3.4:27530' -and $saved.Address -eq '1.2.3.4') 'relay: the last join is kept for Enter'
+Save-RelayJoin $kitDir $roomJoin '1.2.3.4'
+$saved = Read-RelayJoin $kitDir
+Check ($saved -and $saved.Text -eq 'forest-gang@1.2.3.4:27530') 'relay: the last room join is kept for Enter too'
 Remove-Item -Recurse -Force $kitDir
 
 # The host's coop_server arguments from coop-options.ini.
@@ -163,6 +203,10 @@ $h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; 
 Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'NOT used') 'relay: refused without a join password, even with server_allow'
 $h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'bad relay;x'; RelayKey = '' } 'secret' ''
 Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'not a relay address') 'relay: a bad address is named, not used'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = ''; RelayRoom = 'forest-gang' } 'secret' ''
+Check (($h.Args -join ' ') -eq '--relay-via relay.example.net:27530 --relay-room forest-gang' -and ($h.Notes -join ' ') -match 'forest-gang@relay\.example\.net') 'relay: a room name goes to the server and is explained'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = ''; RelayRoom = 'no spaces here' } 'secret' ''
+Check (($h.Args -join ' ') -eq '--relay-via relay.example.net:27530' -and ($h.Notes -join ' ') -match 'not a room name') 'relay: a bad room name is named, not used; the code still works'
 
 # UPnP and the invite code need the join password; server_allow is not enough.
 $h = Get-ServerHostingArgs @{ Upnp = $true; Invite = $true; Stun = ''; Relay = ''; RelayKey = '' } '' '25.1.2.3'
@@ -177,9 +221,24 @@ $opt = Join-Path $optDir 'coop-options.ini'
 [System.IO.File]::WriteAllText($opt, "# upnp = no`r`n# invite = no`r`n")
 $a = Read-KitServerAccess $opt
 Check ($a.Upnp -and $a.Invite -and $null -eq $a.Password) 'defaults: upnp and invite on, no password line'
+Check ($a.Relay -eq '159.54.182.85:27530' -and $a.SameNetworkOpen) 'defaults: the project''s relay built in, the same network without the password'
 [System.IO.File]::WriteAllText($opt, "upnp = no`r`ninvite = no`r`nstun_servers = a.example:1`r`n")
 $a = Read-KitServerAccess $opt
 Check (-not $a.Upnp -and -not $a.Invite -and $a.Stun -eq 'a.example:1') 'upnp = no and invite = no turn them off'
+[System.IO.File]::WriteAllText($opt, "relay = relay.example.net`r`n# relay_room = not-this`r`nrelay_room = forest-gang `r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.Relay -eq 'relay.example.net' -and $a.RelayRoom -eq 'forest-gang') 'relay_room is read (a commented one is not)'
+Check (-not $a.ApproveJoins) 'approve_joins: off by default'
+[System.IO.File]::WriteAllText($opt, "relay =`r`nsame_network_password = on`r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.Relay -eq '159.54.182.85:27530' -and -not $a.SameNetworkOpen) 'an empty relay line is the built-in relay; same_network_password = on'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = ''; SameNetworkOpen = $true } 'secret' ''
+Check (($h.Args -join ' ') -eq '--same-network-open') 'the same network: the server lets it in without the password'
+[System.IO.File]::WriteAllText($opt, "approve_joins = on`r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.ApproveJoins) 'approve_joins = on is read (issue 261)'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = ''; ApproveJoins = $true } 'secret' ''
+Check (($h.Args -join ' ') -eq '--approve-joins' -and ($h.Notes -join ' ') -match '/allow or /deny') 'approve_joins: the server asks the host, and the window says how to answer'
 Remove-Item -Recurse -Force $optDir
 
 # Invite codes: the server's vectors (tests/server/nat_test.cpp) read back here.
@@ -200,6 +259,14 @@ Check ((ConvertFrom-InviteCode 'EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-
 Check (-not (Test-InviteCodeText 'ABCD-EFGH') -and -not (Test-InviteCodeText '203.0.113.5') -and (Test-InviteCodeText $good)) 'invite: told apart from relay codes and addresses'
 $p1 = New-JoinPassword; $p2 = New-JoinPassword
 Check ($p1.Length -eq 20 -and $p1 -match '^[A-HJ-NP-Z2-9]{20}$' -and $p1 -ne $p2) 'invite: a made password is 20 letters (100 bits) and new each time'
+
+# The public game's room (Get-KitPublicRoom): lower case as the relay keeps it; a bad override is skipped.
+$acc = @{ RelayRoom = 'Forest-Gang' }
+Check ((Get-KitPublicRoom $acc) -eq 'forest-gang') 'public room: relay_room in lower case'
+Check ((Get-KitPublicRoom $acc ' Lake-12 ') -eq 'lake-12') 'public room: the override, trimmed, in lower case'
+Check ((Get-KitPublicRoom $acc 'no spaces allowed') -eq 'forest-gang') 'public room: a bad override is skipped'
+Check ((Get-KitPublicRoom @{ RelayRoom = '' } 'x') -match '^[a-z]+-\d{4}$') 'public room: nothing usable gives a ready one'
+Check ((Get-KitPublicPassword (Get-KitPublicRoom $acc ' Lake-12 ')) -eq 'squadala-public-game:lake-12') 'public room: the password from the room as the game makes it'
 
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

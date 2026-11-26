@@ -1,0 +1,9 @@
+# hs-title-menu (see hs-title-menu.steps.txt), both games: from Continue down to the fifth row (Host).
+# proof-0116 (Longshot v3.0.0): the title has no focusable button 3 (focus walks 0, 1, 2, 4, 5, 6),
+# so THREE downs reach Host (button 4).
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press DDOWN
+wait 60

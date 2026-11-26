@@ -6,6 +6,7 @@
 #include <random>
 #include <utility>
 
+#include "bind_host.hpp"
 #include "coop/protocol/messages.hpp"
 #include "local_net.hpp"
 #include "nat_net.hpp"
@@ -126,16 +127,12 @@ bool JoinHelper::start(std::string& error) {
     stop();
     return false;
   }
-  ENetAddress any{};
-  any.host = ENET_HOST_ANY;
-  any.port = config_.public_port;
-  bool bound = enet_socket_bind(public_socket_, &any) == 0;
+  bool bound = bind_socket(public_socket_, config_.bind, config_.public_port) == 0;
   if (!bound && config_.public_port != 0) {
     // That port is taken: any port (a rejoin then needs a new answer code).
     enet_socket_destroy(public_socket_);
     public_socket_ = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
-    any.port = 0;
-    bound = public_socket_ != ENET_SOCKET_NULL && enet_socket_bind(public_socket_, &any) == 0;
+    bound = public_socket_ != ENET_SOCKET_NULL && bind_socket(public_socket_, config_.bind, 0) == 0;
   }
   if (!bound) {
     error = "cannot open a UDP port for the way to the host";
@@ -143,8 +140,7 @@ bool JoinHelper::start(std::string& error) {
     return false;
   }
   // Only this PC's own game can reach the helper's game side.
-  const ENetAddress local = to_enet(Addr{kLoopback, config_.game_port});
-  if (enet_socket_bind(game_socket_, &local) != 0) {
+  if (bind_socket(game_socket_, kLoopback, config_.game_port) != 0) {
     error = "UDP port " + std::to_string(config_.game_port) +
             " on 127.0.0.1 is taken (another Join.bat helper still open?)";
     stop();

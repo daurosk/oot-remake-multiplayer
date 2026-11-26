@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The official always-on public game (docs/official-game.md), on the relay's own machine beside the relay.
+# Install: copy to /etc/systemd/system/, then: systemctl daemon-reload && systemctl enable --now squadala-public
+[Unit]
+Description=Squadala official public game (coop_server --dedicated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=coop
+Group=coop
+# /run/squadala-public (the console FIFO) and /var/lib/squadala-public (the kept bans), owned by User.
+RuntimeDirectory=squadala-public
+StateDirectory=squadala-public
+ExecStartPre=/bin/sh -c 'rm -f /run/squadala-public/console && mkfifo -m 600 /run/squadala-public/console'
+# The FIFO is opened read-write (fd 3), so it never reaches end-of-file when a command's writer closes it.
+# If the relay needs a host key, add: Environment=COOP_RELAY_KEY=... and --relay-key-env COOP_RELAY_KEY
+ExecStart=/bin/sh -c 'exec 3<>/run/squadala-public/console && exec /opt/squadala-public/coop_server \
+  --port 27610 --relay-via 127.0.0.1:27530 --relay-room squadala --relay-list "Squadala public game" \
+  --public --dedicated --max-players 16 --bans-file /var/lib/squadala-public/bans.txt \
+  --official-key-file /etc/squadala-public/official-game.key --official-relay 159.54.182.85:27530 <&3'
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

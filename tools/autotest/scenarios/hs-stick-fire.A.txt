@@ -1,0 +1,53 @@
+# hs-stick-fire (Hookshot, issue 248, held-pieces-0116): another player's lit Deku stick burns on their puppet,
+# as a picture only (docs/puppet.md, "A lit Deku stick"). Research run (B #35 GO, one LANE2 run).
+# InsideTheDekuTree room E: the switch torch Obj_SwitchCandleStick_A_02 0c29e0a5d05f4426 at -12.9 79.4 -10.5 is
+# lit at load in the kit saves (past the Deku Tree; hs-deku-torch's notes). B stands beside it, takes a Deku
+# Stick out and swings it through the flame; A stands 4 m off (hs-deku-torch's A spot) facing torch and B.
+# No save prep: the torch must be LIT at load (if the save has it dark, the run is UNPROVEN, not FAIL).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-stick-fire   (~4 min of game)
+# Look for, A's log: "P2 PLAYER_EQUIP: ... lit 1" after B's swing (the sender saw Chemical_Fire on its stick),
+#   "P2 flame: their stick burns; the puppet's (slot 0) shows the game's 'Chemical_Fire'", later
+#   "P2 flame: put out" or "the burning piece is gone or made again" when B's stick burns out (FixedBurningDuration
+#   1440 frames; the stick breaks); no "CRASH:" in either log.
+# Shots: B lit / B burning: B's own stick burns (the chemistry, B's game). A lit / A burning: the puppet's stick
+#   burns as B's does (flame at the tip). A burnt: no flame on the puppet once B's is out. A's torch and web must
+#   not change from A's own (nothing burns in A's world from the puppet).
+# If B's stick never lights (B's shots show no flame): the swing missed the flame; UNPROVEN, move B's place.
+# If B's lights and A's log has no "lit 1": the sender's walk (PlayerReader::read_lit) does not see Chemical_Fire:
+#   keep B's log and both shots (the research question).
+#! noload
+#! start coop: test warp done
+# Placement as hs-shots r2: 'toward' never turned Link in 20261119-092844, so short goto walks turn both.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_PUPPET=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -14.5 79.6 -6.5
+wait 240
+mark placed
+goto -12.9 -10.5 3 120   # a short walk toward the torch: A and its camera face torch and B
+press ZL 10
+wait 300
+mark ready
+wait 330
+mark lit
+wait 150
+mark burning
+wait 150
+mark burning2
+wait 1500
+mark burnt
+wait 300
+mark late

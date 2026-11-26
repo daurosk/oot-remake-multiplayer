@@ -1,0 +1,83 @@
+# hs-boss-fix-gohma-rev, A: the GUEST order reversed: B (the guest) walks in first and owns Gohma, A (the host)
+# about 25 s later with a copy. A plays hs-boss-fix-gohma.B.txt's part (marks a-*), B plays the A part (marks b-*,
+# incl. the walk under her for her drop and the owner's test kill). PASS lines: hs-boss-fix-gohma.A.txt's header
+# with A and B swapped; first check (else VOID): after "mark b-trigger" B's Gohma leaves Pre_Battle_Ceiling_*.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-fix-gohma-rev
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+wait 1500               # A walks in first and owns her
+place -12.0 48.5 66.5   # the corridor (if the area rules moved B in already, this puts B back before the door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: B's own intro, with a copy Gohma
+mark a-in
+wait 2400               # B's intro (the copy runs its own event changes)
+mark a-after-intro
+goto 15.0 67.5 1.5 600  # CONTROL: 3.5 m west of her (the room's centre is x 22.5)
+mark a-moved
+wait 300
+hold ZL 30              # B's seed into the eye: the copy's own stun
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed1
+wait 90
+mark a-stun
+wait 600
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed2
+wait 120
+hold ZL+LSTICK_UP 90    # locked on: walk up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit1
+wait 900
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 120
+hold ZL+LSTICK_UP 90
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit2
+wait 600
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # with the other game's: whichever game owns the boss then kills it (a kill on a copy is held at 1 and its owner keeps its stops; big-run-0115: the owner moved mid-fight)
+wait 120
+mark a-k1
+wait 900
+mark a-k2
+wait 1200
+mark end

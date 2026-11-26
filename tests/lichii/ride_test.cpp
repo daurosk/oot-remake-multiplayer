@@ -254,3 +254,163 @@ TEST_CASE("ride: the highest player number rides too (16 players), one past it i
         CHECK(copies.size() == (n == top ? 1u : 0u));
     }
 }
+
+// epona-sync (protocol 17): every player has their own Epona, seen by the others while nobody rides her too.
+
+TEST_CASE("epona-sync: a game that has won Epona sends her while nobody rides her, and one horse on and off") {
+    CoopRide::Rider rider;
+    const Vec3 me{0.0f, 0.0f, 0.0f};
+    const Quat turn = Yaw(0.0f);
+    HorseSeen horse;
+    horse.address = 0x77;
+    horse.position = {40.0f, 2.0f, -15.0f};
+    horse.rotation = CoopPuppet::QuatToMatrix(Yaw(200.0f));
+    horse.animation = proto::Animation{"Wait", 3.0f, 1.0f};
+
+    // Epona not won here (the ranch's Epona is every game's own): on foot nothing is sent, no walk.
+    CHECK_FALSE(rider.Wants(false, 1'000'000));
+    CHECK_FALSE(rider.Tick(false, me, turn, {horse}, 1'000'000));
+    CHECK_FALSE(rider.Free());
+
+    // Won: she is looked for, and sent where she is in the world.
+    CHECK(rider.Wants(false, 1'000'000, true));
+    auto m = rider.Tick(false, me, turn, {horse}, 1'000'000, true);
+    REQUIRE(m);
+    CHECK(m->flags == proto::kRideFree);
+    CHECK(m->horse == "Animal_Epona_Adult");
+    CHECK(Near(m->place, horse.position));
+    CHECK(Near(m->offset, Vec3{0.0f, 0.0f, 0.0f}));
+    CHECK(Near(CoopPuppet::QuatToMatrix(m->rotation), horse.rotation));
+    REQUIRE(m->animation);
+    CHECK(m->animation->name == "Wait");
+    CHECK(rider.Free());
+    CHECK_FALSE(rider.Riding());
+    CHECK(rider.Horse() == 0x77);
+    CHECK(Relayed(*m).flags == proto::kRideFree);  // the codec takes it
+
+    // Standing still: about 7 a second. Moving: 30 a second.
+    CHECK_FALSE(rider.Tick(false, me, turn, {horse}, 1'040'000, true));
+    CHECK_FALSE(rider.Tick(false, me, turn, {horse}, 1'140'000, true));
+    CHECK(rider.Tick(false, me, turn, {horse}, 1'150'000, true));
+    horse.position[0] += 0.5f;
+    CHECK(rider.Tick(false, me, turn, {horse}, 1'183'000, true));
+    horse.position[0] += 0.5f;
+    CHECK_FALSE(rider.Tick(false, me, turn, {horse}, 1'190'000, true));
+
+    // Getting on: riding at once, the same horse.
+    const Vec3 saddle = Add(horse.position, {0.0f, 1.1f, 0.0f});
+    CHECK(rider.Wants(true, 1'200'000, true));
+    auto on = rider.Tick(true, saddle, turn, {horse}, 1'200'000, true);
+    REQUIRE(on);
+    CHECK(on->flags == proto::kRideRiding);
+    CHECK(rider.Riding());
+    CHECK_FALSE(rider.Free());
+    CHECK(rider.Horse() == 0x77);
+
+    // Getting off: free at once, never "off" in between (the others keep the copy).
+    CHECK(rider.Wants(false, 1'201'000, true));
+    auto down = rider.Tick(false, saddle, turn, {horse}, 1'201'000, true);
+    REQUIRE(down);
+    CHECK(down->flags == proto::kRideFree);
+    CHECK(rider.Free());
+    CHECK_FALSE(rider.Riding());
+
+    // Another horse nearer to us does not take her place: the one we sent stays ours.
+    HorseSeen other = horse;
+    other.address = 0x88;
+    other.position = saddle;
+    auto same = rider.Tick(false, saddle, turn, {other, horse}, 1'360'000, true);
+    REQUIRE(same);
+    CHECK(Near(same->place, horse.position));
+
+    // Not seen on one walk: not gone. Not seen for 0.4 s: off, three times, then she is looked for again.
+    CHECK_FALSE(rider.Tick(false, saddle, turn, {}, 1'400'000, true));
+    CHECK(rider.Free());
+    auto off = rider.Tick(false, saddle, turn, {}, 1'761'000, true);
+    REQUIRE(off);
+    CHECK(off->flags == 0);
+    CHECK(off->horse.empty());
+    CHECK_FALSE(rider.Free());
+    CHECK(rider.Wants(false, 1'800'000, true));
+    CHECK(rider.Tick(false, saddle, turn, {}, 1'800'000, true));
+    CHECK(rider.Tick(false, saddle, turn, {}, 1'840'000, true));
+    CHECK_FALSE(rider.Tick(false, saddle, turn, {}, 1'880'000, true));
+    CHECK_FALSE(rider.Wants(false, 1'920'000, true));  // twice a second while she is not out
+    CHECK(rider.Wants(false, 2'400'000, true));
+
+    // A place no world has is never sent.
+    rider.Reset();
+    horse.position[2] = 2.0f * proto::kMaxRidePlace;
+    CHECK_FALSE(rider.Tick(false, me, turn, {horse}, 3'000'000, true));
+}
+
+TEST_CASE("epona-sync: the others draw a free Epona where her owner's game has her, one copy on and off") {
+    CoopRide::Rides rides;
+    const std::optional<std::string> scene = std::string("HyruleField");
+    proto::PlayerRide loose;
+    loose.flags = proto::kRideFree;
+    loose.horse = "Animal_Epona_Adult";
+    loose.place = {50.0f, 1.0f, 60.0f};
+    loose.rotation = Yaw(90.0f);
+    loose.animation = proto::Animation{"Wait", 2.0f, 1.0f};
+    rides.Receive(Relayed(loose), 1'000'000);
+
+    // Her owner stands 30 m away on foot: the horse is at her own place, not by the puppet.
+    auto copies = rides.Plan(scene, false, {Rider({20.0f, 1.0f, 60.0f}, Yaw(10.0f), "Wait")}, kP2Live, 1'050'000);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].actor == "Animal_Epona_Adult");
+    CHECK((copies[0].key >> 61) == 1);
+    CHECK(Near(copies[0].position, Vec3{50.0f, 1.0f, 60.0f}));
+    REQUIRE(copies[0].rotation);
+    CHECK(Near(*copies[0].rotation, CoopPuppet::QuatToMatrix(Yaw(90.0f))));
+    REQUIRE(copies[0].animation);
+    CHECK(copies[0].animation->frame > 2.0f);
+    const std::uint64_t key = copies[0].key;
+    auto changes = rides.Changes();
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0] == "P2's Animal_Epona_Adult is here, nobody on her (horse copy CoopRide_Epona)");
+
+    // The owner gets on: the same copy (one key), now under the puppet.
+    proto::PlayerRide on;
+    on.flags = proto::kRideRiding;
+    on.horse = "Animal_Epona_Adult";
+    on.offset = {0.0f, -1.1f, 0.0f};
+    rides.Receive(Relayed(on), 1'100'000);
+    copies = rides.Plan(scene, false, {Rider({50.0f, 2.1f, 60.0f}, Yaw(90.0f))}, kP2Live, 1'120'000);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].key == key);
+    CHECK(Near(copies[0].position, Vec3{50.0f, 1.0f, 60.0f}));
+    changes = rides.Changes();
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0] == "P2 rides Animal_Epona_Adult (horse copy CoopRide_Epona, the same copy)");
+
+    // And off again: still the same copy, waiting where it was left.
+    rides.Receive(Relayed(loose), 1'200'000);
+    copies = rides.Plan(scene, false, {Rider({48.0f, 1.0f, 60.0f}, Yaw(90.0f), "Wait")}, kP2Live, 1'220'000);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].key == key);
+    changes = rides.Changes();
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0] == "P2's Animal_Epona_Adult waits, nobody on her (the same copy)");
+
+    // The owner's puppet is not live here (hidden, or its pack is missing): no horse either.
+    CHECK(rides.Plan(scene, false, {Rider({48.0f, 1.0f, 60.0f}, Yaw(90.0f), "Wait")}, 0, 1'230'000).empty());
+    changes = rides.Changes();
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0] == "P2's horse gone (copy deleted)");
+
+    // Not heard of for 0.6 s: gone.
+    CHECK(rides.Plan(scene, false, {Rider({48.0f, 1.0f, 60.0f}, Yaw(90.0f), "Wait")}, kP2Live, 1'900'000).empty());
+
+    // Gone (off) and called again: a new copy.
+    rides.Receive(Relayed(proto::PlayerRide{}), 2'000'000);
+    rides.Receive(Relayed(loose), 2'100'000);
+    copies = rides.Plan(scene, false, {Rider({48.0f, 1.0f, 60.0f}, Yaw(90.0f), "Wait")}, kP2Live, 2'110'000);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].key != key);
+
+    // A child owner (their game is in the past): no adult Epona drawn for them.
+    CoopPuppet::Remote child = Rider({48.0f, 1.0f, 60.0f}, Yaw(90.0f), "Wait");
+    child.adult = false;
+    CHECK(rides.Plan(scene, false, {child}, kP2Live, 2'120'000).empty());
+}

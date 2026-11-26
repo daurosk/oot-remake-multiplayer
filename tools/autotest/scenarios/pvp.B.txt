@@ -13,8 +13,9 @@ wait 300
 press A
 wait 2400
 mark field
-goto 213.0 14.0 0.4 600
-toward 215.0 14.0 6     # face A
+place 196.93 163.4 309.87  # the field's own landing spot, 0.6 m west
+wait 30
+toward 198.13 309.87 6  # face A
 mark standing
 wait 1500
 mark end

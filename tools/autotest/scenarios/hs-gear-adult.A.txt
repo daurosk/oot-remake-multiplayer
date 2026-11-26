@@ -1,0 +1,48 @@
+# hs-gear-adult (row 148, world-misc-0115): the adult side of hs-gear-age, the regression check of the reader's
+# armor-link rule. Adult A in Kakariko by day (B too, hs-gear-adult.B.txt) sets its flags with the test-only `wear`
+# (flag only, after `give`s: the save owns none of them), then `dress` (the game's own equip call 0x2df6c80 from the flags, as the pause menu makes it, so A's OWN Link wears them too): the Golden Gauntlets, then the Goron Tunic and the Hover Boots, then warps to the same place so the
+# game wears them on its own Link through its GameData path, as a player who picks them in the menu.
+# Pass (shots, both games): at gold-flag and adult-flags A's OWN Link wears the pieces (the `dress` call re-dresses it
+#   from the flags) and B's puppet of A shows the same (a tunic: red, the Goron Tunic's own part). At rewarp: A's own Link wears the gauntlets, the red tunic and
+#   the Hover Boots, and so does B's puppet of A; B's log "P1 PLAYER_EQUIP: ... hand 'Armor_Adult_Gauntlet_Gold'",
+#   armor 'Armor_Adult_Goron', boots 'Armor_Adult_HoverBoot'.
+#   FAIL: a piece on A's own Link at rewarp missing on B's puppet (the links rule lost a real piece).
+#! switches LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+setflag Sequence_IsChildhood 0  # set AFTER the save is loaded (run.ps1 loads it first): at the title the load put the save's age back
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1200               # the warp lands
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+# The save does not own the pieces: give them first (cheat: StockNum 0 -> 1, IsGet), as a pickup would.
+give PouchData.Armor_Adult_Gauntlet_Gold.StockNum
+give PouchData.Armor_Adult_Goron.StockNum
+give PouchData.Armor_Adult_HoverBoot.StockNum
+wait 120
+wear hand Armor_Adult_Gauntlet_Gold
+wait 30
+dress hand            # the game's own equip call: A's own Link wears the gauntlets
+wait 300
+mark gold-flag
+wear armor Armor_Adult_Goron
+wear boots Armor_Adult_HoverBoot
+wait 30
+dress all
+wait 300
+mark adult-flags
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1500
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark rewarp
+wait 300
+mark end

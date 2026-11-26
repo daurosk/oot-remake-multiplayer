@@ -2,20 +2,29 @@
 #include "coop_map_page.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 #include <fmt/format.h>
 
 #include "common/logging.h"
+#include "coop_hud_layout.h"
+#include "coop_pause_files.h"
 #include "coop_runtime.h"
+#include "coop_screen_panes.h"
 
 namespace CoopMapPage {
 namespace {
@@ -27,14 +36,26 @@ struct HosCoopMenuState {
     std::uint32_t size;
     std::int32_t map_page, menu_open, reserved;
     std::uint64_t hud_screen, panel_screen;
+    std::int64_t hud_ran_ns_ago;  // (rows 63/76; an older exe answers with the struct up to here)
+    std::uint32_t hud_refreshes, reserved2;
+    std::uint32_t screen_count, reserved3;  // (row 141; an older exe answers with the struct up to here)
+    std::uint64_t screens[24];
 };
 using MenuStateFn = int (*)(HosCoopMenuState*);
 
-MenuStateFn FindMenuState() {
+// One of patch 0018's exports, by name in the exe: dllexport on Windows; on Linux the exe's link exports it by name
+// (patch 0001, as 0008's and 0015's) and dlsym finds it. Nothing in a Longshot without it.
+void* FindExport(const char* name) {
 #ifdef _WIN32
+    return reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), name));
+#else
+    return dlsym(RTLD_DEFAULT, name);
+#endif
+}
+
+MenuStateFn FindMenuState() {
     static const MenuStateFn fn = [] {
-        const auto f = reinterpret_cast<MenuStateFn>(
-            reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_menu_state")));
+        const auto f = reinterpret_cast<MenuStateFn>(FindExport("hos_coop_menu_state"));
         LOG_INFO(Core, "coop: map: {}", f ? "the game's menus are known (patch 0018): players on the Map page, the "
                                             "minimap's icons hidden behind menus"
                                           : "this Longshot has no menu state (patch 0018): nothing on the Map page, "
@@ -42,9 +63,6 @@ MenuStateFn FindMenuState() {
         return f;
     }();
     return fn;
-#else
-    return nullptr;
-#endif
 }
 
 // The panes found (0: not found), each with the screen whose layout it is in; and the screens looked in.
@@ -54,6 +72,15 @@ struct Found {
 Found g_field, g_dungeon;
 Found g_mini_dungeon, g_mini_field, g_mini_window, g_mini_field_window, g_mini_root;  // the HUD minimap's (HUD screen only)
 std::atomic<std::uint64_t> g_searched_hud{0}, g_searched_panel{0};
+// (each a new one of its screen: another screen or layout address, or a gap in Frame's updates, row 262 / review-01112-e:
+// a screen freed and made again at the same address had kept the old one's panes, never searched again. Frame's thread)
+CoopScreen::ScreenInstance g_hud_at, g_panel_at;
+
+std::uint64_t NowMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
 
 // A pane is used only while the screen it came from is one of the screens that run now (a new screen: its
 // old panes may be freed).
@@ -86,7 +113,7 @@ std::uint64_t FindPane(void* ctx, const HosCoopApi* api, std::uint64_t layout, c
         return 0;
     }
     HosCoopCall k{};
-    k.function = kFindPane;
+    k.function = CoopRuntime::MainBase() + kFindPane;
     k.x[0] = layout;
     k.x[1] = at;
     std::uint64_t pane = 0;
@@ -133,6 +160,42 @@ void Search(void* ctx, const HosCoopApi* api, std::uint64_t screen, const char* 
                   : std::string());
 }
 
+// dungeon-maps-a (row 76, #146): LICHII_COOP_MAP_PROBE=1 logs the HUD screen's own map copy whenever it changes, read
+// only: the mode (+0x1358: 0 field, 2 dungeon, ...), the floors shown (+0x1368: floor, count, lowest), the floors
+// byte the minimap and the Map page draw (+0x1500, filled by the game's rebuild main+0xb28380: every floor when the
+// dungeon's IsGetMap is set) and the cached IsGetMap, IsGetCompass, IsGetBossKey and 4th Bool (+0x1538..+0x153b).
+// Research only: it says whether a map get (the game's own, another player's, the randomizer's) reached the copy.
+void Probe(const Menu& menu) {
+    static const bool on = CoopFiles::Env("LICHII_COOP_MAP_PROBE") == "1";
+    if (!on || menu.hud_screen == 0) {
+        return;
+    }
+    struct Copy {
+        std::int32_t mode = 0, floor = 0, count = 0, lowest = 0;
+        std::uint8_t floors = 0, cached[4]{};
+        bool operator==(const Copy&) const = default;
+    } now{};
+    const std::uint64_t s = menu.hud_screen;
+    std::int32_t f[3]{};
+    if (!CoopRuntime::Read(s + 0x1358, &now.mode, sizeof now.mode) || !CoopRuntime::Read(s + kHudFloors, f, sizeof f) ||
+        !CoopRuntime::Read(s + 0x1500, &now.floors, 1) || !CoopRuntime::Read(s + 0x1538, now.cached, 4)) {
+        return;
+    }
+    now.floor = f[0], now.count = f[1], now.lowest = f[2];
+    static Copy was{};
+    static std::uint64_t was_screen = 0;
+    if (now == was && s == was_screen) {
+        return;
+    }
+    LOG_INFO(Core,
+             "coop: map probe: the HUD screen {:#x}{}: mode {} floor {} of {} (lowest {}) floors 0x{:02x}, map {} "
+             "compass {} boss key {} bool4 {} (menu {}, Map page {})",
+             s, s != was_screen ? " (new)" : "", now.mode, now.floor, now.count, now.lowest, now.floors, now.cached[0],
+             now.cached[1], now.cached[2], now.cached[3], menu.menu_open ? "open" : "closed",
+             menu.map_page ? "shown" : "not shown");
+    was = now, was_screen = s;
+}
+
 }  // namespace
 
 std::optional<Menu> MenuState() {
@@ -145,7 +208,174 @@ std::optional<Menu> MenuState() {
     if (!fn(&s)) {
         return std::nullopt;
     }
-    return Menu{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
+    Menu m{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
+    if (s.size >= offsetof(HosCoopMenuState, screen_count)) m.hud_ran_ns_ago = s.hud_ran_ns_ago, m.hud_refreshes = s.hud_refreshes;
+    if (s.size >= sizeof s) {  // (row 141: the running screens)
+        m.screens_known = true;
+        m.screen_count = (std::min<std::uint32_t>)(s.screen_count, static_cast<std::uint32_t>(m.screens.size()));
+        std::copy(s.screens, s.screens + m.screen_count, m.screens.begin());
+    }
+    return m;
+}
+
+std::optional<bool> QuickSwitchOpen(const Menu& menu) {
+    if (!menu.screens_known) {
+        return std::nullopt;
+    }
+    const std::uint64_t main = CoopRuntime::MainBase();
+    for (std::uint32_t i = 0; i < menu.screen_count && i < menu.screens.size(); ++i) {
+        const std::uint64_t screen = menu.screens[i];
+        const std::uint64_t vtable = screen != 0 ? Read64(screen) : 0;
+        if (main == 0 || vtable < main || vtable - main != kShortCutVtable) {
+            continue;
+        }
+        std::uint8_t state = 0;
+        if (CoopRuntime::Read(screen + kScreenStateAt, &state, 1) && ShortCutShows(vtable - main, state)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
+std::string HudCopy(std::uint64_t screen) {
+    std::uint8_t floors = 0, held[4]{};
+    if (screen == 0 || !CoopRuntime::Read(screen + 0x1500, &floors, 1) || !CoopRuntime::Read(screen + 0x1538, held, 4)) {
+        return "not readable";
+    }
+    return fmt::format("floors 0x{:02x}, map {} compass {} boss key {}", floors, held[0], held[1], held[2]);
+}
+std::atomic<std::uint32_t> g_refresh_asked_at{0};  // hud_refreshes when the last one was asked
+std::atomic<bool> g_refresh_pending{false};
+}  // namespace
+
+bool AskHudRefresh() {
+    using Fn = int (*)();
+    static const Fn fn = reinterpret_cast<Fn>(FindExport("hos_coop_hud_refresh"));
+    static bool told = false;
+    if (fn == nullptr) {
+        if (!told) LOG_INFO(Core, "coop: map refresh: this Longshot's patch 0018 has no HUD refresh: not asked");
+        told = true;
+        return false;
+    }
+    const auto menu = MenuState();
+    g_refresh_asked_at = menu ? menu->hud_refreshes : 0;
+    g_refresh_pending = true;
+    fn();
+    LOG_INFO(Core, "coop: map refresh: asked (a dungeon item written by co-op); the HUD screen's copy {}",
+             menu ? HudCopy(menu->hud_screen) : std::string("unknown"));
+    return true;
+}
+
+namespace {
+// Row 141: the player status screen (PlayerStatus_00) and its HUD panes; the screens already looked in.
+std::atomic<std::uint64_t> g_status_screen{0};
+Found g_status_dpad, g_status_hearts, g_status_magic, g_status_agony;
+std::uint64_t g_status_layout = 0;   // its layout as it was found in
+// The running screens looked in for the d-pad pane: each looked at again at each new one of it (another screen or layout,
+// a gap in its running), for a second while its pane may still come (row 262 / review-01112-e: a screen was skipped
+// whenever it had been looked in at the update before, so one made again at a gone one's address, or whose pane came a
+// frame late, was never looked in again).
+CoopScreen::ScreenPanes g_status_panes;
+bool g_status_told = false;
+
+void ForgetStatus() {
+    for (Found* f : {&g_status_dpad, &g_status_hearts, &g_status_magic, &g_status_agony}) f->pane = 0, f->from = 0;
+    g_status_screen = 0, g_status_layout = 0;
+}
+
+// Looks in each running screen not looked in before for the d-pad pane, only in a layout of the same kind as the HUD
+// screen's (its object's vtable), so the game's lookup is never handed something that is not a layout.
+void SearchStatus(void* ctx, const HosCoopApi* api, const Menu& menu) {
+    const std::uint64_t had = g_status_screen.load();
+    if (had != 0 && !menu.Runs(had)) {
+        ForgetStatus();
+        LOG_INFO(Core, "coop: hud: the player status screen {:#x} no longer runs: forgotten", had);
+    } else if (had != 0 && Read64(had + kScreenLayout) != g_status_layout) {
+        ForgetStatus();   // (another screen made at its address: its panes are not the ones found)
+        LOG_INFO(Core, "coop: hud: the player status screen {:#x} has another layout now: forgotten", had);
+    }
+    if (g_status_screen.load() != 0 || menu.hud_screen == 0 || menu.screen_count == 0) {
+        return;
+    }
+    const std::uint64_t hud_layout = Read64(menu.hud_screen + kScreenLayout);
+    const std::uint64_t layout_kind = hud_layout != 0 ? Read64(hud_layout) : 0;
+    if (layout_kind == 0) {
+        return;
+    }
+    const std::uint64_t now = NowMs();
+    for (std::uint32_t i = 0; i < menu.screen_count && i < menu.screens.size(); ++i) {
+        const std::uint64_t screen = menu.screens[i];
+        if (screen == 0 || screen == menu.hud_screen || screen == menu.panel_screen) {
+            continue;
+        }
+        const std::uint64_t layout = Read64(screen + kScreenLayout);
+        if (layout == 0 || Read64(layout) != layout_kind) {
+            continue;
+        }
+        std::uint64_t dpad = 0;
+        if (!g_status_panes.Update(layout, screen, true, now, [&] {
+                dpad = FindPane(ctx, api, layout, kStatusDpadPane);
+                return dpad != 0;
+            })) {
+            continue;
+        }
+        if (dpad == 0) dpad = FindPane(ctx, api, layout, kStatusDpadPane);   // (taken before, not looked at now)
+        if (dpad == 0) {
+            continue;
+        }
+        const std::uint64_t hearts = FindPane(ctx, api, layout, kStatusHeartsPane);
+        const std::uint64_t magic = FindPane(ctx, api, layout, kStatusMagicPane);
+        const std::uint64_t agony = FindPane(ctx, api, layout, kStatusAgonyPane);
+        g_status_dpad.pane = dpad, g_status_hearts.pane = hearts, g_status_magic.pane = magic, g_status_agony.pane = agony;
+        for (Found* f : {&g_status_dpad, &g_status_hearts, &g_status_magic, &g_status_agony}) f->from = screen;
+        g_status_screen = screen, g_status_layout = layout;
+        LOG_INFO(Core, "coop: hud: the player status screen {:#x} (layout {:#x}): {} {:#x}, {} {:#x}, {} {:#x}, {} {:#x}",
+                 screen, layout, kStatusDpadPane, dpad, kStatusHeartsPane, hearts, kStatusMagicPane, magic,
+                 kStatusAgonyPane, agony);
+        break;
+    }
+    if (g_status_screen.load() == 0 && !g_status_told) {
+        g_status_told = true;
+        LOG_INFO(Core, "coop: hud: no running screen has {} yet ({} screens): the player list starts at the fixed top "
+                       "until one does", kStatusDpadPane, menu.screen_count);
+    }
+}
+}  // namespace
+
+std::optional<double> GameHudBottom() {
+    static std::mutex mutex;
+    static CoopHudLayout::Hold hold;
+    const auto menu = MenuState();
+    const std::uint64_t screen = g_status_screen.load();
+    const bool runs = menu && screen != 0 && menu->Runs(screen);
+    std::optional<double> now;
+    if (runs) {
+        std::vector<CoopHudLayout::HudPiece> pieces;
+        const auto add = [&](const Found& f, auto&& piece) {
+            const std::uint64_t pane = f.from.load() == screen ? f.pane.load() : 0;
+            float m[12] = {};
+            if (pane == 0 || !CoopRuntime::Read(pane + kPaneMatrix, m, sizeof m)) {
+                return;
+            }
+            float alpha = 1.0f;
+            if (!CoopRuntime::Read(pane + kPaneAlpha, &alpha, sizeof alpha) || !std::isfinite(alpha)) {
+                alpha = 1.0f;  // (unreadable: counted as shown, the blocks rather lower than over it)
+            }
+            pieces.push_back(piece(m, alpha));
+        };
+        add(g_status_dpad, [](const float* m, float a) {
+            CoopHudLayout::HudPiece p = CoopHudLayout::Centred(m, a, kDpadSlot, kDpadSlot);
+            p.x0 += kDpadDownX, p.x1 += kDpadDownX, p.y0 += kDpadDownY, p.y1 += kDpadDownY;
+            return p;
+        });
+        add(g_status_hearts, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kHeartsW, kHeartsH); });
+        add(g_status_magic, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kMagicW, kMagicH); });
+        add(g_status_agony, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kAgonySize, kAgonySize); });
+        now = CoopHudLayout::HudBottom(pieces);
+    }
+    std::lock_guard lock(mutex);
+    return hold.Update(now);
 }
 
 void Frame(void* ctx, const HosCoopApi* api) {
@@ -156,13 +386,23 @@ void Frame(void* ctx, const HosCoopApi* api) {
     if (!menu) {
         return;
     }
-    if (menu->hud_screen != 0 && menu->hud_screen != g_searched_hud.load()) {
+    Probe(*menu);
+    SearchStatus(ctx, api, *menu);  // (row 141: the game's own HUD, for the player list's top)
+    if (g_refresh_pending && menu->hud_refreshes != g_refresh_asked_at) {  // rows 63/76: the asked refresh has run
+        g_refresh_pending = false;
+        LOG_INFO(Core, "coop: map refresh: run at the HUD screen's update; its copy now {}", HudCopy(menu->hud_screen));
+    }
+    const std::uint64_t now = NowMs();
+    const auto anew = [&](CoopScreen::ScreenInstance& at, std::uint64_t screen) {
+        return screen != 0 && at.Next(screen, Read64(screen + kScreenLayout), true, now);
+    };
+    if (anew(g_hud_at, menu->hud_screen)) {
         const std::uint64_t old = g_searched_hud.exchange(menu->hud_screen);
         Forget(g_field, old), Forget(g_dungeon, old);
         for (Found* f : {&g_mini_dungeon, &g_mini_field, &g_mini_window, &g_mini_field_window, &g_mini_root}) Forget(*f, old);
         Search(ctx, api, menu->hud_screen, "HUD");
     }
-    if (menu->panel_screen != 0 && menu->panel_screen != g_searched_panel.load()) {
+    if (anew(g_panel_at, menu->panel_screen)) {
         const std::uint64_t old = g_searched_panel.exchange(menu->panel_screen);
         Forget(g_field, old), Forget(g_dungeon, old);
         Search(ctx, api, menu->panel_screen, "panel's");

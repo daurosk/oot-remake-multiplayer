@@ -16,9 +16,12 @@ add_library(coop_server_lib STATIC
   local_net.cpp
   join_helper.cpp
   host_service.cpp
+  test_delay.cpp
+  console_out.cpp
 )
 target_include_directories(coop_server_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(coop_server_lib PUBLIC coop_protocol coop_net enet PRIVATE coop_warnings)
+find_package(Threads REQUIRED)
+target_link_libraries(coop_server_lib PUBLIC coop_protocol coop_net enet Threads::Threads PRIVATE coop_warnings)
 
 add_executable(coop_server main.cpp)
 target_link_libraries(coop_server PRIVATE coop_server_lib coop_warnings)

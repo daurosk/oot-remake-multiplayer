@@ -1,0 +1,32 @@
+# el-dc-walkaway (proof-0116, enemy-left-0116 scenario 2 + #238): DC, the Keese trio at 62.5-65.5 98-99.5 16.0 (Banc).
+# A stands by them (owns them), walks out of their area to room 1's lift (-10.5 97.6 -23.0) and back. PASS: a-near/a-back and
+# B's b-near/b-back show the Keese on BOTH screens; A log has no new-kind 'gone Enemy_Keese' line (only 'dead, said' if killed).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+wait 300
+place 58.0 98.5 12.0
+wait 600
+mark a-near
+place -10.5 97.6 -23.0
+wait 900
+mark a-away
+place 58.0 98.5 12.0
+wait 600
+mark a-back
+wait 300
+mark end

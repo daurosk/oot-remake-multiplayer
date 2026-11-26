@@ -1,4 +1,4 @@
-From d4e779f12b5bbf99eb5483af569d67103de6c00e Mon Sep 17 00:00:00 2001
+From d2a3f499c3163fd4e5a464553c45165a8b6b8a9e Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -25,6 +25,11 @@ key_down.
 gpu/vk/vk_draw.cpp also hands each scene draw's camera block (the uniform buffer
 Hookshot's temporal upscalers read) to the module's optional
 hos_coop_camera_wanted / hos_coop_camera (vk_coop.cpp), for co-op's name tags.
+
+On Linux nx2/build.py also exports, each by name, the exe functions the module
+finds with dlsym (hos_coop_fs_*, hos_coop_input_*, hos_coop_pad_info/read/take,
+hos_coop_texture*, hos_coop_menu_state and hos_coop_hud_refresh from later
+patches); on Windows they are dllexport.
 ---
  gpu/vk/hos_coop_draw.h   |  43 +++++++++
  gpu/vk/vk_coop.cpp       | 160 ++++++++++++++++++++++++++++++
@@ -32,17 +37,15 @@ hos_coop_camera_wanted / hos_coop_camera (vk_coop.cpp), for co-op's name tags.
  gpu/vk/vk_draw.cpp       |   2 +
  gpu/vk/vk_menu.cpp       |   9 +-
  host/coop_bridge.c       | 204 +++++++++++++++++++++++++++++++++++++++
- host/display.c           |  28 +++++-
+ host/display.c           |  25 ++++-
  host/hos_coop_api.h      |  76 +++++++++++++++
- host/hos_sdl.c           |  18 ++++
- host/hos_sdl.h           |   5 +-
- host/nn_hid.c            |   8 +-
+ host/nn_hid.c            |   5 +-
  host/nvn_native.c        |   2 +
- host/posix/display_sdl.c |  60 +++++++++++-
- nx2/build.py             |   2 +-
+ host/posix/display_sdl.c |  62 +++++++++++-
+ nx2/build.py             |  10 +-
  nx2/coop_hooks.py        |  61 ++++++++++++
  nx2/lift.py              |   2 +
- 16 files changed, 692 insertions(+), 8 deletions(-)
+ 14 files changed, 673 insertions(+), 8 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -292,38 +295,38 @@ index 00000000..59acc4be
 +
 +}  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
-index cb6722d4..a5e1e7e9 100644
+index 813d3430..0789e64d 100644
 --- a/gpu/vk/vk_draw.cpp
 +++ b/gpu/vk/vk_draw.cpp
-@@ -39,6 +39,7 @@
- #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
- #include "dlss_actor.h"
- #include "vk_temporal.h"
+@@ -59,6 +59,7 @@
+ #include "vk_framegen.h"   // (framegen_hud_before: a gameplay upscale's picture, for FSR 3.1 frame interpolation's HUD mark)
+ #include "reshade/fx_runtime.h"
+ #include "vk_fsr3fi.h"     // (frames_wanted)
 +#include "vk_coop.h"   // (oot-remake-multiplayer: the camera for co-op's name tags)
  #include "vk_fsr3.h"          // (AMD FSR 3.1 in the gameplay upscale's place)
  #include "vk_fsr3_inputs.h"
  #include "reactive_policy.h"
-@@ -6733,6 +6734,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
+@@ -9073,6 +9074,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
      // FSR 3.1 (vk_fsr3_inputs.cpp). The vertex stage's uniform buffer 3 (NVN's binding 0)
      if (at.n && at.color[0] && at.depth) {
          temporal_note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);
 +        coop::note_scene_draw(at.color[0], at.width, at.height, s.ubo[0][0].addr, s.ubo[0][0].size);   // (oot-remake-multiplayer: name tags)
          fsr3_inputs::note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);
-     }
-     uint8_t types[8];
+         if (upscale_route::wanted() && s.ubo[0][0].addr && s.ubo[0][0].size >= 0x230 && route_scene_format(at.color[0]->format))
+             upscale_route::note_scene(at.width, at.height);
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index f3bdb417..93b6f540 100644
+index 78a74af7..88124d57 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -37,6 +37,7 @@
- #include "oot_cheat_items.h"
+@@ -44,6 +44,7 @@
  #include "vk_progress.h"   // (StartupView, version_text: the start-up screen)
+ #include "vk_imgui.h"   // (the renderer's side of the overlay: begin, fonts, logo, record)
  #include "vk_ui.h"
 +#include "vk_coop.h"   // (oot-remake-multiplayer: co-op's drawing over the picture)
  #include "vk_menu_keys.h"   // (which gamepad buttons confirm and go back: those A and B are bound to)         // (how it looks: Dear ImGui, vk_imgui.h)
  #include "vk_dlss.h"
  #include "vk_framegen.h"   // (Frame generation by: who makes the frames now, framegen_maker)
-@@ -5151,7 +5152,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -5683,7 +5684,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h, in
      const bool start = startup_on.load(std::memory_order_acquire);
      const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
      const bool open = open_now.load(std::memory_order_relaxed);
@@ -333,7 +336,7 @@ index f3bdb417..93b6f540 100644
          // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
          // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
          if (prebake_needed(w, h) && ui::begin(w, h)) {
-@@ -5174,6 +5176,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -5706,6 +5708,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h, in
      ui::Ctx c = ui_ctx(w, h);
      prebake(c);   // (the menu's glyphs at this size, before it opens: no hitch then)
      if (start) draw_startup(c);   // (under the menu)
@@ -341,7 +344,7 @@ index f3bdb417..93b6f540 100644
      if (open) draw_menu(c);
      if (fps) draw_fps(c, open);
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
-@@ -5183,9 +5186,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -5715,9 +5718,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h, in
  void menu_record_image(VkCommandBuffer cmd, VkImage image, VkImageView view, uint32_t w, uint32_t h) {
      const bool open = open_now.load(std::memory_order_relaxed);
      const bool fps = opts.show_fps && !startup_on.load(std::memory_order_acquire);
@@ -565,11 +568,11 @@ index 00000000..63de418a
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 ? coop_hold(component, bits) : bits;
 +}
 diff --git a/host/display.c b/host/display.c
-index d47a33fa..5e7e214f 100644
+index 4f933b8b..5d83ae2f 100644
 --- a/host/display.c
 +++ b/host/display.c
-@@ -268,11 +268,21 @@ static void menu_press(HWND w, LPARAM lp, LONG bit) {   /* (a click while the me
-     pointer_publish_at(w, at, (uint32_t)bit, 0);
+@@ -403,10 +403,20 @@ void hos_display_paste(void) {
+     if (hwnd) PostMessageA(hwnd, WM_APP + 12, 0, 0);
  }
  
 +/* (oot-remake-multiplayer) the cursor for co-op's cheats panel first (coop_bridge.c), while no menu has the mouse:
@@ -585,12 +588,11 @@ index d47a33fa..5e7e214f 100644
      switch (msg) {
      case WM_MOUSEMOVE: {
          if (mouse_captured) return 0;
-         const int x = (short)LOWORD(lp), y = (short)HIWORD(lp);
-+        coop_mouse(w, (POINT){x, y}, 0);   /* (oot-remake-multiplayer: the row under the cursor) */
-         if (game_menu_open && !menu_open && (x != gm_mx || y != gm_my)) {   /* (a move: not a repeat at rest) */
-             gm_mx = x, gm_my = y;
-             gm_mouse_used();
-@@ -288,7 +298,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
++        coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 0);   /* (oot-remake-multiplayer: the row under the cursor) */
+         gm_mouse_moved(w);
+         if (!pointer_tracking) {
+             TRACKMOUSEEVENT t = {sizeof t, TME_LEAVE, w, 0};
+@@ -419,7 +429,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          pointer_tracking = 0;
          pointer_update(w, 0, 0);
          return 0;
@@ -603,7 +605,7 @@ index d47a33fa..5e7e214f 100644
          if (menu_open || game_menu_open) pointer_update(w, 0, GET_WHEEL_DELTA_WPARAM(wp));   /* (hidden or not) */
          else if ((LONG64)hos_now_ns() - InterlockedCompareExchange64(&play_wheel_ns, 0, 0) < 200000000LL)
              InterlockedExchangeAdd(&play_wheel, GET_WHEEL_DELTA_WPARAM(wp));   /* (a screen that takes the wheel only) */
-@@ -356,11 +370,23 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -497,11 +511,18 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          return DefWindowProcA(w, msg, wp, lp);
      }
      case WM_LBUTTONDOWN:
@@ -612,11 +614,6 @@ index d47a33fa..5e7e214f 100644
          else if (game_menu_open) game_menu_press(lp, HOS_MOUSE_LEFT);
          else if (renderer && !mouse_captured) mouse_capture(w, 1);
          return 0;
-+    case WM_CHAR: {   /* (oot-remake-multiplayer: co-op's chat box, coop_bridge.c) */
-+        extern int hos_coop_char(unsigned ch);
-+        if (hos_coop_char((unsigned)wp)) return 0;
-+        break;
-+    }
      case WM_KEYDOWN: {
 +        extern int hos_coop_key(unsigned key, int repeat);   /* (oot-remake-multiplayer: the chat box's keys first) */
 +        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) {
@@ -627,6 +624,15 @@ index d47a33fa..5e7e214f 100644
          extern void hos_vk_note_key_press(unsigned key);
          if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
          if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
+@@ -527,6 +548,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+                          takes; a double-byte character's two (a lead byte, then its trail) are left out together */
+         static int trail;
+         const BYTE c = (BYTE)wp;
++        extern int hos_coop_char(unsigned ch);   /* (oot-remake-multiplayer: co-op's chat box first, coop_bridge.c) */
++        if (!trail && hos_coop_char((unsigned)wp)) return 0;
+         if (trail) trail = 0;
+         else if (IsDBCSLeadByte(c)) trail = 1;
+         else if (c >= 0x20 && c != 0x7F) hos_text_put(c);   /* (Backspace, Enter, Esc and Ctrl+letters: WM_KEYDOWN above) */
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
 index 00000000..9e2075c4
@@ -709,92 +715,11 @@ index 00000000..9e2075c4
 +typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
 +
 +#endif
-diff --git a/host/hos_sdl.c b/host/hos_sdl.c
-index e637a363..087aea51 100644
---- a/host/hos_sdl.c
-+++ b/host/hos_sdl.c
-@@ -25,6 +25,7 @@ static struct {
-     void *PadVendor, *PadSteamHandle, *SetHintPriority;   /* (Steam's stand-in pads: optional, host/steam_pads.h) */
-     void *JoystickGUID, *PadMapping;   /* (optional connection diagnostics: no serial number or device path) */
-     void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
-+    void *StartTextInput;   /* (optional: co-op's chat box, hos_sdl_text_input) */
-     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2; GetJoystick also SDL3's diagnostics) */
- } f;
- #define CALL(type, fn) ((type)f.fn)
-@@ -80,6 +81,7 @@ static int get_all(HMODULE m, int three) {
-     *(FARPROC *)&f.SetHintPriority = GetProcAddress(m, "SDL_SetHintWithPriority");
-     *(FARPROC *)&f.JoystickGUID = GetProcAddress(m, three ? "SDL_GetJoystickGUID" : "SDL_JoystickGetGUID");
-     *(FARPROC *)&f.PadMapping = GetProcAddress(m, three ? "SDL_GetGamepadMapping" : "SDL_GameControllerMapping");
-+    *(FARPROC *)&f.StartTextInput = GetProcAddress(m, "SDL_StartTextInput");
-     if (three) {
-         *(FARPROC *)&f.GetJoystick = GetProcAddress(m, "SDL_GetGamepadJoystick");   /* (optional: diagnostics only) */
-         GET(SetWindowPosition, "SDL_SetWindowPosition");
-@@ -244,6 +246,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
-         *x = (float)ix, *y = (float)iy;
-     }
- }
-+void hos_sdl_text_input(void *window) {
-+    if (!f.StartTextInput) return;
-+    if (version == 3) CALL(_Bool (*)(void *), StartTextInput)(window);
-+    else CALL(void (*)(void), StartTextInput)();
-+}
- void hos_sdl_window_size(void *window, int *width, int *height) {
-     if (version == 3) CALL(_Bool (*)(void *, int *, int *), GetWindowSize)(window, width, height);
-     else CALL(void (*)(void *, int *, int *), GetWindowSize)(window, width, height);
-@@ -287,6 +294,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
-             if (dir == 1) e->wheel = -e->wheel;
-             break;
-         }
-+        case 0x303: {   /* (SDL_TextInputEvent: the text's pointer at 24, SDL's until the next poll: copied) */
-+            const char *t;
-+            memcpy(&t, raw + 24, sizeof t);
-+            e->type = HOS_SDL_EV_TEXT;
-+            if (t) snprintf(e->text, sizeof e->text, "%s", t);
-+            break;
-+        }
-         }
-         return;
-     }
-@@ -320,6 +334,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
-         e->wheel = (float)(dir == 1 ? -i[0] : i[0]);
-         break;
-     }
-+    case 0x303:   /* (SDL_TextInputEvent: the text at 12, 32 bytes) */
-+        e->type = HOS_SDL_EV_TEXT;
-+        memcpy(e->text, raw + 12, sizeof e->text - 1);
-+        break;
-     }
- }
- int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms) {
-diff --git a/host/hos_sdl.h b/host/hos_sdl.h
-index 89fa13f3..e8b5935d 100644
---- a/host/hos_sdl.h
-+++ b/host/hos_sdl.h
-@@ -35,7 +35,8 @@ void hos_sdl_icon(void *window, const char *png);   /* (SDL 3.4's PNG loader: no
- enum {
-     HOS_SDL_EV_OTHER, HOS_SDL_EV_QUIT, HOS_SDL_EV_CLOSE, HOS_SDL_EV_RESIZED, HOS_SDL_EV_FOCUS_GAINED,
-     HOS_SDL_EV_FOCUS_LOST, HOS_SDL_EV_MOUSE_LEAVE, HOS_SDL_EV_KEY_DOWN, HOS_SDL_EV_MOUSE_DOWN, HOS_SDL_EV_MOUSE_MOTION,
--    HOS_SDL_EV_MOUSE_UP, HOS_SDL_EV_MOUSE_WHEEL, HOS_SDL_EV_MOUSE_ENTER
-+    HOS_SDL_EV_MOUSE_UP, HOS_SDL_EV_MOUSE_WHEEL, HOS_SDL_EV_MOUSE_ENTER,
-+    HOS_SDL_EV_TEXT   /* (oot-remake-multiplayer: typed text, for co-op's chat box) */
- };
- typedef struct {
-     int type;
-@@ -45,7 +46,9 @@ typedef struct {
-     float x, y;             /* (mouse motion, down and up: the cursor in the window, hos_sdl_window_size's units) */
-     int button;             /* (mouse down and up: 1 left, 2 middle, 3 right, as SDL numbers them) */
-     float wheel;            /* (mouse wheel: notches, up or away from the player positive) */
-+    char text[32];          /* (text: UTF-8, NUL-terminated) */
- } HosSdlEvent;
-+void hos_sdl_text_input(void *window);   /* text events on (SDL3 starts with them off; SDL2 has them on) */
- int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms);   /* 1 when there was one */
- int hos_sdl_poll_event(HosSdlEvent *e);
- 
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index e5b27dde..d3f5bf31 100644
+index e1e7da0d..eb47959a 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
-@@ -52,7 +52,8 @@ static int64_t sampling;
+@@ -63,7 +63,8 @@ static int64_t sampling;
  
  int rx_option(int id, int otherwise);
  /* (the Insert menu takes the keyboard while it is open) */
@@ -804,34 +729,27 @@ index e5b27dde..d3f5bf31 100644
  
  int hos_mouse_take(int32_t *dx, int32_t *dy);   /* display.c */
  
-@@ -1053,6 +1054,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
- 
+@@ -1567,6 +1568,7 @@ done:
  static void vibration_send(uint64_t handle, uint64_t value);
  volatile int64_t hos_hid_last_read;
+ volatile uint64_t hos_hid_buttons;   /* (the buttons the game was last given: HidNpadButton bits) */
 +volatile uint64_t hos_coop_pad;   /* (oot-remake-multiplayer, coop_bridge.c: player 1's word as the game got it) */
  
  /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
  static void npad_states(Ctx *c) {
-@@ -1112,11 +1114,13 @@ static void npad_states(Ctx *c) {
-     uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
-     if (connected) buttons = hos_frame_step_buttons(buttons);
+@@ -1698,6 +1700,7 @@ static void npad_states(Ctx *c) {
+         hos_input_movie_end(&pad);   /* (recording: the frame's pad) */
+     }
      int64_t s = ++sampling;
-+    const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
 +    if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
      for (int i = 0; i < count; i++) {
          uint64_t e = out + (uint64_t)i * STATE_SIZE;
          memset(GP(e), 0, STATE_SIZE);
-         G64(e) = (uint64_t)(s - i);
--        G64(e + 8) = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
-+        G64(e + 8) = word;
-         memcpy(GP(e + 16), stick, 16);
-         G32(e + 32) = connected ? ATTR_CONNECTED : 0;
-     }
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index 0d3b2e19..bf6991d4 100644
+index 3b18d4ab..e7b8a751 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
-@@ -2512,6 +2512,8 @@ NV(nvnQueuePresentTexture) {
+@@ -3070,6 +3070,8 @@ NV(nvnQueuePresentTexture) {
      extern volatile LONG64 hos_present_count;   /* display.c */
      InterlockedIncrement64(&hos_present_count);
      hos_vi_native_presented(phases);
@@ -841,10 +759,10 @@ index 0d3b2e19..bf6991d4 100644
  
  /* ---- NVN2 (mkw-recomp): what the Switch 2's NVN adds, as MKW uses it ---- */
 diff --git a/host/posix/display_sdl.c b/host/posix/display_sdl.c
-index 81d533b2..414fc9a1 100644
+index 3d76f1bb..b4edaf14 100644
 --- a/host/posix/display_sdl.c
 +++ b/host/posix/display_sdl.c
-@@ -81,6 +81,43 @@ static void pointer_update(uint32_t pressed, int wheel) {
+@@ -90,6 +90,43 @@ static void pointer_update(uint32_t pressed, int wheel) {
  static uint32_t sdl_button_bit(int b) { return b == 1 ? HOS_MOUSE_LEFT : b == 3 ? HOS_MOUSE_RIGHT : b == 2 ? HOS_MOUSE_MIDDLE : 0; }
  
  /* ---- keys: SDL's scancodes (USB HID usages) as Windows' virtual keys ---- */
@@ -888,7 +806,7 @@ index 81d533b2..414fc9a1 100644
  static void keys_update(void) {
      int n = 0;
      const uint8_t *k = hos_sdl_keys(&n);
-@@ -114,6 +151,12 @@ static void keys_update(void) {
+@@ -143,6 +180,12 @@ static void text_key(const HosSdlEvent *e) {
  }
  
  /* ---- the window ---- */
@@ -899,17 +817,9 @@ index 81d533b2..414fc9a1 100644
 +    return w > 0 && h > 0 ? hos_coop_mouse(x / (float)w, y / (float)h, event) : 0;
 +}
  static volatile int renderer;   /* the renderer presents into the window */
+ int rx_start_failure_claim(void);   /* rx_backend.c: coordinate with every close path */
  static HANDLE renderer_up;   /* (set once rx_start has returned, ready or not: hos_renderer_wait) */
- static int fullscreen;
-@@ -288,6 +331,7 @@ void hos_display_loop(void) {
-         ExitProcess(1);
-     }
-     vk_window.window = window;
-+    hos_sdl_text_input(window);   /* (oot-remake-multiplayer: co-op's chat box gets typed text) */
-     hos_posix_window[0] = 1;
-     {   /* the window's icon: longshot.png beside the game (make_game.py puts it there), for X11 and the compositors that
-            take one from the window; the others find it through the menu entry */
-@@ -348,6 +392,11 @@ void hos_display_loop(void) {
+@@ -432,6 +475,11 @@ void hos_display_loop(void) {
                      ptr_in = 1;
                      break;
                  case HOS_SDL_EV_KEY_DOWN: {
@@ -921,7 +831,7 @@ index 81d533b2..414fc9a1 100644
                      const int scancode = e.scancode, mod = e.mod;
                      if (e.scancode == 41) {   /* Esc (it may open the Insert menu too: the capture comes back) */
                          if (!menu_open && mouse_captured) esc_had_capture = 1;
-@@ -360,6 +409,7 @@ void hos_display_loop(void) {
+@@ -445,6 +493,7 @@ void hos_display_loop(void) {
                      ptr_in = 1;
                      ptr_held |= sdl_button_bit(e.button);
                      if (menu_open) pointer_publish_at(e.x, e.y, sdl_button_bit(e.button), 0);   /* (the menu's click) */
@@ -929,7 +839,7 @@ index 81d533b2..414fc9a1 100644
                      else if (renderer && !mouse_captured) mouse_capture(1);
                      break;
                  case HOS_SDL_EV_MOUSE_UP:
-@@ -367,9 +417,17 @@ void hos_display_loop(void) {
+@@ -452,9 +501,14 @@ void hos_display_loop(void) {
                      break;
                  case HOS_SDL_EV_MOUSE_WHEEL:
                      if (menu_open) pointer_update(0, (int)(e.wheel * 120));
@@ -938,9 +848,6 @@ index 81d533b2..414fc9a1 100644
 +                        hos_sdl_mouse_position(&x, &y);
 +                        coop_mouse(x, y, e.wheel > 0 ? 2 : 3);
 +                    }
-+                    break;
-+                case HOS_SDL_EV_TEXT:   /* (oot-remake-multiplayer: typed text for co-op's chat box and panel) */
-+                    coop_text(e.text);
                      break;
                  case HOS_SDL_EV_MOUSE_MOTION:
 -                    if (!mouse_captured) ptr_in = 1;
@@ -948,19 +855,56 @@ index 81d533b2..414fc9a1 100644
                      if (mouse_captured) {   /* (SDL3's motion comes in fractions of a pixel: the remainders kept for the next) */
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
+@@ -466,12 +520,16 @@ void hos_display_loop(void) {
+                     break;
+                 case HOS_SDL_EV_TEXT:
+                     hos_text_put_utf8(e.text, 0);
++                    if (!hos_text_focus()) coop_text(e.text);   /* (oot-remake-multiplayer: co-op's chat box and panel) */
+                     break;
+                 }
+                 pointer_update(0, 0);
+             } while (hos_sdl_poll_event(&e));
+         }
+-        if (hos_text_focus() != text_on) hos_sdl_text_input(window, text_on = hos_text_focus());
++        {   /* (oot-remake-multiplayer: typed text also while co-op's chat box or panel has the keys) */
++            const int text_wanted = hos_text_focus() || hos_coop_keys_taken();
++            if (text_wanted != text_on) hos_sdl_text_input(window, text_on = text_wanted);
++        }
+         if (__atomic_exchange_n(&paste_asked, 0, __ATOMIC_ACQ_REL)) paste_clipboard();
+         const int asked = __atomic_exchange_n(&fullscreen_asked, -1, __ATOMIC_ACQ_REL);
+         if (asked >= 0) set_fullscreen(asked);
 diff --git a/nx2/build.py b/nx2/build.py
-index 1158c4fc..19419837 100644
+index e9af3555..c2bd2624 100644
 --- a/nx2/build.py
 +++ b/nx2/build.py
-@@ -1222,7 +1222,7 @@ def main():
+@@ -2089,7 +2089,7 @@ def main():
                         "-DIMGUI_DISABLE_WIN32_FUNCTIONS", "-DIMGUI_DISABLE_DEMO_WINDOWS", "-DIMGUI_DISABLE_DEBUG_TOOLS"]
          imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zbic)
                                for f in sorted(os.listdir(d)) if f.endswith(".h"))
--        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp")
-+        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_coop.cpp")   # (oot-remake-multiplayer: co-op's drawing, vk_coop.cpp)
+-        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_crash_window.cpp", "reshade.cpp")
++        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_crash_window.cpp", "reshade.cpp", "vk_coop.cpp")   # (oot-remake-multiplayer: co-op's drawing, vk_coop.cpp)
          for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "backends/imgui_impl_vulkan.cpp"):
              vk_jobs.append((cxx, os.path.join(imgui, *f.split("/")),
-                             os.path.join(obj_dir, "vk_imgui_" + os.path.basename(f)[:-4] + ".o"), vflags + imgui_flags, imgui_deps))
+                             os.path.join(obj_dir, "vk_imgui_" + os.path.basename(f)[:-4] + ".o"), tp_vflags + imgui_flags,
+@@ -2310,11 +2310,17 @@ def main():
+         exe = os.path.join(out, EXE)   # (+ longshot.map: crash offsets -> f_<guest address>)
+         t = time.time()
+         # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
++        # (oot-remake-multiplayer) and the functions hookshot_coop.so finds in this exe by name (dlsym(RTLD_DEFAULT), as
++        # GetProcAddress on Windows, where they are dllexport): each by its own name, as the module has others of the same prefix
++        coop = ["-Wl,--export-dynamic-symbol=" + s for s in ("hos_coop_fs_save_root", "hos_coop_fs_save_remount", "hos_coop_fs_save_slot_opened",
++                "hos_coop_input_select", "hos_coop_input_pad_name", "hos_coop_pad_info", "hos_coop_pad_read", "hos_coop_pad_take",
++                "hos_coop_textures", "hos_coop_texture_override", "hos_coop_texture_overridden", "hos_coop_texture_overlay",
++                "hos_coop_menu_state", "hos_coop_hud_refresh")]
+         # (LONGSHOT_TRACY: Tracy's client is C++, so the C++ driver links, its runtime inside as the back end's is, and the
+         # client's C API is exported for the back end's module)
+         r = run_link([toolchain.need(toolchain.find("clang++")) if TRACY else cc] + target() + ["-fuse-ld=lld", "-o", exe] +
+                      linker("-Map=" + exe + ".map") +
+-                     ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*", "@" + rsp] + HOT_ORDER() +
++                     ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*"] + coop + ["@" + rsp] + HOT_ORDER() +
+                      (["-Wl,--export-dynamic-symbol=___tracy_*", "-static-libstdc++", "-static-libgcc"] if TRACY else []) +
+                      (["-fprofile-instr-generate"] if PGO == "gen" else []) +
+                      (FFMPEG_LX[1] if FFMPEG_LX else []) + HOST_LIBS, exe)
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38
@@ -1029,15 +973,15 @@ index 00000000..a3aa4a38
 +        FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
 +    return len(FRAME_SITES) + 1
 diff --git a/nx2/lift.py b/nx2/lift.py
-index c5c16fe0..72ce5abd 100644
+index 5608ac89..dcbb883b 100644
 --- a/nx2/lift.py
 +++ b/nx2/lift.py
-@@ -175,6 +175,8 @@ def main():
+@@ -203,6 +203,8 @@ def main():
+         oot_shadow_fit.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
+         import oot_jitter   # (the temporal upscalers' camera jitter, DLSS's and FSR 3.1's: none unless one runs, host/rx_backend.c)
          oot_jitter.install(L, img)
-         import oot_occlusion   # (no occlusion queries when LONGSHOT_OCCLUSION_OFF=1: Fritchii's Occlusion Off)
-         oot_occlusion.install(L, img)
 +        import coop_hooks   # (oot-remake-multiplayer: co-op's frame hook and AI hold, host/coop_bridge.c)
 +        coop_hooks.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
-     L.discover(max_insns=a.max_func)
-     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))
-     last[0] = time.time()
+     discover.discover(L, img_dir, chunks.file_jobs(), max_insns=a.max_func)
+     if a64_lift.local_regs() or a64_lift.local_flags():   # (C spliced after an instruction reads and writes the context)
+         print("locals: %d functions with spliced code kept in the context" % local_regs.keep_spliced(L))

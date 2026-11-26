@@ -1,0 +1,100 @@
+# hs-boss-hit-react-dodongo, B (see hs-boss-hit-react-dodongo.A.txt): B's copy of King Dodongo takes A's verbs; B
+# slashes his stunned head (own hits that take life) and throws one bomb of its own (a stun: its own reaction).
+mark start
+warp DodongoStage DodongoStage
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+give bombs
+wait 120
+assign Bomb
+wait 120
+mark b-ready
+wait 2350               # A's first bomb lands just before
+hold ZL+LSTICK_UP 90    # locked on: up to his head while he is stunned
+hold ZL+Y 8             # the sword is Y
+wait 40
+mark b-hit1
+hold ZL+Y 8             # the sword is Y
+wait 40
+mark b-hit2
+hold ZL+Y 8             # the sword is Y
+wait 40
+mark b-hit3
+hold ZL+Y 8             # the sword is Y
+wait 40
+mark b-hit4
+hold ZL+Y 8             # the sword is Y
+wait 40
+mark b-hit5
+wait 60
+mark w01
+wait 60
+mark w02
+wait 60
+mark w03
+wait 60
+mark w04
+wait 60
+mark w05
+wait 60
+mark w06
+wait 60
+mark w07
+wait 60
+mark w08
+wait 60
+mark w09
+wait 60
+mark w10
+wait 60
+mark w11
+wait 60
+mark w12
+wait 60
+mark w13
+wait 60
+mark w14
+wait 60
+mark w15
+wait 60
+mark w16
+press ZR
+wait 120
+hold ZL+LSTICK_UP 60
+press A
+mark b-bomb1
+wait 60
+mark w17
+wait 60
+mark w18
+wait 60
+mark w19
+wait 60
+mark w20
+wait 60
+mark w21
+wait 60
+mark w22
+wait 60
+mark w23
+wait 60
+mark w24
+wait 60
+mark w25
+wait 60
+mark w26
+wait 60
+mark w27
+wait 60
+mark w28
+wait 1800
+mark end

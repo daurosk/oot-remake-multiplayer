@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop/presence/show_delay.hpp"
 
 namespace coop::presence {
 
@@ -131,6 +132,7 @@ class Player {
   std::optional<std::uint32_t> age_sequence_;
   std::deque<Sample> samples_;
   std::optional<std::uint64_t> last_shown_us_;
+  ShowDelay delay_;  // report 37: how late this player is drawn
 };
 
 class Presence {
@@ -167,9 +169,18 @@ class Presence {
   std::vector<std::uint8_t> players_in_scene(std::string_view local_scene) const;
   const Player* player(std::uint8_t number) const;
 
+  // A sample of `number` made at `sample_us` came at `server_now_us` (the
+  // receiver's estimate of the server clock): its age sets how late that
+  // player is drawn (show_delay.hpp).
+  void seen(std::uint8_t number, std::uint64_t sample_us, std::uint64_t server_now_us);
+  // How late `number` is drawn now (at least Settings::show_delay_us); the
+  // floor for a player not known.
+  std::uint64_t show_delay_us(std::uint8_t number) const;
+
   // What to draw now for `number`, given the receiver's estimate of the
-  // server clock. Shows Settings::show_delay_us behind it, and remembers the
-  // time shown so that later samples older than it are dropped.
+  // server clock. Shows that player's delay (show_delay.hpp, never under
+  // Settings::show_delay_us) behind it, and remembers the time shown so that
+  // later samples older than it are dropped. Pose::at_us is the time shown.
   std::optional<Pose> shown(std::uint8_t number, std::uint64_t server_now_us);
   bool same_scene(std::uint8_t number, std::string_view local_scene) const;
 

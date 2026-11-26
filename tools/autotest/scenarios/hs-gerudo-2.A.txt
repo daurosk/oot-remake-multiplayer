@@ -1,0 +1,9 @@
+# hs-gerudo phase 2 (A, host): cell 1's rescue done, the five flags the game's own rescue leaves.
+mark a-rescue1
+setflag GerudoFortress_DestroyGerudoThief_Npc_Hylia_013_Adult 1
+setflag IsGet_SmallKey_GerudoFortress.SmallKey01 1
+setflag GerudoFortress_Saved_Npc_Hylia_013_Adult 1
+setflag GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_013_Adult 1
+setflag GerudoFortress_WarpPoint01_ClearEvent 1
+wait 600
+mark a-rescue1-done

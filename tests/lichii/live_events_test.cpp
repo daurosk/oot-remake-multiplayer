@@ -115,6 +115,63 @@ TEST_CASE("live events: the tester's Deku Tree switches each start in their own 
           std::optional<std::string>("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb"));
 }
 
+TEST_CASE("live events: an event asked from two rooms under one flag is never started here (Water Temple)") {
+    // deku-ladder: WaterTemple_EyeSwitch_Focus is asked by the eye of room 0 and of room 21 (36 m apart), the Dark
+    // Link room's door event by both its doors (51 m): which room played it is not known, so neither is started.
+    CHECK(CoopLiveEvents::SpansRooms("WaterTemple_EyeSwitch_Focus", "WaterTemple"));
+    CHECK(CoopLiveEvents::SpansRooms("WaterTemple_DarkLink_DoorMovement", "WaterTemple"));
+    // Two askers in one room stay startable.
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("GerudoTrainingGround_10_AppearTreasureBox", "GerudoTrainingGround"));
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple"));
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree"));
+    // The same name in two scenes is one place per scene.
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("ForestTemple_Room25_FirstTimeBLock", "ForestTemple"));
+    int spanning = 0;
+    for (const auto& p : CoopLiveEvents::Places()) {
+        spanning += CoopLiveEvents::SpansRooms(p.event, p.scene) ? 1 : 0;
+    }
+    CHECK(spanning == 6);  // the Water Temple lines: 4 for the two doors, 2 for the two eyes
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"WaterTemple_EyeSwitch_Focus"};
+    CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{0.7f, 116.1f, -29.3f}).has_value());
+    CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{-33.5f, 118.9f, -40.7f}).has_value());
+}
+
+TEST_CASE("live events: a place's own room, not a guess (Jabu-Jabu room 1's switch asker high on the wall)") {
+    // deku-ladder LANE1 hs-and-gate: the players at the switch were in room 17, the asker's place was guessed in room 5
+    // (nearer that room's placements), so the decider waited forever. Places carry their room (place_rooms.py).
+    int known = 0;
+    for (const auto& p : CoopLiveEvents::Places()) known += p.room >= 0 ? 1 : 0;
+    CHECK(known == 190);  // round 5: ties and rooms our Link is (almost) never guessed in near the place stay -1
+    const auto room_of_place = [](std::string_view event) {
+        for (const auto& p : CoopLiveEvents::Places()) {
+            if (p.event == event) return p.room;
+        }
+        return -2;
+    };
+    CHECK(room_of_place("InsideJabuJabuBellyRoom01StepSwitch") == 17);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop") == 6);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_FallingLadder") == 2);
+    // Review round 5: a vote our Link near the place never reaches (one far member), or a tie, is not kept: guessed.
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Water") == -1);   // voted 7, Link there: 5/6
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Shadow") == -1);  // voted 9, 78 m off
+    CHECK(room_of_place("FocusGimmick_GreenTentacleGimmick") == -1);               // a tie {3, 2}
+    // Two known rooms decide SpansRooms: the Water Temple eyes' camera is in rooms 0 and 21.
+    CHECK(room_of_place("WaterTemple_EyeSwitch_Focus") == 0);
+    const CoopLiveEvents::RoomOf wrong_guess = [](const std::array<float, 3>& at) -> std::optional<int> {
+        return at[1] > 105.0f ? 5 : 17;  // the asker's place (y 109.7) guessed in room 5; Link (y 102.5) in 17
+    };
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"InsideJabuJabuBellyRoom01StepSwitch"};
+    CHECK(d.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &wrong_guess) ==
+          std::optional<std::string>("InsideJabuJabuBellyRoom01StepSwitch"));
+    // Still never through a wall: our Link in another room waits.
+    CoopLiveEvents::Decider d2;
+    const CoopLiveEvents::RoomOf elsewhere = [](const std::array<float, 3>&) -> std::optional<int> { return 5; };
+    CHECK_FALSE(d2.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &elsewhere)
+                    .has_value());
+}
+
 TEST_CASE("live events: every place is a shared gimmick event of a dungeon, in the scene its name says") {
     std::size_t deku = 0;
     for (const auto& p : CoopLiveEvents::Places()) {
@@ -435,14 +492,15 @@ TEST_CASE("a gimmick event whose place is near but in another room waits for our
     // room is not loaded there, and the event's camera would show black.
     const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
     const std::array<float, 3> link{-37.5f, 117.8f, 1.5f};
-    int link_room = 2;
+    // deku-ladder: the place carries its own room (2, place_rooms.py); the guess is only asked for our Link.
+    int link_room = 5;
     const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
-        return at == link ? link_room : 5;  // the place is in room 5
+        return at == link ? link_room : 9;  // a guess for the place would say 9: not used
     };
     CoopLiveEvents::Decider d;
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());  // it waits
-    link_room = 5;  // we walked in
+    link_room = 2;  // we walked in
     CHECK(d.Next(held, "InsideTheDekuTree", false, link, &room_of) ==
           std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
 }
@@ -827,7 +885,8 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
     for (const auto& n : r.TakeNotes()) said |= n.find("started by our room's asker at -22.6 122.6 -3.8") != std::string::npos;
     CHECK(said);
 
-    // No asker here (its room not loaded, or deleted): asked by name alone, and said so.
+    // No asker here (its room not loaded, or deleted by the room's clear flag): not asked at all, and said so
+    // (dungeon-sync-b: a start by name only plays the camera and kept the Lizalfos room's shutter shut).
     r.WantFromRoom("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb", "InsideTheDekuTree");
     order.clear();
     call = r.Step(m, false, 0, kMain);
@@ -835,9 +894,10 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
         order.push_back(call->function - kMain);
         call = r.Step(m, true, Run(m, *call), kMain);
     }
-    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+    CHECK(order.empty());
+    CHECK(r.Waiting() == 0);
     said = false;
-    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor") != std::string::npos;
+    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor within 1 m of its places here: not asked") != std::string::npos;
     CHECK(said);
 
     // A plain Want (a story cutscene) never looks for an asker.
@@ -957,7 +1017,7 @@ TEST_CASE("deku-sync-fix: our room's asker asks the event itself (its performer'
     CHECK(order == std::vector<std::uint64_t>{addr::kPerformerRequest});
 }
 
-TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game") {
+TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game, nor asked by name") {
     Mem m;
     m.Put64(kMain + addr::kManagerPtr, kHolder);
     m.Put64(kHolder, kManager);
@@ -976,11 +1036,116 @@ TEST_CASE("live events: an asker deleted between the pick and the link is not ha
         }
         call = r.Step(m, true, x0, kMain);
     }
-    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kRequest, addr::kStringFree,
-                                              addr::kStringFree});
+    // cutscene-bleed (#251): not asked by name alone either (it would only hold our game): what was built is freed.
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
     bool said = false;
-    for (const auto& n : r.TakeNotes()) said |= n.find("asker went away before the link") != std::string::npos;
+    for (const auto& n : r.TakeNotes()) {
+        said |= n.find("asker went away before the link: not asked") != std::string::npos;
+    }
     CHECK(said);
+}
+
+TEST_CASE("cutscene-bleed: a start decided in a room waits while our Link is in another room, then may be asked") {
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    int here = 0;
+    const auto away = [&](int room) { return room != here; };
+    // A story cutscene joined in room 0 (the joiner's same-room check), a gimmick decided in room 0, one with no room.
+    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 3'000'000, 0);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree", 0);
+    r.Want("Boss_Intro", "InsideTheDekuTree", 1'000'000, 3'000'000);
+    REQUIRE(r.Waiting() == 3);
+    r.Expire("InsideTheDekuTree", 1'500'000, none, away);
+    CHECK(r.TakeNotes().empty());
+    // Through the door into room 1 while they waited behind the door's event: kept, but held (one note each).
+    here = 1;
+    r.Expire("InsideTheDekuTree", 1'600'000, none, away);
+    r.Expire("InsideTheDekuTree", 1'700'000, none, away);
+    CHECK(r.Waiting() == 3);
+    auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("Dm_Story waits: our Link is in another room") != std::string::npos);
+    CHECK(notes[1].find("FallingLadder waits") != std::string::npos);
+    // Back in room 0: may be asked again.
+    here = 0;
+    r.Expire("InsideTheDekuTree", 1'800'000, none, away);
+    notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("Dm_Story may be asked again") != std::string::npos);
+    // Age, scene and played rules still drop a held start: the story join gets too old in room 1.
+    here = 1;
+    r.Expire("InsideTheDekuTree", 4'500'000, none, away);
+    CHECK(r.Waiting() == 1);  // the gimmick (no age limit) waits on; Dm_Story and Boss_Intro too old
+    r.Expire("DekuTreeBoss", 4'600'000, none, away);
+    CHECK(r.Waiting() == 0);
+}
+
+namespace {
+// The calls one frame's Steps make (the caller's loop), as offsets from kMain.
+std::vector<std::uint64_t> OneFrame(Mem& m, CoopLiveEvents::Requester& r) {
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    return order;
+}
+bool Asked(const std::vector<std::uint64_t>& order) {
+    return std::count(order.begin(), order.end(), addr::kRequest) == 1;
+}
+}  // namespace
+
+TEST_CASE("cutscene-bleed: decided in room 1, Link in room 2: not asked, back in room 1: asked once") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 30'000'000, 1);
+    // Our Link went through the door into room 2 while it waited (the door's event ran): not asked, kept.
+    r.Expire("InsideTheDekuTree", 1'500'000, none, [](int room) { return room != 2; });
+    for (int frame = 0; frame < 3; ++frame) {
+        CHECK_FALSE(Asked(OneFrame(m, r)));
+    }
+    CHECK(r.Waiting() == 1);
+    // Back in room 1 (same visit): asked once, then gone.
+    r.Expire("InsideTheDekuTree", 2'000'000, none, [](int room) { return room != 1; });
+    CHECK(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 0);
+    CHECK_FALSE(Asked(OneFrame(m, r)));
+}
+
+TEST_CASE("cutscene-bleed: nothing is asked while our teleport is under way, kept for after the trip (#197)") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    r.Want("Boss_Intro", "InsideTheDekuTree", 1'000'000, 30'000'000);
+    r.Pause(true);
+    r.Pause(true);
+    CHECK_FALSE(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 1);
+    r.Pause(false);
+    const auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("paused: our teleport is under way") != std::string::npos);
+    CHECK(notes[1].find("resume") != std::string::npos);
+    CHECK(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 0);
+}
+
+TEST_CASE("cutscene-bleed: a held start does not block one of our room behind it") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    r.Want("Dm_Other_Room", "InsideTheDekuTree", 1'000'000, 30'000'000, 1);
+    r.Want("Dm_Our_Room", "InsideTheDekuTree", 1'000'000, 30'000'000, 2);
+    r.Expire("InsideTheDekuTree", 1'500'000, none, [](int room) { return room != 2; });
+    CHECK(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 1);  // the held one is still there
 }
 
 TEST_CASE("intro-ocarina: while the game runs another event it asked for, a story name left in the session is not given") {

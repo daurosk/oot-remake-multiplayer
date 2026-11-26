@@ -1,0 +1,74 @@
+# pvp-native (proof-0116, native puppets phase 4, reports/native-puppets-e-3.md O5 P-a, P-b, P-e, P-h): pvp's field spot.
+# Packs --puppet-body --puppet-pvp, LICHII_COOP_PVP_NATIVE=1 on both. PASS needs shots of BOTH games:
+#  z-off (P-a): A holds ZL near B's copy, PvP off: NO reticle on A.  z-on (P-b): after /pvp on, reticle on B's copy (A log '_Pvp copies for players').
+#  hit1..hit5 (P-e + r2 proof 2): flash/sparks on the copy in A; A log 'strike N on P2', 'the game's invincibility on';
+#    B log 'outcome 6' + PVP_HIT knockback; B's shots: knocked back, heart lost once per hit (i-frames).
+#  bomb-z / bomb-off / thrown (P-h): A holds a bomb, B holds ZL on A's copy, A turns PvP off: B's reticle stays until the throw, then gone.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PVP_NATIVE=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 540
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+place 198.63 163.4 309.87
+wait 30
+toward 196.93 309.87 10
+wait 60
+hold ZL 90 z-off
+wait 60
+chat /pvp on
+wait 240
+mark pvp-on
+hold ZL 90 z-on
+wait 30
+hold ZL+Y 8
+wait 20
+mark hit1
+wait 60
+hold ZL+Y 8
+wait 20
+mark hit2
+wait 60
+hold ZL+Y 8
+wait 20
+mark hit3
+wait 60
+hold ZL+Y 8
+wait 20
+mark hit4
+wait 60
+hold ZL+Y 8
+wait 20
+mark hit5
+wait 120
+give bombs
+wait 60
+assign Bomb
+wait 60
+press ZR
+wait 60
+mark bomb-held
+wait 240
+mark bomb-z
+chat /pvp off
+wait 60
+mark bomb-off
+wait 120
+stick 1.0 0.0 10
+press A
+wait 90
+mark thrown
+wait 300
+mark end

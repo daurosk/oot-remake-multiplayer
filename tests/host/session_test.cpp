@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -59,8 +60,9 @@ struct EnetLife {
   ~EnetLife() { enet_deinitialize(); }
 };
 
-net::ClientConfig config_for(std::uint16_t port, const std::string& name) {
+net::ClientConfig config_for(std::uint16_t port, const std::string& name, std::uint32_t timeout_ms = 0) {
   net::ClientConfig c;
+  if (timeout_ms != 0) c.timeout_ms = timeout_ms;  // the server's loss noticed sooner
   c.host = "127.0.0.1";
   c.port = port;
   c.hello.build_id = "coop-tests 0";
@@ -81,8 +83,9 @@ SessionSettings with_flags() {
 
 // One player: a client, its session, and its game.
 struct Peer {
-  Peer(std::uint16_t port, const std::string& name, SessionSettings settings = with_flags())
-      : client(config_for(port, name)), session(client, std::move(settings)) {
+  Peer(std::uint16_t port, const std::string& name, SessionSettings settings = with_flags(),
+       std::uint32_t timeout_ms = 0)
+      : client(config_for(port, name, timeout_ms)), session(client, std::move(settings)) {
     test::make_game(memory);
     REQUIRE(client.start());
   }
@@ -108,6 +111,7 @@ struct Peer {
 coop::server::ServerOptions any_port() {
   coop::server::ServerOptions o;
   o.port = 0;
+  o.bind = 0x7F000001u;  // 127.0.0.1 only: a test listens on no other address
   o.session.join_password = "test-pass";
   return o;
 }
@@ -246,6 +250,165 @@ TEST_CASE("session: samples reach the other player's presence") {
   CHECK(a.session.sampler().last_sample().has_value());
 }
 
+TEST_CASE("session: a held game keeps sending its still player, so the other's puppet stays") {
+  EnetLife enet;
+  coop::server::EnetServer server(any_port());
+  REQUIRE(server.start());
+  std::vector<Peer*> peers;
+  Peer a(server.port(), "Link", SessionSettings{});
+  join(server, peers, a);
+  Peer b(server.port(), "Zelda", SessionSettings{});
+  join(server, peers, b);
+  const std::uint8_t na = a.number();
+
+  // How B draws A now (Presence::shown, as the puppet planner): the pose's fade, 0 with none (no puppet then).
+  auto fade_of_a = [&] {
+    const std::uint64_t now = b.session.with_client([](net::Client& c) { return c.server_now_us(); });
+    return b.session.with_presence([&](coop::presence::Presence& p) {
+      const auto pose = p.shown(na, now);
+      return pose ? pose->fade : 0.0f;
+    });
+  };
+  REQUIRE(pump(server, peers, [&] { return fade_of_a() == 1.0f; }));
+
+  // A is held (the play-test bridge's hold): no frame(), only its network thread's service().
+  auto held_for = [&](int ms) {
+    float lowest = 1.0f;
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+      server.service(1);
+      a.session.service();
+      b.step();
+      lowest = (std::min)(lowest, fade_of_a());
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return lowest;
+  };
+  a.session.set_held(true);
+  CHECK(held_for(1500) == 1.0f);  // longer than extrapolation and fade (400 ms) and the 1 s settle
+  CHECK(b.session.with_presence([&](coop::presence::Presence& p) {
+    return p.player(na)->samples().back().velocity == proto::Vec3{0.0f, 0.0f, 0.0f};
+  }));
+
+  // Not held and no frame (a game stopped some other way): A fades out, as before.
+  a.session.set_held(false);
+  held_for(800);
+  CHECK(fade_of_a() == 0.0f);
+}
+
+TEST_CASE("session: a reconnect while held sends the status and equipment again") {
+  EnetLife enet;
+  // The old server has run an hour: its clock (time since it started) is far ahead of the new one's.
+  const auto started = std::chrono::steady_clock::now();
+  auto server = std::make_unique<coop::server::EnetServer>([&] {
+    auto o = any_port();
+    o.now_us = [started] {
+      const auto ran = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started);
+      return static_cast<std::uint64_t>(ran.count()) + 3'600'000'000ull;
+    };
+    return o;
+  }());
+  REQUIRE(server->start());
+  const std::uint16_t port = server->port();
+  std::vector<Peer*> peers;
+  Peer a(port, "Link", SessionSettings{}, 1000);  // a short timeout: the lost server is noticed sooner
+  a.session.set_color(0x00ff00ffu);               // so A has equipment to send
+  join(*server, peers, a);
+  // B counts A's status and equipment messages.
+  std::atomic<int> statuses{0}, equips{0};
+  SessionSettings bs;
+  bs.on_event = [&](const net::Event& e, net::Client&) {
+    if (e.kind != net::EventKind::message) return;
+    if (const auto* st = std::get_if<proto::PlayerStatus>(&e.message); st && st->player_number == a.number()) ++statuses;
+    if (const auto* eq = std::get_if<proto::PlayerEquip>(&e.message); eq && eq->player_number == a.number()) ++equips;
+  };
+  Peer b(port, "Zelda", bs, 1000);
+  join(*server, peers, b);
+  REQUIRE(pump(*server, peers, [&] { return b.session.with_presence([&](coop::presence::Presence& p) {
+    return p.player(a.number()) != nullptr && !p.player(a.number())->samples().empty();
+  }); }));
+
+  // A is held; the server restarts. B connects again first, so it is there
+  // when A's WELCOME comes and A sends its status and equipment.
+  a.session.set_held(true);
+  server.reset();
+  server = std::make_unique<coop::server::EnetServer>([&] {
+    auto o = any_port();
+    o.port = port;
+    return o;
+  }());
+  REQUIRE(server->start());
+  const auto connected = [](Peer& p) {
+    return p.session.with_client([](net::Client& c) { return c.state() == net::State::connected; });
+  };
+  const auto run_until = [&](bool with_a, const std::function<bool()>& done) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (std::chrono::steady_clock::now() < end) {
+      server->service(1);
+      if (with_a) a.session.service();
+      b.step();
+      if (done()) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+  };
+  bool lost = false;
+  REQUIRE(run_until(false, [&] {
+    lost = lost || !connected(b);
+    return lost && connected(b);
+  }));
+  statuses = 0;
+  equips = 0;
+  CHECK(run_until(true, [&] { return connected(a) && statuses > 0 && equips > 0; }));
+  CHECK(statuses.load() > 0);
+  CHECK(equips.load() > 0);
+
+  // B keeps showing A: held, A's keep-alive goes on in the new server's clock; released, A's frames send again.
+  const auto fade_of_a = [&] {
+    const std::uint64_t now = b.session.with_client([](net::Client& c) { return c.server_now_us(); });
+    return b.session.with_presence([&](coop::presence::Presence& p) {
+      const auto pose = p.shown(a.number(), now);
+      return pose ? pose->fade : 0.0f;
+    });
+  };
+  REQUIRE(run_until(true, [&] { return fade_of_a() == 1.0f; }));
+  const auto lowest_for = [&](int ms, bool frames) {
+    float lowest = 1.0f;
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+      server->service(1);
+      if (frames) a.step();
+      else a.session.service();
+      b.step();
+      lowest = (std::min)(lowest, fade_of_a());
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return lowest;
+  };
+  CHECK(lowest_for(1500, false) == 1.0f);
+  a.session.set_held(false);
+  CHECK(lowest_for(500, true) == 1.0f);
+  // Released, A walks: B's copy follows (a sample stamped in the old server's clock would keep it in place).
+  const auto x_of_a = [&] {
+    const std::uint64_t now = b.session.with_client([](net::Client& c) { return c.server_now_us(); });
+    return b.session.with_presence([&](coop::presence::Presence& p) {
+      const auto pose = p.shown(a.number(), now);
+      return pose ? pose->position[0] : 0.0f;
+    });
+  };
+  float x = 1.0f;
+  const auto walk_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+  while (std::chrono::steady_clock::now() < walk_end) {
+    x = (std::min)(x + 0.2f, 100.0f);
+    a.memory.put_vec3(test::Layout{}.game_ui + addr::kGameUiPosition, {x, 2.0f, 3.0f});
+    server->service(1);
+    a.step();
+    b.step();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  CHECK(x_of_a() > 20.0f);
+}
+
 TEST_CASE("session: a frame thread and a network thread per player share a flag") {
   EnetLife enet;
   coop::server::EnetServer server(any_port());
@@ -313,14 +476,16 @@ TEST_CASE("session: reset sends the status again on the next connected frame") {
   REQUIRE(pump(server, peers, [&] { return a.session.sampler().last_sample().has_value(); }));
 
   // A new game process: the reset is applied on the next connected frame,
-  // before that frame's reading (none here), so nothing was sent since.
+  // before that frame's reading (none here: no Link), so only the status
+  // `loading` was sent since, no sample.
   a.session.reset();
   const auto report = a.session.frame(std::nullopt, nullptr);
   CHECK(report.connected);
-  CHECK(report.queued == 0);
+  CHECK(report.queued == 1);
+  CHECK(a.session.sampler().status_flags() == coop::protocol::status::loading);
   CHECK_FALSE(a.session.sampler().last_sample().has_value());
 
-  // The next reading goes out as a status and a sample at once.
+  // The next reading goes out as a status (loading over) and a sample at once.
   const auto again = a.session.frame(a.memory, nullptr);
   CHECK(again.queued == 2);
   CHECK(a.session.sampler().last_sample().has_value());

@@ -48,9 +48,9 @@ class FakeGames:
         elif outcome == "refused":
             self.server += "refused a connection, reason 6: wrong join password\n"
 
-    def wait_joined(self, x):
-        self.calls.append(("wait", x))
-        if hs.JOINED not in self.logs[x]:
+    def wait_joined(self, x, join=True):
+        self.calls.append(("wait", x) if join else ("wait-renderer", x))
+        if join and hs.JOINED not in self.logs[x]:
             raise TimeoutError("game %s did not reach it" % x)
 
     def load(self, xs):
@@ -67,6 +67,12 @@ class FakeGames:
     def kill(self, x, keep_log=None):
         self.calls.append(("kill", x, keep_log))
         self.running[x] = False
+
+    def freeze(self, x):
+        self.calls.append(("freeze", x))
+
+    def thaw(self, x):
+        self.calls.append(("thaw", x))
 
     def server_stop(self):
         self.calls.append(("server", "stop"))
@@ -114,19 +120,24 @@ try B refused
 expect both A=1 B=0
 shot here
 lines keep-number-A A max=0 coop: welcomed as player [2-4] on
+freeze B
+thaw B
 """)
         self.assertEqual([s.verb for s in steps], ["start", "load", "play", "close", "kill", "server", "sleep",
-                                                   "password", "password", "try", "expect", "shot", "lines"])
+                                                   "password", "password", "try", "expect", "shot", "lines",
+                                                   "freeze", "thaw"])
+        self.assertEqual(steps[13].args, ["B"])
         self.assertEqual(steps[2].args, [("A", "stray-out.A.txt"), ("B", "x.B.txt")])
         self.assertEqual(steps[6].args, [2.5])
         self.assertEqual(steps[7].args, ["B", "zelda-1"])
         self.assertEqual(steps[8].args, ["B", ""])
-        self.assertEqual(steps[10].args, ["both", {"A": 1, "B": 0}])
+        self.assertEqual(steps[10].args, ["both", {"A": 1, "B": 0}, []])
         self.assertEqual(steps[12].args, ["keep-number-A", "A", "max", 0])
         self.assertEqual(steps[12].pattern, "coop: welcomed as player [2-4] on")
 
     def test_errors(self):
-        for text in ("start", "start C", "play A", "close A B", "server restart", "sleep x", "password B",
+        for text in ("start", "start C", "play A", "close A B", "freeze", "thaw C", "freeze A B", "server restart",
+                     "sleep x", "password B",
                      "try B maybe", "expect x", "expect x C=1", "lines x A most=1 r", "dance A"):
             with self.assertRaises(hs.StepsError, msg=text):
                 hs.parse_steps(text)
@@ -189,6 +200,31 @@ class RunnerTest(unittest.TestCase):
         self.assertIn(("start", "A", right), self.g.calls)
         self.assertEqual(sum(1 for c in self.g.calls if c[0] == "kill" and str(c[2]).startswith("try")), 7)  # each try ends B, log kept
 
+    def test_launch_waits_for_the_renderer_only(self):
+        # Row 124 (save-refresh-list): the games start before the server, so `start` would wait for a welcome that
+        # cannot come; `launch` stops at the renderer.
+        self.g.join_rule = lambda x, pw: "none"
+        steps = hs.parse_steps("launch A B")
+        self.assertEqual([s.verb for s in steps], ["launch"])
+        self.assertEqual(self.r.run(steps), 0)
+        self.assertEqual([c for c in self.g.calls if c[0].startswith("wait")], [("wait-renderer", "A"), ("wait-renderer", "B")])
+        with self.assertRaises(hs.StepsError):
+            hs.parse_steps("launch")
+
+    def test_a_once_per_process_line_said_again_is_a_fail(self):
+        # Row 267: "coop: objects: list head" at every object scan flooded a tester's log.
+        head = "[hos] coop: objects: list head 0x105f302870, 8 entries, 7 actors\n"
+        build = "[hos] coop: build hookshot v0\n"
+        self.g.logs["A"] = build + head
+        self.g.logs["B"] = build + head + build + head
+        self.assertEqual(self.r.run([]), 0)  # once per game process: no line at all
+        self.g.logs["A"] += head * 3
+        self.assertEqual(self.r.run([]), 1)
+        self.assertEqual(self.counts(), ["FAIL A: objects list head (row 267) said 4 times in 1 game process(es), "
+                                         "want at most once each"])
+        self.assertEqual(hs.once_floods(head * 2), [("objects list head (row 267)", 2, 1)])  # no build line: one
+        self.assertEqual(hs.once_floods(""), [])
+
     def test_start_waits_for_both_and_password_reaches_the_game(self):
         self.r.run(hs.parse_steps("password B secret\nstart A B\n"))
         self.assertEqual(self.g.calls[:4], [("start", "A", ""), ("start", "B", "secret"), ("wait", "A"),
@@ -226,7 +262,8 @@ class RunnerTest(unittest.TestCase):
         self.r.sleep = sleep
         self.r.run(hs.parse_steps("expect both-loaded A=1 B=0\n"))
         c = self.counts()
-        self.assertTrue(c[0].startswith("PASS both-loaded (want A=1 B=0, after 5 s): A: 1 puppet (1 CoopPuppet_Child), "
+        # the counts match; no see= check proves them on the shot: UNPROVEN (owner rule: no PASS from log lines)
+        self.assertTrue(c[0].startswith("UNPROVEN both-loaded (want A=1 B=0, after 5 s): A: 1 puppet (1 CoopPuppet_Child), "
                                         "1 fairy; B: 0 puppet (), 0 fairy"), c[0])
         self.assertEqual(self.g.shots, ["s1-both-loaded"])
 
@@ -272,7 +309,14 @@ class RunnerTest(unittest.TestCase):
         self.assertIn(("kill", "B", None), self.g.calls)
         self.assertEqual(verbs.count("load"), 3)
         self.assertTrue(any(c[0] == "play" and ("A", "stray-out.A.txt") in c[1] for c in self.g.calls))
-        self.assertEqual(sum(1 for line in self.counts() if line.startswith(("PASS", "FAIL"))), 12)  # 10 expect, 2 lines
+        self.assertEqual(sum(1 for line in self.counts() if line.startswith(("PASS", "FAIL", "UNPROVEN"))), 12)  # 10 expect, 2 lines
+
+
+    def test_freeze_and_thaw_reach_the_game_in_order(self):
+        self.r.run(hs.parse_steps("freeze B\nserver start\nthaw B\n"))
+        calls = [c for c in self.g.calls if c[0] in ("freeze", "server", "thaw")]
+        self.assertEqual(calls, [("freeze", "B"), ("server", "start"), ("thaw", "B")])
+        self.assertEqual(self.r.fails, 0)
 
 
 class DryRunTest(unittest.TestCase):
@@ -290,12 +334,83 @@ class DryRunTest(unittest.TestCase):
         self.assertIn("would wait until A=1 B=1 puppets and fairies", text)
         self.assertFalse(os.path.exists("O"))
 
+    def test_dry_run_says_the_password_without_setting_it(self):
+        old = os.environ.pop("OOT_COOP_TEST_PASSWORD", None)
+        try:
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = hs.main(["run", "--steps", os.path.join(SCENARIOS, "stray.steps.txt"), "--game-a", "GA",
+                                "--game-b", "GB", "--server", "S.exe", "--out", "O", "--dry-run"])
+            self.assertEqual(code, 0)
+            self.assertIn("a random join password would be made", out.getvalue())
+            self.assertNotIn("OOT_COOP_TEST_PASSWORD", os.environ)
+        finally:
+            if old is not None:
+                os.environ["OOT_COOP_TEST_PASSWORD"] = old
+
     def test_check(self):
         out = io.StringIO()
         with redirect_stdout(out):
             code = hs.main(["check", os.path.join(SCENARIOS, "join-password.steps.txt")])
         self.assertEqual(code, 0)
         self.assertIn("14 steps (password start try)", out.getvalue())
+
+    def test_check_reads_a_file_with_a_bom(self):
+        # A steps file written by Windows PowerShell 5.1 (Out-File -Encoding utf8: BOM + CRLF) reads the same.
+        with open(os.path.join(SCENARIOS, "join-password.steps.txt"), encoding="utf-8") as f:
+            text = f.read()
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "bom.steps.txt")
+            with open(path, "wb") as f:
+                f.write(b"\xef\xbb\xbf" + text.replace("\n", "\r\n").encode("utf-8"))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = hs.main(["check", path])
+            self.assertEqual(code, 0)
+            self.assertIn("14 steps (password start try)", out.getvalue())
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class ServerPasswordTest(unittest.TestCase):
+    # rejoin-host-273-2: a wrapper that ran `run` without OOT_COOP_TEST_PASSWORD started a server with no join
+    # password (coop_server refuses to start) and games with none. Now one is always there for both.
+    def test_unset_makes_a_random_one(self):
+        env = {}
+        self.assertTrue(hs.ensure_server_password(env))
+        pw = env["OOT_COOP_TEST_PASSWORD"]
+        self.assertTrue(1 <= len(pw) <= 64 and pw.isprintable() and " " not in pw)
+        other = {}
+        hs.ensure_server_password(other)
+        self.assertNotEqual(pw, other["OOT_COOP_TEST_PASSWORD"])   # random, never a fixed one
+
+    def test_empty_counts_as_unset(self):
+        env = {"OOT_COOP_TEST_PASSWORD": ""}
+        self.assertTrue(hs.ensure_server_password(env))
+        self.assertTrue(env["OOT_COOP_TEST_PASSWORD"])
+
+    def test_a_set_one_is_kept(self):
+        env = {"OOT_COOP_TEST_PASSWORD": "zelda"}
+        self.assertFalse(hs.ensure_server_password(env))
+        self.assertEqual(env["OOT_COOP_TEST_PASSWORD"], "zelda")
+
+    def test_the_games_send_the_servers(self):
+        # The Runner's default (a game with no `password` line) is the one the server got.
+        env = {}
+        hs.ensure_server_password(env)
+        old = os.environ.get("OOT_COOP_TEST_PASSWORD")
+        try:
+            os.environ["OOT_COOP_TEST_PASSWORD"] = env["OOT_COOP_TEST_PASSWORD"]
+            d = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, d, True)
+            r = hs.Runner(FakeGames(Clock()), d, say=lambda *_: None)
+            self.assertEqual(r.password("B"), env["OOT_COOP_TEST_PASSWORD"])
+        finally:
+            if old is None:
+                os.environ.pop("OOT_COOP_TEST_PASSWORD", None)
+            else:
+                os.environ["OOT_COOP_TEST_PASSWORD"] = old
 
 
 class HookshotGamesTest(unittest.TestCase):
@@ -333,6 +448,8 @@ class HookshotGamesTest(unittest.TestCase):
         hk.exe_dir = lambda g: g
         hk.restore_save = lambda g: restored.append(g) or True
         hk.Bridge = Bridge
+        self.packed = []   # (row 265: the kit's start of the pack, before each game start)
+        hk.pack_start = lambda g, env, say: self.packed.append((g, env.get("X"))) or []
         self.restored = restored
         self.g = hs.HookshotGames(hk, self.games, self.out, None, 27560, "coop-test", ["X=1"], 30,
                                   {"switches": [], "start": None, "timeout": None, "server": []}, say=said.append)
@@ -343,6 +460,34 @@ class HookshotGamesTest(unittest.TestCase):
                 p.kill()
                 p.wait(10)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_each_start_places_its_window_on_the_chosen_monitor(self):
+        """start() gives the game the no-activation start flags and places its window (hookshot.place_games)."""
+        calls, flags = [], []
+        self.g.hk.popen_flags = lambda: flags.append(1) or {}
+        self.g.hk.place_games = lambda pids, display, say, wait=0.0, topmost=False: calls.append((dict(pids), display, wait))
+        self.g.display = "DISPLAY7"
+        self.g.start("B", "pw", wait=False)
+        self.assertEqual(flags, [1])
+        self.assertEqual(calls, [({"B": self.g.procs["B"].pid}, "DISPLAY7", 30.0)])
+
+    def test_run_stops_before_any_game_when_the_monitor_is_missing(self):
+        """main run: a PC with no monitor at all is an error (exit 2) before the server or any game starts."""
+        import hookshot
+        from unittest import mock
+        with mock.patch.object(hs, "WINDOWS", True), \
+                mock.patch.object(hookshot.placement, "monitors", lambda: []), \
+                mock.patch.object(hs.HookshotGames, "server_start", side_effect=AssertionError("a start happened")):
+            steps = os.path.join(self.tmp, "s.steps.txt")
+            with open(steps, "w") as f:
+                f.write("start A\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = hs.main(["run", "--steps", steps, "--game-a", self.games["A"], "--game-b", self.games["B"],
+                                "--out", os.path.join(self.tmp, "o2"), "--display", "DISPLAY9"])
+        self.assertEqual(code, 2)
+        with open(os.path.join(self.tmp, "o2", "steps.txt")) as f:
+            self.assertIn("no monitor called DISPLAY9", f.read())
 
     def test_fresh_log_each_start_and_the_old_one_kept(self):
         log = os.path.join(self.games["B"], "longshot_log.txt")
@@ -364,6 +509,33 @@ class HookshotGamesTest(unittest.TestCase):
         self.assertEqual(self.g.ended_by_itself(), [])
         self.g.close("B")
         self.g.finish()
+
+    def test_each_start_puts_the_pack_as_the_kits_start_first(self):
+        # (row 265: your own tunic files, then the merge, before the game reads its mods; a restart again)
+        order, popen = [], hs.subprocess.Popen
+        self.g.hk.pack_start = lambda g, env, say: order.append(("pack", g, env.get("X"))) or []
+        hs.subprocess.Popen = lambda args, **k: order.append(("game",)) or popen(args, **k)
+        try:
+            self.g.start("A", "", wait=False)
+        finally:
+            hs.subprocess.Popen = popen
+        self.assertEqual(order, [("pack", self.games["A"], "1"), ("game",)])
+
+    def test_each_start_gets_the_test_defaults_a_switch_wins(self):
+        # Its own save and no crash ask on the title (a crash record of an earlier run took the load's A presses:
+        # smoke hs-players, kit-0119); the same pairs as hookshot.py's, and a run's switch still wins.
+        import hookshot
+        self.assertEqual(hs.TEST_GAME_DEFAULTS, hookshot.TEST_GAME_DEFAULTS)
+        seen, popen = [], hs.subprocess.Popen
+        hs.subprocess.Popen = lambda args, **k: seen.append(k["env"]) or popen(args, **k)
+        try:
+            self.g.start("A", "", wait=False)
+            self.g.env = ["LICHII_COOP_PROBLEM_ASK=1"]
+            self.g.start("B", "", wait=False)
+        finally:
+            hs.subprocess.Popen = popen
+        self.assertEqual([e["LICHII_COOP_PROBLEM_ASK"] for e in seen], ["0", "1"])
+        self.assertEqual([e["LICHII_COOP_TEST_OWN_SAVE"] for e in seen], ["1", "1"])
 
     def test_log_is_the_captured_output_when_the_game_writes_no_file(self):
         # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>-<n>.txt.
@@ -407,6 +579,69 @@ class HookshotGamesTest(unittest.TestCase):
                 os.environ["OOT_COOP_TEST_PASSWORD"] = old
         self.assertEqual(started[0], ["coop_server.exe", "--port", "27560", "--password-env", "OOT_COOP_TEST_PASSWORD"])
         self.assertNotIn("zelda", " ".join(started[0]))   # the password never on the command line
+
+    def test_server_test_delay_needs_the_test_environment(self):
+        started = []
+        self.g.server_exe = "coop_server.exe"
+        self.g.server_delay = ["--test-delay-ms", "250", "--test-jitter-ms", "60"]
+        real = hs.subprocess.Popen
+
+        class P:
+            def __init__(self, args, **k):
+                started.append((args, k.get("env") or {}))
+
+            def poll(self):
+                return 0
+        hs.subprocess.Popen = P
+        try:
+            self.g.server_start()
+        finally:
+            hs.subprocess.Popen = real
+        args, env = started[0]
+        self.assertEqual(args[-4:], ["--test-delay-ms", "250", "--test-jitter-ms", "60"])
+        self.assertEqual(env.get("OOT_COOP_TEST"), "1")
+
+
+class WaitJoinedTest(unittest.TestCase):
+    """A game joins only once its renderer is up (rc.7: 'welcomed' after 'the shaders took'), so wait_joined waits for the
+    renderer first (hookshot.wait_renderer: follows the compile's progress) and the join's timeout counts from there."""
+
+    def games(self, renderer=None):
+        calls = []
+        hk = type("hk", (), {})()
+        hk.RENDERER_STALL, hk.RENDERER_LIMIT = 180, 3600
+        hk.wait_renderer = lambda read, alive, *args: calls.append((read(), args)) or 450.0
+        g = hs.HookshotGames(hk, {"A": "a", "B": "b"}, "out", None, 27560, "p", [], 30,
+                             {"switches": [], "start": None, "timeout": None, "server": []}, say=lambda s: None)
+        g.renderer = renderer
+        g.log = lambda x: "coop: welcomed as player 2 on 127.0.0.1:27560\n"
+        g.alive = lambda x: True
+        return g, calls
+
+    def test_renderer_first_with_the_timeout_as_its_wait(self):
+        g, calls = self.games()
+        g.wait_joined("B")
+        self.assertEqual(calls, [("coop: welcomed as player 2 on 127.0.0.1:27560\n", (30, 180, 3600))])
+
+    def test_run_options_reach_the_renderer_wait(self):
+        g, calls = self.games(renderer=(900, 240, 2400))
+        g.wait_joined("B")
+        self.assertEqual(calls[0][1], (900, 240, 2400))
+
+    def test_join_timeout_counts_after_the_renderer(self):
+        g, calls = self.games()
+        g.log = lambda x: "vk: start-up: the shaders took 450 s\n"   # renderer up, never welcomed
+        t = [0.0]
+        real_mono, real_sleep = hs.time.monotonic, hs.time.sleep
+        hs.time.monotonic = lambda: t[0]
+        hs.time.sleep = lambda s: t.__setitem__(0, t[0] + s)
+        try:
+            with self.assertRaises(TimeoutError) as e:
+                g.wait_joined("B")
+        finally:
+            hs.time.monotonic, hs.time.sleep = real_mono, real_sleep
+        self.assertIn("in 30 s after its renderer started", str(e.exception))
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,100 @@
+# fx-nut (fx-missing-b, tracker #32: "the Deku Nut flash animation is missing 9 out of 10 times").
+# A throws 4 Deku Nuts in the Deku Tree's entrance, a mark every 0.1 s after each throw. B watches.
+# Expect: the nut's white flash in A's shots (own) and B's (the copy) after every throw.
+#! noload
+#! start coop: test warp done
+#! switches A:LICHII_COOP_CHEATS=1
+#! timeout 300
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Item_DekuNut.StockNum
+wait 120
+setflag PouchData.Item_DekuNut.Count 20
+wait 120
+assign DekuNut
+wait 300
+mark ready
+press ZR 4
+wait 6
+mark n1_01
+wait 6
+mark n1_02
+wait 6
+mark n1_03
+wait 6
+mark n1_04
+wait 6
+mark n1_05
+wait 6
+mark n1_06
+wait 6
+mark n1_07
+wait 6
+mark n1_08
+wait 240
+press ZR 4
+wait 6
+mark n2_01
+wait 6
+mark n2_02
+wait 6
+mark n2_03
+wait 6
+mark n2_04
+wait 6
+mark n2_05
+wait 6
+mark n2_06
+wait 6
+mark n2_07
+wait 6
+mark n2_08
+wait 240
+press ZR 4
+wait 6
+mark n3_01
+wait 6
+mark n3_02
+wait 6
+mark n3_03
+wait 6
+mark n3_04
+wait 6
+mark n3_05
+wait 6
+mark n3_06
+wait 6
+mark n3_07
+wait 6
+mark n3_08
+wait 240
+press ZR 4
+wait 6
+mark n4_01
+wait 6
+mark n4_02
+wait 6
+mark n4_03
+wait 6
+mark n4_04
+wait 6
+mark n4_05
+wait 6
+mark n4_06
+wait 6
+mark n4_07
+wait 6
+mark n4_08
+wait 240
+mark end

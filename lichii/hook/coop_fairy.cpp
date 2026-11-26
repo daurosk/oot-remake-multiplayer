@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <iterator>
 #include <string_view>
 #include <utility>
@@ -24,10 +25,19 @@ float Distance(const Vec3& a, const Vec3& b) {
 
 } // namespace
 
-Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t number) const {
+void Follower::Call(std::uint8_t number, std::uint64_t now_ms) {
+    calls_[number] = now_ms + settings_.call_ms;
+}
+
+bool Follower::Calling(std::uint8_t number, std::uint64_t now_ms) const {
+    const auto it = calls_.find(number);
+    return it != calls_.end() && now_ms < it->second;
+}
+
+Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t number, bool calling) const {
     // Each player's fairy is a little out of step with the others.
     const float phase = static_cast<float>(number) * 1.7f;
-    Vec3 local = settings_.offset;
+    Vec3 local = calling ? settings_.call_offset : settings_.offset;
     const std::string_view actor = puppet.actor;
     // CoopPuppet_Adult, or a tunic colour of it (CoopPuppet_Adult_Red).
     if (actor.size() >= 6 && (actor.substr(actor.size() - 6) == "_Adult" ||
@@ -38,7 +48,8 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
     }
     local[0] += settings_.circle * std::cos(kTwoPi * settings_.circle_hz * t + phase);
     local[2] += settings_.circle * std::sin(kTwoPi * settings_.circle_hz * t + phase);
-    local[1] += settings_.bob * std::sin(kTwoPi * settings_.bob_hz * t + phase);
+    local[1] += calling ? settings_.call_bob * std::sin(kTwoPi * settings_.call_bob_hz * t + phase)
+                        : settings_.bob * std::sin(kTwoPi * settings_.bob_hz * t + phase);
     const auto& m = puppet.rotation;  // rows
     Vec3 out = puppet.position;
     for (int i = 0; i < 3; ++i) {
@@ -79,8 +90,17 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     });
     const float t = static_cast<float>(now_ms % 3600000ULL) / 1000.0f;
     std::map<std::uint8_t, Track> kept;
+    for (auto it = calls_.begin(); it != calls_.end();) {
+        it = now_ms < it->second ? std::next(it) : calls_.erase(it);  // a call over
+    }
     for (const auto& p : puppets.targets) {
-        const Vec3 goal = Goal(p, t, p.number);
+        const bool calling = Calling(p.number, now_ms);
+        if (calling && log_ && called_logged_.insert(p.number).second) {
+            log_("call: P" + std::to_string(p.number) + "'s Navi flies up over their head");
+        } else if (!calling) {
+            called_logged_.erase(p.number);
+        }
+        const Vec3 goal = Goal(p, t, p.number, calling);
         Track track{goal, now_ms};
         if (const auto it = tracks_.find(p.number); it != tracks_.end()) {
             const Track& was = it->second;
@@ -269,6 +289,7 @@ void Wings::Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
 #include "common/logging.h"
 #include "coop/host/session.hpp"
 #include "coop/presence/presence.hpp"
+#include "coop_emote_game.h"
 #include "coop_svc.h"
 
 namespace CoopFairy {
@@ -406,6 +427,10 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
+    // Calls heard since the last frame (/here): the caller's Navi is the marker.
+    for (const std::uint8_t number : CoopEmote::TakeCalls()) {
+        glue.follower->Call(number, now_ms);
+    }
     glue.main_base.store(main_base);
     auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     CoopPuppet::StampDrawing(puppets, now_ms);

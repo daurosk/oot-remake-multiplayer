@@ -33,6 +33,17 @@ using coop::protocol::Vec3;
 
 // The actor names of enemy and boss shots that are shared.
 bool IsEnemyShot(std::string_view name);
+// A split shot (docs/boss-multiplayer.md): an attack that is real in every game. Each game keeps the one its own
+// copy of the boss fires (never stopped, never deleted) and the owner's is not sent (Decide says keep), so it
+// hits every player as it would alone. Phantom Ganon's stage 1 thunder bolt and its four shockwaves.
+// LICHII_COOP_SPLIT_SHOTS=0: off (one bolt, the owner's, as before).
+bool IsSplitShot(std::string_view name);
+bool SplitOn();
+// Row 211 (shot-reflect-211-4): a boss ball that a player sends back with a sword and its maker answers (Ganondorf's
+// light ball and charge ball, Phantom Ganon's): his volley (Parry) and the stun that ends a rally won are the same
+// attack as the shot. While one flies in a game, its maker's attack there goes on (CoopObjects AttackWithRally), so
+// a boss turn never hands him on mid-rally. Split shots or not.
+bool IsRallyBall(std::string_view name);
 // What its maker's name starts with ("Enemy_Octorok" for Octorok_Bullet),
 // one or more; empty for a name that is no enemy shot.
 std::vector<std::string_view> MakersOf(std::string_view shot);
@@ -75,7 +86,9 @@ std::vector<Shooter> Shooters(std::uint64_t now_us);
 // `shooter`: the actor the game's own shoot code makes the shot for (patch
 // 0007's SHOOT_FROM), 0 when not known. A noted shooter at that address
 // decides by its owner alone, with no guess by place; an actor that is not
-// in the list falls back to the place.
+// in the list falls back to the place. Also asked inside the native boss
+// sync's calls on a copy (the owner's shoot action put in: CoopPuppet::Call::
+// copy_game), so the shot has one maker, the owner's game (issue 189).
 bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter = 0);
 std::uint64_t StoppedAtCreate();  // how many so far
 // LICHII_COOP_ENEMY_SHOTS_STOP=0: never stopped at the create (deleted by the

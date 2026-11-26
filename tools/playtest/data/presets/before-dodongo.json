@@ -1,0 +1,40 @@
+{
+  "preset": "before-dodongo",
+  "version": 1,
+  "title": "Dodongo's Cavern (King Dodongo): child Link in the dungeon, boss key, 3 hearts",
+  "spec": {
+    "items": [
+      "Weapon_Sword_Kokiri",
+      "Weapon_Shield_Deku",
+      "bombs",
+      "PouchData.Weapon_Range_SlingShot.StockNum"
+    ],
+    "hearts": 3,
+    "max_hearts": 3,
+    "boss_keys": [
+      "DodongoCavern"
+    ],
+    "age": "child",
+    "flags": {
+      "0x1002b466": "BossBattle",
+      "HavePlayedEvent.Get_StoneOfFire_DefeatBoss": 0,
+      "HavePlayedEvent.Dm_DodongoCave_BossOut": 0,
+      "HavePlayedEvent.Dm_DodongoCave_BossIn": 0
+    },
+    "warp": {
+      "scene": "DodongoCavern",
+      "entrance": "DodongoCavern_MountainTrailSide"
+    },
+    "place": {
+      "x": 24.0,
+      "y": 73.41,
+      "z": -77.5
+    }
+  },
+  "notes": [
+    "Link loads in the dungeon (DodongoCavern), not the boss rush room DodongoStage (a free-play warp into a rush room left both games black with no control; the Gohma preset goes through the dungeon too).",
+    "Link is put at the boss room's arrival point (docs/dungeons-boss.md, the eight rooms: the same coordinates as the rush start 24.00 73.41 -77.50). A place skips the door's own trigger, so the intro may not run from here: if no boss comes, walk out of the room through its door and in again (`look` lists the doors). The place before the door is not in the repository; the first lane run records it.",
+    "The age is set before the warp (Sequence_IsChildhood, then 30 frames), so a save of either age works.",
+    "The boss is made alive as docs/dungeons-boss.md (the boss set table) has it: the shared quest Get_StoneOfFire is put back to its step BossBattle, and the boss room's played flags (the intro and the death among them) and Bools to their before values."
+  ]
+}

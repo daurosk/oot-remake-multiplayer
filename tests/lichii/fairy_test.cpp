@@ -132,6 +132,52 @@ TEST_CASE("an adult puppet's fairy sits higher, by its shoulder") {
     CHECK(a[0] > c[0]);
 }
 
+TEST_CASE("a call (/here): the caller's Navi flies up over their head for call_ms, then back by the shoulder") {
+    Settings s = Still();
+    s.call_bob = 0.0f;
+    Follower f(s);
+    const std::uint64_t t0 = 10000;
+    Input in = Puppets(2, {0, 0, 0});
+    CHECK(f.Follow(in, t0).targets[0].position[1] == doctest::Approx(s.offset[1]));   // by the shoulder
+    f.Call(2, t0);
+    CHECK(f.Calling(2, t0));
+    CHECK_FALSE(f.Calling(3, t0));   // only the caller's
+    CHECK(f.Calling(2, t0 + s.call_ms - 1));
+    CHECK_FALSE(f.Calling(2, t0 + s.call_ms));
+    // Over the head, centred, well above the shoulder spot; flown there smoothly, not snapped.
+    Target p;
+    const auto up = f.Goal(p, 0.0f, 2, true);
+    CHECK(up[1] == doctest::Approx(s.call_offset[1]));
+    CHECK(up[1] > s.offset[1] + 0.8f);
+    CHECK(up[0] == doctest::Approx(0.0f));
+    const float first = f.Follow(in, t0 + 50).targets[0].position[1];
+    CHECK(first > s.offset[1]);
+    CHECK(first < s.call_offset[1]);
+    float y = first;
+    for (std::uint64_t ms = t0 + 100; ms < t0 + 2000; ms += 50) y = f.Follow(in, ms).targets[0].position[1];
+    CHECK(y == doctest::Approx(s.call_offset[1]).epsilon(0.02));
+    // The call over: back by the shoulder.
+    for (std::uint64_t ms = t0 + s.call_ms; ms < t0 + s.call_ms + 3000; ms += 50) {
+        y = f.Follow(in, ms).targets[0].position[1];
+    }
+    CHECK(y == doctest::Approx(s.offset[1]).epsilon(0.02));
+    CHECK_FALSE(f.Calling(2, t0 + s.call_ms + 3000));
+    // A new call restarts it.
+    f.Call(2, t0 + 9000);
+    CHECK(f.Calling(2, t0 + 9000 + s.call_ms - 1));
+}
+
+TEST_CASE("an adult caller's Navi hovers higher over the head") {
+    Follower f(Still());
+    Target child;
+    child.actor = "CoopPuppet_Child";
+    Target adult = child;
+    adult.actor = "CoopPuppet_Adult";
+    const auto c = f.Goal(child, 0.0f, 1, true);
+    const auto a = f.Goal(adult, 0.0f, 1, true);
+    CHECK(a[1] > c[1]);
+}
+
 // The wing beat: finding the local Navi on the actor list and copying her
 // skeleton onto each fairy.
 namespace {

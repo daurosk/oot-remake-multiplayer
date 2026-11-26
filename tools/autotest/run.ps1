@@ -34,6 +34,12 @@ param(
     [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_SPAWN=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
     # Seconds to wait for each phase (boot and join, load, scenario).
     [int]$Timeout = 180,
+    # Longshot (-Runtime hookshot): each game's renderer start (hookshot.py wait_renderer). -RendererWait: seconds with
+    # no compile progress logged; while the game logs progress it waits on until -RendererStall seconds pass without a
+    # rise, never past -RendererLimit seconds. 0 = the harness default (a cold driver shader cache: minutes).
+    [int]$RendererWait = 0,
+    [int]$RendererStall = 0,
+    [int]$RendererLimit = 0,
     # Steps files: how long an `expect` line waits for the counts (seconds).
     [int]$ExpectWait = 30,
     # Skip load.txt (the games are expected to be in the world already: never, unless testing).
@@ -104,11 +110,16 @@ param(
     # pair (coop-kit\ls\laneN-A/-B), port, pipes and run folders unless given, and its lock (laneN.lock) for the run.
     # Two runs in different lanes go at the same time; a game build (build-game.lock) stops both.
     [ValidateRange(0, 2)][int]$Lane = 0,
-    # Hookshot: start each game through a release kit's own start, as "Start OoT Co-op.bat" does (play.ps1 choose
+    # Hookshot: start each game through a release kit's own start, as "Start Squadala.bat" does (play.ps1 choose
     # -Hookshot: the module step, the puppet pack, the colour, the randomizer seeds), then play as usual. Two kit
     # folders, A then B ("kitA,kitB"), each with hookshot\game-folder.txt naming its game (-HookshotA/-B or the
     # lane's pair): tools\autotest\kit_pair.py setup makes them. Plain scenarios only (no steps files yet).
-    [string[]]$Kit = @()
+    [string[]]$Kit = @(),
+    # The monitor the game windows go to, by device name (Settings > System > Display: "DISPLAY2" is \\.\DISPLAY2).
+    # Default: $env:OOT_TEST_DISPLAY, else \\.\DISPLAY2. Resolved to that monitor's work area when the games start;
+    # a name no monitor has stops the run before any game starts. The windows are placed side by side there
+    # without taking the focus (tools\autotest\placement.py, docs/testing.md "Where the test games' windows go").
+    [string]$Display = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -178,7 +189,8 @@ if ($Runtime -eq 'hookshot') {
     # A steps file ($Scenario.steps.txt) is played by tools\autotest\hs_steps.py: the same verbs as
     # Run-Steps below (start, load, play, close, kill, server stop/start, password, try, expect, lines, shot).
     if ($TakeBaseline) { throw "-Runtime hookshot: copy <game>\user\save to <game>\autotest-save for a baseline" }
-    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
+    # -Lag and -Jitter work here too: the server holds the packets itself (below); loss and spikes are netsim.py's only.
+    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'Loss', 'Spike', 'NetSimArgs', 'NetSimFor') {
         if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
     }
     # The server's join password: always through the environment for the server (OOT_COOP_TEST_PASSWORD);
@@ -229,7 +241,18 @@ if ($Runtime -eq 'hookshot') {
         }
     }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    if ($Lag -or $Jitter) {
+        # Longshot games cannot go through tools\netsim\netsim.py, so the server holds every packet itself
+        # (TEST ONLY: server/test_delay.hpp, refused without OOT_COOP_TEST=1, which hookshot.py / hs_steps.py set):
+        # -Lag round trip (half each way), -Jitter +- each way, order kept, for both games.
+        if ($NoCoop) { throw "-Lag / -Jitter need the server (not with -NoCoop)" }
+        $a += @('--test-delay-ms', "$([int]$Lag)", '--test-jitter-ms', "$([int]$Jitter)")
+    }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
+    if ($Display) { $a += @('--display', $Display) }
+    if ($RendererWait -gt 0) { $a += @('--renderer-wait', "$RendererWait") }
+    if ($RendererStall -gt 0) { $a += @('--renderer-stall', "$RendererStall") }
+    if ($RendererLimit -gt 0) { $a += @('--renderer-limit', "$RendererLimit") }
     if ($Kit.Count) { $a += @('--kit-a', (Resolve $Kit[0]), '--kit-b', (Resolve $Kit[1])) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
@@ -245,23 +268,8 @@ if ($Runtime -eq 'hookshot') {
         if ($LASTEXITCODE) { throw "lane $Lane is not free (lanes.py lock status)" }
     }
     try {
-        # Your own Link's tunic files follow the colour each game will wear and send, on every start, as the
-        # kit's launcher does (colour-agree; tools\puppet_pack\self_tunic.py = kit-paths.ps1 Set-KitSelfTunic):
-        # files left by an earlier start in another colour would show you in that colour on your own screen.
-        $switchList = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
-        foreach ($x in $(if ($Kit.Count) { @() } else { 'A', 'B' })) {   # (-Kit: the kit's own start does it)
-            $pair = Resolve $(if ($x -eq 'A') { $HookshotA } else { $HookshotB })
-            $sw = @{}   # a plain switch, then the pair's own 'A:' / 'B:' one wins (hookshot.py --env)
-            foreach ($e in $switchList) { if ($e -notmatch '^[AB]:' -and $e -match '^(.+?)=(.*)$') { $sw[$Matches[1]] = $Matches[2] } }
-            foreach ($e in $switchList) { if ($e -match "^${x}:(.+?)=(.*)$") { $sw[$Matches[1]] = $Matches[2] } }
-            $pack = Join-Path $pair 'mods\contents\0400486024DEC000\coop-puppet'
-            if (-not (Test-Path -LiteralPath (Join-Path $pack 'coop_puppet.json'))) { continue }
-            $selfArgs = @('-I', (Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'), '--pack', $pack,
-                "--color=$($sw['LICHII_COOP_COLOR'])", "--tunics=$($sw['LICHII_COOP_TUNICS'])",   # (=: PowerShell drops an empty argument)
-                '--options', (Join-Path $pair 'coop-options.ini'), '--coop-ini', (Join-Path $pair 'coop.ini'))
-            $got = (& $py[0] @pyArgs @selfArgs | Out-String).Trim()
-            Write-Host "hookshot: game $x's own tunic files: $(if ($got) { $got } else { "none (the game's green)" })"
-        }
+        # Your own Link's tunic files and the size-table merge, as the kit's start does them, are the game start's in
+        # hookshot.py / hs_steps.py (pack_start; row 265), for every start of a game they start themselves.
         & $py[0] @a
         $code = $LASTEXITCODE
     } finally {
@@ -357,8 +365,6 @@ public class AutotestWin {
  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
  [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
- [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int ht, uint f);
- [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
  delegate bool EnumProc(IntPtr h, IntPtr l);
  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -401,8 +407,6 @@ public class AutotestWin {
  // Real pixels: without this a scaled desktop gives rects in scaled units and the copy
  // misses part of the window.
  public static void DpiAware() { SetProcessDPIAware(); }
- // Moves the window and keeps it above other windows, so a screen copy sees the game.
- public static void Place(IntPtr h, int x, int y, int w, int ht) { SetWindowPos(h, new IntPtr(-1), x, y, w, ht, 0x40); }
  // The game's client area only (no title bar or border). PrintWindow with
  // PW_CLIENTONLY|PW_RENDERFULLCONTENT first; if it gives a black picture (Vulkan),
  // copy the screen where the client area is instead.
@@ -646,7 +650,12 @@ function Start-Game([string]$x) {
         Remove-Item Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
     }
     $env:LICHII_COOP_TEST_SCRIPT = $s.Script
-    $s.Proc = Start-Process (Join-Path $s.Emu 'lichii.exe') -ArgumentList "-g `"$Game`"" -WorkingDirectory $s.Emu -PassThru
+    # Through placement.py launch: the window opens without taking the focus (Start-Process cannot do that).
+    $gamePid = (& $py[0] @pyArgs -I "$here\placement.py" launch --cwd $s.Emu -- (Join-Path $s.Emu 'lichii.exe') -g $Game | Out-String).Trim()
+    if ($LASTEXITCODE -or $gamePid -notmatch '^\d+$') { throw "game ${x}: placement.py launch failed: $gamePid" }
+    $s.Proc = Get-Process -Id ([int]$gamePid)
+    # (the game is not this process's child: without a handle held from here, ExitCode would read empty)
+    [void]$s.Proc.Handle
     Remove-Item Env:LICHII_COOP_TEST_SCRIPT
     foreach ($k in $old.Keys) { [Environment]::SetEnvironmentVariable($k, $old[$k]) }
     $s.Done = 0; $s.Marks = 0
@@ -667,14 +676,20 @@ function Wait-Joined([string]$x) {
         Start-Sleep -Milliseconds 500
     }
 }
-# Side by side on the main screen, so a screen copy works too.
-function Place-Windows {
+# Side by side on the chosen monitor ($Display), without taking the focus (placement.py: SWP_NOACTIVATE, no restore
+# call). Topmost only with -ScreenCopy (the copy needs the game above other windows); it stays on that monitor.
+function Display-Args { if ($Display) { @('--display', $Display) } else { @() } }
+# -Release: place again, not topmost (the end of a -KeepOpen -ScreenCopy run: the games stay open, no longer above
+# other windows).
+function Place-Windows([switch]$Release) {
     $i = 0
     foreach ($x in $kits.Keys) {
-        $h = Game-Window $x
-        if ($h -ne [IntPtr]::Zero) {
-            [void][AutotestWin]::ShowWindow($h, 9)
-            [AutotestWin]::Place($h, 960 * $i, 0, 960, 600)
+        $p = $st[$x].Proc
+        if ($p -and -not $p.HasExited) {
+            $pa = @('--pid', "$($p.Id)", '--first-slot', "$i", '--slots', "$($kits.Count)") + @(Display-Args)
+            if ($ScreenCopy -and -not $Release) { $pa += '--topmost' }
+            $o = (& $py[0] @pyArgs -I "$here\placement.py" place @pa 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE) { Write-Host "window placement: $o"; Note "window placement: $o" }
         }
         $i++
     }
@@ -723,8 +738,13 @@ function Puppet-Count([string]$x) {
 #   close B / kill B      close game B's window (it leaves the server) / end it at once (a crash)
 #   server stop / server start
 #   sleep 10              seconds
-#   expect NAME A=1 B=0   wait up to -ExpectWait s until each game named has that many puppets
-#                         and as many fairies, then screenshot NAME; else FAIL (the test goes on)
+#   expect NAME A=1 B=0 [see=CHECK...]  wait up to -ExpectWait s until each game named has that many
+#                         puppets and as many fairies, then screenshot NAME (s<step>-NAME-A/-B.png); else FAIL
+#                         (the test goes on). Counts that match are PASS only when every see= check
+#                         (tools\autotest\proofs.txt, graded by proof.py on that shot) is OK; a shot showing the
+#                         wrong result is FAIL; no see= or an unclear check: UNPROVEN (owner rule 2026-11-18: no
+#                         PASS from log lines alone, and puppets are visible)
+#   see CHECK [CHECK...]  grade screenshot checks on the shots taken so far: PASS / FAIL / UNPROVEN
 #   shot NAME
 #   password B TEXT       the join password game B sends from its next start (- for none)
 #   try B welcomed        start B (no wait for the join) and check the outcome within 40 s:
@@ -733,7 +753,23 @@ function Puppet-Count([string]$x) {
 #   lines NAME B max=N REGEX  game B's log has at most N lines matching REGEX (the rest of the
 #                         line, spaces kept); PASS or FAIL with the count (a loop, a repeat);
 #                         min=N instead: at least N (the case really happened)
-# Results go to counts.txt beside the screenshots.
+# Results go to counts.txt beside the screenshots. Log-only steps by nature: try (a join's outcome, a
+# connection result) and lines (log line counts); a run of them alone needs its group line's see= or
+# logonly= (groups.py). UNPROVEN steps are counted and printed at the end; they are not a pass.
+function Prove-Shots([string[]]$checks) {
+    # proof.py grade: exit 0 PASS, 3 FAIL (a shot shows the wrong result), 1 UNPROVEN, 2 error (UNPROVEN here).
+    $py = @(Find-Python)
+    $o = @(& $py[0] @($py | Select-Object -Skip 1) -I "$here\proof.py" grade $out @checks | ForEach-Object { "$_" })
+    $state = switch ($LASTEXITCODE) { 0 { 'PASS' } 3 { 'FAIL' } default { 'UNPROVEN' } }
+    $text = (@($o | Where-Object { $_ -notmatch '^verdict ' }) -join '; ')
+    return @{ State = $state; Text = $(if ($state -eq 'PASS') { "[seen: $text]" } else { "[screenshot check: $text]" }) }
+}
+function Step-Result([string]$state, [string]$text) {
+    $res = "$state $text"
+    Write-Host $res
+    Add-Content "$out\counts.txt" $res
+    if ($state -eq 'FAIL') { $script:stepFails++ } elseif ($state -eq 'UNPROVEN') { $script:stepUnproven++ }
+}
 function Run-Steps([string]$file) {
     $n = 0
     foreach ($raw in Get-Content $file) {
@@ -798,6 +834,11 @@ function Run-Steps([string]$file) {
                 Copy-Item $st[$x].Log "$out\eden_log-$x-try$n.txt" -ErrorAction SilentlyContinue
             }
             'shot' { Shot-Both "s$n-$($rest[0])" }
+            'see' {
+                if (-not $rest.Count) { throw "steps line ${n}: want see CHECK [CHECK...]" }
+                $pr = Prove-Shots $rest
+                Step-Result $pr.State "see $($rest -join ' ') $($pr.Text)"
+            }
             'lines' {
                 if ($rest.Count -lt 4 -or $rest[2] -notmatch '^(max|min)=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N|min=N REGEX" }
                 $atLeast = $Matches[1] -eq 'min'
@@ -813,8 +854,13 @@ function Run-Steps([string]$file) {
             }
             'expect' {
                 $name = $rest[0]
-                $want = [ordered]@{}
-                foreach ($kv in $rest[1..($rest.Count - 1)]) { $k, $v = $kv -split '='; $want[$k] = [int]$v }
+                $want = [ordered]@{}; $see = @()
+                foreach ($kv in $rest[1..($rest.Count - 1)]) {
+                    if ($kv -match '^see=([A-Za-z0-9_.-]+)$') { $see += $Matches[1] }
+                    elseif ($kv -match '^([AB])=(\d+)$') { $want[$Matches[1]] = [int]$Matches[2] }
+                    else { throw "steps line ${n}: expect wants A=N / B=N / see=CHECK, not '$kv'" }
+                }
+                if (-not $want.Count) { throw "steps line ${n}: want expect NAME A=1 [B=0] [see=CHECK...]" }
                 $start = Get-Date
                 while ($true) {
                     $ok = $true; $texts = @()
@@ -827,12 +873,12 @@ function Run-Steps([string]$file) {
                     Start-Sleep -Milliseconds 500
                 }
                 $secs = [int]((Get-Date) - $start).TotalSeconds
-                $res = '{0} {1} (want {2}, after {3} s): {4}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $name,
-                    (($rest[1..($rest.Count - 1)]) -join ' '), $secs, ($texts -join '; ')
-                Write-Host $res
-                Add-Content "$out\counts.txt" $res
-                if (-not $ok) { $script:stepFails++ }
+                $res = '{0} (want {1}, after {2} s): {3}' -f $name,
+                    (@($want.Keys | ForEach-Object { "$_=$($want[$_])" }) -join ' '), $secs, ($texts -join '; ')
                 Shot-Both "s$n-$name"
+                if (-not $ok) { Step-Result 'FAIL' $res }
+                elseif (-not $see.Count) { Step-Result 'UNPROVEN' "$res [counts from the log only: no see= check on shot s$n-$name]" }
+                else { $pr = Prove-Shots $see; Step-Result $pr.State "$res $($pr.Text)" }
             }
             default { throw "steps line ${n}: unknown '$($w[0])'" }
         }
@@ -892,6 +938,14 @@ function Stop-NetSim {
 
 $failed = $null
 $stepFails = 0
+$stepUnproven = 0
+# The emulator runtime's games and their window placement use Python (placement.py); a monitor name that does not
+# exist goes to the primary monitor (placement.py says so); no monitor at all stops the run here.
+$py = @(Find-Python)
+$pyArgs = @($py | Select-Object -Skip 1)
+$mon = (& $py[0] @pyArgs -I "$here\placement.py" rects @(Display-Args) 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE) { throw $mon }
+Write-Host "windows go to: $mon"
 try {
     Start-Server
     Start-NetSim
@@ -905,6 +959,7 @@ try {
     if ($steps) {
         Run-Steps $steps
         if ($stepFails) { Write-Host "$stepFails expect step(s) FAILED (counts.txt)" }
+        if ($stepUnproven) { Write-Host "UNPROVEN: $stepUnproven step(s) without screenshot proof (counts.txt): not a pass" }
     } else {
         foreach ($x in $kits.Keys) { Start-Game $x; Start-Sleep 3 }
         # Wait for both windows and both joins.
@@ -942,6 +997,7 @@ try {
         Stop-NetSim
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }
+    if ($KeepOpen -and $ScreenCopy) { try { Place-Windows -Release } catch { Write-Host "window placement: $($_.Exception.Message)" } }
     if (-not $KeepOpen) {
         foreach ($x in $kits.Keys) { $p = $st[$x].Proc; if ($p) { [void]$p.WaitForExit(15000) } }
         Restore-RunSettings

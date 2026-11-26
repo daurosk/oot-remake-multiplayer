@@ -144,6 +144,7 @@ Config config_for(const FakeRouter& router) {
   c.routers = {{router.address(), 0x7F000001u}};
   c.waits_ms = {150, 150};
   c.renew_waits_ms = {150};
+  c.bind = 0x7F000001u;  // (127.0.0.1 only)
   return c;
 }
 

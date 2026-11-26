@@ -196,6 +196,7 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::join_timed_out:
     case net::EventKind::host_changed:
     case net::EventKind::player_equip:
+    case net::EventKind::waiting_for_host:
       break;  // the `message` event before each one is enough here
   }
 }

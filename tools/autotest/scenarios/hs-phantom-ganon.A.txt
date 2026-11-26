@@ -1,0 +1,66 @@
+# hs-phantom-ganon (fable-g2-bosses, player row 114: "not doable in co-op with more than 1 player in the boss room;
+# only the host can do the fight; when the host dies it is fully scuffed"). A is the host, B the guest.
+# Both warp into the boss rush's PhantomGanonStage (it places its own boss; no kit save is from before it), as
+# hs-phantomganon-native. Then, 600 frames a turn, the same on both sides:
+#   t1 B hits 2 (B's copy: the fall goes to the owner as DAMAGE; "only the host can do the fight")
+#   t2 B says stunned (`stun`: the hand-over of issue 150) and hits 2 after 180 frames
+#   t3 A hits 2 (A's copy now, or A's own if he stayed A's)
+#   t4 A dies (`hurt 80`), then presses A through the game over (Continue); B waits
+#   t5, t6 B says stunned and hits 2 (the fight goes on in B's game with the host dead)
+#   t7 B `kill`s him (the owner's kill passes his life stops; a copy's goes to the owner as a hit)
+# PASS (the job's verdict, offline/boss-phantom-ganon-probe.ps1):
+#  1. Every hit after the first lands on the life the one before left: each "coop: test hit
+#     Enemy_DungeonBoss_PhantomGanon N 0x.. (.. m, life L)" logged after a settled hand-over (t3, t6) has L = the
+#     life before minus every hit since (higher = a hit given back, the row 104/118 bug).
+#  2. B's hits count while A owns him (t1: A's next life seen is lower by B's 2).
+#  3. After A's death B still fights: B's t5/t6 hits are logged with a life, B's log has "now ours" for him after t4
+#     or B's hits fall on the owner's life, and his death comes in B's game after t7.
+#  4. Reported, not judged: A's game after its Continue (the Forest Temple's beaten record, "beaten"), any
+#     "disconnect", "exception", "crash" line, and the screenshots t4..end on both sides (A not black / stuck).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-phantom-ganon
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 720
+mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+wait 600
+mark t2
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 2
+wait 600
+mark t4
+hurt 80               # the host dies
+wait 300
+press A
+wait 120
+press A
+wait 168
+mark t5
+wait 600
+mark t6
+wait 600
+mark t7
+wait 600
+mark after-turns
+wait 1800               # his death, if it came
+mark d1
+wait 1800
+mark end

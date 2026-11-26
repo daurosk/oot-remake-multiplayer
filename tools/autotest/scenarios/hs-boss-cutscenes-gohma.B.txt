@@ -55,6 +55,7 @@ wait 20
 wait 44                   # (A's sword hits)
 wait 240
 mark b-stun4
+kill Enemy_DungeonBoss_Gohma   # with the other game's: whichever game owns the boss then kills it (a kill on a copy is held at 1 and its owner keeps its stops; big-run-0115: the owner moved mid-fight)
 wait 120
 mark b-kill
 wait 300

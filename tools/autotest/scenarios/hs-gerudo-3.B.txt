@@ -1,0 +1,8 @@
+# hs-gerudo phase 3 (B): put at cell 2's guard spot (63.6 120.5 -112.6); nothing written for cell 2,
+# so B's own game should make its guard (the Area sensor, Found_Npc_Hylia_014_Adult).
+mark b-to-cell2
+place 62.0 120.6 -112.6
+wait 120
+toward 72.6 -111.4 10   # face the cell
+wait 780
+mark b-cell2

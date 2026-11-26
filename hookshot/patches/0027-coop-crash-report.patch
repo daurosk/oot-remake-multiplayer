@@ -1,0 +1,313 @@
+From 437f302fbf9a473bd9f43296f9f50cd35ea6d1e0 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 16 Nov 2026 17:21:30 -0900
+Subject: [PATCH] Co-op and Longshot's crash reports: nothing sent, co-op's
+ lines kept out
+
+A co-op build is not Longshot's to support (owner's decision): it sends
+nothing to Longshot's services, files nothing with Longshot and never says it
+is a Longshot release. host/hos_crash_dialog.c reads no address (no Report
+automatically, no silent send of longshot_crash.ini) and its release flag is
+always 0; Report manually saves and copies the report and opens co-op's page
+on reporting a problem (host/hos_crash_dialog.h's words, HOS_CRASH_ISSUES);
+gpu/vk/perf_report.cpp never starts (no performance summaries);
+nx2/addresses.ini has every address empty. The Insert menu's Bug report
+(gpu/vk/vk_bug_report.cpp, vk_menu.cpp) points to that page too, not
+Longshot's issue form, and Save my pipeline list (Longshot issue 14) is
+neither listed nor run.
+
+The reports co-op's players save and send to us leave co-op's own log lines
+out (server address, nicknames): the crash report's two readers, crash_lines
+and read_log, and the Bug report's copied logs skip a line
+host/hos_coop_crash.h calls co-op's ("coop:" or "coop voice:" after hos_log's
+tags and the module's level word).
+---
+ gpu/vk/menu/bug_report.cpp    |  7 +++---
+ gpu/vk/menu/pipeline_list.cpp |  3 ++-
+ gpu/vk/perf_report.cpp        |  3 +++
+ gpu/vk/vk_bug_report.cpp      | 23 ++++++++++++------
+ host/hos_coop_crash.h         | 44 +++++++++++++++++++++++++++++++++++
+ host/hos_crash_dialog.c       | 13 +++++++----
+ host/hos_crash_dialog.h       | 13 ++++++-----
+ nx2/addresses.ini             |  7 +++---
+ 8 files changed, 88 insertions(+), 25 deletions(-)
+ create mode 100644 host/hos_coop_crash.h
+
+diff --git a/gpu/vk/menu/bug_report.cpp b/gpu/vk/menu/bug_report.cpp
+index 260697c7..4e535527 100644
+--- a/gpu/vk/menu/bug_report.cpp
++++ b/gpu/vk/menu/bug_report.cpp
+@@ -26,9 +26,10 @@ const char* bug_report_cell() {
+ /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
+ /// sure to be there, as on a Steam Deck in Game Mode)
+ std::string bug_report_saved_text(const std::string& folder) {
+-    return "Saved in the game folder as " + folder + ". To send it, open git.magicbean.dev/MagicBeanDev/Longshot/issues, choose New issue and "
+-           "Game problem, copy report.txt's answers into the form and drag the folder's files into it: on Windows from File "
+-           "Explorer, on Linux from a file manager (on a Steam Deck, in Desktop Mode).";
++    // (oot-remake-multiplayer's patch 0027: co-op's page, not Longshot's issues)
++    return "Saved in the game folder as " + folder + ". To send it, open co-op's Reporting a problem page (docs/setup.md "
++           "of github.com/daurosk/oot-remake-multiplayer): /bugreport on Discord, or a GitHub issue with report.txt's answers "
++           "and the folder's files: on Windows from File Explorer, on Linux from a file manager (on a Steam Deck, in Desktop Mode).";
+ }
+ /// Under its help once pressed: how the report goes
+ const char* bug_report_hint() {
+diff --git a/gpu/vk/menu/pipeline_list.cpp b/gpu/vk/menu/pipeline_list.cpp
+index 8fcfae93..e3ee588f 100644
+--- a/gpu/vk/menu/pipeline_list.cpp
++++ b/gpu/vk/menu/pipeline_list.cpp
+@@ -462,9 +462,10 @@ MENU_MODULE(pipeline_share) {
+                       "pipelines\" issue. Attach the zip there and paste the report. Nothing is uploaded for you.",
+               .kind = menu::Kind::Action,
+               .choices = {"Save", "Saved", "Not saved"},   // (its cell's texts: the Debug tab's cell as wide as the widest)
++              .shown = [] { return false; },   // (oot-remake-multiplayer's patch 0027: never listed in a co-op build: it files with Longshot)
+               .text = MENU_HOOK([](int) { return share_value.empty() ? std::string("Save") : share_value; }),
+               .hint = MENU_HOOK(hn_share),
+-              .on_activate = MENU_HOOK(share_pipeline_list),
++              .on_activate = MENU_HOOK(share_pipeline_list),   // (patch 0027: never reached, the row is never shown)
+               .verb = "Save"}, menu::first());
+ }
+ 
+diff --git a/gpu/vk/perf_report.cpp b/gpu/vk/perf_report.cpp
+index d3d15d57..7240458c 100644
+--- a/gpu/vk/perf_report.cpp
++++ b/gpu/vk/perf_report.cpp
+@@ -386,6 +386,9 @@ void at_exit() {
+ 
+ bool perf_report_init() {
+     folder = game_dir_path();
++    // (oot-remake-multiplayer's patch 0027) A co-op build measures and writes no performance statistics for Longshot,
++    // ticked or not: nothing for a launcher to send
++    if (true) return false;
+     if (!ticked(folder)) return false;
+     {   // (what the launcher configured: the relay's address, the source fingerprint and the copies setting)
+         std::ifstream stamp_file(folder / "longshot_version.txt");
+diff --git a/gpu/vk/vk_bug_report.cpp b/gpu/vk/vk_bug_report.cpp
+index 5c9fbc75..fd866d55 100644
+--- a/gpu/vk/vk_bug_report.cpp
++++ b/gpu/vk/vk_bug_report.cpp
+@@ -2,6 +2,7 @@
+ // tests/test_bug_report.py compiles this file alone.
+ #include "vk_bug_report.h"
+ #include "compat/longshot_redact.h"
++#include "../../host/hos_coop_crash.h"   // (oot-remake-multiplayer's patch 0027: co-op's page, co-op's lines)
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -43,8 +44,9 @@ namespace {
+ // (a log is copied whole up to 10 MB, well within what the issue tracker takes; a longer one keeps its first MB, where the start, the
+ // device and the options are, and its last 9 MB, where the problem usually is: an hour of play logs about 10 MB)
+ constexpr uint64_t kLogCap = 10ull << 20, kLogHead = 1ull << 20;
+-constexpr const char* kIssues = "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new/choose";
+-constexpr const char* kForm = "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml";
++// (patch 0027) A co-op build is not Longshot's to support: the report goes to co-op (/bugreport, an issue with collect-logs),
++// whose page says how; was Longshot's issue chooser and its game-problem form
++constexpr const char* kIssues = HOS_COOP_CRASH_REPORT_PAGE;
+ // (the link's longest: a player who is not signed in is sent to the sign-in page, and the address waits for them in a cookie,
+ // about 4 KB at most; GitHub's sign-in page, where the form lived first, failed from links of 3500 characters of escaped text
+ // on. 2000 passes both, and every browser and chat program takes it)
+@@ -194,6 +196,11 @@ LogFacts copy_log(const std::string& from, const std::string& to, const Inputs&
+     uint64_t read = 0, start = 0;   // (bytes read; where the line being gathered starts in the log)
+     bool said_gap = false;
+     const auto put = [&] {   // (a whole line, its '\n' kept, or the last part of the log)
++        if (hos_coop_crash_private(line.c_str())) {   // (patch 0027: co-op's own lines, as in the crash report; collect-logs has them)
++            start += line.size();
++            line.clear();
++            return;
++        }
+         const std::string clean = redact(line, in.home, in.user, in.windows);
+         take_facts(clean, f);
+         if (start < gap_from || start >= gap_to) {
+@@ -510,7 +517,7 @@ std::string write(const Inputs& in) {
+     // rows that depend on this PC and the switches' names: never a switch's value, which only report.txt has. When they do not
+     // fit, the options, those rows and how many switches there are; then the options and how many of each; else only the counts)
+     // (Forgejo fills a form's field from the query's field:<its id>: routers/web/repo/issue.go, setTemplateIfExists)
+-    std::string link = std::string(kForm) + "&field:version=" + url_part(in.version) +
++    std::string link = std::string("?field:version=") + url_part(in.version) +
+                        (now.map.empty() ? "" : "&field:where=" + url_part(now.map)) + "&field:gpu=" + url_part(gpu) +
+                        "&field:system=" + url_part(in.system);
+     const auto count = [](const std::string& s) { return std::to_string(std::count(s.begin(), s.end(), '\n')); };
+@@ -532,12 +539,14 @@ std::string write(const Inputs& in) {
+         }
+         link_short = true;
+     }
++    link = kIssues, link_short = false;   // (patch 0027: co-op's page, not Longshot's form filled in)
+ 
+     std::string text;
+     text += "Longshot bug report, made by the Insert menu's Bug report on " + when(in.now, "%Y-%m-%d at %H:%M") + ".\n\n";
+-    text += std::string("To send it: open ") + kIssues + " and choose Game problem (or the link at the end of this file, which "
+-            "fills in the answers below), copy the answers below into the fields of the same names, say what happened, and drag "
+-            "the files of this folder, this one too, into the issue.\n\n";
++    text += std::string("To send it: open ") + kIssues + " (co-op's page on reporting a problem: this is a co-op build, not "
++            "Longshot's to fix) and send it as it says: /bugreport on Discord, or a GitHub issue with the answers below, what "
++            "happened, the files of this folder and the kit's collect-logs zip. Co-op's own log lines are left out of the copied "
++            "logs (collect-logs has them).\n\n";
+     text += "### Longshot version\n\n" + in.version + "\n\n";
+     text += "### Where in the game\n\n" + where + "\n\n";
+     text += "### Graphics card and driver version\n\n" + gpu + "\n\n";
+@@ -548,7 +557,7 @@ std::string write(const Inputs& in) {
+             (picture ? "picture.png: the game's picture when the report was made, without the menu.\n\n"
+                      : "No picture: the game showed no new frame while the report was made, or its picture could not be written.\n\n");
+     text += "### What this folder holds\n\n" + files + ". Nothing else from this PC: no saves, no game files, not the options file "
+-            "itself.\n\nThe link with the answers filled in" +
++            "itself.\n\nCo-op's page on reporting a problem" +
+             (link_short ? std::string(in.pc_options.empty() ? " (the changes from the defaults in short: the switches' names did not fit in a link)"
+                                                               : " (the changes from the defaults in short: not all of them fit in a link)") : "") +
+             ":\n" + link + "\n";
+diff --git a/host/hos_coop_crash.h b/host/hos_coop_crash.h
+new file mode 100644
+index 00000000..45b12ec9
+--- /dev/null
++++ b/host/hos_coop_crash.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   (oot-remake-multiplayer's patch 0027) A co-op build and Longshot's crash reports and statistics (rc.6's #983).
++
++   A co-op build is not Longshot's to support, so it sends nothing to Longshot's services and never says it is a Longshot
++   release (owner's decision, 2026-11-17: crashes go through co-op's own /bugreport and collect-logs):
++   - host/hos_crash_dialog.c: no address is ever read (find_addresses), so neither Report automatically nor the silent send
++     of longshot_crash.ini is offered; the report's release flag is always 0 ("No (a local or modified build)");
++   - Report manually still saves and copies the report, and opens HOS_COOP_CRASH_REPORT_PAGE below, not Longshot's issue
++     form (host/hos_crash_dialog.h's words say so);
++   - gpu/vk/perf_report.cpp: perf_report_init never starts, so no performance summary is measured or written;
++   - nx2/addresses.ini: every address empty, so the build's stamp has no crash_reports= and the sender has nowhere to send.
++
++   The report co-op's players save and send to us still leaves co-op's own log lines out: the module logs through hos_log
++   (patch 0001's bridge_log), so the run's log holds the server's address and the players' nicknames. Both readers of the
++   log (crash_lines and read_log) ask hos_coop_crash_private first and skip such a line.
++
++   A line as hos_log writes it: "[hos <thread>] [<level>] <text>" (the level tag only when not info); the module's own level
++   word ("warning: ", "error: ", "critical: ", hookshot/compat/common/logging.h) may lead the text. Co-op's text begins with
++   "coop:" (the module, patch 0001's bridge) or "coop voice:" (patch 0009). Plain C. */
++#ifndef HOS_COOP_CRASH_H
++#define HOS_COOP_CRASH_H
++#include <string.h>
++
++#define HOS_COOP_CRASH_REPORT_PAGE "https://github.com/daurosk/oot-remake-multiplayer/blob/main/docs/setup.md#reporting-a-problem"
++
++static inline const char *hos_coop_crash_skip_tag(const char *p) {   /* (one "[...] " at p, when there is one) */
++    if (*p != '[') return p;
++    const char *end = strchr(p, ']');
++    if (!end) return p;
++    for (p = end + 1; *p == ' '; p++) {}
++    return p;
++}
++
++static inline int hos_coop_crash_private(const char *line) {
++    const char *p = hos_coop_crash_skip_tag(hos_coop_crash_skip_tag(line));
++    static const char *const levels[] = {"warning: ", "error: ", "critical: "};
++    for (size_t i = 0; i < sizeof levels / sizeof *levels; i++)
++        if (!strncmp(p, levels[i], strlen(levels[i]))) {
++            p += strlen(levels[i]);
++            break;
++        }
++    return !strncmp(p, "coop:", 5) || !strncmp(p, "coop voice:", 11);
++}
++#endif
+diff --git a/host/hos_crash_dialog.c b/host/hos_crash_dialog.c
+index 5dc29677..2a63e587 100644
+--- a/host/hos_crash_dialog.c
++++ b/host/hos_crash_dialog.c
+@@ -328,6 +328,7 @@ static void read_log(RunLog *r, const Who *who) {
+         const size_t n = strlen(line);
+         const uint64_t line_at = taken;
+         taken += n;
++        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */
+         char *clean = redacted(who, line, n);
+         if (!clean) continue;
+         if (line_at >= r->from) hos_crash_log_line(&r->facts, clean);
+@@ -1097,7 +1098,8 @@ static void report_facts(const Shown *s, Report *out) {
+         stamp_source[strcspn(stamp_source, " \t")] = 0;
+         free(stamp);
+     }
+-    in.release = hos_crash_release(in.bare_version, source, stamp_source);
++    in.release = 0;   /* (patch 0027: a co-op build is never a Longshot release, whatever its version and source) */
++    (void)stamp_source;
+     count_settings(&in);
+     *out = in;
+ }
+@@ -1131,6 +1133,7 @@ static int make_report(const Shown *s, Made *out) {
+     snprintf(where, sizeof where, "%s", f->place[0] ? f->place : s->log->found ? HOS_CRASH_TITLE_AND_INTRO : "");
+     hos_crash_issue_url(out->url, sizeof out->url, title, in.version, f->gpu[0] ? in.gpu : "", system, what, track, where,
+                         in.changed_list);
++    snprintf(out->url, sizeof out->url, "%s", HOS_COOP_CRASH_REPORT_PAGE);   /* (patch 0027: co-op's page, not Longshot's form) */
+     {   /* (one separator between names: the game folder ends with one; a share's leading two kept) */
+         const char *from = saved ? path : "";
+         size_t o = 0;
+@@ -1189,10 +1192,9 @@ static int sent_already(const Shown *s) {
+     return t != NULL;
+ }
+ static void find_addresses(Shown *s) {
+-    char path[PATH_MAX_UTF8];
+-    char *stamp = join(path, sizeof path, s->dir, "longshot_version.txt") ? read_text(path, 16 << 10, NULL) : NULL;
+-    if (!stamp || !hos_crash_stamp_address(stamp, "crash_reports", s->reports, sizeof s->reports)) s->reports[0] = 0;
+-    free(stamp);
++    /* (patch 0027) A co-op build sends nothing to Longshot: no address, so neither Report automatically nor the silent
++       send of longshot_crash.ini is ever offered, whatever the stamp says */
++    s->reports[0] = 0;
+ }
+ /* A line of the report, cleaned (hos_crash_clean), as a JSON string after sep */
+ static void put_field(Buf *b, const char *sep, const char *key, const char *value, size_t limit, const Shown *s,
+@@ -1277,6 +1279,7 @@ static int crash_lines(const Shown *s, Lines *tail, Lines *crash) {
+     for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
+         taken += strlen(line);
+         line[strcspn(line, "\r\n")] = 0;
++        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */
+         if (!found && hos_crash_starts(line)) found = 1;
+         if (!found) {   /* (the lines before it: the last 150, a ring) */
+             if (ring.n < HOS_CRASH_TAIL_LINES) lines_add(&ring, line);
+diff --git a/host/hos_crash_dialog.h b/host/hos_crash_dialog.h
+index bc502bf6..41d74f6f 100644
+--- a/host/hos_crash_dialog.h
++++ b/host/hos_crash_dialog.h
+@@ -27,7 +27,8 @@
+ /* (the game-problem form, as the Insert menu's Bug report links it: gpu/vk/vk_bug_report.cpp kForm. Forgejo fills a form's field
+    from the query's field:<its id>, and the title from title=) */
+ #define HOS_CRASH_ISSUE_FORM "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml"
+-#define HOS_CRASH_ISSUES "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new/choose"
++#include "hos_coop_crash.h"   /* (oot-remake-multiplayer's patch 0027) */
++#define HOS_CRASH_ISSUES HOS_COOP_CRASH_REPORT_PAGE   /* (patch 0027: co-op's page; was Longshot's issue chooser) */
+ enum { HOS_CRASH_LINK_MAX = 2000, HOS_CRASH_LOG_LINES = 200 };
+ 
+ /* ---- the helper's command line ---- */
+@@ -527,8 +528,8 @@ static inline size_t hos_crash_message(char *out, size_t cap, int verdict, int s
+     const int n = snprintf(out, cap,
+                            "%s.\n\nWhat went wrong: %s\n\n%s"
+                            "Report manually copies a report to your clipboard (the error, your PC's hardware and the end of the log, "
+-                           "with your home folder and user name taken out) and opens Longshot's issue form in your browser, "
+-                           "for you to paste it into. %s",
++                           "with your home folder and user name taken out) and opens the co-op kit's page on reporting a problem in "
++                           "your browser (this is a co-op build: not Longshot's to fix). %s",
+                            headline, hos_crash_cause_text(cause),
+                            send ? "Report automatically shows you what would go to the Longshot team, and sends it only when you "
+                                   "press Send.\n\n" : "",
+@@ -643,11 +644,11 @@ static inline size_t hos_crash_ready_text(char *out, size_t cap, int copied, int
+         copied ? "The report is on your clipboard. "
+         : saved ? "The report could not be put on the clipboard. Click Open the report, select all of it and copy it. "
+                 : "The report could not be put on the clipboard, nor saved. ",
+-        opened ? "In the issue form that opened in your browser, paste it into the longshot_log.txt box, say what you were doing, "
+-                 "and fill in the rest."
++        opened ? "Nothing has been sent: send it yourself, as the page that opened in your browser says (/bugreport on Discord "
++                 "with the zip that collect-logs.cmd in the kit's scripts folder makes, or a GitHub issue), and say what you were doing."
+                : "Open ",
+         opened ? "" : issues,
+-        opened ? "" : ", choose Game problem, and paste it into the longshot_log.txt box.",
++        opened ? "" : ". Nothing has been sent: send it yourself as that page says (/bugreport on Discord with the zip that collect-logs.cmd in the kit's scripts folder makes, or a GitHub issue).",
+         saved ? "\n\nIt is saved as " : "", saved ? saved : "");
+     size_t used = n < 0 ? 0 : (size_t)n < cap ? (size_t)n : cap ? cap - 1 : 0;
+     const char *tail = saved ? "." : "";
+diff --git a/nx2/addresses.ini b/nx2/addresses.ini
+index a1671d32..de57b7e2 100644
+--- a/nx2/addresses.ini
++++ b/nx2/addresses.ini
+@@ -2,7 +2,8 @@
+ # Read by nx2/addresses.py (address(key)). A key left out or empty turns that use off: nothing is sent, and what was
+ # waiting stays for next time.
+ [addresses]
+-# Longshot-api's telemetry (/telemetry/crash): POST a crash report (the crash window's Report automatically), kept where only the team reads it
+-crash_reports = https://data-services.magicbean.dev/telemetry/crash
++# (oot-remake-multiplayer's patch 0027) All empty: a co-op build sends nothing to Longshot's services.
++# Longshot-api's telemetry (/telemetry/crash): POST a crash report (the crash window's Report automatically)
++crash_reports =
+ # Longshot-api's telemetry (/telemetry/perf): POST a performance summary (the launcher's Send performance statistics)
+-perf_reports = https://data-services.magicbean.dev/telemetry/perf
++perf_reports =

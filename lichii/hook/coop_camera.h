@@ -25,7 +25,10 @@ struct Frame {
 // Turned on by the hook while Ocarina is running with co-op on, so the
 // renderer does nothing otherwise. Any thread.
 void SetWanted(bool wanted);
-bool Wanted();
+// The play-test bridge's own want (coop_playtest.cpp), on while the bridge runs: `move` steers by the camera
+// when solo or before a session too. The hook's SetWanted cannot turn it off. Any thread.
+void SetToolWanted(bool wanted);
+bool Wanted();  // either of the two
 
 // GPU thread. True when a camera from a target of this size would replace
 // what `frame` already has (the largest scene target of a frame wins, as in

@@ -8,6 +8,11 @@ param(
     [int]$GamePort = 27512
 )
 $ErrorActionPreference = 'Continue'
+# QuickEdit off first (#239, the alt-tab freeze): a click in this window starts a selection that pauses
+# Write-Host below; coop_server.exe's output pipe then fills, its log write blocks and the server stops
+# sending to every player (0.11.0 logs: "nothing from the server for 16 s", then a reconnect). console-mode.ps1, never fails.
+$consoleMode = Join-Path $PSScriptRoot 'console-mode.ps1'
+if (Test-Path -LiteralPath $consoleMode) { . $consoleMode; [void](Disable-KitQuickEdit) }
 $kit = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $kit 'server\coop_server.exe'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }

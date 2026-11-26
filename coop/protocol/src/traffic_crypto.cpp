@@ -91,6 +91,13 @@ std::optional<PlayerKey> open_player_key(const std::array<std::uint8_t, 32>& cli
   return key;
 }
 
+std::array<std::uint8_t, 8> player_key_tag(const PlayerKey& key, std::string_view label) {
+  std::array<std::uint8_t, 8> tag{};
+  crypto_blake2b_keyed(tag.data(), tag.size(), key.data(), key.size(),
+                       reinterpret_cast<const std::uint8_t*>(label.data()), label.size());
+  return tag;
+}
+
 KeyPair::~KeyPair() { crypto_wipe(secret_.data(), secret_.size()); }
 
 std::optional<std::array<std::uint8_t, 32>> KeyPair::shared_with(const KeyShare& peer) const {

@@ -38,6 +38,12 @@ std::string Hex(std::uint64_t v) {
 
 constexpr std::uint32_t kLastOrder = 3;  // One: the last of 2, 3, 1
 
+// Issue 243: the Deku Tree brothers' solve, as coop_scrub_talk.h's kTalkFlags names them.
+constexpr std::array<std::uint32_t, 2> kDekuTreeSolve{
+    0xd2f46f66,  // InsideTheDekuTree_RoomK_Cleared
+    0x60c22ed7,  // InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003
+};
+
 std::string Label(const Brother& b) {
     return "brother " + std::string(b.name) + " " + Hex(b.hash);
 }
@@ -55,6 +61,13 @@ const Brother* FindBrother(std::uint64_t hash) {
         }
     }
     return nullptr;
+}
+
+std::span<const std::uint32_t> Puzzle::SolveFlags(std::uint64_t manager) {
+    if (manager == kDekuTreeManager) {
+        return kDekuTreeSolve;
+    }
+    return {};  // the Kokiri Forest grotto's: no saved solve flag (its chest opens from the manager)
 }
 
 bool IsManager(std::uint64_t hash) {
@@ -117,6 +130,7 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         animation_.clear();
         echo_until_.clear();
         solved_.clear();
+        solve_due_.clear();
         if (!pending_.empty()) {
             out.notes.push_back("scrubs: " + std::to_string(pending_.size()) +
                                 " hits from other games dropped: we left the scene");
@@ -143,6 +157,9 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
                 s.animation.find("SmallHit") != std::string::npos &&
                 solved_.insert(b->manager).second) {
                 out.notes.push_back("scrubs: " + Label(*b) + " took the last hit: its manager is solved here");
+                if (!SolveFlags(b->manager).empty()) {
+                    solve_due_.insert(b->manager);  // issue 243: the fight ends at the hit
+                }
             }
             if (anim_lines_ < kMaxAnimLines && !IsIdleAnimation(s.animation)) {
                 ++anim_lines_;
@@ -173,6 +190,19 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         animation[s.address] = s.animation.empty() ? before : s.animation;
     }
     animation_ = std::move(animation);
+    // Issue 243: the solve flags of a manager solved here, once our Link is in no event.
+    if (!solve_due_.empty() && !in_event_) {
+        for (const std::uint64_t m : solve_due_) {
+            const auto flags = SolveFlags(m);
+            out.solve.insert(out.solve.end(), flags.begin(), flags.end());
+            out.notes.push_back("scrubs: manager " + Hex(m) + " solved at the hit: its " +
+                                std::to_string(flags.size()) + " solve flags are set here (issue 243)");
+        }
+        solve_due_.clear();
+    } else if (!solve_due_.empty() && in_event_ && !solve_waited_) {
+        out.notes.push_back("scrubs: the solve flags wait: our Link is in an event");
+    }
+    solve_waited_ = !solve_due_.empty();
     if (!brothers) {
         first_seen_us_ = 0;  // out of their room: a later visit settles again
     } else if (first_seen_us_ == 0) {
@@ -324,6 +354,8 @@ void Puzzle::Reset() {
     animation_.clear();
     echo_until_.clear();
     solved_.clear();
+    solve_due_.clear();
+    solve_waited_ = false;
     in_event_ = false;
     last_event_us_ = 0;
     pending_.clear();

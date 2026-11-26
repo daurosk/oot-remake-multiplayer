@@ -1,0 +1,95 @@
+# hs-boss-stun-gohma (Hookshot, branch boss-stun-c-2; issue 150, player-reports rows 135 and 138: "only one player
+# could stun Gohma", the stunner = her owner). Root cause: a seed or nut in her eye takes no life, so the Life's last
+# hit id never moves and the copy's own stun (its AI's weak-point reaction) was skipped as a copy's own change. Now
+# our own shot's end beside a copy boss (coop_spawn's flights -> CoopBossNative::Table::NoteOwnShotEnd) lets the
+# copy run its own reaction; its stun sends the DAMAGE of 0 and the server hands her to the stunner.
+# Two players, A walks in first (A owns her), B ~25 s later with a copy. B seeds her eye (6 tries, 8 s apart: the
+# eye is open only in her PreAttack/AttackWait); then A, a copy after the hand-over, seeds her (the reverse).
+# SAVE / FLAGS: as hs-boss-fix-gohma (pre-Gohma save in both lanes' baselines; the setflags clear the boss flags).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-stun-gohma
+# PASS needs SCREENSHOT proof (owner rule 2026-11-18: no PASS from log lines alone):
+#  1. LOG B: "Enemy_DungeonBoss_Gohma: our own shot ended at it: the copy runs its own reaction" and
+#     "share stunned here, said to the owner: Enemy_DungeonBoss_Gohma"; then "Enemy_DungeonBoss_Gohma: now ours".
+#     B's 10 s bosses line: "(N late, M hits by our shots)" with M > 0.
+#  2. SHOTS: at one of B's marks b-stun1..b-stun6 Gohma lies stunned (Down_*: on the floor, eye open) in BOTH
+#     games (B-b-stunN-A and B-b-stunN-B). B's stun must show in B's own game (the copy's stun), not only in A's.
+#  3. REVERSE: after the hand-over A is the copy: at one of A's a-stun1..a-stun3 Gohma stunned in both games; A's
+#     log "our own shot ended at it" and "stunned here, said to the owner".
+#  4. SOLO path unchanged: no "our own shot ended at it" in the owner's log while it owns her (the rule is copies
+#     only); A's lines before the hand-over have none.
+#  0. VOID (not a FAIL) if A's Gohma never leaves Pre_Battle_Ceiling_* after "mark a-trigger" (hs-boss-fix-gohma 0).
+# Group line once proof-shots is merged (groups.py see=; proofs.txt lines in reports/boss-stun-c-2.md):
+#   hs-boss-stun-gohma  expect="B:our own shot ended at it: the copy runs its own reaction"
+#     expect="B:stunned here, said to the owner: Enemy_DungeonBoss_Gohma"  label="#150 stun by a non-owner"
+#     see=hs-boss-stun-gohma-A  see=hs-boss-stun-gohma-B
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 2400               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (18.49 59.97 67.79); the owner's Link must
+rstick 0 1 60           # walk into the room for her own trigger (GohmaStage Banc: floor Area x 22.5 z 68.2)
+press ZL 10             # look up at her
+wait 900
+mark a-trigger          # her anim leaves Pre_Battle_Ceiling_* here ('(ours)'), else the run is VOID
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her (x 0.0 was the doorway, 17 m from her)
+mark a-moved
+wait 1500               # B's intro (B walks in now)
+mark a-watch0
+wait 4200               # B's six seeds (b-seed1..6): watched from here, shots at B's marks
+mark a-watch1
+wait 1200
+hold ZL 30              # A's seed into the eye (A is the copy now if B's stun handed her over)
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed1
+wait 90
+mark a-stun1
+wait 390
+hold ZL 30              # A's seed into the eye (A is the copy now if B's stun handed her over)
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed2
+wait 90
+mark a-stun2
+wait 390
+hold ZL 30              # A's seed into the eye (A is the copy now if B's stun handed her over)
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed3
+wait 90
+mark a-stun3
+wait 390
+wait 600
+mark end

@@ -1,0 +1,97 @@
+# hs-intro-seen-gohma (row 244 (a), branch cutscene-244; docs/dungeons-boss.md "Not everyone skips the intro"):
+# hs-boss-fix-gohma's route (A walks in first and owns Queen Gohma, B ~25 s later through the door), but B's save
+# says it saw the intro before (HavePlayedEvent.Dm_Deku_BossIn left 1, a public lobby's mixed saves), so before
+# 71c669e1 B's game was "ready to own the boss" by that flag while it still played the intro, and could take her
+# then (piscesgamer97's King Dodongo: owned by the game still in the cutscene, stuck in the pit for the others).
+# A's side is hs-boss-fix-gohma's A unchanged. SAVE: the kit save; the setflags put the Deku boss flags back.
+# Run: hookshot.py run --lane 1 --name hs-intro-seen-gohma --script-a <this> --script-b <the .B file> --no-load
+# PASS (proof lines and shots):
+#  1. B, while its intro plays: "boss: ... not ready to own the boss: our game plays its intro now"; B never logs
+#     "ready to own the boss" before its intro is over (its event-end line). If B's game plays no intro at all
+#     (its flag skips it): INCONCLUSIVE for row 244, note what B's log shows.
+#  2. A stays the owner through B's intro: A "native boss sync on (BSA 0x..., ours)", B "a copy", B "the owner's
+#     verbs came"; no "Enemy_DungeonBoss_Gohma: now ours" in B before its b-seed steps.
+#  3. Shots a-moved / b-moved: each Link has control after the intro; Gohma in the same place on both screens
+#     (a-watch1 / b-stun), not left where an intro put her.
+#  0. As hs-boss-fix-gohma: after "mark a-trigger" A's Gohma leaves Pre_Battle_Ceiling_* "(ours)", else VOID.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 2400               # the door's event, the intro, Gohma's own appear event
+mark a-after-intro
+goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (18.49 59.97 67.79); the owner's Link must
+rstick 0 1 60           # walk into the room for her own trigger (GohmaStage Banc: floor Area x 22.5 z 68.2)
+press ZL 10             # look up at her
+wait 900
+mark a-trigger          # her anim leaves Pre_Battle_Ceiling_* here ('(ours)'), else the run is VOID
+goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her (x 0.0 was the doorway, 17 m from her)
+mark a-moved
+wait 1500               # B's intro (B walks in now)
+mark a-watch0
+wait 600
+mark a-watch1           # B's seeds: Gohma stunned here too?
+wait 600
+mark a-watch2
+wait 600
+hold ZL 30              # A's own seed into the eye
+hold ZL+ZR 60
+hold ZL 30
+mark a-seed
+wait 120
+hold ZL+LSTICK_UP 90    # locked on: walk up to the stunned eye
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit1
+wait 900
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 120
+hold ZL+LSTICK_UP 90
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark a-hit2
+wait 600
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # 8. the owner's Gohma dies (direct life 0 write): the copy must die too
+wait 120
+mark a-k1
+wait 900
+mark a-k2
+wait 1200
+mark end

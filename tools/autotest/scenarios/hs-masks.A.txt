@@ -1,13 +1,13 @@
 # hs-masks (Hookshot, issue 91): wear-masks-real on Hookshot. A is given three masks, puts each
-# on ZR and wears it, then takes the last one off; A steps aside to face B, B watches A's puppet.
+# on ZR and wears it through the game's own equip call (`dress`), then takes the last one off; A steps aside to face B, B watches A's puppet.
 # Nothing in the module differs from the emulator here (the same hook files; the pack is in
 # mods\contents before Hookshot starts), so this run is the proof.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-masks
-# Pass:
+# Pass (also: A's log 'test setenum PlayerStatus.AssignableItem.Child ?' lines: empty, Bomb, then Skull's own hash):
 # - B's log: "P1 wears head 'Armor_Child_Mask_Skull'", then Bunny and Keaton; at off
 #   "P1 takes off head ... (returned 0x1)", and no new "create CoopPuppet_Child".
 # - B's shots b-skull, b-bunny, b-keaton: the mask on A's puppet; b-off: none.
-# - A's shots: the mask on A's own Link at skull, bunny, keaton.
+# - A's shots: the mask on A's own Link at skull, bunny, keaton (after `dress head`); none at off.
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 give PouchData.Armor_Child_Mask_Skull.StockNum
@@ -19,22 +19,46 @@ stick 0.7 0 30
 stick 0 -0.4 12
 wait 60
 mark before
+# Readback (test-give-0116-2): 'setenum ... ?' logs the ZR enum's value as a hash. Bomb is the control (assign
+# works for it): the value after 'assign Bomb' is Bomb's hash; after 'assign SkullMask' it must be a different
+# non-zero hash, and after the press the item box must show the mask. Same hash as Bomb or unchanged = the
+# game did not take the mask value (then compare the pause-screen shot and the ownership flags).
+setenum PlayerStatus.AssignableItem.Child ?
+give bombs
+wait 30
+assign Bomb
+wait 30
+setenum PlayerStatus.AssignableItem.Child ?
 assign SkullMask
 wait 30
-press ZR 10            # puts the Skull Mask on
+setenum PlayerStatus.AssignableItem.Child ?
+press ZR 10            # the item use, still tried as a player would (the item box shows the mask)
+wait 120
+setenum PlayerStatus.AssignableItem.Child ?
+# The wear itself: the flag, then the game's own equip call (0x2df6c80 from the flags, as a save load and the
+# pause menu make it): the mask is on A's own Link. 'wear' alone only wrote the flag.
+wear head Armor_Child_Mask_Skull
+wait 30
+dress head
 wait 240
 mark skull
 assign BunnyMask
 wait 30
-press ZR 10            # the Bunny Hood in its place
+wear head Armor_Child_Mask_Bunny
+wait 30
+dress head             # the Bunny Hood in its place
 wait 240
 mark bunny
 assign KeatonMask
 wait 30
-press ZR 10
+wear head Armor_Child_Mask_Keaton
+wait 30
+dress head
 wait 240
 mark keaton
-press ZR 10            # the same mask again: taken off
+wear head none         # taken off: the game's own take-off for an empty head flag
+wait 30
+dress head
 wait 300
 mark off
 wait 300

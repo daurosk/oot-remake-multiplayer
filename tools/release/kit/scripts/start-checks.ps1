@@ -1,4 +1,4 @@
-# The checks "Start OoT Co-op.bat" (start.ps1) runs before the game starts, one function each, so
+# The checks "Start Squadala.bat" (start.ps1) runs before the game starts, one function each, so
 # tools/release/tests/launch_test.ps1 can try each case without a game. Each says what is wrong in
 # plain words; start.ps1 decides what to do about it.
 
@@ -59,9 +59,9 @@ function Test-KitWritable([string]$Kit) {
     } catch { return $false }
 }
 
-# A short folder for the kit when this one cannot be used: C:\OoT-Coop (a new name when that one is taken
-# by something else), else C:\Users\Public\OoT-Coop. Both are plain ASCII and outside OneDrive.
-function Get-KitMoveTarget([string[]]$Bases = @("$env:SystemDrive\OoT-Coop", "$env:SystemDrive\Users\Public\OoT-Coop")) {
+# A short folder for the kit when this one cannot be used: C:\Squadala (a new name when that one is taken
+# by something else), else C:\Users\Public\Squadala. Both are plain ASCII and outside OneDrive.
+function Get-KitMoveTarget([string[]]$Bases = @("$env:SystemDrive\Squadala", "$env:SystemDrive\Users\Public\Squadala")) {
     foreach ($base in $Bases) {
         for ($i = 1; $i -le 9; $i++) {
             $d = if ($i -eq 1) { $base } else { "$base-$i" }
@@ -88,9 +88,9 @@ function Get-KitMissingFilesText([string[]]$Missing) {
         return @(
             "Your antivirus has most likely removed a file of this kit: $first.",
             'Windows Security: Virus & threat protection > Protection history: restore it, and add this kit''s folder under',
-            '"Exclusions". Or unzip the kit again. Then start "Start OoT Co-op.bat" again.')
+            '"Exclusions". Or unzip the kit again. Then start "Start Squadala.bat" again.')
     }
-    return @("Files of this kit are missing ($first): the unzip did not finish. Unzip the kit again, then start ""Start OoT Co-op.bat"".")
+    return @("Files of this kit are missing ($first): the unzip did not finish. Unzip the kit again, then start ""Start Squadala.bat"".")
 }
 
 # The Visual C++ runtime the co-op module and the server need: the DLLs not in the kit's hookshot\ folder
@@ -138,7 +138,7 @@ function Register-KitFolder([string]$ListFile, [string]$Kit) {
     return $others
 }
 
-# The kit's name line in VERSION.txt ("kit: oot-coop-<version> ..."), or ''.
+# The kit's name line in VERSION.txt ("kit: Squadala-<version> ...", oot-coop-<version> up to v0.11.2), or ''.
 function Get-KitName([string]$Kit) {
     $v = Join-Path $Kit 'VERSION.txt'
     if (-not (Test-Path -LiteralPath $v)) { return '' }

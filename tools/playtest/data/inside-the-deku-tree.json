@@ -1,0 +1,18 @@
+{
+  "kit": 1,
+  "title": "Inside the Deku Tree, entrance room: the map chest",
+  "scene": "InsideTheDekuTree",
+  "positions": {
+    "map-chest": {"x": 6.51, "y": 108.4, "z": 7.25, "note": "The map chest, Obj_TBox_A_02, where the actor stands."},
+    "chest-front": {"x": 5.45, "y": 108.9, "z": 6.15, "note": "Link at the chest's front: face the chest and A opens it."},
+    "chest-beside": {"x": 7.57, "y": 108.9, "z": 8.35, "note": "1.5 m beside the chest: another game's player looks at it from here."}
+  },
+  "routes": {
+    "front-to-beside": {"start": "chest-front", "steps": ["chest-beside"], "note": "Two places, a short walk or a place call."}
+  },
+  "menu_paths": {},
+  "stuck_spots": [
+    {"x": 6.5, "y": 108.5, "z": 8.6, "radius": 1.0, "note": "place here (beside the chest): the camera ended inside the chest's side and A answered with an empty prompt, so the chest did not open.", "fix": "Place Link at chest-front instead and face the chest."}
+  ],
+  "notes": ["Positions are from tools/autotest/scenarios/chest-other.A.txt (metres, the game's own coordinates).", "The stuck spot is from a two-game play-test run on 2026-11-23 (one try, not repeated)."]
+}

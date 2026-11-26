@@ -1,0 +1,42 @@
+From 8bb11f80596a620712abaed32134a62a548ea29d Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Wed, 18 Nov 2026 21:05:51 -0900
+Subject: [PATCH] Co-op menu tabs: an opaque column, and the page arrow after a
+ value
+
+draw_coop_page (patches 0012, 0019): the module tab's column is filled with
+the column's own colour first, then column() draws its edge lines whole, so
+nothing of the game behind it shows under the last row (the game's own pause
+System page, Subtitle Display and the rest, showed faintly there). An action
+row with a value and `right` set draws the page arrow after the value, as an
+action with no value does: the Multiplayer tab's rows can say where they
+stand (Off, Hosting, the player's name) and still open a page.
+---
+ gpu/vk/vk_menu.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 33a59085..7f5dbc99 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -2632,6 +2632,10 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+     float cx0, cx1, hx0, hx1;
+     bool narrow;
+     columns(c, &cx0, &cx1, &hx0, &hx1, &narrow);
++    // (oot-remake-multiplayer, patch 0031: the column's own colour with nothing of the game behind it, drawn first so the
++    // column's edge lines stay whole. A module tab's rows are few, and the column is a little see-through for the stock
++    // tabs' full pages; behind a short page the game's own pause page (Subtitle Display, Voice Language...) showed faintly)
++    c.d->AddRectFilled(ImVec2(cx0, hh), ImVec2(cx1, c.h), ui::rgba(34, 26, 17));
+     column(c, cx0, cx1, hh);
+     HosCoopMenuPage p{};
+     if (!coop::menu_page(coop_tab, &p)) p = HosCoopMenuPage{}, p.selected = -1;
+@@ -2719,6 +2723,9 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+             ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1, selected && !fixed ? ui::kGoldInk : ui::kInk);
+         } else {
+             choice_cell(c, va, vb, value, selected, false, false, fixed);
++            // (patch 0031: an action with a value that also opens a page: right set, the page arrow after the value)
++            if (r.right)
++                ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1, selected && !fixed ? ui::kGoldInk : ui::kInk);
+         }
+         hits.add(rx0, std::max(y, top - 8 * s), rx1, std::min(y + rh, bottom + 8 * s), menu_hit::kRow, i, va.x, vb.x, 0, 0);
+     }

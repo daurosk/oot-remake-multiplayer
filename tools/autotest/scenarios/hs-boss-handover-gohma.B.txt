@@ -1,0 +1,81 @@
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -12.0 48.5 66.5   # the corridor
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark b-in
+wait 2400               # the door's event, the intro, her appear
+mark b-after-intro
+goto 17.0 67.8 1.5 600  # under her ceiling spot: her drop
+rstick 0 1 60
+press ZL 10
+wait 900
+mark b-trigger
+goto 12.0 67.5 1.5 600  # inside the room, west of her
+mark b-moved
+wait 1500               # A's intro (A walks in now)
+mark b-watch0
+wait 1500
+mark t1
+hit Enemy_DungeonBoss_Gohma 3   # the owner's own hit
+wait 600
+mark t2
+wait 600
+mark t3
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 20
+hit Enemy_DungeonBoss_Gohma 2   # inside the hand-over
+wait 580
+mark t4
+wait 600
+mark t5
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 20
+hit Enemy_DungeonBoss_Gohma 2   # inside the hand-over
+wait 580
+mark t6
+wait 600
+mark t7
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 180
+hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+wait 420
+mark t8
+wait 600
+mark t9
+stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
+wait 180
+hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+wait 420
+mark t10
+wait 600
+mark after-turns
+wait 1200               # her death cutscene, if she died
+mark d1
+wait 1800
+mark end

@@ -137,9 +137,10 @@ void Set(std::string_view key, std::string_view value, const std::string& where,
         }
         settings.color = color;
     } else if (key == "client_id" || key == "last_invite" || key == "last_host" ||
-               key.substr(0, 5) == "look_") {
+               key.substr(0, 5) == "look_" || key == "join_lan") {
         // Written into coop.ini by the game's co-op module itself (the title's
-        // client id, Join again, Customize) and read there, not here.
+        // client id, Join again, Customize), or by the Nucleus handler for the
+        // module (join_lan: join a game on this network), and read there, not here.
     } else {
         errors.push_back(where + ": unknown key '" + std::string(key) + "', line ignored");
     }

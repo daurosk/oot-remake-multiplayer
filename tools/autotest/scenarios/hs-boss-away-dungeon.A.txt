@@ -1,0 +1,59 @@
+# hs-boss-away-dungeon (rows 136, boss-away-0115): A (host) is INSIDE the Deku Tree, in room E (not Gohma's area),
+# when B (a guest) kills Gohma. Before the fix A's set waited for another scene's load: the shared quest deleted her
+# in A's game but Gohma_DefeatBoss never came, so A's boss room had no boss, no warp, no way out.
+# SAVE (both lanes, else no Gohma body): quest Get_StoneOfForest = GoToBossRoom and her set alive, every slot:
+#   save_flags.py set <laneN-X>\autotest-save\slot_0*\progress.sav enum:0x7d776b61=0xb5df43cb bool:0x6b093b51=0
+#   bool:0x3419ccb3=0 bool:0x00c0a2f6=0 bool:0x5882768c=0   (offline\boss-away-0115-probe.ps1 does it)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-away-dungeon -Server <protocol 13 server>
+# PASS (shots decide, screenshot rule):
+#  1. B: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land).
+#  2. A: "Queen Gohma was beaten by the group, not in this game: Gohma_DefeatBoss = 1 (written)" while A is in room E
+#     (before a-walk), not at a later load.
+#  3. A's shots a-room / a-end: Gohma's room with the BLUE WARP and no Gohma; B's b-end the same room, warp up.
+#     FAIL: A's room empty (no warp) or Gohma in it.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the game drops her death event as played (hs-gohma-death)
+wait 120
+place -14.5 79.6 -6.5   # room E (hs-deku-torch's spot): in the dungeon, far from Gohma's area
+wait 300
+mark a-away
+wait 6120               # B's walk, intro, her trigger (b-trigger, +45 s), fight and kill (B's b-kill at about the same time)
+mark a-kill
+wait 600
+mark a-given            # the set must be in A's log by now, A still in room E
+place -12.0 48.5 66.5   # the corridor before Gohma's door
+wait 240
+mark a-walk
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door
+wait 600
+mark a-room
+goto 7.5 67.2 1.5 600   # toward the room's centre (the warp)
+wait 300
+mark a-end
+wait 300
+mark end

@@ -1,0 +1,15 @@
+# hs-held-adult, B: adult in Kakariko too (the same scene as A, so A's adult puppet is live), backs off,
+# faces A and watches. B's log and shots are the check (hs-held-adult.A.txt).
+mark start
+setflag Sequence_IsChildhood 0
+warp KakarikoVillage_Adult
+wait 900
+mark after
+wait 200
+stick 0 -0.6 30         # walk back toward the camera
+stick 0 0.3 8           # turn to face up the path
+press ZL                # camera behind B
+wait 60
+mark ready
+wait 2400               # watches A's puppet while A goes through its items
+mark end

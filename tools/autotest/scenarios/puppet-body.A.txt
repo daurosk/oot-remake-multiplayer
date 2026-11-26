@@ -1,0 +1,33 @@
+# puppet-body (proof-0116, native puppets phase 1, docs/native-puppets.md section 7): packs --puppet-body on both.
+# PASS (shots both): walk-into = A stopped at B's copy (A's x short of 194.0), not through it; on-top = A standing ON the
+# copy (A log: our y = copy top); B's own screen: B unmoved.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 600
+place 195.93 163.4 309.87      # was 200.93: on the Kokiri Forest exit (harness-0116); now 4 m east of B, facing it
+wait 30
+goto 188.0 309.87 0.5 300
+wait 30
+mark walk-into
+place 191.93 165.4 309.87
+wait 60
+mark on-top
+wait 60
+mark on-top2
+wait 300
+mark end

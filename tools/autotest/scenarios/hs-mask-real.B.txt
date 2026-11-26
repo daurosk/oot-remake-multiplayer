@@ -1,0 +1,8 @@
+# hs-mask-real: B faces where A stands after A steps aside, camera behind B (as hs-masks.B); A's marks take
+# both games' shots, so B only watches.
+mark start
+wait 120
+stick 1 0 8             # face right, towards A
+press ZL                # camera behind B
+wait 1800
+mark end

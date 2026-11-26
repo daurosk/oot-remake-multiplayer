@@ -1,0 +1,35 @@
+# save-refresh-list (player report 124, the save arrives while the guest's load list is open): B has a save of its own
+# and opens its load list before it is in a session (the server starts later); the host's save then arrives under the
+# open list. The game's list reset says "not now" while a save screen holds the list (asked again, quietly), and the
+# re-read runs once B is back on the title.
+# Best effort on who hosts: A must be player 1 (b-guest). If B was welcomed first the run says nothing: run it again.
+# PASS: the lines AND the shots: b-list-open (B's own list), b-list-under (the list as the save arrived: no crash, no
+# half list), b-title-back (Continue first), b-load-list (the host's slot), b-in-game.
+#! switches B:LICHII_COOP_HOST_SAVE=1,B:LICHII_COOP_TEST_OWN_SAVE=0
+#! timeout 540
+server stop
+# launch, not start: the server is down, so no game can be welcomed yet (start waited 540 s for it and A never came)
+launch A B
+sleep 10
+play B save-refresh.press.txt
+shot b-list-open
+freeze B
+server start
+sleep 20
+thaw B
+sleep 60
+shot b-list-under
+lines b-guest B min=1 coop: welcomed as player 2
+lines b-switched B min=1 coop: save: now playing from the co-op save folder
+lines b-quiet B max=40 coop: title: save list: the game's list reset said not now
+play B save-refresh.back.txt
+shot b-title-back
+lines b-list-read B min=1 coop: title: save list: read again by the game: a save yes
+lines b-not-kept B max=0 coop: title: save list: the open title keeps its buttons
+play B save-refresh.press.txt
+shot b-load-list
+play B save-refresh.back.txt
+load B
+sleep 20
+shot b-in-game
+lines b-no-crash B max=0 unhandled exception|fault at|coop: null read

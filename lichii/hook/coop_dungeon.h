@@ -43,10 +43,10 @@ std::span<const Flag> Flags();
 // (where they stand, Navi) or a one-way ride, and stay out.
 std::span<const Flag> LiveFlags();
 
-// A saved Bool with no name in GameDataList: the game makes it for one placed
-// switch (OperateGameDataAllocAutogenGameData in the room's logic graph) and
+// A saved Bool with no name in GameDataList: the game makes it for one
+// placement (OperateGameDataAllocAutogenGameData in the room's logic graph) and
 // the room reads it at load and live. Flags() cannot list it (it is found by
-// name), so it is listed here by hash, as seen set in a game.
+// name), so it is listed here by hash (tools/puppet_pack/autogen_flags.py).
 struct AutogenFlag {
     std::uint32_t hash;
     const char* dungeon;
@@ -90,6 +90,13 @@ struct Key {
 // Every such saved (ResetTypeValue 24) key placed in a dungeon. They are
 // one-time: once 1 in any game, 1 in all (shared as pickups, docs/dungeon.md).
 std::span<const Key> Keys();
+
+// Row 220 (puzzles reset): the same saved (ResetTypeValue 24) keys placed OUTSIDE the dungeons, the overworld's and
+// the grottos' obstacles that stay done: boulders blown up or thrown away, cracked walls, grotto covers, the Hyrule
+// Field grottos' webs, Zora's Domain's red ice, a grotto's or the Graveyard's room of enemies beaten. Not pickups
+// (CoopPickups), chests (CoopChests), Boss Rush (DreamWorld) or the minigames' targets: each player's own. One-time,
+// as Keys(): `dungeon` is the area (Banc folder) here.
+std::span<const Key> WorldKeys();
 
 // Adds the dungeon flags and keys to `shared` when `on`, making the list when there is
 // none. Flags already there are kept once. Returns how many it added.

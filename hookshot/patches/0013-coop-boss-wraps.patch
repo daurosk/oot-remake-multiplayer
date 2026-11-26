@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From a548a365c5443f7465f8fcd0a61b9d02acd863d3 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 00:40:00 -0900
-Subject: [PATCH] Co-op boss wraps: a BSA component's brain and action verbs
- to the module
+Subject: [PATCH] Co-op boss wraps: a BSA component's brain and action verbs to
+ the module
 
 Two more wrapped game functions in patch 0005's table
 (nx2/coop_world_wraps.py WRAPS; their ids in host/hos_coop_bosses.h), for
@@ -17,10 +17,11 @@ machinery, the checks (build id, first words) and the hello's bits are 0005's.
  host/hos_coop_bosses.h  | 23 +++++++++++++++++++++++
  nx2/coop_world_wraps.py |  8 ++++++++
  2 files changed, 31 insertions(+)
+ create mode 100644 host/hos_coop_bosses.h
 
 diff --git a/host/hos_coop_bosses.h b/host/hos_coop_bosses.h
 new file mode 100644
-index 0000000..dc48c75
+index 00000000..dc48c75d
 --- /dev/null
 +++ b/host/hos_coop_bosses.h
 @@ -0,0 +1,23 @@
@@ -48,7 +49,7 @@ index 0000000..dc48c75
 +
 +#endif
 diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
-index 8877d6c..03c7d91 100644
+index 8877d6cd..03c7d916 100644
 --- a/nx2/coop_world_wraps.py
 +++ b/nx2/coop_world_wraps.py
 @@ -24,6 +24,14 @@ WRAPS = (
@@ -66,6 +67,3 @@ index 8877d6c..03c7d91 100644
  )
  
  
--- 
-2.47.0
-

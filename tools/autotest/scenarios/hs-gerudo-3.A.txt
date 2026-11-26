@@ -1,0 +1,4 @@
+# hs-gerudo phase 3 (A): stays at cell 1.
+mark a-wait2
+wait 900
+mark a-wait2-done

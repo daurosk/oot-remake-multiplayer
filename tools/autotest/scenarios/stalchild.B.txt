@@ -1,3 +1,9 @@
+# misc-fails-0115: on Hookshot the warp's start is not used (Longshot's teleport takes a destination only): in
+# bigrun-0115 both landed at the field's own start (197.5 163.2 309.9, by the Lost Woods bridge) and the goto to
+# 186 22 walked them into the Kokiri woods (A ended at -97 113 -37): no Stalchild could rise (PLAYED, none in view).
+# Now both are placed on the open ground in front of the Market where peahat plays (ground 145.7 at x -88..-110,
+# z 58..76; placed 5 m up, as peahat), A at -88 58.6, B at -95 76 facing A. Stalchildren rise at night near Link
+# anywhere in the field's grass; ZL targets the nearest, so the fight no longer walks to fixed spots.
 # stalchild, B: loads into the same spot, then stands 8 m east of the fight and faces it, so
 # B's screen shows the copies rise, fight, die and drop.
 mark start
@@ -14,8 +20,9 @@ press A                 # loads the save, then the warp
 wait 2400               # the save loads, then the warp lands (about 30 s)
 mark field
 wait 1500
-goto 186.0 24.0 1.0 900
-toward 174.0 27.0 20
+place -95.0 151.0 76.0   # peahat's B spot, 18 m from A
+wait 60
+toward -88.0 58.6 10     # face A's fight
 mark watching
 wait 3600
 mark end

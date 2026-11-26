@@ -7,6 +7,8 @@
 
 #include <enet/enet.h>
 
+#include "bind_host.hpp"
+
 namespace coop::server::upnp {
 
 namespace {
@@ -453,10 +455,10 @@ bool Mapping::open() {
     ENetSocket s;
     ~Closer() { enet_socket_destroy(s); }
   } closer{s};
-  ENetAddress any{};
-  any.host = ENET_HOST_ANY;
-  any.port = 0;
-  enet_socket_bind(s, &any);
+  if (bind_socket(s, config_.bind, 0) != 0 && config_.bind) {
+    say("cannot bind the network socket to look for the router");
+    return false;
+  }
   enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
   enet_socket_set_option(s, ENET_SOCKOPT_TTL, 2);
   ENetAddress group{};

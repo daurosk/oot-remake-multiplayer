@@ -9,21 +9,12 @@
 #   'Armor_Adult_HoverBoot'", then 'Armor_Adult_HeavyBoot'; at off "P1 takes off boots ...
 #   (returned 0x1)" and no new "create CoopPuppet_Adult". B's shots: the boots on the puppet.
 # - A's "slots (local player" lines: which slot or armor link holds the boots.
-#! noload
-#! start coop: test warp done
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
+setflag Sequence_IsChildhood 0  # set AFTER the save is loaded (run.ps1 loads it first): at the title the load put the save's age back
+wait 60                 # the flag takes 30+ frames before the warp (kit_setup: Link loads at the flag's age)
 warp KakarikoVillage_Adult Kakariko_WellSide
-wait 1200
-mark title
-press A
-wait 180
-press A
-wait 180
-press A
-wait 300
-press A
-wait 2400
+wait 1200               # the warp lands
 mark after
 give PouchData.Armor_Adult_HoverBoot.StockNum
 give PouchData.Armor_Adult_HeavyBoot.StockNum

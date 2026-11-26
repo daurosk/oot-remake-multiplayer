@@ -215,6 +215,21 @@ TEST_CASE("shots: a copy is shown as late as the puppet, between the owner's sam
     CHECK(t.Shown(1'133'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
 }
 
+TEST_CASE("shots: over a slow line a copy is shown as late as its shooter's puppet (#239)") {
+    // At 300 ms ping the owner's samples come ~300 ms old: shown 100 ms late the copy was always past the
+    // newest one (carried on, held, then jumped at each sample). Shown at the shooter's delay it stays between two.
+    shots::Track t;
+    for (std::uint64_t i = 0; i <= 10; ++i) {
+        REQUIRE(t.Add({1'000'000 + i * 33'000, {static_cast<float>(i), 10, 0}, {30, 0, 0}}));
+    }
+    constexpr std::uint64_t kSlow = 350'000;
+    // The newest sample is at 1.33 s; at 1.6 s it is 270 ms old. Halfway between samples 7 and 8:
+    const auto at = t.Shown(1'000'000 + 7 * 33'000 + 16'500 + kSlow, true, kSlow);
+    CHECK(at[0] == doctest::Approx(7.5f));
+    // The default stays the LAN's 100 ms.
+    CHECK(t.Shown(1'000'000 + 3 * 33'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
+}
+
 TEST_CASE("shots: a copy flies in even steps where carrying on stepped") {
     // The owner's seed flies at 30 m/s along x. Its game moves it 30 times
     // a second; the owner walks 60 times a second and sends a sample at most
@@ -285,6 +300,9 @@ TEST_CASE("shots: why an owner's projectile left the list") {
     CHECK(shots::GoneReason(*shots::Find("Shootable_DekuSeed"), 300'000, 20) == R::hit);
     CHECK(shots::GoneReason(*shots::Find("Weapon_Boomerang"), 2'000'000, 15) == R::gone);  // caught
     CHECK(shots::GoneReason(*shots::Find("Shootable_Hook"), 900'000, 10) == R::gone);
+    // #248: a nut bursts where it stops, slowed by its bounce or not: hit, so the copies burst too.
+    CHECK(shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 0.5f) == R::hit);
+    CHECK(shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 12) == R::hit);
 }
 
 TEST_CASE("shots: a bomb's moment on the server clock") {
@@ -515,16 +533,78 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].act == Act::show);
     // Issue 166: at the spot the copy itself plays the arrow's own hit effect (the director emits it once).
     CHECK(copies[0].effect == "Hit_AdditionalAttacker");
+    // ... and the wall-hit sound on its own sound user (the stand-in's ReactionHit).
+    CHECK(copies[0].sound == "Hit_Bow_Arrow");
     CHECK_FALSE(copies[0].real);
     CHECK(sync.HitEffects() == 1);
     CHECK(shots::HitEffect(shots::Kind::seed) == "Hit_AdditionalAttacker");
     CHECK(shots::HitEffect(shots::Kind::bomb).empty());
+    CHECK(shots::HitSound(shots::Kind::seed) == "Hit_SlingShot_Bullet");
+    CHECK(shots::HitSound(shots::Kind::arrow) == "Hit_Bow_Arrow");
+    CHECK(shots::HitSound(shots::Kind::bomb).empty());
     copies.clear();
     sync.Tick(kScene, 2, got + hold, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);  // counted once
+}
+
+TEST_CASE("shots: a nut copy bursts where the owner's nut burst (#248)") {
+    CoopSpawn::Sync sync;
+    sync.SetImpacts(false);
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 11};
+    spawn.actor = "Item_DekuNut";
+    spawn.state.time = {now, 0};
+    spawn.state.position = proto::Vec3{0.0f, 1.0f, 0.0f};
+    spawn.state.velocity = proto::Vec3{10.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    now += 50 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    // The owner's nut burst after its bounce, slow: the sender's reason is hit now.
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 0.5f);
+    remove.position = {2.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    const std::uint64_t got = now + 33 * kMs;
+    copies.clear();
+    sync.Tick(kScene, 2, got, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // not deleted at the remove (the old bug)
+    CHECK(copies[0].effect.empty());    // not at the spot yet (shown kBehindUs late)
+    // Shown reaching the spot: it plays the nut's own burst there, once.
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));
+    CHECK(copies[0].effect == "Chemical_Light");
+    CHECK(copies[0].sound == "Chemical_Light");  // (its AI plays the key on both users)
+    CHECK(sync.HitEffects() == 1);
+    // Then gone, as on the owner's screen.
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::nut), {}, live, send,
+              copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::remove);
+    CHECK(sync.HitEffects() == 1);  // counted once
+    CHECK(shots::HitEffect(shots::Kind::nut) == "Chemical_Light");
+    // Caught or reeled in, never burst: no end effect for the boomerang and the hook tips.
+    CHECK(shots::HitEffect(shots::Kind::boomerang).empty());
+    CHECK(shots::HitEffect(shots::Kind::hook).empty());
+    CHECK(shots::HitEffect(shots::Kind::hook_long).empty());
+    CHECK(shots::HitSound(shots::Kind::nut) == "Chemical_Light");
+    CHECK(shots::HitSound(shots::Kind::boomerang).empty());
+    CHECK(shots::HitSound(shots::Kind::hook).empty());
+    CHECK(shots::HitSound(shots::Kind::hook_long).empty());
 }
 
 TEST_CASE("shots: a bounce is a turn of over 45 degrees at speed") {
@@ -536,7 +616,7 @@ TEST_CASE("shots: a bounce is a turn of over 45 degrees at speed") {
     CHECK_FALSE(shots::Bounced({0, 0, 0}, {30, 0, 0}));    // the shot itself
     CHECK(shots::LandHoldUs(shots::Kind::seed) > 0);
     CHECK(shots::LandHoldUs(shots::Kind::arrow) > shots::LandHoldUs(shots::Kind::seed));
-    CHECK(shots::LandHoldUs(shots::Kind::nut) == 0);
+    CHECK(shots::LandHoldUs(shots::Kind::nut) > 0);  // #248: it bursts there, then goes
     CHECK(shots::LandHoldUs(shots::Kind::bomb) == 0);
 
     // A copy's track keeps its fall across a bounce: the turn is no gravity.
@@ -898,12 +978,14 @@ TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one 
 }
 
 TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes") {
-    // A nut has no land hold: before, its copy was removed as the remove
-    // came, while shown 100 ms late it was still in flight.
+    // Before, its copy was removed as the remove came, while shown 100 ms
+    // late it was still in flight. #248: it then bursts there for its land
+    // hold (the nut's own Chemical_Light) before it goes.
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
+    shots::TheShotHits().Reset();
     const std::uint64_t t0 = 10'000'000;
     sync.Tick(kScene, 2, t0, {}, live, send, copies);
     proto::ObjectSpawn spawn;
@@ -937,7 +1019,19 @@ TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes"
     copies.clear();
     sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // reached the spot: it bursts there
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));
+    CHECK(copies[0].effect == "Chemical_Light");
+    // ai-stuns: where another player's shot hit here is kept: a stun beside it is that player's, not ours.
+    CHECK(shots::TheShotHits().Size() == 1);
+    CHECK(shots::TheShotHits().Near({2.0f, 1.0f, 0.0f}, got + shots::Track::kBehindUs + 100 * kMs));
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::nut), {}, live, send,
+              copies);
+    REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
+    CHECK(shots::TheShotHits().Size() == 1);  // once
+    shots::TheShotHits().Reset();
 }
 
 TEST_CASE("shots: a bomb copy that went off by itself is noted as a blast") {
@@ -1245,4 +1339,314 @@ TEST_CASE("shots: a held bomb's path is read between two samples, never carried 
     CHECK(path.At(0)[0] > 2.0f);  // only the newest kKeep are kept
     path.Clear();
     CHECK(path.Empty());
+}
+
+TEST_CASE("shots: issue 133, our own hit on a copy beside a copy bomb's blast is still sent") {
+    shots::Blasts blasts;
+    CoopObjects::Sync sync;
+    sync.SetBlastNear([&](const proto::Vec3& at, std::uint64_t now) { return blasts.Near(at, now); });
+    Tick(sync, 0, 8, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    sync.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    Tick(sync, 10 * kMs, 8, 2);
+
+    // Player 1's bomb copy went off beside it, but the enemy's own hit record names our Link: our hit.
+    blasts.Add({2.0f, 0.0f, 0.0f}, 20 * kMs);
+    std::vector<proto::Message> send;
+    std::vector<CoopObjects::LifeWrite> writes;
+    CoopObjects::Seen hit = Enemy(0x100, 8);
+    hit.hit_ours = true;
+    sync.Tick(kScene, 2, 30 * kMs, {hit}, send, writes);
+    Tick(sync, 40 * kMs, 6, 2);
+    auto step = Tick(sync, 200 * kMs, 6, 2);
+    const auto damage = Of<proto::Damage>(step.send);
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);
+    CHECK(sync.BlastDrops() == 0);
+
+    // A hit record naming someone else (not ours): the blast's, as before.
+    blasts.Add({2.0f, 0.0f, 0.0f}, 3'000 * kMs);
+    hit = Enemy(0x100, 6);
+    hit.hit_ours = false;
+    sync.Tick(kScene, 2, 3'010 * kMs, {hit}, send, writes);
+    Tick(sync, 3'020 * kMs, 4, 2);
+    step = Tick(sync, 3'200 * kMs, 4, 2);
+    CHECK(Of<proto::Damage>(step.send).empty());
+    CHECK(sync.BlastDrops() == 1);
+}
+
+TEST_CASE("shots: issue 133, a hit counts as ours from our Link or our own projectile, also just after it went") {
+    shots::OwnShots own;
+    const std::uint64_t link = 0x5000;
+    CHECK(shots::HitIsOurs(link, link, own, 0));
+    CHECK_FALSE(shots::HitIsOurs(0, link, own, 0));
+    CHECK_FALSE(shots::HitIsOurs(0x7000, link, own, 0));
+    own.Note(0x7000, 1'000'000);  // our seed
+    CHECK(shots::HitIsOurs(0x7000, link, own, 1'000'000 + shots::OwnShots::kKeepUs));
+    CHECK_FALSE(shots::HitIsOurs(0x7000, link, own, 1'000'001 + shots::OwnShots::kKeepUs));
+    CHECK_FALSE(shots::HitIsOurs(0x7100, link, own, 1'000'000));  // a copy's, or another actor's
+    own.Note(0x7000, 5'000'000);  // seen again: kept from then
+    CHECK(shots::HitIsOurs(0x7000, link, own, 6'000'000));
+    for (std::uint64_t a = 1; a <= shots::OwnShots::kKeep; ++a) {
+        own.Note(0x9000 + a, 6'000'000);
+    }
+    CHECK_FALSE(own.Was(0x7000, 6'000'000));  // the oldest went first
+    own.Reset();
+    CHECK_FALSE(own.Was(0x9001 + 1, 6'000'000));
+}
+
+TEST_CASE("objects: issue 133, a lifeless enemy's death here is a kill only when it is ours") {
+    using CoopObjects::LifelessKillHere;
+    CHECK(LifelessKillHere("Enemy_Scrub_Deku_Leaf", true, false, true, "Wait", false));
+    CHECK(LifelessKillHere("Enemy_Tailpasaran", true, false, true, "", false));
+    CHECK_FALSE(LifelessKillHere("Enemy_Tailpasaran", true, true, true, "", false));     // its life falls: hits go
+    CHECK_FALSE(LifelessKillHere("Enemy_Tailpasaran", true, false, false, "", false));   // no death of its own here
+    CHECK_FALSE(LifelessKillHere("Enemy_Tailpasaran", true, false, true, "Die", false)); // the owner's death
+    CHECK_FALSE(LifelessKillHere("Enemy_Tailpasaran", true, false, true, "", true));     // the owner said dead
+    CHECK_FALSE(LifelessKillHere("Obj_Pot", false, false, true, "", false));             // not an enemy
+    CHECK_FALSE(LifelessKillHere("Enemy_DungeonBoss_Gohma", true, false, true, "", false));
+}
+
+namespace {
+
+CoopObjects::Seen Lifeless(std::uint64_t address, const char* animation) {
+    CoopObjects::Seen s;
+    s.address = address;
+    s.name = "Enemy_Tailpasaran";
+    s.hash = 0x22;
+    s.position = {0.0f, 0.0f, 0.0f};
+    s.animation = proto::Animation{animation, 0.0f, 1.0f};
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("objects: issue 133, a lifeless enemy's copy that died here sends the kill and its owner says it dead") {
+    // The hitter (player 2): its copy of player 1's enemy plays its own death, then leaves the walk.
+    CoopObjects::Sync hitter;
+    std::vector<proto::Message> send;
+    std::vector<CoopObjects::LifeWrite> writes;
+    hitter.Tick(kScene, 2, 0, {Lifeless(0x200, "Wait")}, send, writes);
+    const proto::ObjectId id = *hitter.IdOf(0x200);
+    hitter.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    hitter.Tick(kScene, 2, 10 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    hitter.Tick(kScene, 2, 100 * kMs, {Lifeless(0x200, "Dead_Fall")}, send, writes);
+    send.clear();
+    for (std::uint64_t t = 200; t <= 400; t += 100) {
+        hitter.Tick(kScene, 2, t * kMs, {}, send, writes);
+    }
+    const auto damage = Of<proto::Damage>(send);
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].amount == 1);
+    CHECK(damage[0].cause == static_cast<std::uint8_t>(proto::DamageCause::killed));
+
+    // A copy that only left (no death of its own here) sends nothing.
+    CoopObjects::Sync other;
+    other.Tick(kScene, 2, 0, {Lifeless(0x200, "Wait")}, send, writes);
+    other.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    other.Tick(kScene, 2, 10 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    send.clear();
+    for (std::uint64_t t = 200; t <= 400; t += 100) {
+        other.Tick(kScene, 2, t * kMs, {}, send, writes);
+    }
+    CHECK(Of<proto::Damage>(send).empty());
+
+    // The owner (player 1): the kill comes for its enemy with no life to read: said dead to everyone.
+    CoopObjects::Sync owner;
+    owner.Tick(kScene, 1, 0, {Lifeless(0x200, "Wait")}, send, writes);
+    owner.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    owner.Tick(kScene, 1, 10 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    proto::Damage kill = damage[0];
+    kill.player_number = 2;
+    owner.Receive(kill);
+    send.clear();
+    owner.Tick(kScene, 1, 50 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    const auto removes = Of<proto::ObjectRemove>(send);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].reason == proto::RemoveReason::dead);
+
+    // Any other DAMAGE on it (no kill) changes nothing.
+    CoopObjects::Sync plain;
+    plain.Tick(kScene, 1, 0, {Lifeless(0x200, "Wait")}, send, writes);
+    plain.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    plain.Tick(kScene, 1, 10 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    kill.cause = static_cast<std::uint8_t>(proto::DamageCause::sword);
+    plain.Receive(kill);
+    send.clear();
+    plain.Tick(kScene, 1, 50 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
+    CHECK(Of<proto::ObjectRemove>(send).empty());
+}
+
+TEST_CASE("objects: row 175, a Poe sister's painting that died here sends the kill at once and keeps its own death") {
+    using CoopObjects::PictureDeathHere;
+    CHECK(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Die", "Pct_Wait"));
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, false, "Pct_Die", "Pct_Wait"));  // ours
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Die", "Pct_Die"));  // owner's
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Wait", "Pct_Wait"));
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", true, true, "Pct_Die", "Pct_Wait"));  // a life
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_PhantomGanon", false, true, "Die", "Wait"));  // the boss's
+    CHECK_FALSE(PictureDeathHere("Enemy_Tailpasaran", false, true, "Die", "Wait"));  // issue 133's (on leaving)
+
+    const auto painting = [](const char* animation) {
+        CoopObjects::Seen s;
+        s.address = 0x300;
+        s.name = "Enemy_GhostPicturePerformer_Poe_Amy";
+        s.hash = 0x29b1;
+        s.position = {66.66f, 119.18f, 0.43f};
+        s.animation = proto::Animation{animation, 0.0f, 1.0f};
+        return s;
+    };
+    // The hitter (player 1): its copy of player 2's painting dies here and stays in the walk.
+    CoopObjects::Sync hitter;
+    std::vector<proto::Message> send;
+    std::vector<CoopObjects::LifeWrite> writes;
+    hitter.Tick(kScene, 1, 0, {painting("Pct_Wait")}, send, writes);
+    const proto::ObjectId id = *hitter.IdOf(0x300);
+    hitter.Receive(proto::ObjectOwner{id, 2, 0, 0});
+    hitter.Tick(kScene, 1, 10 * kMs, {painting("Pct_Wait")}, send, writes);
+    send.clear();
+    for (std::uint64_t t = 100; t <= 400; t += 100) {
+        hitter.Tick(kScene, 1, t * kMs, {painting("Pct_Die")}, send, writes);
+    }
+    const auto damage = Of<proto::Damage>(send);
+    REQUIRE(damage.size() == 1);  // once, while it is still in the walk
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].cause == static_cast<std::uint8_t>(proto::DamageCause::killed));
+
+    // Run 20261119-232719: an owner's play already on its way cut our death off: its own death is played again,
+    // over what it shows now, and no more once it shows its death.
+    hitter.Tick(kScene, 1, 450 * kMs, {painting("Pct_Wait")}, send, writes);
+    std::vector<CoopObjects::PlayWish> plays;
+    hitter.Plays(460 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x300);
+    CHECK(plays[0].name == "Pct_Die");
+    CHECK(plays[0].frame == 0.0f);
+    hitter.Tick(kScene, 1, 470 * kMs, {painting("Pct_Die")}, send, writes);
+    plays.clear();
+    hitter.Plays(480 * kMs, plays);
+    CHECK(plays.empty());
+    // Review of bd5fab5c: played again once. What it shows after that death (its end, inside kPictureReplayUs) is
+    // its own: no second replay.
+    hitter.Tick(kScene, 1, 490 * kMs, {painting("Pct_Wait")}, send, writes);
+    plays.clear();
+    hitter.Plays(500 * kMs, plays);
+    CHECK(plays.empty());
+    send.clear();
+
+    // The owner says it dead: ours is not deleted (its own death runs the room logic here).
+    proto::ObjectRemove dead;
+    dead.id = id;
+    dead.player_number = 2;
+    dead.reason = proto::RemoveReason::dead;
+    hitter.Receive(dead);
+    send.clear();
+    for (std::uint64_t t = 500; t <= 5000; t += 500) {
+        hitter.Tick(kScene, 1, t * kMs, {painting("Pct_Die")}, send, writes);
+        CHECK(hitter.Removes().empty());
+    }
+    CHECK(Of<proto::Damage>(send).empty());  // no second kill
+    // ...nor when it leaves the walk after its death.
+    for (std::uint64_t t = 5500; t <= 6000; t += 100) {
+        hitter.Tick(kScene, 1, t * kMs, {}, send, writes);
+    }
+    CHECK(Of<proto::Damage>(send).empty());
+}
+
+TEST_CASE("objects: row 175, a play never covers the copy's own death or a boss copy's own stun in slot 0") {
+    using CoopObjects::CoversOwnReaction;
+    using CoopObjects::DeathReadFromAnimation;
+    CoopObjects::PlayWish wish;
+    wish.name = "Pct_Wait";
+    wish.keep_own_death = true;
+    CHECK(CoversOwnReaction(wish, "Pct_Die"));        // runs 20261120-142219, -135153: our hit's death, kept
+    CHECK_FALSE(CoversOwnReaction(wish, "Pct_Wait"));  // nothing of its own
+    CHECK_FALSE(CoversOwnReaction(wish, ""));
+    wish.name = "Pct_Die";
+    CHECK_FALSE(CoversOwnReaction(wish, "Pct_Die"));  // the owner's own death is played as usual
+    wish.name = "Pct_Wait";
+    wish.slot = 1;
+    CHECK_FALSE(CoversOwnReaction(wish, "Pct_Die"));  // only slot 0 is its own AI's
+    wish.slot = 0;
+    wish.keep_own_death = false;
+    CHECK_FALSE(CoversOwnReaction(wish, "Pct_Die"));  // a copy whose death goes by its life
+    CoopObjects::PlayWish boss;
+    boss.name = "Walk";
+    boss.keep_own_stun = true;
+    CHECK(CoversOwnReaction(boss, "Stun_Loop"));  // row 169: its own stun stays on screen
+    boss.name = "Stun_Loop";
+    CHECK_FALSE(CoversOwnReaction(boss, "Stun_Loop"));
+    // Which copies' deaths are read from their own animation.
+    CHECK(DeathReadFromAnimation("Enemy_GhostPicturePerformer_Poe_Joelle", false, false));
+    CHECK(DeathReadFromAnimation("Enemy_GhostPicturePerformer_Poe_Beth", false, false));
+    CHECK(DeathReadFromAnimation("Enemy_GhostPicturePerformer_Poe_Amy", false, false));
+    CHECK(DeathReadFromAnimation("Enemy_GhostPicturePerformer_Poe_Meg", false, false));
+    CHECK_FALSE(DeathReadFromAnimation("Enemy_GhostPicturePerformer_Poe_Amy", false, true));  // a life
+    CHECK(DeathReadFromAnimation("Enemy_Tailpasaran", true, false));        // issue 133
+    CHECK_FALSE(DeathReadFromAnimation("Enemy_Tailpasaran", false, false));  // does not react
+    CHECK_FALSE(DeathReadFromAnimation("Enemy_Tailpasaran", true, true));
+    CHECK_FALSE(DeathReadFromAnimation("Enemy_DungeonBoss_PhantomGanon", true, false));  // a boss
+}
+
+TEST_CASE("objects: row 175, the Mover's report of a painting's own death marks it before any walk sees it") {
+    const auto painting = [](const char* animation) {
+        CoopObjects::Seen s;
+        s.address = 0x300;
+        s.name = "Enemy_GhostPicturePerformer_Poe_Amy";
+        s.hash = 0x29b1;
+        s.position = {66.66f, 119.18f, 0.43f};
+        s.animation = proto::Animation{animation, 0.0f, 1.0f};
+        return s;
+    };
+    CoopObjects::Sync hitter;
+    std::vector<proto::Message> send;
+    std::vector<CoopObjects::LifeWrite> writes;
+    hitter.Tick(kScene, 1, 0, {painting("Pct_Wait")}, send, writes);
+    const proto::ObjectId id = *hitter.IdOf(0x300);
+    hitter.Receive(proto::ObjectOwner{id, 2, 0, 0});
+    proto::ObjectSample pose;
+    pose.id = id;
+    pose.player_number = 2;
+    pose.state.time = {5 * kMs, 1};
+    pose.state.position = proto::Vec3{66.66f, 119.18f, 0.43f};
+    pose.state.animation = proto::Animation{"Pct_Wait", 100.0f, 1.0f};
+    hitter.Receive(pose);
+    hitter.Tick(kScene, 1, 10 * kMs, {painting("Pct_Wait")}, send, writes);
+    std::vector<CoopObjects::PlayWish> plays;
+    hitter.Plays(20 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Pct_Wait");
+    CHECK(plays[0].keep_own_death);  // the owner's idle never covers its own death
+    CHECK(plays[0].stun_plain);  // ai-stuns: a plain enemy keeps only its own plain stun (no Down, no Fall)
+    send.clear();
+
+    // The Mover saw its own 'Pct_Die' in slot 0 and did not cover it; the walk has not seen it yet.
+    hitter.NoteOwnDeath(0x300, 30 * kMs, "Pct_Wait");  // not a death: nothing
+    hitter.NoteOwnDeath(0x300, 31 * kMs, "Pct_Die");
+    plays.clear();
+    hitter.Plays(32 * kMs, plays);
+    // The owner's animation waits; only its own death is asked for (the replay-once, a no-op over its death).
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Pct_Die");
+    hitter.Tick(kScene, 1, 40 * kMs, {painting("Pct_Die")}, send, writes);
+    plays.clear();
+    hitter.Plays(45 * kMs, plays);
+    CHECK(plays.empty());  // the walk sees its death: nothing more
+    hitter.Tick(kScene, 1, 140 * kMs, {painting("Pct_Die")}, send, writes);
+    const auto damage = Of<proto::Damage>(send);
+    REQUIRE(damage.size() == 1);  // the kill goes to its owner, once
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].cause == static_cast<std::uint8_t>(proto::DamageCause::killed));
+
+    // A copy nobody owns elsewhere (ours, or solo): the report changes nothing.
+    CoopObjects::Sync own;
+    own.Tick(kScene, 1, 0, {painting("Pct_Wait")}, send, writes);
+    own.Receive(proto::ObjectOwner{*own.IdOf(0x300), 1, 0, 0});
+    send.clear();
+    own.NoteOwnDeath(0x300, 30 * kMs, "Pct_Die");
+    own.Tick(kScene, 1, 40 * kMs, {painting("Pct_Die")}, send, writes);
+    CHECK(Of<proto::Damage>(send).empty());
+    own.NoteOwnDeath(0x999, 50 * kMs, "Pct_Die");  // not in the walk: ignored
 }

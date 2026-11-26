@@ -1,4 +1,6 @@
-# Co-op in the emulator
+# Squadala! in the emulator
+
+> **Retired (0.11.12):** the Fritchii emulator is no longer built, shipped or supported; this page is kept for reference. `lichii/hook/` is still the game code of the Hookshot/Longshot module.
 
 How presence (plan stage 1 step 1) runs inside the patched emulator. The code is in [`lichii/hook/`](../lichii/hook); how to fetch, patch and build is in [lichii/README.md](../lichii/README.md). The emulator is Fritchii at the tag in [`lichii/PIN`](../lichii/PIN) (`fritchii-v5.8.4` since 2026-11-11; the notes below that name v5 were found on v5 and hold on v5.5 to v5.8, whose changes do not touch the parts the hook uses; what v5.6, v5.7 and v5.8 changed that matters is in lichii/README.md). A co-op build has no Fritchii updater (lichii/README.md, "The emulator's own updater").
 

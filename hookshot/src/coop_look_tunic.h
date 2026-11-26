@@ -10,7 +10,9 @@
 // Same format, same size, nothing else moves.
 //
 // The puppet pack has those texels per colour (tools/puppet_pack/look_live.py:
-// coop_look/<colour>.bin, green being the game's own). A texture is one the
+// coop_look/<colour>.bin, green being the game's own); the Hookshot module
+// paints green's in the exact colour asked for (CoopLookParts::TunicPainted)
+// and hands them to the wardrobe as another colour's file. A texture is one the
 // game made (Longshot lists them) whose storage holds a colour's texels
 // exactly. The game copies texels into its texture memory with no file or name
 // in front (lane1, 2026-11-14), so the puppets' copies of the same texels carry
@@ -25,7 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,14 +44,31 @@ using Texels = std::vector<Texture>;
 
 // The first bytes of a texture's texels, compared before anything else.
 inline constexpr std::size_t kHead = 64;
+// The rest of a texture's texels is read from the game's memory and compared
+// this much at a time, in a buffer on the look worker's stack: a search makes
+// no heap allocation per texture (row 260: a fresh buffer of up to 4 MiB a
+// texture, many a search, threw std::bad_alloc once Windows ran out of commit).
+inline constexpr std::size_t kComparePiece = 16 * 1024;
 // How much larger than its texels a texture's storage may be (its layout
 // rounded up): only storages up to this much larger are compared.
 inline constexpr std::uint64_t kStorageSlack = 0x10000;
 // While the game makes textures, a Step looks only at the new ones; all of
 // them again at most this often (one made before its texels were in).
 inline constexpr std::uint64_t kFullSearchMs = 1000;
+// A texture the game made that holds no colour yet (its texels come after it
+// is made: a scene, a cutscene, its streaming) is read again at every Step for
+// this long, made or not made anything since: your Link's colour is drawn a
+// step or two after its texels are in, not at the next full search
+// (player report #78: the sword blinked in the game's colours).
+inline constexpr std::uint64_t kLateTexelsMs = 1000;
+// At most this many of those are read again in one Step (in turn, the rest at
+// the next ones): a scene's hundreds of new textures cost a few steps, not one
+// long one.
+inline constexpr std::size_t kLateChecks = 64;
 // A texture file's header is at most this long (the game's are 4096 bytes).
 inline constexpr std::uint64_t kMaxOffset = 0x10000;
+// A wardrobe step that failed (no memory left: std::bad_alloc) is said at most this many times.
+inline constexpr int kFailedSaid = 20;
 
 // A coop_look file. Nothing, and why, for one that is cut short, of another
 // version, or with a texture this code cannot place (no room for a header,
@@ -93,12 +112,23 @@ struct Place {
     bool overridden = false;
 };
 
+// Row 198's guard: the textures found more than once among the game's (texture index, places), in index order. Your
+// own Link has one of each; a second is a copy holding the game's own texels (a puppet's, unmarked), which your
+// colour would be drawn over too.
+std::vector<std::pair<std::size_t, std::size_t>> Repeated(const std::vector<Place>& places);
+// Row 198 (gear-colour-0119): where the places lie, for the log: "<name>@0x<address>/<serial>+<size>" each, in
+// order; `names` gives a texture index its name (none: "#<index>").
+std::string PlacesLine(const std::vector<Place>& places, const Texels* names);
+// Row 198: the places of `a` whose storage range [address, address + size) overlaps one of `b`'s (two wardrobes
+// drawing over one texture: one player's colours on another's). Pairs of indexes into a and b.
+std::vector<std::pair<std::size_t, std::size_t>> Overlaps(const std::vector<Place>& a, const std::vector<Place>& b);
+
 struct Search {
     std::vector<Place> places;
     std::size_t listed = 0;   // the game's textures of a fitting size
     std::size_t unread = 0;   // ... whose storage could not be read
     std::size_t heads = 0;    // ... whose first kHead bytes are a colour's, the rest not (a copy's mark, a painting)
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> misses;   // (address, serial) read and held by no colour
+    std::vector<Live> misses;   // read and held by no colour (its first bytes may be one's)
 };
 // Every texture of `colours` the game has made: its storage holds the
 // colour's texels exactly, the whole image (the pack's texels are the image's
@@ -107,11 +137,19 @@ struct Search {
 // (counted in `listed` all the same), e.g. the misses of an earlier search.
 Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours,
             const std::function<bool(const Live&)>& skip = {});
+// The storage sizes a texture of `colours` may have, [first, second]; (0, 0)
+// when they have no texels.
+std::pair<std::uint64_t, std::uint64_t> Sizes(const std::vector<std::shared_ptr<const Texels>>& colours);
+// Find among `listed` only (`listed` of the result is their count).
+Search Find(const Textures& textures, const std::vector<Live>& listed,
+            const std::vector<std::shared_ptr<const Texels>>& colours);
 // Draws the place in `colour`: an override, or none when the game's memory
 // holds that colour already. False when Longshot refused it (nothing changed).
 bool Draw(Textures& textures, Place& place, const std::shared_ptr<const Texels>& colour);
 
 // Keeps your Link's tunic (or gear) in the colour asked for.
+inline constexpr int kPlacesSaid = 40;
+
 class Wardrobe {
 public:
     struct Host {
@@ -128,16 +166,29 @@ public:
         // base: the kit put that colour's files in (LICHII_COOP_SELF_TUNIC),
         // so its texels are what the game's memory holds.
         std::string start;
+        // Whether the game's memory may hold the colour asked for (your own Link: the kit's files, a restart in it).
+        // The puppets' wardrobes: false. Their copies' memory holds the pack's texels (the base) only and a painting
+        // is only ever drawn, so a search for it could only find another wardrobe's texture: a painting with your own
+        // Link's texels took your Link's tunic for a puppet's (row 198, 0.11.10 log 'cross guard').
+        bool target_in_memory = true;
     };
 
-    explicit Wardrobe(Host host) : host_(std::move(host)) {}
+    // A Host missing a part never stops the game (0.11.9 lane crash: a Host copied after it was moved from had no
+    // file and no log, and the worker's first call threw out of its thread): no file is a pack without the
+    // colour's, no log says nothing, and with no textures Step does nothing.
+    explicit Wardrobe(Host host) : host_(std::move(host)) {
+        if (!host_.file) host_.file = [](const std::string&) { return std::optional<std::vector<std::uint8_t>>{}; };
+        if (!host_.log) host_.log = [](const std::string&) {};
+    }
     // The colour to wear from now on: "green" (the game's own) or a colour of
     // the pack. Any thread.
     void Wear(std::string colour);
     // One step of the work, every frame or two (the game makes Link's
     // textures again on scene changes, cutscenes and its streaming, each time
     // without the override: found again within a step, not a second later).
-    // `now_ms` on any steady clock. One thread.
+    // `now_ms` on any steady clock. One thread. Catches std::exception: a step that fails that way (the PC out of
+    // memory, lane 2026-11-23) logs a `coop:` line and the next step looks at every texture again. Anything that is
+    // not a std::exception is not caught here: the catch (...) around WorkOnce in Work() (coop_look_live.cpp) covers it.
     void Step(std::uint64_t now_ms);
     // Look at the game's textures again at the next Step (the pause screen
     // closed: the equipment may have changed). Any thread.
@@ -153,6 +204,8 @@ public:
 
 private:
     std::shared_ptr<const Texels> Load(const std::string& colour);
+    void Once(std::uint64_t now_ms);
+    void Failed(const char* why);
 
     Host host_;
     mutable std::mutex mutex_;
@@ -168,14 +221,26 @@ private:
     bool look_now_ = true;
     bool looked_ = false;
     std::uint64_t generation_ = 0;
-    // The game's textures of the last searches that hold no colour, looked at
-    // again only by a full search (at most every kFullSearchMs while the game
-    // makes textures): a texture made again is found within a Step, not a round.
-    std::set<std::pair<std::uint64_t, std::uint64_t>> misses_;
+    // The game's textures of the last searches that hold no colour, by
+    // (address, serial), and when first read so. Read again at every Step
+    // while younger than kLateTexelsMs (LateLook), after that only by a full
+    // search (at most every kFullSearchMs while the game makes textures).
+    struct Miss {
+        Live live;
+        std::uint64_t since = 0;
+    };
+    std::map<std::pair<std::uint64_t, std::uint64_t>, Miss> misses_;
+    std::pair<std::uint64_t, std::uint64_t> late_next_{};   // where the next LateLook starts
     std::uint64_t full_ms_ = 0;
+    void LateLook(std::uint64_t now_ms, const std::vector<std::shared_ptr<const Texels>>& colours);
     bool said_nothing_found_ = false;
     std::string said_;                        // the last "no texture" line (said again when it changes)
     int said_count_ = 0;
+    std::string said_repeated_;   // (row 198's guard: the repeats last logged)
+    std::string said_places_;     // (row 198: the places last logged)
+    int said_places_count_ = 0;   // ... how many times (at most kPlacesSaid)
+    int said_taken_ = 0;                      // "override(s) taken away" lines said (at most 20)
+    int said_failed_ = 0;                     // "a step ... failed" lines said (at most kFailedSaid)
 };
 
 }  // namespace CoopLookTunic

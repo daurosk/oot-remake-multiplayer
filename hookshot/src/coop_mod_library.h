@@ -24,7 +24,7 @@
 namespace CoopMods {
 
 // The plugin interface this loader serves (coop_mod_api.h COOP_MOD_API_VERSION).
-inline constexpr int kApiVersion = 1;
+inline constexpr int kApiVersion = 3;
 
 inline constexpr std::size_t kMaxId = 48;
 inline constexpr std::size_t kMaxVersion = 32;
@@ -74,6 +74,9 @@ struct Manifest {
     int api = 0;              // the plugin interface the code was written for (0: not said)
     Share share = Share::Everyone;
     std::vector<Setting> settings;
+    // "file_select": true: the code is a save screen's file select that the title's Continue and New Game both open
+    // (mod API v2 menu screens): the title's own menu then has one Start row for both (CoopTitleMenu::MenuFor).
+    bool file_select = false;
 };
 
 // An id made from any name: lower case, everything else '-', never empty.
@@ -98,7 +101,9 @@ struct Mod {
     Manifest manifest;
     bool has_manifest = false;
     bool has_romfs = false;
-    bool has_exefs = false;         // Hookshot leaves code patches out; shown so the player knows
+    bool has_exefs = false;         // an exefs folder: code patches, built into the game by a game build
+    // its .ips and .pchtxt files there (host/mods.c exefs_status counts the same): file name, FNV-1a 32 of the bytes
+    std::vector<std::pair<std::string, unsigned long>> exefs_patches;
     bool internal = false;          // co-op's own packs: always on, not listed, not compared
     bool folder_off = false;        // Hookshot's own switch: a folder name starting with '-' or '_'
     bool listable = false;          // its name can go into coop-mods.list (plain ASCII, short enough)
@@ -122,12 +127,16 @@ struct State {
     std::vector<std::string> order;  // mod names, the first wins a file two mods have
     std::vector<std::string> off;    // mod names turned off
     std::map<std::string, std::map<std::string, std::string>> settings;  // by mod id, then key
+    // the list's "default off" line (hos_coop_mods.h, Original game): a mod the list does not name is off, so a mod
+    // put into the folder later joins the order off, not on (player report 266)
+    bool default_off = false;
 
     bool IsOff(std::string_view name) const;
 };
 
 // The state for the mods found: names of mods that are gone dropped, mods the order does not name yet added under
-// the named ones in Hookshot's own order (so adding them changes nothing), internal mods never named.
+// the named ones in Hookshot's own order (so adding them changes nothing: on, or off with default_off), internal mods
+// never named.
 void Normalize(State& state, const std::vector<Mod>& mods);
 
 // coop-mods.list's text for the state (hos_coop_mods.h), and the state a list's text gives (order and off only).
@@ -183,9 +192,14 @@ struct Hashes {
     Hash code{};        // the library's bytes; zero without one
     std::uint64_t files = 0, bytes = 0;
 };
+// What stands for one of a mod's game files in its hash (`key`: its romfs path, lower case, '/'): the file itself,
+// another file (the mod's own copy of one the kit rewrote on this PC), or nothing (left out: not the mod's content).
+using StandIn =
+    std::function<std::optional<std::filesystem::path>(const std::filesystem::path& file, const std::string& key)>;
 // Reads the whole mod (slow for a big one: call it off the game's threads). `stop`, when given, is asked now and
-// then; true ends the work early with nothing.
-std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop = nullptr);
+// then; true ends the work early with nothing. `stand_in`, when given, picks each game file's bytes (StandIn).
+std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop = nullptr,
+                              const StandIn* stand_in = nullptr);
 std::string Hex(const Hash& hash);
 
 }  // namespace CoopMods

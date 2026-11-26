@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ENet and Monocypher sources for the ExeFS module's net code, fetched, never copied into the tree.
 
 The pins are read from cmake/enet.cmake and cmake/monocypher.cmake (GIT_REPOSITORY + GIT_TAG),

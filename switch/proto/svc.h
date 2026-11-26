@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Kernel calls the prototype makes itself (no libnx, no SDK headers).
 // Numbers and register use as in the Horizon kernel ABI (switchbrew.org/wiki/SVC).
 #pragma once

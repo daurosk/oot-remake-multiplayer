@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Layout of the prototype module: text (RX), rodata + dynamic linking tables + unwind
    tables (R), data (RW) then bss, each page aligned, as an NSO's three segments need.
    The unwind tables stay in: rtld ignores them, a lifting recomp finds functions by them. */

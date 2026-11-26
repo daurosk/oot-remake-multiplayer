@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // PC test of the ExeFS module's net code (switch/net). The same sources the
 // module links (coop_join.cpp, enet_nx.cpp, ENet, Monocypher), built for the
 // PC by tools/switch_mod/net_host.py, with nn::socket here on the PC's sockets

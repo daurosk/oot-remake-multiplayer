@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Module start and the frame hook's entry (AArch64).
 //
 // A Switch module starts with a branch and the offset of its MOD0 header;

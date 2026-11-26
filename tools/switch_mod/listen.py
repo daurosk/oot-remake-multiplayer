@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Print the UDP datagrams the ExeFS prototype sends (default 127.0.0.1:27520, LANE1's port).
 
     listen.py [--port 27520] [--seconds 600]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // The module's hook table (section .coop_hooks, exported as `coop_hooks`).
 //
 // One table, two readers:

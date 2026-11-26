@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ExeFS prototype (v1-exefs-proto): a code module (subsdk1) inside the game's own process.
 //
 // It proves four things on a Switch 2 emulator (Fritchii), nothing more:

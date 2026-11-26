@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A freestanding co-op join client: joins a coop_server the way a Longshot game
 // does (docs/protocol.md "Join password", "Encrypted traffic"), with ENet and
 // Monocypher and no C++ library. It is the cross-play proof for the ExeFS

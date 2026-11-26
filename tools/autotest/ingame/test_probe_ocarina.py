@@ -3,7 +3,8 @@ SETUP-FAIL: B pressed LEFT, no 'ocarina probe: our Link plays the ocarina' line,
 
 Runs only with --env BT_PROBE_OCARINA=1 (needs_env: every other run deselects it, so no rc pass carries it). Ends NO-REF
 (Pair.unproven), never PASS: its product is <out>/probe-ocarina-<X>.json + the bridge shots, for the root cause.
-Per game (A first, then B, the other game stepped alongside):
+Per game (B first: the failing one, then A; the other game stepped alongside; each game's JSON is written in a finally
+with any exception's text, and an exception on one game never skips the other: review-rows-c136-2 17:36):
 - before: the bridge state's scene/age/event/loading/equips, PlayerStatus.EquipOcarina (flag_read; docs/items.md:24,
   the name D-pad Left takes out, docs/items.md:320), the module's 'equipped by the game from its flags' lines since the
   last 'native ui: scene load ended' (Pair.ocarina_ready) and Pair.need_ocarina's outcome; a shot.
@@ -49,8 +50,10 @@ def _press_and_watch(pair, x, frames, tag, rec):
     pair.check_shot(x, "probe-oca-%s-30" % tag, tolerance=0.0)
     pair.step_both(210)
     pair.check_shot(x, "probe-oca-%s-240" % tag, tolerance=0.0)
-    lines = [ln for ln in pair.log[x].since(pos) if WATCH.search(ln)]
-    rec["presses"][-1].update(state_240=_state(pair, x), lines=lines[:200],
+    since = pair.log[x].since(pos)
+    lines = [ln for ln in since if WATCH.search(ln)]
+    raw = [ln for ln in since if "coop:" in ln and "vk:" not in ln]     # (all module lines too, not only WATCH's)
+    rec["presses"][-1].update(state_240=_state(pair, x), lines=lines[:200], raw_coop_lines=raw[:400],
                               probe_line=bool(pair.log[x].find(OCARINA_OUT, pos=pos)))
     return rec["presses"][-1]["probe_line"]
 
@@ -61,26 +64,28 @@ def _press_and_watch(pair, x, frames, tag, rec):
 def test_probe_ocarina_left(pair):
     with pair.setup():
         pair.until("both games in play", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=600)
-    out = {}
-    for x in ("A", "B"):
-        rec = {"game": x, "before": _state(pair, x), "equip_flag": _equip_flag(pair, x),
-               "ocarina_ready": pair.ocarina_ready(x),
-               "equip_lines": [ln for ln in pair.log[x].since(0) if "equipped by the game from its flags" in ln][-5:],
-               "presses": []}
+    for x in ("B", "A"):
+        rec = {"game": x, "presses": []}
         try:
-            pair.need_ocarina(x)
-            rec["need_ocarina"] = "ok"
-        except AssertionError as e:
-            rec["need_ocarina"] = str(e)
-        rec["equip_flag_after_wait"] = _equip_flag(pair, x)
-        pair.check_shot(x, "probe-oca-before", tolerance=0.0)
-        if not _press_and_watch(pair, x, 12, "12f", rec):
-            _press_and_watch(pair, x, 30, "30f", rec)
-        pair.press(x, ["B"], frames=8)
-        pair.step_both(60)
-        out[x] = rec
-        with open(os.path.join(pair.out_dir or ".", "probe-ocarina-%s.json" % x), "w", encoding="utf-8") as f:
-            json.dump(rec, f, indent=1)
-        pair.notes.append("%s: need_ocarina %s; probe line after LEFT: %s" % (
-            x, rec["need_ocarina"], [p["probe_line"] for p in rec["presses"]]))
+            rec.update(before=_state(pair, x), equip_flag=_equip_flag(pair, x), ocarina_ready=pair.ocarina_ready(x),
+                       equip_lines=[ln for ln in pair.log[x].since(0)
+                                    if "equipped by the game from its flags" in ln][-5:])
+            try:
+                pair.need_ocarina(x)
+                rec["need_ocarina"] = "ok"
+            except AssertionError as e:
+                rec["need_ocarina"] = str(e)
+            rec["equip_flag_after_wait"] = _equip_flag(pair, x)
+            pair.check_shot(x, "probe-oca-before", tolerance=0.0)
+            if not _press_and_watch(pair, x, 12, "12f", rec):
+                _press_and_watch(pair, x, 30, "30f", rec)
+            pair.press(x, ["B"], frames=8)
+            pair.step_both(60)
+        except Exception as e:                # noqa: BLE001 (recorded; the other game is still probed)
+            rec["error"] = "%s: %s" % (type(e).__name__, e)
+        finally:
+            with open(os.path.join(pair.out_dir or ".", "probe-ocarina-%s.json" % x), "w", encoding="utf-8") as f:
+                json.dump(rec, f, indent=1)
+            pair.notes.append("%s: need_ocarina %s; probe line after LEFT: %s; error %s" % (
+                x, rec.get("need_ocarina"), [p.get("probe_line") for p in rec["presses"]], rec.get("error")))
     pair.unproven("probe only: see probe-ocarina-A.json / -B.json and the probe-oca-* shots")

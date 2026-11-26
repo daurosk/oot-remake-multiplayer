@@ -295,26 +295,32 @@ class Pair:
         waits for Link in the scene with NO event (coop_playtest_core.cpp WarpArrived), so it answers 'timeout' with
         Link already there; then a fresh state with that scene, no load AND an event running counts as the arrival,
         anything else raises. Each game's wait is ARRIVE_IN_EVENT_WAIT s, and every wait stays inside the deadline."""
-        extra = {} if entrance in (None, "") else {"entrance": entrance}
         for x in ("A", "B"):
-            before = self.c[x].last_frame or 0
-            wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event else 60
-            t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
-            self.deadline.check("warp")
-            r = self.c[x].request("warp", check=False, reply_timeout=max(0.2, min(t + 15, self.deadline.left())),
-                                  scene=scene, timeout=t, **extra)        # (the reply wait stays inside the deadline)
-            if not r.get("ok"):
-                st = self.state(x) if arrive_in_event and r.get("error") == "timeout" else None
-                if not (st and (st.get("scene") or "").lower() == scene.lower() and not st.get("loading")
-                        and st.get("event") is True):      # (review-c123-8: a timeout with no event is not an arrival)
-                    raise pc.BridgeError(r)
-                self.notes.append("%s: warp %s answered timeout in the arrival event; in the scene, not loading: "
-                                  "arrived (event %s)" % (x, scene, st.get("event")))
-            ran = max(0, (self.c[x].last_frame or before) - before)
-            for y in self.c:
-                if y != x and ran:
-                    self.step_other(y, ran)
+            self.warp_one(x, scene, entrance, arrive_in_event)
         return {x: self.state(x) for x in self.c}
+
+    def warp_one(self, x, scene, entrance=None, arrive_in_event=False):
+        """Game x alone to `scene`, by warp_both's rules (entrance, arrive_in_event, waits inside the deadline); the
+        other game is stepped to the same frame count after it (row-286-wake-3). Returns x's state."""
+        extra = {} if entrance in (None, "") else {"entrance": entrance}
+        before = self.c[x].last_frame or 0
+        wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event else 60
+        t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
+        self.deadline.check("warp")
+        r = self.c[x].request("warp", check=False, reply_timeout=max(0.2, min(t + 15, self.deadline.left())),
+                              scene=scene, timeout=t, **extra)        # (the reply wait stays inside the deadline)
+        if not r.get("ok"):
+            st = self.state(x) if arrive_in_event and r.get("error") == "timeout" else None
+            if not (st and (st.get("scene") or "").lower() == scene.lower() and not st.get("loading")
+                    and st.get("event") is True):      # (review-c123-8: a timeout with no event is not an arrival)
+                raise pc.BridgeError(r)
+            self.notes.append("%s: warp %s answered timeout in the arrival event; in the scene, not loading: "
+                              "arrived (event %s)" % (x, scene, st.get("event")))
+        ran = max(0, (self.c[x].last_frame or before) - before)
+        for y in self.c:
+            if y != x and ran:
+                self.step_other(y, ran)
+        return self.state(x)
 
     def step_other(self, y, frames):
         left = int(frames)

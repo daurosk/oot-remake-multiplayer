@@ -88,8 +88,10 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
 - By picture ONLY for what a player sees (worker-rules TEST SYSTEM: other players' Epona animated, menu UI, HUD UI,
   name tags, balloons, pause pages, a new or changed look): `pair.check_shot(game, name, tolerance)` on EACH game,
   twice a few frames apart where animation must show. The shot is the game's framebuffer (the bridge's `shot`), and is
-  compared to `tools/autotest/ingame/refs/<name>-<game>.png` by SSIM (scikit-image): the score is the worst of 8 x 8
-  tiles of the SSIM map, so one small missing thing fails its tile. Shots are kept with the result
+  compared to `tools/autotest/ingame/refs/<name>-<game>.png` by SSIM (scikit-image) on EACH colour channel: the
+  score is the worst of 8 x 8 tiles of the SSIM map, each tile's worst channel, so one small missing thing fails its
+  tile and so does a recoloured one (a grey compare is blind to a tunic, trim or HUD tint fault: green (0,91,0) vs
+  blue (0,60,160) at the same grey scores grey 1.0000, colour 0.1128). Shots are kept with the result
   (`<dir>/lane<L>/shots/`). A test never writes a reference: a person checks a NO-REF candidate and copies it into
   `refs/`.
 

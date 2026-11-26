@@ -323,7 +323,9 @@ def start(a):
             out["stop"] = stop(argparse.Namespace(session=d))
             return out
     try:
-        code = hookshot.main(runner_argv(a, games, port, pipe, d))
+        import contextlib
+        with contextlib.redirect_stdout(sys.stderr):      # (the runner's boot lines: stdout is the ONE JSON answer)
+            code = hookshot.main(runner_argv(a, games, port, pipe, d))
     except SystemExit as e:      # (the runner's own argument check: the watchdog holds the lane lock by now)
         return {"ok": False, "session": d, "lane": a.lane, "lock": lock,
                 "error": "hookshot.py run refused its arguments (exit %s): the session is closed" % e.code,

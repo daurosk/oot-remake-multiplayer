@@ -593,13 +593,29 @@ class BootCommand(unittest.TestCase):
         import bt_plugin as B
         hs = [sys.executable, "-I", os.path.join(AUTOTEST, "hookshot.py"), "run", "--out", self.tmp] + self.games() + [
             "--script-a", B.BOOT_A, "--script-b", B.BOOT_B]
-        for kv in ("HOS_SLOW_FRAMES=x", "A:HOS_SLOW_FRAMES=x", "HOS_SAMPLE_ALL=y"):
+        for kv in ("HOS_SLOW_FRAMES=x", "A:HOS_SLOW_FRAMES=x", "HOS_SAMPLE_ALL=y", "HOS_SAMPLE=z"):
             p = subprocess.run(hs + ["--env", kv, "--check-args"], capture_output=True, text=True, timeout=60)
             self.assertEqual(p.returncode, 2, kv + ": " + p.stdout + p.stderr)
             self.assertIn("sampler", p.stderr)
-        p = subprocess.run(hs + ["--env", "RX_VK_FRAME_LOG=frames.csv", "--check-args"], capture_output=True, text=True,
-                           timeout=60)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        # (B #142: a Longshot switch no run of ours has proven is refused too; a proven one and our own names pass)
+        for kv in ("RX_VK_FRAME_LOG=frames.csv", "B:HOS_MEM_MAP=1", "LONGSHOT_X=1"):
+            p = subprocess.run(hs + ["--env", kv, "--check-args"], capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 2, kv + ": " + p.stdout + p.stderr)
+            self.assertIn("no run of ours has proven", p.stderr)
+        for kv in ("RX_VK_PRECOMPILE=0", "HOS_COOP=0", "LICHII_COOP_CHEATS=1"):
+            p = subprocess.run(hs + ["--env", kv, "--check-args"], capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 0, kv + ": " + p.stdout + p.stderr)
+        # a scenario's '#! switches' header reaches the games too: the same refusal (hookshot.py header_switches)
+        head = os.path.join(self.tmp, "head.A.txt")
+        with open(B.BOOT_A, encoding="utf-8-sig") as f:
+            body = f.read()
+        with open(head, "w", encoding="utf-8") as f:
+            f.write("#! switches LICHII_COOP_CHEATS=1,HOS_SLOW_FRAMES=x\n" + body)
+        hs_head = [sys.executable, "-I", os.path.join(AUTOTEST, "hookshot.py"), "run", "--out", self.tmp] + self.games() + [
+            "--script-a", head, "--script-b", B.BOOT_B]
+        p = subprocess.run(hs_head + ["--check-args"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("'#! switches' HOS_SLOW_FRAMES", p.stderr)
         r = self.live("--dry-run", "--session", os.path.join(self.tmp, "s"), "--game-a", os.path.join(self.tmp, "a"),
                       "--boot-a", B.BOOT_A, "--no-load", "--env", "HOS_SLOW_FRAMES=x")
         self.assertFalse(r["ok"])

@@ -1219,18 +1219,39 @@ RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: sta
                             r"|vk: programs: load at create: \d+ notes of \d+ programs indexed")
 
 
-# Longshot's all-thread sampler (host/mkw_glue.c sample_all_thread, started for these two: mkw_glue.c:976-978) suspends
-# every thread and walks its stack with RtlVirtualUnwind; on v3.2.0 that walk faulted in the sampler's thread and took
-# the game down (game-commit-c141 run-b8a8a4f3, HOS_SLOW_FRAMES: 'CRASH: exception 0xc0000005 ... at ntdll.dll+0x1ff2a',
-# return addresses longshot.exe+0x1faef7c2 = after unwind_step's call of RtlVirtualUnwind, +0x1faeeb93 = the sampler's
-# loop; the fault Longshot's own mkw_glue.c:347-354 describes). A test game never gets them: run refuses them, so a
-# --check-args / live.py start --dry-run is a SETUP-FAIL before any boot. Frame times without a sampler: RX_VK_FRAME_LOG.
+# Longshot's own switches (gpu/vk/switches.def; host/hos_main.c env_line_allowed's prefixes) reach a test game only when
+# a run of ours has proven them: a debug switch can take the game down. (game-commit-c141 run-b8a8a4f3: HOS_SLOW_FRAMES
+# starts Longshot's all-thread sampler, host/mkw_glue.c sample_all_thread (:976-978), whose RtlVirtualUnwind walk faulted
+# in the sampler's thread: 'CRASH: exception 0xc0000005 ... at ntdll.dll+0x1ff2a', return addresses longshot.exe+0x1faef7c2
+# after unwind_step's call of RtlVirtualUnwind and +0x1faeeb93 in the sampler's loop; the fault mkw_glue.c:347-354
+# describes.) run refuses any other name with these prefixes in --env and in a script's '#! switches' header, so a
+# --check-args / live.py start --dry-run (the lane check) is a SETUP-FAIL before any boot. A new switch is added here only
+# with the run that proved it (the game up and its own line for the switch in the log).
+LONGSHOT_PREFIXES = ("HOS_", "RX_", "LONGSHOT_", "EDEN_", "NVN_")
+LONGSHOT_SWITCHES_PROVEN = {
+    "HOS_COOP": "our own patch 0001-coop-bridge.patch (getenv HOS_COOP: 0/off loads no module); run.ps1 -NoCoop",
+    "RX_VK_PRECOMPILE": "game-commit-c141 run-b0ee5af3 noprecompile: =0 up 9 min, 'vk: programs: load at create: 37691 "
+                        "notes ... indexed' (vk_programs.cpp:464), play files saved",
+}
+# Longshot's stack samplers (all walk other threads' stacks with unwind_step: mkw_glue.c:348, sample_thread, sample_all_thread)
 SAMPLER_SWITCHES = {
     "HOS_SLOW_FRAMES": "Longshot's slow-frame recorder runs the all-thread sampler, which crashed a test game "
-                       "(0xc0000005 in RtlVirtualUnwind, game-commit-c141): use RX_VK_FRAME_LOG=<file> for frame times",
+                       "(0xc0000005 in RtlVirtualUnwind, game-commit-c141 run-b8a8a4f3)",
     "HOS_SAMPLE_ALL": "Longshot's all-thread sampler crashed a test game (0xc0000005 in RtlVirtualUnwind, "
-                      "game-commit-c141): not for test runs",
+                      "game-commit-c141 run-b8a8a4f3)",
+    "HOS_SAMPLE": "Longshot's sampler walks the game thread's stack with the same unwind_step (mkw_glue.c:348) that "
+                  "crashed a test game (game-commit-c141 run-b8a8a4f3)",
 }
+
+
+def longshot_switch_refused(name):
+    """Why a test game may not get this Longshot switch, or None (not a Longshot name, or proven)."""
+    if name in SAMPLER_SWITCHES:
+        return "a stack sampler: " + SAMPLER_SWITCHES[name]
+    if name.startswith(LONGSHOT_PREFIXES) and name not in LONGSHOT_SWITCHES_PROVEN:
+        return ("a Longshot switch no run of ours has proven (proven: %s; add one to LONGSHOT_SWITCHES_PROVEN in "
+                "tools/autotest/hookshot.py with the run that proved it)" % ", ".join(sorted(LONGSHOT_SWITCHES_PROVEN)))
+    return None
 
 
 def read_text(path):
@@ -1964,8 +1985,18 @@ def main(argv=None):
             p.error("--env NAME=VALUE")
         k = kv.split("=", 1)[0]
         k = k[2:] if k[:2] in ("A:", "B:") else k
-        if k in SAMPLER_SWITCHES:
-            p.error("--env %s: %s" % (k, SAMPLER_SWITCHES[k]))
+        why = longshot_switch_refused(k)
+        if why:
+            p.error("--env %s: %s" % (k, why))
+    for script in (getattr(a, "script_a", None), getattr(a, "script_b", None)):   # (their headers reach both games)
+        try:
+            heads = header_switches(script)
+        except OSError:
+            heads = []   # (a missing script is the script check's own error, below)
+        for k, _ in heads:
+            why = longshot_switch_refused(k)
+            if why:
+                p.error("%s '#! switches' %s: %s" % (os.path.basename(script), k, why))
     if a.what == "run" and not a.script_a and not a.only:
         p.error("--script-a (or --only B)")
     if getattr(a, "host_in_game", False):

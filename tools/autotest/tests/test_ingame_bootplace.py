@@ -108,5 +108,46 @@ class NeedBootPlace(unittest.TestCase):
         self.assertTrue(any(w.startswith("A: no state") for w in away), away)
 
 
+class SoloPair(unittest.TestCase):
+    """A --solo pair has game A only (pair.c == {'A'}): need_boot_place / need_child_in_play / warp_both read A alone
+    and fail as SETUP-FAIL, never KeyError 'B' (review-rows-c130-3 16:38: until_in_play defaulted to ('A', 'B'))."""
+
+    def setUp(self):
+        import fakegame
+        self.tmp = tempfile.mkdtemp()
+        self.lane = fakegame.FakeLane(self.tmp)
+        self.pair = P.Pair({"A": self.lane.games()["A"]})
+        self.pair.begin(60)
+        self.pair.boot_scene = "KakarikoVillage_Child"
+        self.pair.boot_ready(self.pair.boot_scene)
+
+    def tearDown(self):
+        self.pair.close()
+        self.lane.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_solo_at_the_boot_place(self):
+        self.assertEqual(set(self.pair.c), {"A"})
+        st = self.pair.need_boot_place("child")
+        self.assertEqual({x: s["scene"] for x, s in st.items()}, {"A": "KakarikoVillage_Child"})
+        self.pair.until_in_play("A in play")
+        self.assertEqual(self.pair.away_from_boot(), [])
+
+    def test_solo_need_child_in_play(self):
+        import test_rows
+        test_rows.need_child_in_play(self.pair)
+
+    def test_solo_wrong_scene_is_a_setup_fail(self):
+        self.pair.warp_both("Market_Child")
+        with self.assertRaises(P.SetupFail) as e:
+            self.pair.need_boot_place("child")
+        self.assertIn("A is in Market_Child, not the boot's KakarikoVillage_Child", str(e.exception))
+
+    def test_solo_wrong_age_is_a_setup_fail(self):
+        with self.assertRaises(P.SetupFail) as e:
+            self.pair.need_boot_place("adult")
+        self.assertIn("A is child, this test needs adult Link", str(e.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -426,10 +426,18 @@ FlagReading ReadFlag(Core::System& system, std::string_view name);
 // the flag is unknown or the write was not queued.
 bool SetEnumHash(Core::System& system, std::string_view name, std::uint32_t value);
 
-// The menu step's doer: the Hookshot module sets it (coop_pause.cpp); "customize" opens
-// the Multiplayer tab's Customize page, "close" closes the menu, "host" hosts, "paste" joins with the
-// clipboard's code. True when asked.
-// Unset (the emulator): the step logs that it is not here.
+// The menu step's words, ONE list each: the parser here, tools/autotest/hookshot.py (MENU_WORDS, MENU_PAGES: checked
+// against these by tools/autotest/tests/test_ingame_menu_pages.py) and CoopPause::TestMenu.
+// `menu WORD`: "customize" opens the Customize page, "close" closes the menu, "host" hosts through the Host page's Host
+// row, "paste" joins with the clipboard's code, "leave" leaves as the Leave row does, "main" opens the Multiplayer page
+// (row 170; the same as `menu open main`).
+inline constexpr std::array<std::string_view, 6> kMenuWords{"customize", "close", "host", "paste", "leave", "main"};
+// `menu open PAGE` (B #138, port-g7): any page of the Multiplayer tab opened, nothing pressed, as the title's rows open
+// them (CoopPause::Open). The words are CoopPauseMenu::PageWord's, the same the bridge state's menu.coop.page shows.
+inline constexpr std::array<std::string_view, 8> kMenuPages{"main",     "host",      "join", "local",
+                                                            "settings", "commands", "customize", "find"};
+// The menu step's doer: the Hookshot module sets it (coop_pause.cpp TestMenu): a kMenuWords word, or "open PAGE".
+// True when asked. Unset (the emulator): the step logs that it is not here.
 using MenuOpener = std::function<bool(const std::string& page)>;
 void SetMenuOpener(MenuOpener opener);
 

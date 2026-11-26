@@ -14,6 +14,7 @@
 #include "coop_draw.h"
 #include "coop_hud_layout.h"
 #include "coop_map_page.h"
+#include "coop_map_drawn.h"
 
 namespace {
 
@@ -969,6 +970,30 @@ TEST_CASE("hookshot draw: the game's map arrow turned the way each player faces 
     const float quarter = std::fmod(images2[0].angle - images[0].angle + 2 * kPi, 2 * kPi);
     CHECK((quarter == doctest::Approx(kPi / 2).epsilon(0.01) || quarter == doctest::Approx(3 * kPi / 2).epsilon(0.01)));
 
+    // The bridge's map_icons (coop_map_drawn.h): what this present drew, as drawn.
+    std::uint64_t presents = 0;
+    const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
+    CHECK(presents > 0);
+    CHECK(drawn.view == "minimap");
+    CHECK(drawn.width == 1920);
+    CHECK(drawn.height == 1080);
+    REQUIRE(drawn.icons.size() == 2);
+    CHECK(drawn.icons[0].number == 2);
+    CHECK(drawn.icons[0].arrow);
+    REQUIRE(drawn.icons[0].turn);
+    CHECK(*drawn.icons[0].turn == doctest::Approx(images2[0].angle).epsilon(0.001));
+    CHECK(drawn.icons[0].x == doctest::Approx(images2[0].x + images2[0].px / 2).epsilon(0.001));
+    CHECK(drawn.icons[0].label == "Darunia");
+    CHECK(drawn.icons[1].number == 3);
+    CHECK_FALSE(drawn.icons[1].arrow);   // no facing yet: the name alone
+    CHECK_FALSE(drawn.icons[1].turn);
+    const std::string json = CoopMapDrawn::Json(drawn, presents);
+    CHECK(json.find("\"view\":\"minimap\"") != std::string::npos);
+    CHECK(json.find("\"number\":2,") != std::string::npos);
+    CHECK(json.find("\"arrow\":true") != std::string::npos);
+    CHECK(json.find("\"turn\":null,\"arrow\":false") != std::string::npos);
+    CHECK(json.find("\"label\":\"Darunia\"") != std::string::npos);
+
     // A Hookshot that cannot turn pictures (hos_coop_draw2's table): the names alone, no unturned arrow.
     Canvas flat(1920, 1080);
     flat.d.draw_image_turned = nullptr;
@@ -1107,6 +1132,20 @@ TEST_CASE("hookshot draw: a player on another floor is paler, the floors after t
     const auto ruto = MapLabel(c, "Ruto (1 below)");
     REQUIRE(ruto);
     CHECK(AlphaOf(ruto->rgba) < 160);
+}
+
+TEST_CASE("hookshot draw: map_icons says none on a present with no map, and counts presents") {
+    std::uint64_t before = 0;
+    CoopMapDrawn::Last(&before);
+    CoopDraw::Scene s;   // no map
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s);
+    std::uint64_t after = 0;
+    const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&after);
+    CHECK(after == before + 1);
+    CHECK(drawn.view == "none");
+    CHECK(drawn.icons.empty());
+    CHECK(CoopMapDrawn::Json(drawn, after).rfind("{\"view\":\"none\",\"presents\":", 0) == 0);
 }
 
 TEST_CASE("hookshot map page: our place's map until Y turns it to the World Map, and back") {

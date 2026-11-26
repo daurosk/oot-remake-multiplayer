@@ -10,6 +10,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "coop_pause_menu.h"
 #include "coop_snail_custom.h"
@@ -35,7 +36,26 @@ struct Screen {
 // The snapshot of a driver (open and driven as the module knows them).
 Screen FromDriver(const CoopSnailCustom::Driver& d, bool open, bool driven);
 
-// The `menu` member's value: {"coop":{...},"customize_screen":{...}} (docs/playtest.md).
+// Co-op's tabs of the game's - menu (Multiplayer, Lobby, Mods: coop_pause_tab.h MinusPage), as the module drew them
+// last (CoopPauseTab::MinusWords). Row 223: the details list on the right of the Multiplayer page (the main and
+// Session views) has two pages, the session's lines and the key items; only the key items' lines go in (the
+// session's page can hold a join code or an address).
+struct Minus {
+    bool open = false;
+    std::string tab;            // "multiplayer", "lobby", "mods"
+    std::string view;           // the rows' view ("main", "session", "players", ...: CoopPauseTab::ViewWord)
+    int details_page = 0;       // 0 the session's lines, 1 the key items
+    int details_pages = 0;      // 2 while the game's key items can be read, 1 when not, 0 on a view without the list
+    struct Line {
+        std::string name, value;   // "Songs", "3 of 12"
+    };
+    std::vector<Line> key_items;   // the key items page's lines under its heading (only while details_page is 1)
+};
+
+// The `menu` member's value: {"coop":{...},"customize_screen":{...}} (docs/playtest.md); with the - menu's tabs,
+// {"coop":...,"customize_screen":...,"minus":{...}}.
 std::string Json(const Tab& tab, const Screen& screen);
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus);
+std::string MinusJson(const Minus& minus);
 
 }  // namespace CoopMenuState

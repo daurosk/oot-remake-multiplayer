@@ -151,6 +151,9 @@ def test_kokiri_hood_band(pair):
             # adult: the bridge warp to an _Adult name sets Sequence_IsChildhood first (docs/playtest.md "warp"); the old
             # scenario: setflag Sequence_IsChildhood 0, then warp KakarikoVillage_Adult
             pair.warp_both("KakarikoVillage_Adult")
+            # stepped, never one read (B #139 16:31, the gifts-237 class): the bridge's warp answers on arrival
+            # (coop_playtest_core.cpp WarpArrived), but the state read right after can hold a sample older than the frame
+            pair.until_in_play("both games in play after the warp to KakarikoVillage_Adult")
             for x in ("A", "B"):
                 s = pair.state(x)
                 assert pair.in_play(s) and s.get("age") == "adult", "%s is not adult in play (%s, %s)" % (
@@ -189,7 +192,9 @@ def test_kokiri_hood_band(pair):
                 "the band thresholds are not measured yet (MEASURED: run the probe on the fixed and the old pack)"))
     finally:
         try:
-            back = pair.warp_both("KakarikoVillage_Child")   # (an _Child name sets Sequence_IsChildhood 1 first)
+            pair.warp_both("KakarikoVillage_Child")   # (an _Child name sets Sequence_IsChildhood 1 first)
+            pair.until_in_play("both games in play after the warp back to KakarikoVillage_Child")   # (stepped, as above)
+            back = {x: pair.state(x) for x in ("A", "B")}
         except Exception:
             if done:
                 raise

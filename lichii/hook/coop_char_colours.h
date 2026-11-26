@@ -146,6 +146,18 @@ inline constexpr std::uint64_t kActorEquipment = 0x200, kGearFirst = 0x20, kGear
 inline constexpr std::uint32_t kGearHandles = 0x11F0FD, kGearCount = 21, kShownBit = 0x10000;
 // Shows (shown) or hides the actor's equipment pieces; the count of pieces changed.
 std::size_t SetGearShown(const Game& game, std::uint64_t actor, bool shown);
+// gear-link (one owner per bit): a piece Equipment Hidden hid, by its actor and its handle's id, so only the pieces WE
+// hid are shown again (one the game hid itself, in an event or a pose, stays as the game left it).
+struct GearPiece {
+    std::uint64_t piece = 0;
+    std::uint32_t id = 0;
+    bool operator==(const GearPiece&) const = default;
+};
+// Hides the actor's pieces (as SetGearShown(false)) and keeps in `ours` every piece we hid that the actor still wears
+// (one it no longer wears, or one being made or deleted, is dropped); the count hidden this call.
+std::size_t HideGear(const Game& game, std::uint64_t actor, std::vector<GearPiece>& ours);
+// Shows again only the pieces in `ours` the actor still wears (the same id) and empties `ours`; the count shown.
+std::size_t ShowOurGear(const Game& game, std::uint64_t actor, std::vector<GearPiece>& ours);
 
 // Puts `custom`'s colours on the actor's model. put_back: an option at 0 sets the file's own values again (after
 // another hand changed them: the mod's own per-frame code with the viewer's options). `iris_shift` as EyeColour.
@@ -172,12 +184,17 @@ Result Dress(const Game& game, State& state, const Options& options, bool put_ba
 // for every character): ForModel is the one rule at every site that dresses a model.
 inline constexpr std::uint8_t kLinkEyesPart = 18, kLinkHairPart = 19, kCharHairPart = 20, kCharEyesPart = 21,
                               kCharCloth1Part = 22, kCharGearPart = 25;
+// look-link-cs (report 293): Character Select's options on a Link model, CoopLook's parts 27 to 29 (the vest, the
+// leather and boots, the equipment). On Link only the equipment is the wardrobe's (Hidden, nibble 2): his hair, vest
+// and leather are painted on his own textures by co-op's texture overrides (C #132), never the mod's palette.
+inline constexpr std::uint8_t kLinkVestPart = 27, kLinkLeatherPart = 28, kLinkGearPart = 29;
 struct ModelColours {
     std::uint32_t custom = 0;                 // Options' nibbles: hair palette, gear, the three clothing palettes
     std::optional<std::uint32_t> eyes{}, hair{};  // exact colours (EyeParam / HairParam)
     bool operator==(const ModelColours&) const = default;
 };
-// `part(number)`: the look's colour of that part, if set. A Link model: Link's eyes and hair only. A character's: its
+// `part(number)`: the look's colour of that part, if set. A Link model: Link's eyes and hair, and his equipment
+// (look-link-cs). A character's: its
 // character parts; with none of them set, `legacy_custom` (a 0.11.8 peer's Character Select options, part 62).
 ModelColours ForModel(bool link_model, const std::function<std::optional<std::uint32_t>(std::uint8_t)>& part,
                       std::uint32_t legacy_custom = 0);
@@ -290,7 +307,10 @@ private:
         std::uint64_t retry_ms = 0;            // after a failed call: not before then (kAgainMs)
         bool said_failed = false;              // a failure is said once per puppet
         bool seen = false;
-        bool gear_hidden = false;              // its equipment hidden by us (shown again when that ends)
+        // its equipment pieces hidden by us (HideGear; shown again when Hidden ends, also after a model-key reset:
+        // the actor and its pieces are the same, gear-link)
+        std::vector<GearPiece> gear_hidden;
+        bool gear_said = false;                // "equipment hidden" said for this spell of Hidden
     };
     std::vector<Kept> kept_;
     std::size_t first_ = 0;                    // the target dressed first: one further each frame (the budget)

@@ -1056,6 +1056,24 @@ RowAction ActionFor(int row, const Session& s) {
     }
 }
 
+const char* ViewWord(View view) {
+    switch (view) {
+    case View::kMain: return "main";
+    case View::kPlayers: return "players";
+    case View::kLetIn: return "let_in";
+    case View::kJoin: return "join";
+    case View::kSession: return "session";
+    case View::kPlayer: return "player";
+    case View::kPlayerHost: return "player_host";
+    case View::kLan: return "lan";
+    case View::kLanGame: return "lan_game";
+    case View::kPassword: return "password";
+    case View::kMenu: return "menu";
+    case View::kHost: return "host";
+    }
+    return "unknown";
+}
+
 View BackOf(View view) {
     switch (view) {
     case View::kPlayerHost: return View::kPlayer;
@@ -2061,6 +2079,14 @@ std::vector<ListLine> ChatHistoryLines(const SessionView& v) {
     return lines;
 }
 
+DetailPaging DetailPages(View view, const SessionView& v) {
+    if (view != View::kMain && view != View::kSession) return {};
+    DetailPaging p;
+    p.pages = v.tally_ok ? 2 : 1;
+    p.page = CoopListPages::Wrap(v.detail_page, p.pages);
+    return p;
+}
+
 std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
     // (menu-parity-0119, a lane shot: co-op that came with the game's start left the Lobby's Host and Join views with
@@ -2072,9 +2098,9 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     // Row 223: the details list's pages (ZL / ZR), on the Main and Session views only: page 1 is the session's lines
     // below, page 2 the key items the game holds, "Songs  8 of 13" (a list of ours, English keys through Tr; only
     // with a game loaded, else the list has the one page).
-    const bool paged_details = (view == View::kMain || view == View::kSession) && v.tally_ok;
-    const int detail_pages = paged_details ? 2 : 1;
-    const int detail_page = CoopListPages::Wrap(v.detail_page, detail_pages);
+    const DetailPaging paging = DetailPages(view, v);
+    const int detail_pages = paging.pages > 0 ? paging.pages : 1;
+    const int detail_page = paging.page;
     if (detail_page == 1) {
         using coop::host::TallyGroup;
         lines[0] = ListLine{CoopListPages::Heading(CoopI18n::Tr("Key items"), CoopListPages::Line(1, 2), kListNameChars),

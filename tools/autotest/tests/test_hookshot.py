@@ -299,6 +299,12 @@ class ParseTest(unittest.TestCase):
         steps = hs.parse("menu Customize\nmenu close\nmenu Host\nmenu Paste\n")
         self.assertEqual([(s.kind, s.name) for s in steps], [("menu", "customize"), ("menu", "close"), ("menu", "host"), ("menu", "paste")])
         self.assertIn("menu", hs.MODULE_ONLY)
+        # gear-link: a look part chosen and worn (the module's MENU parser takes the same words)
+        self.assertEqual([(s.kind, s.name) for s in hs.parse("menu look link_gear=hidden\nmenu look Link_Gear=None\n")],
+                         [("menu", "look link_gear=hidden"), ("menu", "look link_gear=none")])
+        for bad in ("menu look link_gear\n", "menu look a=b c\n", "menu paint a=b\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
         self.assertIn("autosave", hs.MODULE_ONLY)   # rejoin-host-273-2: the game's own autosave, asked
         self.assertEqual(hs.parse("autosave\n")[0].kind, "autosave")
         with self.assertRaises(hs.ScriptError):

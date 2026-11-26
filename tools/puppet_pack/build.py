@@ -2647,6 +2647,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "characters": ({"mod": characters["mod"], "numbers": {str(n): characters["numbers"][n] for n in sorted(characters["files"])},
                         "variants": {str(n): characters["files"][n] for n in sorted(characters["files"])},
                         "colours": characters.get("colours"),
+                        # row 285: per variant, the mod's AnimationParams its puppets took (retargeted clips), as the
+                        # log's "the Player_<v> puppets take ...'s <path> (retargeted clips)" lines; a test reads it
+                        "animation_params": {v: sorted(p) for v, p in sorted(mod_anims.items()) if p},
                         **({"barslist": {"file": voices["rel"], "sha256": voices["sha256"], "voices": bool(voiced)}}
                            if voices else {})} if characters else None),
         "test_tunic": test_tunic,

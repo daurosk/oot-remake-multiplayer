@@ -35,7 +35,9 @@ def num(game):
 
 
 def setup(game):
-    game.dbno = {"state": "up", "life": 12, "fairy": game.tag == "B", "held": 0, "charsel": 0, "on": False}
+    game.dbno = {"state": "up", "life": 12, "fairy": game.tag == "B", "held": 0, "on": False}
+    if not game.env_on("COOP_TEST_NO_CHARACTER_SELECT=1"):   # (no_cs.SWITCH: that game boots without the mod, the
+        game.flags.setdefault(CHARSEL, 0)                     # flag unset = kind unknown/None, no_cs.has_character_select)
     game.dbno_rules = {"on": True, "bleed": 45, "hold": 50}
 
 
@@ -139,18 +141,18 @@ def act(game, words):
     return False
 
 
-def command(game, m):
+def after(game, m, r):
+    # The character flag goes through the built-in flag store (game.flags) and this hook only adds to its answer, so
+    # another row's fake of the same flag (fakes/levitate.py nochar, later in file-name order) still takes effect;
+    # a `command` hook here answered it for every test and hid theirs.
     if m.get("cmd") == "flag_read" and m.get("name") == CHARSEL:
-        return {"ok": True, "kind": "int", "value": game.dbno["charsel"]}
+        if r.get("value") is not None:     # (unset = no Character Select in the fake: no_cs.has_character_select)
+            r["kind"] = "int"
+        return
     if m.get("cmd") == "flag" and m.get("name") == CHARSEL:
-        was, game.dbno["charsel"] = game.dbno["charsel"], int(m["value"])
         o, n = game.other, int(m["value"])
         o.later(30, lambda: o.say("coop: look: P%d wears 11 part colour(s), character %d (PLAYER_LOOK)" % (num(game), n)))
-        return {"ok": True, "was": was, "value": n}
-    return None
-
-
-def after(game, m, r):
+        return
     if m.get("cmd") != "input" or not here(game):
         return
     frames = int(m.get("frames", 1))

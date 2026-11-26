@@ -20,6 +20,9 @@ const std::array<PartInfo, kParts>& Parts() {
         {Part::cap_trim_hoods, "cap_trim_hoods", "Tunic", "Cap trim on hoods"},
         {Part::eyes, "eyes", "Eyes", "Colour"},
         {Part::hair, "hair", "Hair", "Colour"},
+        {Part::link_vest, "link_vest", "Link", "Vest"},
+        {Part::link_leather, "link_leather", "Link", "Leather and boots"},
+        {Part::link_gear, "link_gear", "Link", "Equipment"},
         {Part::hylian_frame, "hylian_frame", "Hylian Shield", "Frame"},
         {Part::hylian_face, "hylian_face", "Hylian Shield", "Face"},
         {Part::hylian_emblem, "hylian_emblem", "Hylian Shield", "Emblem"},
@@ -167,7 +170,7 @@ bool WriteSettings(const Look& look, std::string& coop_ini, std::string* options
     std::string out = text;
     for (const PartInfo& info : Parts()) {
         // (the equipment's row is shown or hidden, not a colour)
-        const std::string colour = info.part == Part::char_gear        ? (look[info.part] ? "hidden" : "")
+        const std::string colour = IsGearSwitch(info.part)             ? (look[info.part] ? "hidden" : "")
                                    : info.part == Part::cap_trim_hoods ? (look[info.part] ? "on" : "")
                                                                        : ColourText(look[info.part]);
         const std::string key = SettingsKey(info);
@@ -198,7 +201,7 @@ Look ReadParts(std::string_view text, std::vector<std::string>* errors) {
         if (!value || value->empty()) {
             continue;
         }
-        if (info.part == Part::char_gear) {
+        if (IsGearSwitch(info.part)) {
             if (*value == "hidden") {
                 look[info.part] = kGearHidden;
             } else if (*value != "shown" && errors != nullptr) {

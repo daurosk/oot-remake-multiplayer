@@ -68,6 +68,10 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
+# The `menu` step's words: lichii/hook/coop_testinput.h kMenuWords and kMenuPages, the one lists
+# (tests/test_ingame_menu_pages.py checks these copies against them).
+MENU_WORDS = ("customize", "close", "host", "paste", "leave", "main")
+MENU_PAGES = ("main", "host", "join", "local", "settings", "commands", "customize", "find")
 MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "drop", "verb", "hurt", "setflag", "setenum", "menu",
                "dump", "event", "autosave")
 
@@ -452,9 +456,18 @@ def parse(text):
                 fail("want: assign ITEM")
             s.kind, s.name = "assign", w[1]
         elif cmd == "MENU":
-            if len(w) != 2 or w[1].lower() not in ("customize", "close", "host", "paste", "leave", "main"):
-                fail("want: menu customize|close|host|paste|leave|main")
-            s.kind, s.name = "menu", w[1].lower()
+            # (gear-link: "menu look KEY=VALUE", the module's coop_testinput.cpp MENU: a look part chosen and worn)
+            if len(w) == 3 and w[1].lower() == "look" and "=" in w[2]:
+                s.kind, s.name = "menu", " ".join(w[1:]).lower()
+            elif len(w) == 3 and w[1].lower() == "open":     # `menu open PAGE` (B #138): any page, nothing pressed
+                if w[2].lower() not in MENU_PAGES:
+                    fail("want: menu open " + "|".join(MENU_PAGES))
+                s.kind, s.name = "menu", "open " + w[2].lower()
+            else:
+                if len(w) != 2 or w[1].lower() not in MENU_WORDS:
+                    fail("want: menu " + "|".join(MENU_WORDS) + ", menu open " + "|".join(MENU_PAGES)
+                         + ", or menu look KEY=VALUE")
+                s.kind, s.name = "menu", w[1].lower()
         elif cmd == "AWAIT":
             # Row 325: "await TICKS REGEX": until a NEW line of this game's own log (written after the step began)
             # matches REGEX (the rest of the line, spaces kept), at most TICKS. The runner reads the log itself: no

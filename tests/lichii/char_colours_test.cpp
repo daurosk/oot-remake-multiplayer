@@ -244,6 +244,33 @@ TEST_CASE("char colours (npc-customize): Link's eyes and hair on a Link model, t
     CHECK(ForModel(true, part) == ModelColours{0, 0x123456u, 0xABCDEFu});   // (Link keeps his own)
 }
 
+TEST_CASE("char colours (look-link-cs, report 293): Character Select's options on a Link model") {
+    using namespace CoopCharColours;
+    std::map<std::uint8_t, std::uint32_t> look = {{kLinkHairPart, 0x0A0808u},   // (near black: hair entry 3)
+                                                  {kLinkVestPart, 0xFF1010u},   // (red: clothing entry 2)
+                                                  {kLinkLeatherPart, 0xFFFFFFu},   // (white: entry 7)
+                                                  {kLinkGearPart, 1u}};
+    const auto part = [&look](std::uint8_t n) -> std::optional<std::uint32_t> {
+        const auto it = look.find(n);
+        return it == look.end() ? std::nullopt : std::optional<std::uint32_t>(it->second);
+    };
+    // Only Hidden (nibble 2): the hair, vest and leather are co-op's texture paint on Link, never a palette (C #132).
+    const ModelColours link = ForModel(true, part);
+    CHECK(link.custom == (1u << 8));
+    CHECK(link.hair == 0x0A0808u);
+    CHECK(link.eyes == std::nullopt);
+    CHECK(Options::Of(link.custom).hair == 0);
+    CHECK(Options::Of(link.custom).clothes == std::array<std::uint8_t, 3>{});
+    CHECK(Options::Of(link.custom).gear == 1);
+    // A character's model never takes Link's (its own parts, or a 0.11.8 peer's options).
+    CHECK(ForModel(false, part) == ModelColours{});
+    // Each alone.
+    look = {{kLinkGearPart, 1u}};
+    CHECK(ForModel(true, part).custom == (1u << 8));
+    look = {{kLinkLeatherPart, 0x0000FFu}, {kLinkVestPart, 0xFF0000u}};
+    CHECK(ForModel(true, part) == ModelColours{});
+}
+
 TEST_CASE("char colours (npc-customize): the mod's nearest hair and clothing palette entries") {
     using namespace CoopCharColours;
     for (std::uint8_t i = 0; i < kCloths; ++i) CHECK(NearestCloth(kClothRgb[i]) == i + 1);
@@ -307,6 +334,122 @@ TEST_CASE("char colours (npc-customize): Equipment Hidden clears the shown bit o
     CHECK(SetGearShown(g, actor, true) == 1);
     CHECK(flags(0x5000) == 0x10003u);
     CHECK(SetGearShown(g, 0x9999, false) == 0);   // (no equipment: nothing)
+}
+
+namespace {
+// gear-link: a bare equipment component in memory, as above, for HideGear / ShowOurGear and the wardrobe.
+struct GearMem {
+    std::map<std::uint64_t, std::uint8_t> mem;
+    CoopCharColours::Game g;
+    static constexpr std::uint64_t kActor = 0x1000, kComps = 0x2000, kEquip = 0x3000;
+    GearMem() {
+        g.read = [this](std::uint64_t a, void* out, std::size_t n) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto it = mem.find(a + i);
+                if (it == mem.end()) return false;
+                static_cast<std::uint8_t*>(out)[i] = it->second;
+            }
+            return true;
+        };
+        g.write = [this](std::uint64_t a, const void* in, std::size_t n) {
+            for (std::size_t i = 0; i < n; ++i) mem[a + i] = static_cast<const std::uint8_t*>(in)[i];
+            return true;
+        };
+        Put64(kActor + CoopCharColours::kActorComponents, kComps);
+        Put64(kComps + CoopCharColours::kActorEquipment, kEquip);
+    }
+    void Put64(std::uint64_t a, std::uint64_t v) { g.write(a, &v, 8); }
+    void Put32(std::uint64_t a, std::uint32_t v) { g.write(a, &v, 4); }
+    // handle k worn by the piece at `at` (its link at 0x4000 + 0x100 k), with id and flag word
+    void Piece(std::uint32_t k, std::uint64_t at, std::uint32_t id, std::uint32_t flags) {
+        using namespace CoopCharColours;
+        const std::uint64_t h = kEquip + kGearFirst + kGearStride * k, link = 0x4000 + 0x100 * k;
+        Put32(h + 0x10, id);
+        Put64(h + 0x8, link);
+        Put32(link + 0x48, id);
+        Put64(link + 0x40, at);
+        Put32(at + 0x2c, 1);
+        Put32(at + kActorFlags, flags);
+    }
+    std::uint32_t Flags(std::uint64_t at) {
+        std::uint32_t v = 0;
+        g.read(at + CoopCharColours::kActorFlags, &v, 4);
+        return v;
+    }
+};
+}  // namespace
+
+TEST_CASE("char colours (gear-link): only the pieces Hidden hid are shown again, one the game hid stays hidden") {
+    using namespace CoopCharColours;
+    GearMem m;
+    m.Piece(0, 0x5000, 40, 0x10003u);   // the sword: shown
+    m.Piece(4, 0x5200, 44, 0x00003u);   // the shield: hidden by the game itself (an event, a pose)
+    std::vector<GearPiece> ours;
+    CHECK(HideGear(m.g, GearMem::kActor, ours) == 1);
+    CHECK(m.Flags(0x5000) == 0x3u);
+    CHECK(ours == std::vector<GearPiece>{{0x5000, 40}});
+    // The game shows the sword again when it uses it: hidden again, still one piece of ours.
+    m.Put32(0x5000 + kActorFlags, 0x10003u);
+    CHECK(HideGear(m.g, GearMem::kActor, ours) == 1);
+    CHECK(HideGear(m.g, GearMem::kActor, ours) == 0);
+    CHECK(ours.size() == 1);
+    CHECK(ShowOurGear(m.g, GearMem::kActor, ours) == 1);
+    CHECK(m.Flags(0x5000) == 0x10003u);
+    CHECK(m.Flags(0x5200) == 0x00003u);   // (never ours: left as the game had it)
+    CHECK(ours.empty());
+}
+
+TEST_CASE("char colours (gear-link): a piece no longer worn is dropped, a new piece is hidden and ours") {
+    using namespace CoopCharColours;
+    GearMem m;
+    m.Piece(4, 0x5200, 44, 0x10000u);   // the Deku Shield
+    std::vector<GearPiece> ours;
+    CHECK(HideGear(m.g, GearMem::kActor, ours) == 1);
+    // A shield change makes a new actor (docs/puppet.md "Which slot is which"): a new id in the same handle.
+    m.Piece(4, 0x5300, 45, 0x10000u);
+    CHECK(HideGear(m.g, GearMem::kActor, ours) == 1);
+    CHECK(ours == std::vector<GearPiece>{{0x5300, 45}});
+    // The old piece's memory, if the game keeps it, is never written again.
+    m.Put32(0x5200 + kActorFlags, 0x0u);
+    CHECK(ShowOurGear(m.g, GearMem::kActor, ours) == 1);
+    CHECK(m.Flags(0x5200) == 0x0u);
+    CHECK(m.Flags(0x5300) == 0x10000u);
+}
+
+TEST_CASE("char colours (gear-link): the wardrobe hides every frame, shows again once, also after a model switch") {
+    using namespace CoopCharColours;
+    GearMem m;
+    m.Piece(0, 0x5000, 40, 0x10000u);
+    Wardrobe w;
+    std::vector<std::string> said;
+    const auto say = [&](const std::string& l) { said.push_back(l); };
+    const ModelColours hidden{.custom = 1u << 8}, none{};
+    const auto own = [&](const ModelColours& c, std::uint64_t model) {
+        return OwnTarget(GearMem::kActor, 0x20000, model, c, 0, true, false);
+    };
+    w.Frame(m.g, {own(hidden, 1)}, 1000, say);
+    CHECK(m.Flags(0x5000) == 0x0u);
+    REQUIRE(said.size() == 1);
+    CHECK(said[0] == "characters: equipment hidden on your model (1 piece(s))");
+    m.Put32(0x5000 + kActorFlags, 0x10000u);   // (the game shows it when it uses it)
+    w.Frame(m.g, {own(hidden, 1)}, 1016, say);
+    CHECK(m.Flags(0x5000) == 0x0u);
+    CHECK(said.size() == 1);   // (said once per spell of Hidden)
+    // A pick or age switch at the same actor (another model key) to a look without Hidden: shown again.
+    w.Frame(m.g, {own(none, 2)}, 1032, say);
+    CHECK(m.Flags(0x5000) == 0x10000u);
+    REQUIRE(said.size() == 2);
+    CHECK(said[1] == "characters: equipment shown again on your model (1 piece(s))");
+    w.Frame(m.g, {own(none, 2)}, 1048, say);
+    CHECK(said.size() == 2);   // (once)
+    // A Link puppet with part 29 (ForModel's nibble 2) is hidden the same way.
+    m.Piece(0, 0x5000, 40, 0x10000u);
+    const auto parts = [](std::uint8_t n) -> std::optional<std::uint32_t> {
+        return n == kLinkGearPart ? std::optional<std::uint32_t>(1u) : std::nullopt;
+    };
+    w.Frame(m.g, {PuppetTarget(GearMem::kActor, 0x20000, false, "CoopPuppet_Child", ForModel(true, parts))}, 2000, say);
+    CHECK(m.Flags(0x5000) == 0x0u);
+    CHECK(said.back() == "characters: equipment hidden on a puppet (1 piece(s))");
 }
 
 TEST_CASE("char colours: the pause menu's model of your Link is the game's Pouch twin of the field player (lane: eyes)") {

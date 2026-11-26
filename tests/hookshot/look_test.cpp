@@ -272,6 +272,29 @@ TEST_CASE("look: every part has its number, a key and a row, and the numbers nev
     CHECK(CoopCharColours::kCharGearPart == static_cast<int>(Part::char_gear));
     CHECK(CoopCharColours::kLinkEyesPart == static_cast<int>(Part::eyes));
     CHECK(CoopCharColours::kLinkHairPart == static_cast<int>(Part::hair));
+    CHECK(CoopCharColours::kLinkVestPart == static_cast<int>(Part::link_vest));   // (look-link-cs)
+    CHECK(CoopCharColours::kLinkLeatherPart == static_cast<int>(Part::link_leather));
+    CHECK(CoopCharColours::kLinkGearPart == static_cast<int>(Part::link_gear));
+    CHECK(CoopLook::kParts == 30);
+}
+
+TEST_CASE("look (look-link-cs): Link's vest, leather and equipment are saved and read back") {
+    Look look;
+    look[Part::link_vest] = CoopColors::Parse("red");
+    look[Part::link_leather] = CoopColors::Parse("black");
+    look[Part::link_gear] = CoopLook::kGearHidden;
+    std::string ini;
+    CHECK(CoopLook::WriteSettings(look, ini, nullptr));
+    CHECK(ini.find("look_link_gear = hidden") != std::string::npos);
+    CHECK(ini.find("look_link_vest") != std::string::npos);
+    std::vector<std::string> errors;
+    const Look back = CoopLook::ReadParts(ini, &errors);
+    CHECK(errors.empty());
+    CHECK(back[Part::link_vest] == look[Part::link_vest]);
+    CHECK(back[Part::link_leather] == look[Part::link_leather]);
+    CHECK(back[Part::link_gear] == CoopLook::kGearHidden);
+    CHECK(CoopLook::ReadParts("look_link_gear = maybe\n", &errors)[Part::link_gear] == std::nullopt);
+    CHECK_FALSE(errors.empty());
 }
 
 TEST_CASE("look (npc-customize): a character's parts are saved, read back and sent like the others") {
@@ -971,7 +994,8 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
             parts.insert(r.part);
         }
     }
-    CHECK(parts.size() == CoopLook::kParts - 11);   // (and a character's six: CoopCharColours, no texture of ours; Cap trim on hoods: a switch)
+    CHECK(parts.size() == CoopLook::kParts - 14);   // (and a character's six: CoopCharColours, no texture of ours; Cap trim on hoods: a switch;
+                                                    //  look-link-cs: Link's vest, leather (no gear texture yet: vest-link, leather-link) and equipment (a switch))
 }
 
 TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {
@@ -1975,6 +1999,139 @@ TEST_CASE("look parts: the Cap trim paints only the cap's blocks, over the tunic
                                   0xC02020u, 0.2) == 0);
 }
 
+TEST_CASE("look parts (vest-link): one owner per texture, the vest's textures") {
+    using CoopLookParts::OwnerOf;
+    CHECK(OwnerOf("Mt_Vest_Player_Adult_Alb") == Part::link_vest);
+    CHECK(OwnerOf("Mt_Vest_Player_Child_Alb") == Part::link_vest);
+    CHECK_FALSE(OwnerOf(CoopLookParts::kTunicTile));
+    CHECK_FALSE(OwnerOf("Mt_Vest_Armor_Adult_Goron_Alb"));   // (the Goron tunic's own model: its tunic's colour)
+    // Every texture is named once, and every vest texture is a tunic texture (the tunic wardrobe paints it).
+    std::set<std::string> seen;
+    for (const auto& o : CoopLookParts::Owners()) {
+        CHECK(seen.insert(o.texture).second);
+        if (o.part != Part::link_vest) continue;
+        const auto& tunics = CoopLookParts::TunicTextures();
+        CHECK(std::any_of(tunics.begin(), tunics.end(), [&](const auto& t) { return std::string(t.name) == o.texture; }));
+    }
+    // The vest is the tunic wardrobe's, not the gear's: a look with only a vest makes no gear painting.
+    CoopLook::Look look;
+    look[Part::link_vest] = 0xC02020u;
+    CHECK_FALSE(CoopLookParts::AnyGear(look));
+    CHECK(CoopLookParts::Name(look) == CoopLookParts::Name(CoopLook::Look{}));
+}
+
+TEST_CASE("look parts (vest-link): a painting's name says the vest, none is 0.11.12's name") {
+    using CoopLookParts::TunicPaint;
+    using CoopLookParts::TunicPaintOf;
+    using CoopLookParts::TunicPainting;
+    // No vest: every name as before.
+    CHECK(TunicPainting(std::nullopt, std::nullopt, std::nullopt) == "green");
+    CHECK(TunicPainting(0x38D040u, std::nullopt, std::nullopt) == "tunic-38D040");
+    CHECK(TunicPainting(0x38D040u, 0xC02020u, std::nullopt) == "tunic-38D040-cap-C02020");
+    // With one: after the tunic's, before the cap's; the game's own green said as "green".
+    CHECK(TunicPainting(std::nullopt, std::nullopt, 0x2040FFu) == "tunic-green-vest-2040FF");
+    CHECK(TunicPainting(0x30D040u, std::nullopt, 0x2040FFu) == "tunic-green-vest-2040FF");
+    CHECK(TunicPainting(0x38D040u, std::nullopt, 0x2040FFu) == "tunic-38D040-vest-2040FF");
+    CHECK(TunicPainting(0x38D040u, 0xC02020u, 0x2040FFu) == "tunic-38D040-vest-2040FF-cap-C02020");
+    // Read back.
+    CHECK(TunicPaintOf("tunic-green-vest-2040FF") == TunicPaint{std::nullopt, std::nullopt, 0x2040FFu});
+    CHECK(TunicPaintOf("tunic-38D040-vest-2040FF") == TunicPaint{0x38D040u, std::nullopt, 0x2040FFu});
+    CHECK(TunicPaintOf("tunic-38D040-vest-2040FF-cap-C02020") == TunicPaint{0x38D040u, 0xC02020u, 0x2040FFu});
+    CHECK(TunicPaintOf("tunic-green-vest-2040FF-cap-C02020") == TunicPaint{std::nullopt, 0xC02020u, 0x2040FFu});
+    CHECK(TunicPaintOf("tunic-38D040-cap-C02020") == TunicPaint{0x38D040u, 0xC02020u, std::nullopt});
+    CHECK_FALSE(TunicPaintOf("tunic-38D040-vest-"));
+    CHECK_FALSE(TunicPaintOf("tunic-38D040-vest-2040FG"));
+    CHECK_FALSE(TunicPaintOf("tunic-38D040-cap-C02020-vest-2040FF"));   // (the cap's is last)
+    CHECK_FALSE(CoopLookParts::TunicColour("tunic-38D040-vest-2040FF").has_value());
+    CHECK(TunicPainting(0x38D040u, std::nullopt, 0x2040FFu) != TunicPainting(0x38D040u, std::nullopt, 0x2040F8u));
+}
+
+TEST_CASE("look parts (vest-link): the vest paints only the vest's textures, unset 0.11.12 byte for byte") {
+    using CoopLookParts::TunicPaint;
+    using CoopLookPaint::Format;
+    using Colour = std::optional<std::uint32_t>;
+    const auto green = GreenTunic();
+    const char* const kAdultVest = "Mt_Vest_Player_Adult_Alb";   // ASTC: 16-byte blocks
+    // The adult's hood trim in the vest's texture (block 16), the child's headband (Mt_Cloth_Parts) block 16.
+    const auto cap = *CoopLookParts::ParseCap(CapFile({{kChildParts, 16, {16}}, {kAdultVest, 16, {16}}}));
+    for (const Colour tunic : {Colour{}, Colour{0xD02020u}}) {
+        CAPTURE(tunic.value_or(0));
+        // Unset: the painting of 0.11.12, every byte (with and without cap.bin, with and without a cap colour).
+        for (const CoopLookParts::Cap* c : {static_cast<const CoopLookParts::Cap*>(nullptr), &cap}) {
+            for (const Colour trim : {Colour{}, Colour{0xE0E020u}}) {
+                const auto now = CoopLookParts::TunicPainted(green, TunicPaint{tunic, trim, std::nullopt}, c);
+                const auto before = CoopLookParts::TunicPainted(green, TunicPaint{tunic, trim}, c);
+                REQUIRE(now.size() == before.size());
+                for (std::size_t i = 0; i < now.size(); ++i) CHECK(now[i].texels == before[i].texels);
+            }
+        }
+        const auto alone = CoopLookParts::TunicPainted(green, TunicPaint{tunic, std::nullopt}, &cap);
+        const auto all_blue = CoopLookParts::TunicPainted(green, 0x2040FFu);
+        const auto vest = CoopLookParts::TunicPainted(green, TunicPaint{tunic, std::nullopt, 0x2040FFu}, &cap);
+        REQUIRE(vest.size() == green.size());
+        CHECK(CoopLookTunic::SameLayout(vest, green));
+        for (std::size_t i = 0; i < green.size(); ++i) {
+            CAPTURE(green[i].name);
+            if (CoopLookParts::OwnerOf(green[i].name) != Part::link_vest) {
+                CHECK(vest[i].texels == alone[i].texels);   // (the tile, the cap's parts, the straps: the tunic's)
+                continue;
+            }
+            if (green[i].name == std::string(kAdultVest)) {
+                // The hood trim's block follows the tunic (no Cap trim colour), the rest of it is the vest's.
+                CHECK(Changed(vest[i].texels, all_blue[i].texels, 16) == std::vector<std::size_t>{16});
+                CHECK(std::equal(vest[i].texels.begin() + 16, vest[i].texels.begin() + 32, alone[i].texels.begin() + 16));
+            } else {
+                CHECK(vest[i].texels == all_blue[i].texels);
+            }
+            CHECK(vest[i].texels != green[i].texels);
+        }
+        // With a Cap trim colour the hood trim's block is the cap's, over the vest.
+        const auto trimmed = CoopLookParts::TunicPainted(green, TunicPaint{tunic, 0xE0E020u, 0x2040FFu}, &cap);
+        const auto& t = TextureOf(trimmed, kAdultVest).texels;
+        const auto cap_only = CoopLookParts::TunicPainted(green, TunicPaint{tunic, 0xE0E020u}, &cap);
+        CHECK(std::equal(t.begin() + 16, t.begin() + 32, TextureOf(cap_only, kAdultVest).texels.begin() + 16));
+        CHECK(std::equal(t.begin(), t.begin() + 16, TextureOf(all_blue, kAdultVest).texels.begin()));
+        // No cap.bin (an older pack): the whole vest texture is the vest's.
+        const auto bare = CoopLookParts::TunicPainted(green, TunicPaint{tunic, std::nullopt, 0x2040FFu}, nullptr);
+        CHECK(TextureOf(bare, kAdultVest).texels == TextureOf(all_blue, kAdultVest).texels);
+    }
+}
+
+// A texture painted from green as a puppet's copy holds it (row 198): its last byte marked as the copy's, not green's.
+// (Defined before its first use: the vest-link case below.)
+std::vector<std::uint8_t> CopyMarked(std::vector<std::uint8_t> texels) {
+    if (!texels.empty()) texels.back() ^= CoopLookParts::kSelfMark ^ CoopLookParts::kTunicMark;
+    return texels;
+}
+
+TEST_CASE("look parts (vest-link): the puppets' tunic copies take their player's vest") {
+    using Paint = CoopLookParts::TunicPaint;
+    const auto green = GreenTunic();
+    auto blue = green;
+    for (auto& t : blue) t.texels.front() ^= 0x11;
+    const std::vector<std::pair<std::string, CoopLookTunic::Texels>> copies = {{"blue", blue}};
+    CHECK(CoopLookParts::PuppetTunicsName({{"blue", Paint{0x123456u, std::nullopt, 0xC02020u}}}) ==
+          "ptunics|blue=123456+vestC02020");
+    CHECK(CoopLookParts::PuppetTunicsName({{"blue", Paint{0x123456u, 0x2040FFu, 0xC02020u}}}) ==
+          "ptunics|blue=123456+cap2040FF+vestC02020");
+    CHECK(CoopLookParts::PuppetTunicsName({{"blue", Paint{0x123456u, std::nullopt}}}) == "ptunics|blue=123456");
+    // A player's tunic and vest: the copy is green painted in both (TunicPainted), marked as the copy's.
+    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{0x123456u, std::nullopt, 0xC02020u}}});
+    const auto want = CoopLookParts::TunicPainted(green, Paint{0x123456u, std::nullopt, 0xC02020u}, nullptr);
+    REQUIRE(painted.size() == blue.size());
+    for (std::size_t i = 0; i < blue.size(); ++i) {
+        CAPTURE(blue[i].name);
+        CHECK(painted[i].texels == CopyMarked(want[i].texels));
+    }
+    // The game's own green with a vest: only the vest's textures painted; the tile the game's own.
+    const auto own = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{std::nullopt, std::nullopt, 0xC02020u}}});
+    REQUIRE(own.size() == blue.size());
+    CHECK(own[0].texels == CopyMarked(green[0].texels));
+    for (std::size_t i = 0; i < blue.size(); ++i) {
+        if (CoopLookParts::OwnerOf(green[i].name) == Part::link_vest) CHECK(own[i].texels != CopyMarked(green[i].texels));
+    }
+}
+
 TEST_CASE("look parts (row 278, C4-4): with Cap trim on hoods, the Goron and Zora hood trims take the Cap trim") {
     using CoopLookPaint::Format;
     // (the Zora feather: a zora_tunic gear texture in BC1, Shield()'s blue ends in every even block)
@@ -2161,12 +2318,6 @@ TEST_CASE("look (row 198): where the places lie, and two wardrobes over one text
     CHECK(both[0] == std::pair<std::size_t, std::size_t>{1, 1});
     theirs[1].address = 0x3010;   // right after own[1]: apart
     CHECK(CoopLookTunic::Overlaps(own, theirs).empty());
-}
-
-// A texture painted from green as a puppet's copy holds it (row 198): its last byte marked as the copy's, not green's.
-std::vector<std::uint8_t> CopyMarked(std::vector<std::uint8_t> texels) {
-    if (!texels.empty()) texels.back() ^= CoopLookParts::kSelfMark ^ CoopLookParts::kTunicMark;
-    return texels;
 }
 
 TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact colour of the player given it") {

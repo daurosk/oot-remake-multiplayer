@@ -473,6 +473,8 @@ enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
+// A view's word for the play-test bridge's `menu` state (coop_menu_state.h Minus::view): "main", "session", ...
+const char* ViewWord(View view);
 // The main view's five entries (0.11.9, the owner: "clean, user friendly"): each always says what it opens and always
 // opens it (no row that does nothing); what co-op does now is on the list on the right (DetailLines).
 enum Row { kRowFind = 0, kRowHost = 1, kRowJoin = 2, kRowPlayers = 3, kRowSettings = 4 };
@@ -849,6 +851,13 @@ bool RoomMatches(const std::string& room, const std::string& host, const std::st
 // The Players view: the session's chat to look back at (ChatHistoryLines). None on the other views. The rows keep what
 // can be done.
 std::vector<ListLine> DetailLines(View view, const SessionView& v);
+// Row 223: the details list's pages on that view (DetailLines' own rule, also the play-test state's): the Main and
+// Session views have 2 while the game's key items can be read (v.tally_ok), else 1; the page shown (0 the session's
+// lines, 1 the key items). Other views: {0, 0} (no paged list).
+struct DetailPaging {
+    int page = 0, pages = 0;
+};
+DetailPaging DetailPages(View view, const SessionView& v);
 // The Players view's list (row 282, coop_chat_history.h): the heading "Chat  Page 3/3" (paged: the game's ZL and ZR
 // beside it; its A the page of older lines), then a page of v.chat's rows, as they were said (never looked up); "No
 // chat yet" with none; nothing out of a session.
@@ -1243,6 +1252,9 @@ int MousePage() noexcept;
 // Character Select's Customize screen as co-op drives it, for the play-test bridge's `menu` state (coop_menu_state.h).
 // Any thread (takes the screen's lock).
 CoopMenuState::Screen CustomizeScreen();
+// Co-op's - menu tabs as MinusWords last drew them (row 223: the details list's page and its key items), for the same
+// state; closed while none of ours shows. Any thread.
+CoopMenuState::Minus MinusNow();
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).
 bool ClientCursor(float* fx, float* fy, bool* left) noexcept;

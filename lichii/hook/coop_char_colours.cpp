@@ -362,18 +362,20 @@ std::uint8_t Rows(const State& state) {
     return any ? static_cast<std::uint8_t>(rows | kRowGear | kRowsKnown) : std::uint8_t{0};
 }
 
-std::size_t SetGearShown(const Game& game, std::uint64_t actor, bool shown) {
-    if (!game.read || !game.write) return 0;
+namespace {
+// The pieces the actor wears in the mod's handles (kGearHandles), each with its handle's id and its flag word.
+// (the mod's cz_gear: a handle's id must be its piece's, and a piece being made or deleted, state 7..11 at +0x2c,
+// is left alone)
+template <typename Fn>
+void ForEachGearPiece(const Game& game, std::uint64_t actor, Fn&& fn) {
+    if (!game.read || !game.write) return;
     const auto r64 = [&](std::uint64_t a) {
         std::uint64_t v = 0;
         return a != 0 && game.read(a, &v, sizeof v) ? v : std::uint64_t{0};
     };
     const auto r32 = [&](std::uint64_t a, std::uint32_t& v) { return a != 0 && game.read(a, &v, sizeof v); };
     const std::uint64_t equipment = r64(r64(actor + kActorComponents) + kActorEquipment);
-    if (equipment == 0) return 0;
-    std::size_t changed = 0;
-    // (the mod's cz_gear: a handle's id must be its piece's, and a piece being made or deleted, state 7..11 at +0x2c,
-    // is left alone)
+    if (equipment == 0) return;
     for (std::uint32_t k = 0; k < kGearCount; k++) {
         if (((kGearHandles >> k) & 1u) == 0) continue;
         const std::uint64_t handle = equipment + kGearFirst + kGearStride * k;
@@ -384,10 +386,50 @@ std::size_t SetGearShown(const Game& game, std::uint64_t actor, bool shown) {
         const std::uint64_t piece = r64(link + 0x40);
         if (piece == 0 || !r32(piece + 0x2c, state) || state - 7u < 5u) continue;
         if (!r32(piece + kActorFlags, flags)) continue;
-        const std::uint32_t want = shown ? (flags | kShownBit) : (flags & ~kShownBit);
-        if (want != flags && game.write(piece + kActorFlags, &want, sizeof want)) changed++;
+        fn(GearPiece{piece, id}, flags);
     }
+}
+bool WriteFlags(const Game& game, std::uint64_t piece, std::uint32_t flags) {
+    return game.write(piece + kActorFlags, &flags, sizeof flags);
+}
+}  // namespace
+
+std::size_t SetGearShown(const Game& game, std::uint64_t actor, bool shown) {
+    std::size_t changed = 0;
+    ForEachGearPiece(game, actor, [&](const GearPiece& p, std::uint32_t flags) {
+        const std::uint32_t want = shown ? (flags | kShownBit) : (flags & ~kShownBit);
+        if (want != flags && WriteFlags(game, p.piece, want)) changed++;
+    });
     return changed;
+}
+
+std::size_t HideGear(const Game& game, std::uint64_t actor, std::vector<GearPiece>& ours) {
+    std::vector<GearPiece> worn;
+    std::size_t hidden = 0;
+    ForEachGearPiece(game, actor, [&](const GearPiece& p, std::uint32_t flags) {
+        const bool was_ours = std::find(ours.begin(), ours.end(), p) != ours.end();
+        if ((flags & kShownBit) != 0) {
+            if (!WriteFlags(game, p.piece, flags & ~kShownBit)) return;
+            hidden++;
+            worn.push_back(p);
+        } else if (was_ours) {
+            worn.push_back(p);   // (still hidden by us; one the game hid itself is never ours)
+        }
+    });
+    ours = std::move(worn);
+    return hidden;
+}
+
+std::size_t ShowOurGear(const Game& game, std::uint64_t actor, std::vector<GearPiece>& ours) {
+    std::size_t shown = 0;
+    if (!ours.empty()) {
+        ForEachGearPiece(game, actor, [&](const GearPiece& p, std::uint32_t flags) {
+            if ((flags & kShownBit) != 0 || std::find(ours.begin(), ours.end(), p) == ours.end()) return;
+            if (WriteFlags(game, p.piece, flags | kShownBit)) shown++;
+        });
+    }
+    ours.clear();
+    return shown;
 }
 
 std::uint8_t NearestHair(std::uint32_t rgb) {
@@ -459,6 +501,9 @@ ModelColours ForModel(bool link_model, const std::function<std::optional<std::ui
     ModelColours out;
     if (link_model) {
         out.eyes = get(kLinkEyesPart), out.hair = get(kLinkHairPart);
+        // (look-link-cs: Link's equipment Hidden in the nibble a character's takes. His hair, vest and leather are
+        // never a palette here: co-op's texture overrides paint them, C #132)
+        if (get(kLinkGearPart)) out.custom |= 1u << 8;
         return out;
     }
     bool any = false;
@@ -538,18 +583,36 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
         k.seen = true;
         // Another block, or another actor made at this address: its model is not the one looked up.
         if (k.state.cell != t.cell || k.model != t.model) {
+            // (gear-link: the pieces we hid are kept: the same actor still wears them, and a switch to a look
+            // without Hidden must show them again, or they stayed hidden for good)
+            std::vector<GearPiece> hidden = std::move(k.gear_hidden);
+            const bool said = k.gear_said;
             k = Kept{};
             k.state.actor = t.actor;
             k.state.cell = t.cell;
             k.model = t.model;
             k.seen = true;
+            k.gear_hidden = std::move(hidden);
+            k.gear_said = said;
         }
         // npc-customize, Equipment Hidden: the game shows a piece again when it uses it, so it is hidden every frame
         // (as the mod did from its per-frame code); shown again once, when Hidden ends. Reads and the flag word only.
+        // gear-link (Link's part 29 too, ForModel): only the pieces we hid are shown again.
         const bool hide = Options::Of(t.custom).gear == 1;
-        if (hide || k.gear_hidden) {
-            SetGearShown(game, t.actor, !hide);
-            k.gear_hidden = hide;
+        const char* who = t.own ? "your model" : t.picture ? "the menu's model" : "a puppet";
+        if (hide) {
+            const std::size_t n = HideGear(game, t.actor, k.gear_hidden);
+            if (say && n != 0 && !k.gear_said) {
+                say(std::string("characters: equipment hidden on ") + who + " (" + std::to_string(n) + " piece(s))");
+            }
+            k.gear_said = k.gear_said || n != 0;
+        } else if (!k.gear_hidden.empty() || k.gear_said) {
+            const std::size_t n = ShowOurGear(game, t.actor, k.gear_hidden);
+            if (say) {
+                say(std::string("characters: equipment shown again on ") + who + " (" + std::to_string(n) +
+                    " piece(s))");
+            }
+            k.gear_said = false;
         }
         if (t.mods_routine || calls >= kCallsPerFrame || now_ms < k.retry_ms) continue;
         // Your own character's model, and its picture on the Customize screen, looked up even with nothing to put on,

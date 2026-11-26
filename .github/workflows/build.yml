@@ -153,7 +153,8 @@ jobs:
         run: python tools/autotest/tests/test_compare_digest.py -v
       - name: Play-test bridge client and MCP tools tests (fake bridge)
         run: python tools/autotest/tests/test_playtest_bridge.py -v
-      # (it plays tools/autotest/ingame/test_smoke.py and tools/autotest/ingame/test_rows.py on two fake bridges)
+      # (it plays tools/autotest/ingame/test_smoke.py, tools/autotest/ingame/test_rows.py and
+      # tools/autotest/ingame/test_gear_link.py on two fake bridges)
       - name: In-game test system selftests (fake games, no game)
         run: python tools/autotest/tests/test_ingame.py -v
       - name: In-game rejoin, server restart, lan251 and host-menu (rows 292/170) selftests (fake live.py)

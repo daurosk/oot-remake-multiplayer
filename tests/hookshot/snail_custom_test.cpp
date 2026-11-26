@@ -32,7 +32,7 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     d.Open(start, 0);
     REQUIRE(d.Active());
     auto t = d.Shown();
-    CHECK(t.title == "Link (page 1 of 4)  Y: page  A: Fine-tune");
+    CHECK(t.title == "Link (page 1 of 5)  Y: page  A: Fine-tune");
     CHECK(t.labels[0] == "Eye Colour");
     CHECK(t.labels[1] == "Kokiri Tunic");
     CHECK(t.labels[2] == "Cap Trim");
@@ -52,10 +52,17 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     const auto change = d.TakeChange();
     REQUIRE(change);
     CHECK((*change)[Part::zora_tunic] != CoopColors::Parse("red"));
-    // Y: the Shields page, the same six places.
+    // Y: Link's page of Character Select's options (look-link-cs), then the Shields page, the same six places.
     CHECK(d.Pad(kY) == 0);
     t = d.Shown();
-    CHECK(t.title == "Shields (page 2 of 4)  Y: page  A: Fine-tune");
+    CHECK(t.title == "Hair and clothes (page 2 of 5)  Y: page  A: Fine-tune");
+    CHECK(t.labels[0] == "Hair Colour");
+    CHECK(t.labels[1] == "Vest Colour");
+    CHECK(t.labels[2] == "Leather and Boots Colour");
+    CHECK(t.labels[3] == "Equipment");
+    CHECK(d.Pad(kY) == 0);
+    t = d.Shown();
+    CHECK(t.title == "Shields (page 3 of 5)  Y: page  A: Fine-tune");
     CHECK(t.labels[0] == "Hylian Shield Frame");
     CHECK(t.labels[5] == "Deku Shield");
     // B and -: his (back to his picker).
@@ -133,7 +140,7 @@ TEST_CASE("snail customize: a place with nothing is given a space, never an empt
 TEST_CASE("snail customize: his option past a page's parts does nothing") {
     Driver d;
     d.Open(Look{}, 0);
-    d.Pad(kY), d.Pad(kY), d.Pad(kY);             // (the Boots and gauntlets page: two parts)
+    d.Pad(kY), d.Pad(kY), d.Pad(kY), d.Pad(kY);   // (the Boots and gauntlets page, 5th since look-link-cs: two parts)
     REQUIRE(d.Shown().labels[1] == "Gauntlets");
     d.Pad(kDown), d.Pad(kDown);                  // (his third option: past the page's two)
     REQUIRE(d.Focus() == 2);
@@ -168,7 +175,7 @@ TEST_CASE("snail customize: his screen's texts in the game's language, as co-op'
     CHECK(t.values[3] == CoopI18n::Tr(hans, "Off"));   // (C4-4's switch: its value in the table)
     CHECK(t.values[4] == d.Shown(nullptr).values[4]);   // (#123456 stays)
     // English (no table): the same texts as before.
-    CHECK(d.Shown(nullptr).title == "Link (page 1 of 4)  Y: page  A: Fine-tune");
+    CHECK(d.Shown(nullptr).title == "Link (page 1 of 5)  Y: page  A: Fine-tune");
     CHECK(d.Shown(nullptr).values[5] == "Red");
 }
 
@@ -185,11 +192,11 @@ TEST_CASE("snail customize: the title fits its pane (61 bytes) on every page in 
     for (int i = 0; i < CoopI18n::kLangCount; ++i) {
         Driver d;
         d.Open(Look{}, 0);
-        for (int page = 0; page < 4; ++page) {
+        for (int page = 0; page < 5; ++page) {   // (look-link-cs: Link's five pages)
             const auto t = d.Shown(&CoopI18n::kLangs[i]);
             INFO(CoopI18n::kLangs[i].code << " page " << page + 1 << ": " << t.title);
             CHECK(t.title.size() <= 61);
-            const auto name = CoopI18n::Tr(&CoopI18n::kLangs[i], std::vector<std::string>{"Link", "Shields", "Swords", "Boots and gauntlets"}[static_cast<std::size_t>(page)]);
+            const auto name = CoopI18n::Tr(&CoopI18n::kLangs[i], std::vector<std::string>{"Link", "Hair and clothes", "Shields", "Swords", "Boots and gauntlets"}[static_cast<std::size_t>(page)]);
             CHECK(t.title.compare(0, name.size(), name) == 0);   // (the group's name first)
             const auto y = CoopI18n::Tr(&CoopI18n::kLangs[i], "Y: page"), a = CoopI18n::Tr(&CoopI18n::kLangs[i], "A: Fine-tune");
             if (t.title.find(y) == std::string::npos || t.title.find(a) == std::string::npos) ++lost;
@@ -203,7 +210,7 @@ TEST_CASE("snail customize: Y and A as the game's guide keys (menu-customize-011
     Driver d;
     CHECK(d.KeysNow() == Driver::Keys{});   // (closed: no key)
     d.Open(Look{}, 0);
-    // Link: four pages, each with parts: both keys.
+    // Link: five pages, each with parts: both keys.
     CHECK(d.KeysNow() == Driver::Keys{true, true});
     // Without the key parts in his layout (a kit not merged again) the title keeps the hints in words.
     CHECK(d.Shown().title.find("Y:") != std::string::npos);

@@ -61,7 +61,13 @@ namespace {
 // through HoodTrim (C4-4: row 278's Goron and Zora hood trims when cap_trim_hoods is on).
 bool IsGear(Part p) {
     return p != Part::tunic && p != Part::cap_trim && p != Part::cap_trim_hoods && p != Part::eyes &&
-           p != Part::hair && !CoopLook::IsCharacterPart(p);
+           p != Part::hair && p != Part::link_gear && p != Part::link_vest && p != Part::link_leather &&
+           !CoopLook::IsCharacterPart(p);
+    // (look-link-cs: Link's new parts have no gear texture here, so none is a gear piece: a 0.11.12 look keeps its
+    // painting's name (16 pieces) and a set vest or leather makes no painting that paints nothing. vest-link: the
+    // vest is the TUNIC wardrobe's, as the Cap trim (its textures are tunic textures, green.bin: TunicPainted), so no
+    // gear painting is made for it. leather-link brings the leather in with its textures, named last and only when
+    // set; hair-link the hair the same way.)
 }
 }  // namespace
 
@@ -334,6 +340,7 @@ const std::vector<TunicTexture>& TunicTextures() {
 namespace {
 constexpr std::string_view kTunicPrefix = "tunic-";
 constexpr std::string_view kCapInfix = "-cap-";
+constexpr std::string_view kVestInfix = "-vest-";   // (vest-link: before the cap's)
 constexpr std::string_view kGameGreen = "green";
 
 std::string Hex(std::uint32_t colour) {
@@ -359,15 +366,18 @@ std::optional<std::uint32_t> HexOf(std::string_view text) {
 }
 }  // namespace
 
-std::string TunicPainting(const std::optional<std::uint32_t>& colour, const std::optional<std::uint32_t>& cap) {
+std::string TunicPainting(const std::optional<std::uint32_t>& colour, const std::optional<std::uint32_t>& cap,
+                          const std::optional<std::uint32_t>& vest) {
     // (none, and the preset green: the game's own green, its own texels; painted, the preset's 30D040 was a lime
     // green brighter than the game's tunic, seen in a test run 2026-11-20)
     const bool own = !colour || (*colour & 0xFFFFFFu) == coop::protocol::slot_color(3);
-    if (!cap) {
+    if (!cap && !vest) {
         return own ? std::string(kTunicBase) : std::string(kTunicPrefix) + Hex(*colour);
     }
-    return std::string(kTunicPrefix) + (own ? std::string(kGameGreen) : Hex(*colour)) + std::string(kCapInfix) +
-           Hex(*cap);
+    std::string name = std::string(kTunicPrefix) + (own ? std::string(kGameGreen) : Hex(*colour));
+    if (vest) name += std::string(kVestInfix) + Hex(*vest);
+    if (cap) name += std::string(kCapInfix) + Hex(*cap);
+    return name;
 }
 
 std::optional<TunicPaint> TunicPaintOf(const std::string& name) {
@@ -377,6 +387,7 @@ std::optional<TunicPaint> TunicPaintOf(const std::string& name) {
     }
     std::string_view rest = n.substr(kTunicPrefix.size());
     TunicPaint paint;
+    bool painted = false;   // (a cap or vest colour: then "green" is the game's own green)
     const std::size_t at = rest.find(kCapInfix);
     if (at != std::string_view::npos) {
         paint.cap = HexOf(rest.substr(at + kCapInfix.size()));
@@ -384,9 +395,19 @@ std::optional<TunicPaint> TunicPaintOf(const std::string& name) {
             return std::nullopt;
         }
         rest = rest.substr(0, at);
-        if (rest == kGameGreen) {
-            return paint;   // the game's own green, the cap painted
+        painted = true;
+    }
+    const std::size_t vat = rest.find(kVestInfix);
+    if (vat != std::string_view::npos) {
+        paint.vest = HexOf(rest.substr(vat + kVestInfix.size()));
+        if (!paint.vest) {
+            return std::nullopt;
         }
+        rest = rest.substr(0, vat);
+        painted = true;
+    }
+    if (painted && rest == kGameGreen) {
+        return paint;   // the game's own green, the cap and/or the vest painted
     }
     paint.tunic = HexOf(rest);
     if (!paint.tunic) {
@@ -413,6 +434,24 @@ std::optional<std::uint32_t> TunicColour(const std::string& name) {
 
 CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, std::uint32_t colour) {
     return TunicPainted(green, TunicPaint{colour, std::nullopt}, nullptr);
+}
+
+const std::vector<TextureOwner>& Owners() {
+    static const std::vector<TextureOwner> kOwners = {
+        // Clothing Color 2 on Link (Character Select's notes): the adult's Mt_Vest (mesh Hood_A, the lower tunic and
+        // back), the child's Mt_Vest and the hat's band Mt_Band (one texture). Only their green parts are painted
+        // (TunicTextures: Takes::green), so the belt, the trim and the hood trims' own blocks (Cap) keep theirs.
+        {"Mt_Vest_Player_Adult_Alb", Part::link_vest},
+        {"Mt_Vest_Player_Child_Alb", Part::link_vest},
+    };
+    return kOwners;
+}
+
+std::optional<Part> OwnerOf(std::string_view texture) {
+    for (const TextureOwner& o : Owners()) {
+        if (texture == o.texture) return o.part;
+    }
+    return std::nullopt;
 }
 
 std::optional<Cap> ParseCap(const std::vector<std::uint8_t>& file, std::string* why) {
@@ -491,6 +530,22 @@ std::size_t PaintCap(const Cap& cap, const std::string& name, CoopLookPaint::For
     return changed;
 }
 
+namespace {
+// The cap's blocks of the texture `name` (blocks of `step` bytes) copied from `from` into `texels`, byte for byte; an
+// offset not on a block or past either is passed over (as PaintCap).
+void CopyCap(const Cap& cap, const std::string& name, std::size_t step, const std::vector<std::uint8_t>& from,
+             std::vector<std::uint8_t>& texels) {
+    const std::size_t size = std::min(from.size(), texels.size());
+    for (const CapBlocks& b : cap) {
+        if (b.texture != name || b.block != step) continue;
+        for (const std::uint32_t at : b.offsets) {
+            if (at % step != 0 || at > size || size - at < step) continue;
+            std::copy_n(from.begin() + at, step, texels.begin() + at);
+        }
+    }
+}
+}  // namespace
+
 CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, const TunicPaint& paint, const Cap* cap) {
     // The tile's average (tunic.py average_luma); with no tile in the file each texture its own.
     double base = 0;
@@ -507,13 +562,23 @@ CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, const Tun
             if (t.name != entry.name) {
                 continue;
             }
-            if (paint.tunic) {
-                CoopLookPaint::Recolour(entry.format, t.texels, t.texels,
-                                        {{0, *paint.tunic & 0xFFFFFFu, entry.takes, base}});
+            // vest-link: a texture the vest owns (OwnerOf) takes the vest's colour when it is set, else the tunic's.
+            const bool vest = paint.vest && OwnerOf(t.name) == Part::link_vest;
+            const std::optional<std::uint32_t> colour = vest ? paint.vest : paint.tunic;
+            if (colour) {
+                CoopLookPaint::Recolour(entry.format, t.texels, t.texels, {{0, *colour & 0xFFFFFFu, entry.takes, base}});
             }
             // Then the cap's own blocks, from green's texels: over the tunic's colour.
             if (paint.cap && cap != nullptr) {
                 PaintCap(*cap, t.name, entry.format, green[i].texels, t.texels, *paint.cap, base);
+            } else if (vest && cap != nullptr) {
+                // No Cap trim colour: the cap's blocks of a vest-painted texture (the adult's hood trims) follow the
+                // tunic, as in 0.11.12: the tunic's painting of them, byte for byte (green's own with no tunic colour).
+                std::vector<std::uint8_t> tunic = green[i].texels;
+                if (paint.tunic) {
+                    CoopLookPaint::Recolour(entry.format, tunic, tunic, {{0, *paint.tunic & 0xFFFFFFu, entry.takes, base}});
+                }
+                CopyCap(*cap, t.name, CoopLookPaint::BlockBytes(entry.format), tunic, t.texels);
             }
             break;
         }
@@ -662,6 +727,10 @@ std::string PuppetTunicsName(const TunicPaints& paints) {
             std::snprintf(hex, sizeof hex, "%06X", static_cast<unsigned>(*paint.cap & 0xFFFFFFu));
             name += std::string("+cap") + hex;
         }
+        if (paint.vest) {
+            std::snprintf(hex, sizeof hex, "%06X", static_cast<unsigned>(*paint.vest & 0xFFFFFFu));
+            name += std::string("+vest") + hex;
+        }
     }
     return name;
 }
@@ -706,7 +775,8 @@ CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string
         // painted, 30D040 is a lime lighter than the game's tunic, row 243)
         const bool own = !paint->second.tunic || (*paint->second.tunic & 0xFFFFFFu) == coop::protocol::slot_color(3);
         const CoopLookTunic::Texels painted =
-            TunicPainted(green, own ? TunicPaint{std::nullopt, paint->second.cap} : paint->second, cap);   // (the trim too)
+            TunicPainted(green, own ? TunicPaint{std::nullopt, paint->second.cap, paint->second.vest} : paint->second,
+                         cap);   // (the trim and the vest too)
         std::optional<CoopLookTunic::Texels> darker;   // (the dark tile's: the main tile in the darker colour)
         for (std::size_t i = 0; i < texels.size(); ++i) {
             CoopLookTunic::Texture t = texels[i];   // (its name and offset: the copy's)

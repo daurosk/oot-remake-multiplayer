@@ -94,6 +94,9 @@ class DbnoFakeStaysInItsRow(unittest.TestCase):
             def __init__(self, tag):
                 self.tag, self.flags, self.pos, self.facing, self.lines = tag, {}, [0.0, 0.0, 0.0], 0.0, []
 
+            def env_on(self, kv):
+                return False
+
             def age(self):
                 return "adult" if self.flags.get("Sequence_IsChildhood", 1) in (0, False) else "child"
 

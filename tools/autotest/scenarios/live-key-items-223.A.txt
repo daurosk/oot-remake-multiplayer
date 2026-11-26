@@ -1,0 +1,18 @@
+# live-key-items-223 A: row 223's own boot (ingame/test_key_items.py): the same steps as live-kakariko-child.A.txt (the save as a child in Kakariko at the well, past the title). The test sets every counted key-item flag and they are shared flags (game_items.hpp Reduce::any: true for everyone once true for anyone), so they cannot be put back: no other test may run after it on one boot.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark a-in

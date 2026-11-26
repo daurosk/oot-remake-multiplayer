@@ -6,11 +6,13 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "coop_dbno_draw.h"
 #include "coop_debug_panels.h"
 #include "coop_hud_hearts.h"
 #include "coop_i18n.h"
+#include "coop_map_drawn.h"
 
 namespace CoopDraw {
 namespace {
@@ -524,7 +526,8 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
 // its inside in their colour; a player off the map is held at its edge, a
 // little paler, and one on another floor paler still. Their name under the
 // arrow (alone where they are without one). Our own Link is the game's arrow.
-void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
+// `drawn` gets what was drawn (the bridge's map_icons, coop_map_drawn.h).
+void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look, CoopMapDrawn::Frame& drawn) {
     namespace map = coop::overlay::map;
     static thread_local std::vector<map::Icon> icons;  // (the present's thread: kept between frames)
     static thread_local std::string label;
@@ -533,6 +536,7 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
         const map::Box pic = LayoutToScreen(*m.page, d.width, d.height);
         r = std::max(6.0f, d.height * 0.012f);
         map::picture_icons(pic, *m.capture, m.page_floor, m.players, icons);
+        drawn.view = "page";
     } else if (m.minimap && m.capture != nullptr) {
         const map::Box layout = LayoutToScreen({0, 0, kLayoutW, kLayoutH}, d.width, d.height);
         const float s = layout.w / kLayoutW;
@@ -540,6 +544,7 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
         map::MinimapPanes mini = *m.minimap;
         mini.edge_inset = r / s;
         map::minimap_icons(mini, *m.capture, m.minimap_floor, m.players, icons);
+        drawn.view = "minimap";
         for (auto& icon : icons) {
             icon.x = layout.x + icon.x * s;
             icon.y = layout.y + icon.y * s;
@@ -587,6 +592,17 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
         } else {
             Outlined(d, x, y, px, fill, a, label.c_str());
         }
+        CoopMapDrawn::Icon shown;
+        shown.number = icon.number;
+        shown.x = icon.x;
+        shown.y = icon.y;
+        if (icon.angle) shown.turn = MapArrowTurn(*icon.angle);
+        shown.arrow = arrow;
+        shown.clamped = icon.clamped;
+        shown.alpha = a / 255.0f;
+        shown.floor_delta = icon.floor_delta;
+        shown.label = label;
+        drawn.icons.push_back(std::move(shown));
     }
 }
 
@@ -835,12 +851,17 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
         return;
     }
     const Look* game = GameLook(d, look) ? &look : nullptr;
+    CoopMapDrawn::Frame drawn;
+    drawn.view = "none";
+    drawn.width = static_cast<int>(d.width);
+    drawn.height = static_cast<int>(d.height);
     if (s.markers) {
         DrawMarkers(d, *s.markers, s, game);
     }
     if (s.map) {
-        DrawMap(d, *s.map, game);
+        DrawMap(d, *s.map, game, drawn);
     }
+    CoopMapDrawn::Set(std::move(drawn));   // (every present: "none" when no map was drawn)
     if (CoopDebugPanels::kOn && s.panel) {   // (release kits: none, coop_debug_panels.h)
         Font(d, 0);
         DrawPanel(d, *s.panel);

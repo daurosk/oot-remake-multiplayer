@@ -7,11 +7,13 @@ compare, the lane fixture. What a reaction logs is copied from the tests' own pa
 
 A row port adds its own reactions WITHOUT editing this file: a module ingame/fakes/<name>.py (one per port, its owner's
 file) with any of these hooks, each called for every fake game (A and B), in file-name order:
-    setup(game)                      after the game's own fields are set (game.env = the boot's --env list)
+    setup(game)                      after the game's own fields are set (game.env = the boot's --env list,
+                                     game.boot = the boot's name, --boot: a hook of a needs_boot row reacts only there)
     lane(fakelane)                   once both games exist and know each other (shared state: fakelane.g["A"/"B"])
     command(game, m) -> dict|None    before the built-in answer of bridge message m; a dict = the whole reply
     after(game, m, r)                after the built-in answer r (change r in place)
-    press(game, buttons) -> bool     before the built-in pad reactions; True = handled, the built-in ones are skipped
+    press(game, buttons) -> bool     before the built-in pad reactions; EVERY module's hook gets the press (none can
+                                     hide it from another row's: B #138); any True = the built-in ones are skipped
     act(game, words) -> bool         before the built-in `act` reactions (words = the line split); True = handled
     actors(game) -> list             more world actors for the state's world list
     move_step(game, pos) -> pos|None each frame of a `move`, Link's next [x, y, z]: return a changed one (a wall)
@@ -50,8 +52,8 @@ GATE = "Npc_Hylia_Soldier_003_GateOpen"
 
 
 class FakeGame:
-    def __init__(self, tag, folder, lane, env=(), fakes=(), solo_log=None):
-        self.tag, self.folder, self.lane = tag, folder, lane
+    def __init__(self, tag, folder, lane, env=(), fakes=(), solo_log=None, boot=""):
+        self.tag, self.folder, self.lane, self.boot = tag, folder, lane, boot
         self.env, self.fakes = list(env), list(fakes)
         os.makedirs(os.path.join(folder, "playtest", "dumps"), exist_ok=True)
         os.makedirs(os.path.join(folder, "playtest", "shots"), exist_ok=True)
@@ -61,6 +63,7 @@ class FakeGame:
         self.pos, self.facing = [0.0 if tag == "A" else 4.0, 0.0, 0.0], 0.0
         self.menu_pause, self.title_until, self.at_title = False, None, False
         self.head, self.ocarina, self.flags, self.pending = None, False, {GATE: 0}, []
+        self.gear_hidden = False   # (gear-link: part 29 worn by this game's player)
         self.other = None
         # (selftests of the lane's boot proof, Pair.boot_ready: BT_FAKE_BOOT_EVENT=B leaves B where the save puts it,
         # Graveyard_Child, in an event a warp ends (test-bridge-pilot-fa63e90f r1); BT_FAKE_BOOT_STUCK=B the same but
@@ -197,7 +200,18 @@ class FakeGame:
             r.update(reads=int(m.get("frames", 1)), no_camera=0, stick=[0.0, float(m.get("strength", 1.0))], view=0.0,
                      state=self.state())
         elif cmd == "act":
-            self.act(m["lines"])
+            # The real bridge's rule (hookshot/src/coop_playtest_core.cpp ParseRequest "act"): one line, no control
+            # character, '#' or ';'. Refused the same way here, so a test that sends one fails in the fakes, not on a
+            # lane (hair-link-4217f901 16:48: 'menu look hair=#RRGGBB' was refused on both games).
+            lines = m.get("lines") or ""
+            if not lines or len(lines) > 256:
+                return {"id": m.get("id"), "ok": False, "error": "bad_request",
+                        "message": "lines: one test line of at most 256 characters (kill NAME, hit NAME N, hurt N, "
+                                   "place X Y Z, ...)"}
+            if any(ord(ch) < 0x20 or ch in "\x7f#;" for ch in lines):
+                return {"id": m.get("id"), "ok": False, "error": "bad_request",
+                        "message": "lines: one line, with no new line, ';' or '#'"}
+            self.act(lines)
             r.update(lines=1, note="ok")
         elif cmd == "give":
             r["result"] = "given"
@@ -228,7 +242,8 @@ class FakeGame:
         return r
 
     def press(self, buttons):
-        if any(h(self, buttons) for h in hooks(self.fakes, "press")):
+        taken = [bool(h(self, buttons)) for h in hooks(self.fakes, "press")]   # (all of them: no short-circuit)
+        if any(taken):
             return
         o, me = self.other, 1 if self.tag == "A" else 2
         if "PLUS" in buttons:
@@ -281,6 +296,14 @@ class FakeGame:
                 o.later(10, lambda: o.say("coop: puppet: P%d wears head '%s' (returned 0x1)" % (me, head)))
             else:
                 o.later(10, lambda: o.say("coop: puppet: P%d takes off head (returned 0x1)" % me))
+        elif w[0] == "menu" and len(w) == 3 and w[1] == "look" and w[2].startswith("link_gear="):
+            # (gear-link: the wardrobe's lines, lichii/hook/coop_char_colours.cpp Wardrobe::Frame)
+            hide = w[2] != "link_gear=none"
+            if hide != self.gear_hidden:
+                self.gear_hidden = hide
+                what = "hidden" if hide else "shown again"
+                self.later(2, lambda: self.say("coop: characters: equipment %s on your model (1 piece(s))" % what))
+                o.later(10, lambda: o.say("coop: characters: equipment %s on a puppet (1 piece(s))" % what))
         elif w[0] == "chat" and w[1:] == ["/teleport", "B"]:
             self.later(30, lambda: setattr(self, "pos", [o.pos[0] + 1.0, o.pos[1], o.pos[2]]))
 
@@ -291,6 +314,8 @@ class FakeGame:
         d.rectangle([20, 20, 120, 40], fill=(200, 30, 30))             # "hearts"
         d.ellipse([140, 60, 180, 140], fill=(230, 220, 200) if not self.menu_pause else (20, 20, 20))
         d.rectangle([150 + self.frame % 3, 50, 170, 70], fill=(240, 240, 240) if self.head else (40, 90, 40))
+        if not (self.gear_hidden or self.other.gear_hidden):   # (gear-link: a "sword" while A's gear is shown)
+            d.rectangle([190, 80, 196, 130], fill=(170, 170, 190))
         im.save(path)
 
     # -- socket -----------------------------------------------------------------------------------------------
@@ -315,10 +340,11 @@ class FakeGame:
 
 
 class FakeLane:
-    def __init__(self, out_dir, lane=1, env=(), fakes_dir=FAKES, solo_log=None):
+    def __init__(self, out_dir, lane=1, env=(), fakes_dir=FAKES, solo_log=None, boot=""):
         root = os.path.join(out_dir, "fake")
         mods = load_fakes(fakes_dir)
-        self.g = {x: FakeGame(x, os.path.join(root, "lane%d-%s" % (lane, x)), lane, env, mods, solo_log=solo_log)
+        self.g = {x: FakeGame(x, os.path.join(root, "lane%d-%s" % (lane, x)), lane, env, mods, solo_log=solo_log,
+                              boot=boot)
                   for x in ("A", "B")}
         self.g["A"].other, self.g["B"].other = self.g["B"], self.g["A"]
         for h in hooks(mods, "lane"):

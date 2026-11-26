@@ -566,7 +566,8 @@ def lane_pair(request):
         lanefake = fakegame.FakeLane(out, env=boot_env(config),     # (fakes/*.py hooks see the boot's switches)
                                      fakes_dir=os.environ.get("BT_FAKE_FAKES_DIR") or fakegame.FAKES,
                                      solo_log=(os.environ.get("BT_FAKE_SOLO_LOG") or solo.IDLE)
-                                     if config.getoption("solo") else None)
+                                     if config.getoption("solo") else None,
+                                     boot=config.getoption("boot"))   # (and its name: game.boot)
         games = lanefake.games()
         if config.getoption("solo"):     # (the fake A logs what the real module logs with no server: solo.IDLE)
             games = {solo.GAME: games[solo.GAME]}

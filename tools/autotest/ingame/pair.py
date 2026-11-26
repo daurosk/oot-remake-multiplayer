@@ -380,11 +380,14 @@ class Pair:
         return "%s: scene=%s loading=%s event=%s not_ready=%s" % (x, st.get("scene"), st.get("loading"), st.get("event"),
                                                                st.get("not_ready"))
 
-    def until_in_play(self, what, games=("A", "B"), max_frames=600):
+    def until_in_play(self, what, games=None, max_frames=600):
         """Steps both games until every one of `games` is in play (a fresh Link sample, a scene, no load, no event).
+        `games` defaults to the pair's OWN games (self.c): a --solo pair has game A only, and a fixed ('A', 'B')
+        read state('B') -> KeyError instead of a SETUP-FAIL (review-rows-c130-3 16:38, need_boot_place).
         A stale sample ('Link sample older than the frame'), a load or an event is a game not ready YET: it is stepped,
         never judged from one read (pilot test-bridge-pilot-fa63e90f: test_boot / test_pause read once, failed on a
         stale sample). After max_frames: AssertionError naming each game's state."""
+        games = tuple(self.c) if games is None else tuple(games)
         try:
             return self.until(what, lambda: all(self.in_play(self.state(x)) for x in games), max_frames)
         except AssertionError as e:

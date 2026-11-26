@@ -941,6 +941,35 @@ set he was no longer a site and kept the last colour). The mod's six option Ints
 Not done: a character whose iris texture is not the common blue one (Impa, Sheik) gets an eye colour shifted by its
 texture's hue (the mod's per-character hue table is not read).
 
+### Character Select's options on Link (look-link-cs, player report 293)
+
+Player report (KaminoX, 0.11.12): "double coloured tunics and hair colour" were gone. Since 0.11.9 (022b3bd6a) the mod's
+Customize screen shows co-op's rows, and on Link those had no Hair (9ab9048f1: the hair parameters alone were too weak),
+no vest, no leather and no Equipment, which the mod's own screen had on Link (README v0.2.1: on Link Clothing Color 1 is
+the tunic and cap, 2 the vest, 3 the leather and boots). Root cause: `CoopCharColours::ForModel` gave a Link model only
+the eye and hair parameters and never a palette entry, and the page never offered those rows on Link. Now (C #132: every row on every Link, with or without the mod, solo too): parts 27 `link_vest`,
+28 `link_leather` (any colour, `look_link_vest` / `look_link_leather`; painted on Link's own textures by co-op's texture
+overrides: IsGear, the texel owner table of branches vest-link and leather-link), 29 `link_gear` (`look_link_gear =
+hidden`: the game's shown bit, ForModel's nibble 2 on a Link model too, so your Link is a wardrobe target with only it
+set). Link's hair (19) is painted the same way (branch hair-link), never the mod's palette. Character Select's
+Customize screen gets a "Hair and clothes" page on Link (page 2); the pause page's list shows the vest, leather and
+equipment under Link, its Hair row as in 0.11.12.
+
+- **The vest (part 27, branch `vest-link`).** One owner per texture: `CoopLookParts::Owners` names each of Link's
+  clothing textures and the part that paints it when set (`OwnerOf`); unset, the texture keeps its 0.11.12 painter.
+  The vest owns `Mt_Vest_Player_Adult_Alb` (mesh `Hood_A`: the lower tunic and back) and `Mt_Vest_Player_Child_Alb`
+  (the child's vest and the hat's band `Mt_Band`, one texture; Character Select's notes, MIT): on Link the mod's
+  Clothing Color 2. Both are tunic textures (green.bin), so the vest is the TUNIC wardrobe's, as the Cap trim (not
+  `IsGear`): `TunicPainted` paints those two in the vest's colour (their green parts only, as the tunic does) instead
+  of the tunic's; with no Cap trim colour the cap's blocks in them (the adult's hood trims) take the tunic's painting
+  byte for byte, so they follow the tunic as in 0.11.12; with one, the trim's. The painting's name gets
+  `-vest-RRGGBB` after the tunic's (`tunic-green-vest-RRGGBB` on the game's green); unset, every name and every byte
+  is 0.11.12's. The puppets: each player's Kokiri tunic copy is painted with their part 27 too (`PuppetTunicsTexels`,
+  `+vest` in the name), so the others see your vest, Character Select or not. Not painted: the Goron and Zora tunics'
+  vests (`Mt_Vest_Armor_Adult_*`, those tunics' own models): they keep their tunic's colour (the mod's palette never
+  reached the armour either). As the Cap trim, a player past the exact tunic copies (`TunicCopy::exact` false) keeps
+  the pack's nearest copy, vest included.
+
 ### Gear colours on the puppets
 
 Branch `customizer-puppets`, Hookshot only. Every player sees the others' part colours on their puppets, not only the tunic. Files: `tools/puppet_pack/look_items.py` (the copies), `lichii/hook/coop_look_share.*` (slots and copies), `lichii/hook/coop_puppet.*` (which copy a puppet wears), `hookshot/src/coop_look_parts.*` and `coop_look_live.cpp` (`PaintPuppetCopy` and the puppets' wardrobe). No memory of the game is written for it: Longshot's texture overrides (patch 0020, as for your own Link) draw the copies' textures in each player's colours.

@@ -99,6 +99,15 @@ Alex's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus th
 | Times in `PLAYER_SAMPLE` | Server time. ENet's throttle stays at its default. |
 | Player colours (tunic by slot) | Built in: each player picks a colour (`color =` in coop-options.ini, else the slot's: 1 blue, 2 red, 3 green, 4 yellow); name tags and the puppets' tunics use it, and your own Link's Kokiri tunic on the emulator kit. Ten tunic colours, made by the puppet pack tool. |
 
+## Later: race mode
+
+A planned mode, not built yet. Players see each other in passing (puppets and name tags), but nothing else is shared: each player has their own bosses, enemies, keys, items, flags and Gold Skulltulas, and finishes the game on their own. The fastest player wins. A host turns it on for the session.
+
+- What is shared: positions and looks, chat, voice. What is not: every flag, item, enemy, boss, door, switch and drop.
+- It builds on the per-setting "not shared" modes that exist today (Gold Skulltulas "Not shared"), and on the "Shared floor switches" setting being added (Off).
+- A PvP option inside race mode lets players hit each other when they meet (the existing `PVP_MODE` / `PVP_HIT` messages).
+- To decide: a shared start and finish signal, a timer, and what happens when one player finishes.
+
 ## Risks
 
 - Lichii keeps changing. Co-op code stays in its own folder with few hook points, so new Lichii releases are easy to take.

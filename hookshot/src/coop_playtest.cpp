@@ -32,6 +32,7 @@
 #include "coop_fairy.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_map_drawn.h"
 #include "coop_menu_state.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
@@ -394,6 +395,11 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     out += "]}";
     out += ",\"coop_menu\":" + Quote(CoopPause::MenuState());
     out += ",\"menu\":" + CoopMenuState::Json(CoopPause::MenuTab(), CoopPauseTab::CustomizeScreen());
+    {
+        std::uint64_t presents = 0;
+        const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
+        out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
+    }
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
     return out;

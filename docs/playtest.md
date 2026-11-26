@@ -221,6 +221,16 @@ load). `coop_menu` is where co-op's own menu is (`"closed"`, or the page's name 
 `"customize"`). It does not see the game's own pause screen: `"closed"` says only that co-op's menu is shut, so a
 tester who pressed Start reads the screen (`shot`), not this.
 
+**`map_icons`** (in `state`; `hookshot/src/coop_map_drawn.h`): what co-op drew on the maps in the last present,
+because the others' map arrows and names are drawn through Longshot's overlay (`coop_draw.cpp` DrawMap) and a bridge
+shot leaves them out. `view` is `"minimap"` (the HUD minimap), `"page"` (the Map page's picture) or `"none"` (no map
+drawn); `presents` counts the presents that wrote it (it grows while the game draws); `width` and `height` are the
+present's size. `icons`: one per other player drawn, each `{"number", "x", "y", "turn", "arrow", "clamped", "alpha",
+"floor_delta", "label"}`: the centre in present pixels (y down), the arrow's turn in radians clockwise (`null` with no
+facing known yet), `arrow` true when the game's map arrow was drawn (false: the name alone), `clamped` at the map's
+edge, the alpha drawn (0..1), their floor minus the one shown, and the words under it. Our own Link is the game's
+own arrow and is not listed. A test of something a player sees still needs a window shot with the overlay.
+
 **`menu`** (in `state`; `hookshot/src/coop_menu_state.h`): what co-op's menus show, as text, because a bridge shot is
 taken before Longshot draws its overlays and so never has co-op's pages on it. Two members:
 

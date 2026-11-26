@@ -333,16 +333,21 @@ def drop_keys(data, drop):
     return new, gone
 
 
+def string64_text_at(data, h):
+    """Where String64 h's 64 bytes of text are in a save (the table's value word is the text's offset)."""
+    at = index(data).get((STRING64, h))
+    if at is None:
+        raise SaveError(f"not in this save: {h:#x}")
+    text = struct.unpack_from("<I", data, at)[0]
+    if text + 64 > len(data):
+        raise SaveError(f"String64 {h:#x}: its text is past the end of the save")
+    return text
+
+
 def no_ocarina(data):
     """Takes the ocarinas out of a bytearray save. Returns [(hash, old, new)];
     the equipped name is reported as its first 4 bytes before and after."""
-    idx = index(data)
-    at = idx.get((STRING64, EQUIP_OCARINA))
-    if at is None:
-        raise SaveError(f"not in this save: {EQUIP_OCARINA:#x}")
-    text = struct.unpack_from("<I", data, at)[0]
-    if text + 64 > len(data):
-        raise SaveError("the equipped ocarina's text is past the end of the save")
+    text = string64_text_at(data, EQUIP_OCARINA)
     changes = [(TYPES[k], h, v) for k, h, v in NO_OCARINA
                if get(data, TYPES[k], h) not in (None, v)]
     done = set_values(data, changes)

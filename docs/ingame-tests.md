@@ -83,7 +83,18 @@ the save are changed; a missing flag is a SETUP-FAIL. Each save is kept in `coop
 baseline is put back. Every flag is read back on every save. A test that needs a profile:
 `@pytest.mark.needs_save(NAME)`. A run with another `--save`, or none, deselects it. `summary.json` `identity.save`
 is `{name, sha256: {game: {rel: sha256}}}`. `saves/gohma-alive.py` puts Queen Gohma back alive, with the quest at
-her room (rows 137/138).
+her room (rows 137/138). A profile may also have `CLEAR_TEXT = [0x...]`: String64 flags whose 64 bytes of text are
+emptied ("") in every save, checked in every save after, and read back as `""` by `prove`; a save without one is a
+SETUP-FAIL. `saves/no-ocarina.py` takes both ocarinas out of both games (`save_flags.NO_OCARINA` and
+`PlayerStatus.EquipOcarina`, issue 190): `test_songs.test_ocarina_given_saria`.
+
+The in-game proof of a save: a profile may also have `EXPECT = {"age": ..., "scene": ..., "items": [...],
+"max_life": N}`, for both games or per game (`{"A": {...}, "B": {...}}`). Every key is optional. The test calls
+`testsave.prove(pair, NAME)` inside `pair.setup()`. It checks that each game is in play, its age, scene and
+max_life from the state, each item's `IsGet.<item>` flag, and every `FLAGS` entry read back from the game by its hash.
+A miss is SETUP-FAIL, naming each game. To prove that the game runs the profile's save, the boot must set none of
+those flags itself (`scenarios/live-deku-gohma-reset.*.txt` is `live-deku-gohma` without them). Rows 138(4)/137
+(`test_boss_reset.py`): `--boot live-deku-gohma-reset --save gohma-alive`.
 
 SOLO boot (owner rule: features that are not multiplayer must also work solo, with co-op idle): `--solo` boots only
 lane game A, with no co-op session. That means `live.py start --only A` without `--server`, so hookshot.py run gives

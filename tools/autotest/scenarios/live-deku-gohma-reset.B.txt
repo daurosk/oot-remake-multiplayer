@@ -1,0 +1,25 @@
+# live-deku-gohma-reset B (boot for live.py start, rows 137/138(4) ingame/test_boss_reset.py, run with --boot live-deku-gohma-reset --save gohma-alive): live-deku-gohma.B.txt WITHOUT the quest setenum and the save profile's four Gohma setflags: the save file (saves/gohma-alive.py, both lanes) is their only writer, so testsave.prove() reading them back proves the game runs the profile's save (the host's reload in the test must find her alive in A's FILE, as boss-away-0115-probe.ps1 Set-Saves 'gohma-alive' made it).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+wait 120
+mark b-ready

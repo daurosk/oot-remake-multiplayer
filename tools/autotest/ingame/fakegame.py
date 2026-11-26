@@ -61,6 +61,12 @@ class FakeGame:
         self.pos, self.facing = [0.0 if tag == "A" else 4.0, 0.0, 0.0], 0.0
         self.menu_pause, self.title_until, self.at_title = False, None, False
         self.head, self.ocarina, self.flags, self.pending = None, False, {GATE: 0}, []
+        # (the module's ocarina re-equip after each load, Pair.need_ocarina: BT_FAKE_OCARINA_LATE=N frames after the
+        # boot and after each warp, default 0 = at once; before it D-pad Left takes nothing out, songs-frogs-733c4d8f)
+        self.ocarina_late, self.equipped = int(os.environ.get("BT_FAKE_OCARINA_LATE", "0") or 0), False
+        # (the game's first-use "Ocarina Audio Input" box on the boot's first D-pad Left, Pair.ocarina_out: the free-Ocarina
+        # event line at once, 'plays the ocarina' only after B closes it; probe-ocarina-2f14b333)
+        self.box, self.box_seen = False, False
         self.other = None
         # (selftests of the lane's boot proof, Pair.boot_ready: BT_FAKE_BOOT_EVENT=B leaves B where the save puts it,
         # Graveyard_Child, in an event a warp ends (test-bridge-pilot-fa63e90f r1); BT_FAKE_BOOT_STUCK=B the same but
@@ -81,6 +87,7 @@ class FakeGame:
             self.say("coop: drawing over Hookshot's picture")
         for h in hooks(self.fakes, "setup"):
             h(self)
+        self.equip_later()
         self.srv = socket.socket()
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
@@ -90,6 +97,18 @@ class FakeGame:
         if tag not in os.environ.get("BT_FAKE_NO_MODULE", ""):
             self.say("coop: playtest: listening on 127.0.0.1:%d (control on; dumps and shots in %s)" % (self.port, folder))
         threading.Thread(target=self.serve, daemon=True).start()
+
+    def equip_later(self):
+        """The module's ocarina re-equip after a load (Pair.need_ocarina), BT_FAKE_OCARINA_LATE frames later."""
+        self.equipped = False
+
+        def done():
+            self.equipped = True
+            self.say("coop: items: ocarina 'Item_Ocarina_Fairy' equipped by the game from its flags (slots 13, 16)")
+        if self.ocarina_late > 0:
+            self.later(self.ocarina_late, done)
+        else:
+            done()
 
     def say(self, line):
         with open(self.log_path, "a", encoding="utf-8") as f:
@@ -184,6 +203,9 @@ class FakeGame:
                 return {"id": m.get("id"), "ok": False, "error": "timeout", "message": "fake: still in the event",
                         "frame": self.frame, "paused": self.paused}
             self.scene, self.event = m["scene"], False
+            self.say("coop: native ui: scene load ended (Sequence_IsLoadingBanc): screens handed out once the game's "
+                     "HUD screen has run")
+            self.equip_later()
             r.update(arrived=True, via="teleport", map=m["scene"], state=self.state())
         elif cmd == "move":
             self.walk(float(m["yaw"]), float(m.get("strength", 1.0)), int(m.get("frames", 1)))
@@ -232,9 +254,21 @@ class FakeGame:
             self.later(30, lambda: (setattr(self, "at_title", False), setattr(self, "title_asked", False)))
             return
         if "LEFT" in buttons:
+            if not self.equipped:
+                return                                   # nothing on the D-pad yet: nothing comes out
             self.ocarina = True
-            self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina"))
+            self.later(2, lambda: self.say("coop: event: the running event is our free Ocarina (by the game's request): "
+                                           "our Link is not held by it, no hide, no hold, no claim"))
+            if not self.box_seen:
+                self.box, self.box_seen = True, True     # the first-use box: no play, no notes until it is closed
+                return
+            self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
             return
+        if self.box:
+            if "B" in buttons and self.tag not in os.environ.get("BT_FAKE_OCARINA_BOX_STUCK", ""):
+                self.box = False
+                self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
+            return                                       # (the box eats every other button: no note)
         if "B" in buttons:
             self.ocarina = False
         notes = {"L": (4, "D"), "R": (8, "F"), "Y": (11, "B"), "X": (16, "HighD"), "A": (14, "A")}

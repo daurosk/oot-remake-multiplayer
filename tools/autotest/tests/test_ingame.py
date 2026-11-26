@@ -116,7 +116,7 @@ class Suite(unittest.TestCase):
         self.assertEqual(s["counts"]["SETUP-FAIL"], 0, p.stdout[-2000:])
         self.assertTrue(s["tests"])
         for d in s["deselected"]:
-            self.assertTrue(d["needs_env"] or d.get("needs_boot") or d.get("needs_pack"), d)   # (a boss row's boot;
+            self.assertTrue(d["needs_env"] or d.get("needs_boot") or d.get("needs_pack") or d.get("needs_solo"), d)   # (a boss row's boot;
             # a --pack test: port-sweep-c131-6 11:46)
 
     def test_repeat_keeps_one_boot_and_orders_by_round(self):
@@ -453,7 +453,7 @@ def fake_live(args, timeout):
         return {'ok': False, 'error': 'live.py start: exit 0, no JSON answer: ... renderer ready'}
     if MODE == 'played':
         return {'ok': False, 'boot': 'FAILED (see steps.txt): the session is closed'}
-    if MODE == 'notready':                        # (started and said hello; the boot proof finds B elsewhere)
+    if MODE in ('notready', 'nomodule'):          # (started; the boot proof finds B elsewhere, or B has no module)
         return {'ok': True}
     return {'ok': False, 'lock': 'not taken', 'error': 'refused before the session'}
 
@@ -469,12 +469,16 @@ class _NotReadyPair:                              # (test-bridge-pilot-fa63e90f 
         self.c, self.notes = {'A': _Hello(), 'B': _Hello()}, []
     def begin(self, seconds):
         pass
+    def module_started(self):
+        if MODE == 'nomodule':                   # (B #137: party-hud-bridge-85e3b255, B's module never started)
+            raise B.P.SetupFail('B: the module never started (no listening line)')
+        return True
     def boot_ready(self, scene):
         raise B.P.SetupFail('boot: not in the boot scene ' + str(scene) + ': B: scene=Graveyard_Child event=True')
     def close(self):
         pass
 
-if MODE == 'notready':
+if MODE in ('notready', 'nomodule'):
     B.P.read_session = lambda session: {}
     B.P.Pair = _NotReadyPair
 """
@@ -522,6 +526,14 @@ class BootStopsSession(unittest.TestCase):
         self.assertEqual(set(results(s).values()), {"SETUP-FAIL"}, p.stdout[-2000:])
         self.assertTrue(all("lane1 boot: not in the boot scene" in r["why"] for r in s["tests"]), s["tests"])
         self.assertEqual(s["lane_closed"], {"ok": True, "ended": "stop asked"})
+
+    def test_a_game_with_no_module_is_stopped_and_setup_fail_boot(self):
+        """B #137 14:57: the module proof runs before any bridge call, inside lane_pair's try: its SetupFail ends with
+        the session stopped, every test SETUP-FAIL 'lane1 boot: B: the module never started'."""
+        p, calls, s = self.run_mode("nomodule")
+        self.assertEqual(calls, ["start", "stop"], p.stdout[-2000:])
+        self.assertEqual(set(results(s).values()), {"SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertTrue(all("lane1 boot: B: the module never started" in r["why"] for r in s["tests"]), s["tests"])
 
     def test_no_session_written_no_stop(self):
         p, calls, s = self.run_mode("refused")

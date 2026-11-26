@@ -41,7 +41,11 @@ OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's 
 # 500 frames and a second 30-frame LEFT before it brought nothing). The frogs runs waited for OCARINA_PLAYS alone.
 OCARINA_FREE = r"coop: event: the running event is our free Ocarina"      # coop/host/include/coop/host/event_owner.hpp:58, docs/scenes.md:41
 OCARINA_PLAYS = r"ocarina probe: our Link plays the ocarina"              # lichii/hook/coop_ocarina.cpp:320 (PROBE=1)
-OCARINA_SETTLE = 60   # frames after OCARINA_FREE for OCARINA_PLAYS to come with no box, before B closes a box
+# The no-box wait for OCARINA_PLAYS after LEFT: 240 frames, the scenario's own 'press DLEFT 12' + 'wait 240'
+# (scenarios/hs-ocarina.A.txt:23-24) that run 20261115-185256 proved (docs/items.md:340: the plays line after DLEFT
+# within it). Not shortened: no run measured the no-box gap itself (review-c123-13 17:47). In the box case nothing
+# closes it by itself (probe: 240 + 30 + 240 frames and no plays line until B).
+OCARINA_PLAYS_FRAMES = 240
 
 
 class SetupFail(Exception):
@@ -331,26 +335,28 @@ class Pair:
         return self.until("%s: the ocarina back on the D-pad after the load ('%s' since the last '%s')"
                           % (x, OCARINA_EQUIPPED, SCENE_LOADED), lambda: self.ocarina_ready(x), max_frames)
 
-    def ocarina_out(self, x, max_frames=240):
+    def ocarina_out(self, x, max_frames=OCARINA_PLAYS_FRAMES):
         """THE way to take game x's ocarina out (test_songs, test_epona, test_rows; needs LICHII_COOP_OCARINA_PROBE=1):
-        need_ocarina, D-pad Left (12 frames), then OCARINA_FREE or OCARINA_PLAYS within max_frames (else AssertionError:
-        nothing came out, the #190 bug's sign). If OCARINA_PLAYS has not come OCARINA_SETTLE frames after that, the
-        first-use box is up: B closes it (the probe's proven press; not A, a note key) and OCARINA_PLAYS must follow.
-        Ends with Link playing (no note sent by the set-up)."""
+        need_ocarina, D-pad Left (12 frames), then OCARINA_PLAYS within max_frames: done. Else OCARINA_FREE must be
+        there (else AssertionError: nothing came out, the #190 bug's sign): the first-use box is up, B closes it (the
+        probe's proven press; not A, a note key), and OCARINA_PLAYS must come AFTER the B press (the log is marked right
+        before it), within max_frames. Ends with Link playing (no note sent by the set-up)."""
         self.need_ocarina(x)
         pos = self.log[x].mark()
         self.press(x, ["LEFT"], frames=12)
-        self.until("%s: the ocarina out after D-pad Left ('%s' or '%s')" % (x, OCARINA_FREE, OCARINA_PLAYS),
-                   lambda: self.log[x].find(OCARINA_PLAYS, pos=pos) or self.log[x].find(OCARINA_FREE, pos=pos),
-                   max_frames)
         try:
-            return self.until("x", lambda: self.log[x].find(OCARINA_PLAYS, pos=pos), OCARINA_SETTLE)
+            return self.until("%s: '%s' after D-pad Left" % (x, OCARINA_PLAYS),
+                              lambda: self.log[x].find(OCARINA_PLAYS, pos=pos), max_frames)
         except AssertionError:
             pass
+        assert self.log[x].find(OCARINA_FREE, pos=pos), (
+            "%s: nothing came out after D-pad Left: neither '%s' nor '%s' in %d frames"
+            % (x, OCARINA_PLAYS, OCARINA_FREE, max_frames))
         self.notes.append("%s: ocarina out with the first-use 'Ocarina Audio Input' box up: closed with B" % x)
+        at_b = self.log[x].mark()
         self.press(x, ["B"], frames=8)
         return self.until("%s: '%s' after B closed the first-use box" % (x, OCARINA_PLAYS),
-                          lambda: self.log[x].find(OCARINA_PLAYS, pos=pos), max_frames)
+                          lambda: self.log[x].find(OCARINA_PLAYS, pos=at_b), max_frames)
 
     def expect_log(self, x, pattern, max_frames=600):
         """A module log line of game x matching `pattern`, written since this test began."""

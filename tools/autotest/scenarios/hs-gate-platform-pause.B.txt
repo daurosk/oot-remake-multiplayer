@@ -1,6 +1,6 @@
 # hs-gate-platform-pause, B: follows A's lift clock from the middle lift; pauses 5 s at A's b-paused mark.
 mark start
-warp DodongoCavern EntrancePos
+warp DodongoCavern   # (row 53: event start EntrancePos dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

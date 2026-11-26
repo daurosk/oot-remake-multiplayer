@@ -4,7 +4,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 720
 mark start
-warp DodongoCavern StartPos_Get_StoneOfFire   # the dungeon scene (the bridge lands at its entrance; place moves Link into room 22) (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
+warp DodongoCavern   # (row 53: event start StartPos_Get_StoneOfFire dropped, not in coop_start_points.inc; the bridge always landed at the map's own start) the dungeon scene (the bridge lands at its entrance; place moves Link into room 22) (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
 wait 1200
 mark title
 press A
@@ -24,7 +24,7 @@ setenum 0x1002b466 BossBattle   # Get_StoneOfFire at the boss door (the lane sav
 setflag HavePlayedEvent.Get_StoneOfFire_AppearBoss 0
 setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
 wait 60
-warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the flags
+warp DodongoCavern   # (row 53: event start StartPos_Get_StoneOfFire dropped, not in coop_start_points.inc; the bridge always landed at the map's own start) same-map warp = reload with the flags
 wait 3000               # the module own warp took >25 s in run 013912
 place 26.0 92.6 -73.5   # room 21, above KD's room (Land_DodongoCave_21_Floor_A_01 y 92.4): the real way in is the drop
 wait 120

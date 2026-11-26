@@ -1,5 +1,5 @@
 mark start
-warp HyruleField_Child MiniGame_Fishing_PlayerStart
+warp HyruleField_Child   # (row 53: event start MiniGame_Fishing_PlayerStart dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

@@ -26,7 +26,7 @@
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_RELEASE=1
 #! timeout 480
 mark start
-warp HyruleField_Child MiniGame_Fishing_PlayerStart
+warp HyruleField_Child   # (row 53: event start MiniGame_Fishing_PlayerStart dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200               # the title screen
 press A
 wait 180

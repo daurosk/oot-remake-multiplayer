@@ -114,6 +114,43 @@ def scene_problem(name, scenes=None):
     return why
 
 
+# The start points a named-start `warp SCENE START` may use: the rows of the same coop_start_points.inc (written by
+# tools/puppet_pack/start_points.py from the game's own Banc StartPos placements: the entrance starts a loading zone
+# uses; cutscene, warp-song, boss-rush and mini-game starts are left out there, as they may start an event). A start
+# not in it is refused at parse (SETUP-FAIL), so a typo or an event start never warps (row 53, 11-23 ToT VOID: the
+# start was silently dropped and Link landed at the market gate).
+_starts = {}
+
+
+def known_starts(path=START_POINTS_INC):
+    """{scene: set of start names} from the source file, or None when it is not there (a kit: nothing checked)."""
+    if path not in _starts:
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            _starts[path] = None
+        else:
+            found = {}
+            for scene, start in re.findall(r'^\s*\{"([A-Za-z0-9_]+)",\s*"([A-Za-z0-9_]+)",', text, re.M):
+                found.setdefault(scene, set()).add(start)
+            _starts[path] = found or None
+    return _starts[path]
+
+
+def start_problem(scene, start, starts=None):
+    """Why `warp SCENE START` names a start the game data does not list for that scene ("" when it does, or when
+    there is no start or no list)."""
+    starts = known_starts() if starts is None else starts
+    if not start or starts is None or scene.isdigit():
+        return ""
+    have = sorted(starts.get(scene, ()))
+    if start in have:
+        return ""
+    return "unknown start '%s' for scene %s (coop_start_points.inc lists %s)" % (
+        start, scene, ", ".join(have) if have else "no start of that scene")
+
+
 INCLUDE_DEPTH = 4
 
 
@@ -350,6 +387,8 @@ def parse(text):
             s.start = w[2] if len(w) == 3 else ""
             if scene_problem(s.name):
                 fail(scene_problem(s.name))
+            if start_problem(s.name, s.start):
+                fail(start_problem(s.name, s.start))
         elif cmd == "PLACE":
             # #196: "place PLATFORM UP": UP metres over the live place of that moving platform (the module's
             # TestPlatformPlace), for a rider on a floor that waves.
@@ -855,8 +894,68 @@ class Player:
     # the module's own warp instead (lichii/hook/coop_testinput.cpp Warp: the scene and the start written into
     # the game's next-scene request, asked again every 0.5 s for 90 s until Link is there; it logs "coop: test
     # warp done after N s" itself). The script's line goes as written, so its start is used there.
+    # A named start (`warp SCENE START`) always goes to the module's warp: the bridge's teleport has no start and lands
+    # at the map's own (row 53: the 11-23 Temple of Time run asked a start, got the market gate, and was graded on
+    # it). The module writes the start into Sequence_ReservedNextStartPosName and logs whether it was set; NOT set,
+    # no commands file, a refusal or no arrival is a FAILED warp (warp_failed: the run FAILs).
+    MODULE_WARP_RX = r"coop: test warp to %s \(start %s\): .*start (set|NOT set) "
+    MODULE_WARP_DONE_RX = r"coop: test warp done after "
+    MODULE_WARP_BAD_RX = r"coop: test warp to %s (refused|did not happen)"
+
+    def warp_named_start(self, s):
+        def failed(why):
+            self.warp_failed.append("%s %s -> %s" % (s.name, s.start, why))
+            self.log("coop: test warp %s start %s FAILED: %s" % (s.name, s.start, why))
+
+        def go():
+            if not self.commands:
+                return failed("no module commands file (a named start needs the module's own warp)")
+            asked = re.compile(self.MODULE_WARP_RX % (re.escape(s.name), re.escape(s.start)))
+            done = re.compile(self.MODULE_WARP_DONE_RX)
+            bad = re.compile(self.MODULE_WARP_BAD_RX % re.escape(s.name))
+            checked = self.read_log is not None
+            n_asked, n_done, n_bad = ((self._log_matches(rx)[0] for rx in (asked, done, bad)) if checked
+                                      else (0, 0, 0))
+            if not self._send([s.text]):
+                return failed("the module did not take the line (no module reading LICHII_COOP_TEST_COMMANDS?)")
+            self.log("coop: test warp %s start %s: asked through the module's own warp" % (s.name, s.start))
+            if not checked:
+                self.log("coop: test warp %s start %s: not checked (no game log here)" % (s.name, s.start))
+                return
+            deadline = self.clock() + self.warp_for + 10.0   # (the module asks for 90 s itself, then logs)
+            said = False
+            while self.clock() < deadline:
+                k, line = self._log_matches(bad)
+                if k > n_bad:
+                    return failed("the module says: " + line.split("coop: ", 1)[-1])
+                k, line = self._log_matches(asked)
+                if k > n_asked and not said:
+                    said = True
+                    if "start NOT set" in line:
+                        return failed("the module could not write the start (its line: %s)"
+                                      % line.split("coop: ", 1)[-1])
+                if said and self._log_matches(done)[0] > n_done:
+                    b = self.connect() if self.connect else self.b
+                    try:
+                        got = self._age_after(b, s.name)
+                    finally:
+                        if b is not self.b:
+                            b.close()
+                    if got:
+                        return failed("in the map, but Link is still a %s (the age flag did not take)" % got)
+                    self.log("coop: test warp done (map %s, start %s)" % (s.name, s.start))
+                    return
+                self.sleep(0.5)
+            failed("no module warp line after %.0f s" % (self.warp_for + 10.0) if not said else
+                   "the module never said 'warp done' in %.0f s" % (self.warp_for + 10.0))
+
+        t = threading.Thread(target=go, daemon=True)
+        t.start()
+        self.warps.append(t)
+
     def warp(self, s):
-        said_start = [False]
+        if s.start:
+            return self.warp_named_start(s)
 
         def by_module(why):
             if not self.commands:
@@ -898,10 +997,6 @@ class Player:
                                      "asked (it keeps the game's age: set Sequence_IsChildhood after the save is "
                                      "loaded, then warp)" % (s.name, to))
                             return
-                        if s.start and not said_start[0]:
-                            said_start[0] = True
-                            self.log("coop: test warp %s: start %s not used on hookshot (the map's own)"
-                                     % (s.name, s.start))
                         self.log("coop: test warp %s: sent (map %s%s)" % (
                             s.name, to, ", not accepted" if r.get("accepted") is False else ""))
                         # "sent" is not "moved": a teleport asked while the arrival event of the save's load still

@@ -11,7 +11,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 400
 mark start
-warp WaterTemple StartPos_SageOfWater
+warp WaterTemple   # (row 53: event start StartPos_SageOfWater dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200               # the title screen
 mark title
 press A

@@ -1,7 +1,7 @@
 # gohma: B (P2) loads into the same room and stays near Gohma; after about 30 s it shoots the
 # slingshot at the boss three times (ZL lock-on, ZR held to aim, let go to shoot).
 mark start
-warp InsideTheDekuTree StartPos_Get_StoneOfForest
+warp InsideTheDekuTree   # (row 53: event start StartPos_Get_StoneOfForest dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

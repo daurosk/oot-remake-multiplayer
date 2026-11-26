@@ -1,0 +1,6 @@
+# warp-starts-probe B: stands where the save put it (the probe is game A's); waits as long as A plays,
+# in steps of at most 30000 ticks (hookshot.py MAX_STEP_TICKS is 36000).
+mark start
+wait 30000
+wait 18240
+mark end

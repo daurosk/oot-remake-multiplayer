@@ -10,7 +10,7 @@
 #! switches LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 600
 mark start
-warp DodongoCavern EntrancePos
+warp DodongoCavern   # (row 53: event start EntrancePos dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A
@@ -43,7 +43,7 @@ wait 1260
 mark back-1
 wait 1260
 mark back-2
-warp DodongoCavern EntrancePos  # leave the room and come back (a scene load)
+warp DodongoCavern   # (row 53: event start EntrancePos dropped, not in coop_start_points.inc; the bridge always landed at the map's own start) leave the room and come back (a scene load)
 wait 1200
 place -9.7 97.6 -23.0
 wait 10

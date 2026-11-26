@@ -1,0 +1,96 @@
+# warp-starts-probe (row-53-ocarina-3, C #124 order 3): warps to each DISTINCT named start the repo's scenarios and
+# groups use (29 pairs, 23 scenes) and marks Link's landing (the mark line logs Link at x y z; each mark is a frame
+# shot). Source of the list: every `warp SCENE START` in tools/autotest/scenarios and groups that
+# lichii/hook/coop_start_points.inc lists (the game's own StartPos placements, tools/puppet_pack/start_points.py);
+# the judge (offline/warp-starts-probe-run.ps1) compares each landing with that start's x, z in the .inc.
+# A named start goes to the module's own warp (hookshot.py warp_named_start; it logs 'warp done (map S, start X)').
+# wait 1500 = 25 s per warp (the module asks for up to 90 s; a load is about 10 s on lane 1).
+mark start
+warp BarinadeStage BarinadeStage
+wait 1500
+mark ws01
+warp BongoBongoStage BongoBongoStage
+wait 1500
+mark ws02
+warp DodongoCavern DodongoCavern_MountainTrailSide
+wait 1500
+mark ws03
+warp DodongoStage DodongoStage
+wait 1500
+mark ws04
+warp GanonStage GanonStage
+wait 1500
+mark ws05
+warp GanondorfStage GanondorfStage
+wait 1500
+mark ws06
+warp GerudoFortress_Adult GerudoFortress_FromGerudoValley
+wait 1500
+mark ws07
+warp GohmaStage GohmaStage
+wait 1500
+mark ws08
+warp GoronCity_Child GoronCity_LostWoodSide_before
+wait 1500
+mark ws09
+warp Graveyard_Child GraveYard_KakarikoSide
+wait 1500
+mark ws10
+warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
+wait 1500
+mark ws11
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1500
+mark ws12
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1500
+mark ws13
+warp HyruleField_Child HyruleField_FrontOfMarket
+wait 1500
+mark ws14
+warp InsideJabuJabuBelly InsideJabuJabuBelly_FromZoraFountain
+wait 1500
+mark ws15
+warp InsideTheDekuTree Entrance
+wait 1500
+mark ws16
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1500
+mark ws17
+warp KakarikoVillage_Child KakarikoVillage_Entrance
+wait 1500
+mark ws18
+warp KakarikoVillage_Child Kakariko_GraveYardSide
+wait 1500
+mark ws19
+warp KakarikoVillage_Child Kakariko_MountainTrailSide
+wait 1500
+mark ws20
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500
+mark ws21
+warp KokiriForest_Child FrontDekuTree
+wait 1500
+mark ws22
+warp KokiriForest_Child LostWoodBridge_FrontOfHyruleField
+wait 1500
+mark ws23
+warp MorphaStage MorphaStage
+wait 1500
+mark ws24
+warp PhantomGanonStage PhantomGanonStage
+wait 1500
+mark ws25
+warp TwinrovaStage TwinrovaStage
+wait 1500
+mark ws26
+warp VolvagiaStage VolvagiaStage
+wait 1500
+mark ws27
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1500
+mark ws28
+warp ZoraRiver_Child ZoraRiver_LostWoodSide
+wait 1500
+mark ws29
+mark end

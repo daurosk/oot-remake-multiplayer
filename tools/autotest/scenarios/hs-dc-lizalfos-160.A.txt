@@ -30,7 +30,7 @@
 #! timeout 600
 mark start
 nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
-warp DodongoCavern EntrancePos
+warp DodongoCavern   # (row 53: event start EntrancePos dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

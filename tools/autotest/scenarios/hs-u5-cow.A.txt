@@ -12,7 +12,7 @@
 #! switches LICHII_COOP_DEBUG_FLAGS=1
 #! timeout 500
 mark start
-warp KokiriForest_Adult LinkBed
+warp KokiriForest_Adult   # (row 53: event start LinkBed dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

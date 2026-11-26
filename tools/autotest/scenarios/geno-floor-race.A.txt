@@ -5,7 +5,7 @@
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
 #! timeout 400
 mark start
-warp DodongoCavern EntrancePos
+warp DodongoCavern   # (row 53: event start EntrancePos dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 press A
 wait 180

@@ -1,7 +1,7 @@
 # hs-fishing, B: loads at the pond and watches A from the start point (see hs-fishing.A.txt). B's log
 # carries the rod check (A's PLAYER_EQUIP) and the shared-fish lines.
 mark start
-warp HyruleField_Child MiniGame_Fishing_PlayerStart
+warp HyruleField_Child   # (row 53: event start MiniGame_Fishing_PlayerStart dropped, not in coop_start_points.inc; the bridge always landed at the map's own start)
 wait 1200
 mark title
 press A

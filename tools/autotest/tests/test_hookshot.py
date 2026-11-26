@@ -603,11 +603,10 @@ class PlayerTest(unittest.TestCase):
         self.assertEqual(log.lines[-1], "coop: test script done")
 
     def test_warp_retries_until_sent(self):
-        game, log, _, _, _ = play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6", FakeGame(refuse_teleports=2))
+        game, log, _, _, _ = play("warp KakarikoVillage_Child\nwait 6", FakeGame(refuse_teleports=2))
         self.assertEqual(len(game.cmds("teleport")), 3)
         self.assertEqual(game.cmds("teleport")[-1]["to"], "KakarikoVillage_Child")
         self.assertTrue(any(line.startswith("coop: test warp KakarikoVillage_Child: sent") for line in log.lines))
-        self.assertTrue(any("start Kakariko_WellSide not used" in line for line in log.lines))
         self.assertIn("coop: test warp done (map KakarikoVillage_Child)", log.lines)
 
     def test_warp_asks_again_when_the_map_does_not_come(self):
@@ -622,7 +621,7 @@ class PlayerTest(unittest.TestCase):
     def test_warp_to_another_map_fails(self):
         """epona-sync-1db5e721-r2: `warp HyruleField_Adult` in a child game went to HyruleField_Child
         ('sent (map HyruleField_Child, not accepted)') and was logged 'warp done': now a FAILED warp, no 'done'."""
-        game, log, _, p, _ = play("warp HyruleField_Adult HyruleField_FrontOfMarket\nwait 6",
+        game, log, _, p, _ = play("warp HyruleField_Adult\nwait 6",
                                   FakeGame(redirect={"HyruleField_Adult": "HyruleField_Child"}))
         self.assertEqual(p.warp_failed, ["HyruleField_Adult -> HyruleField_Child"])
         self.assertTrue(any(line.startswith("coop: test warp HyruleField_Adult FAILED: the bridge sends the game to "
@@ -632,13 +631,13 @@ class PlayerTest(unittest.TestCase):
 
     def test_warp_to_the_right_map_with_the_wrong_age_fails(self):
         """epona-sync-2195cbd1: HyruleField_Adult reached, Epona there, flag set, Link still a child: not 'warp done'."""
-        game, log, _, p, _ = play("warp HyruleField_Adult HyruleField_FrontOfMarket\nwait 6", FakeGame(link_stays_child=True))
+        game, log, _, p, _ = play("warp HyruleField_Adult\nwait 6", FakeGame(link_stays_child=True))
         self.assertEqual(p.warp_failed, ["HyruleField_Adult -> Link is child"])
         self.assertTrue(any("Link is still a child" in line for line in log.lines))
         self.assertFalse(any(line.startswith("coop: test warp done") for line in log.lines))
 
     def test_warp_to_an_adult_map_with_an_adult_link_is_done(self):
-        game, log, _, p, _ = play("warp HyruleField_Adult HyruleField_FrontOfMarket\nwait 6", FakeGame())
+        game, log, _, p, _ = play("warp HyruleField_Adult\nwait 6", FakeGame())
         self.assertEqual(p.warp_failed, [])
         self.assertIn("coop: test warp done (map HyruleField_Adult)", log.lines)
 
@@ -670,24 +669,22 @@ class PlayerTest(unittest.TestCase):
                         taken.append(f.read())
                     open(path, "w").close()
             game.clock.sleep = module_sleep
-            game, log, _, _, _ = play("warp BarinadeStage BarinadeStage\nwait 6", game, commands=path)
+            game, log, _, _, _ = play("warp BarinadeStage\nwait 6", game, commands=path)
             self.assertEqual(len(game.cmds("teleport")), 1)
-            self.assertEqual([t.splitlines()[1:] for t in taken], [["warp BarinadeStage BarinadeStage"]])
+            self.assertEqual([t.splitlines()[1:] for t in taken], [["warp BarinadeStage"]])
             self.assertTrue(any("not one of the bridge's maps (not_found): asked through the module's own warp"
-                                in line and "start BarinadeStage" in line for line in log.lines))
-            self.assertFalse(any("not used on hookshot" in line for line in log.lines))
+                                in line for line in log.lines))
             self.assertFalse(any("gave up after" in line for line in log.lines))
 
     def test_warp_to_a_map_the_bridge_lacks_without_the_module(self):
-        game, log, _, _, _ = play("warp GohmaStage GohmaStage\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
+        game, log, _, _, _ = play("warp GohmaStage\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
         self.assertEqual(len(game.cmds("teleport")), 1)
         self.assertTrue(any("gave up: the bridge has no such map" in line for line in log.lines))
 
     def test_warp_to_a_bridge_map_still_uses_the_bridge(self):
-        game, log, _, _, _ = play("warp InsideTheDekuTree Entrance\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
+        game, log, _, _, _ = play("warp InsideTheDekuTree\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
         self.assertEqual(game.map, "InsideTheDekuTree")
         self.assertIn("coop: test warp done (map InsideTheDekuTree)", log.lines)
-        self.assertEqual(sum("start Entrance not used" in line for line in log.lines), 1)
 
     def test_module_steps_are_skipped_without_the_file(self):
         game, log, _, _, _ = play("give bombs\nchat /teleport B\nplace 1 2 3\nmark m")
@@ -1477,6 +1474,120 @@ class WindowPlacementTest(unittest.TestCase):
         self.assertEqual(len(said), 1)
         self.assertIn("on \\\\.\\DISPLAY1", said[0])
         self.assertNotIn("DISPLAY2", said[0])
+
+
+class NamedStartWarpTest(unittest.TestCase):
+    """Row 53 (11-23 Temple of Time VOID): the bridge's teleport has no start, so `warp SCENE START` landed at the map's
+    own start while the script went on as if at START. A named start now goes to the module's own warp (which writes
+    Sequence_ReservedNextStartPosName and logs whether it did), is checked against the game's start list at parse,
+    and every way it can go wrong is a FAILED warp."""
+
+    def _fake_module(self, game, path, lines):
+        """The module: takes the commands file and answers a warp line with `lines` (formatted with scene, start)."""
+        log, sleep = [], game.clock.sleep
+
+        def module_sleep(sec):
+            sleep(sec)
+            if os.path.getsize(path):
+                with open(path, encoding="utf-8") as f:
+                    for ln in f.read().splitlines():
+                        w = ln.split()
+                        if len(w) == 3 and w[0] == "warp":
+                            log.extend(x.format(scene=w[1], start=w[2]) for x in lines)
+                open(path, "w").close()
+        game.clock.sleep = module_sleep
+        return lambda: "\n".join(log)
+
+    ASKED = ("[Core] coop: test warp to {scene} (start {start}): scene set (type 16), start %s (type 16), "
+             "position type 18, childhood child set (type 0)")
+    DONE = "[Core] coop: test warp done after 2.5 s (5 asks), Link at 1.00 2.00"
+
+    def _play(self, text, lines, read_log=True, maps=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands-A.txt")
+            open(path, "w").close()
+            game = FakeGame(maps=maps)
+            module_log = self._fake_module(game, path, lines)
+            kw = {"commands": path, "warp_for": 20.0}
+            if read_log:
+                kw["read_log"] = module_log
+            return play(text, game, **kw)
+
+    def test_a_named_start_goes_to_the_module_and_is_done(self):
+        game, log, _, p, _ = self._play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6",
+                                        [self.ASKED % "set", self.DONE])
+        self.assertEqual(game.cmds("teleport"), [])          # never the bridge: it would drop the start
+        self.assertEqual(p.warp_failed, [])
+        self.assertIn("coop: test warp done (map KakarikoVillage_Child, start Kakariko_WellSide)", log.lines)
+        self.assertFalse(any("not used" in line for line in log.lines))
+
+    def test_start_not_set_fails(self):
+        game, log, _, p, _ = self._play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6",
+                                        [self.ASKED % "NOT set", self.DONE])
+        self.assertEqual(len(p.warp_failed), 1)
+        self.assertIn("could not write the start", p.warp_failed[0])
+        self.assertFalse(any(line.startswith("coop: test warp done") for line in log.lines))
+
+    def test_a_refused_or_lost_module_warp_fails(self):
+        for bad in ("[Core] coop: test warp to {scene} refused, nothing written: unknown scene",
+                    "[Core] coop: test warp to {scene} did not happen in 90 s (scene Market_Child)"):
+            _, log, _, p, _ = self._play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6", [bad])
+            self.assertEqual(len(p.warp_failed), 1, bad)
+            self.assertIn("the module says", p.warp_failed[0])
+
+    def test_no_module_answer_fails(self):
+        _, log, _, p, _ = self._play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6", [])
+        self.assertEqual(len(p.warp_failed), 1)
+        self.assertIn("no module warp line", p.warp_failed[0])
+
+    def test_a_named_start_without_the_commands_file_fails(self):
+        game, log, _, p, _ = play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6", FakeGame())
+        self.assertEqual(game.cmds("teleport"), [])
+        self.assertEqual(len(p.warp_failed), 1)
+        self.assertIn("no module commands file", p.warp_failed[0])
+
+    def test_without_a_game_log_it_is_asked_but_not_checked(self):
+        game, log, _, p, _ = self._play("warp KakarikoVillage_Child Kakariko_WellSide\nwait 6", [], read_log=False)
+        self.assertEqual(p.warp_failed, [])
+        self.assertTrue(any("not checked (no game log here)" in line for line in log.lines))
+
+    def test_a_named_start_on_a_map_the_bridge_lacks_also_goes_to_the_module(self):
+        game, log, _, p, _ = self._play("warp BarinadeStage BarinadeStage\nwait 6", [self.ASKED % "set", self.DONE],
+                                        maps={"InsideTheDekuTree"})
+        self.assertEqual(game.cmds("teleport"), [])
+        self.assertIn("coop: test warp done (map BarinadeStage, start BarinadeStage)", log.lines)
+
+    def test_a_start_the_game_does_not_list_is_refused_at_parse(self):
+        # a typo, and an event start start_points.py leaves out (cutscene: the Sage of Water's)
+        for bad, scene in (("warp KakarikoVillage_Child Kakariko_WelSide\n", "KakarikoVillage_Child"),
+                           ("warp WaterTemple StartPos_SageOfWater\n", "WaterTemple")):
+            with self.assertRaises(hs.ScriptError) as ctx:
+                hs.parse(bad)
+            msg = str(ctx.exception)
+            self.assertIn("unknown start", msg)
+            self.assertIn("coop_start_points.inc lists", msg)
+        self.assertIn("WaterTemple_FromLakeHylia", msg)       # the message names the scene's real starts
+
+    def test_known_starts_are_the_inc_rows(self):
+        starts = hs.known_starts()
+        self.assertIn("Kakariko_WellSide", starts["KakarikoVillage_Child"])
+        self.assertIn("Entrance", starts["InsideTheDekuTree"])
+        self.assertEqual(hs.start_problem("InsideTheDekuTree", "Entrance"), "")
+        self.assertEqual(hs.start_problem("Market_Child", ""), "")
+        self.assertEqual(hs.start_problem("X", "Y", starts={}),
+                         "unknown start 'Y' for scene X (coop_start_points.inc lists no start of that scene)")
+
+    def test_every_named_start_in_the_repo_scenarios_is_listed(self):
+        """The sweep: every `warp SCENE START` in tools/autotest/scenarios and groups parses against the list."""
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bad = []
+        for f in glob.glob(os.path.join(here, "scenarios", "*.txt")) + glob.glob(os.path.join(here, "groups", "*.txt")):
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                for n, ln in enumerate(fh, 1):
+                    w = ln.split("#", 1)[0].split()
+                    if len(w) == 3 and w[0].lower() == "warp" and hs.start_problem(w[1], w[2]):
+                        bad.append("%s:%d %s %s" % (os.path.basename(f), n, w[1], w[2]))
+        self.assertEqual(bad, [])
 
 
 class WarpSceneCheckTest(unittest.TestCase):

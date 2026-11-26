@@ -1,0 +1,10 @@
+# warp-starts-probe (row-53-ocarina-3): see warp-starts-probe.A.txt. Line checks read the game logs.
+start A B
+load A B
+shot loaded
+play A warp-starts-probe.A.txt B warp-starts-probe.B.txt
+shot end
+lines starts-A A min=29 coop: test warp to [A-Za-z_]+ \(start [A-Za-z_]+\): .*start set 
+lines warps-A A min=29 coop: test warp done after 
+lines nostart-A A max=0 coop: test warp to [A-Za-z_]+ \(start [A-Za-z_]+\): .*start NOT set 
+lines marks-A A min=29 coop: test mark ws[0-9]+ \(Link at

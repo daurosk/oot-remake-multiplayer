@@ -255,6 +255,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/title_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_native.cpp
   hookshot/problem_ask_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_problem_ask.cpp
   hookshot/stuck_load_test.cpp
+  hookshot/back_window_test.cpp
   hookshot/auto_press_test.cpp
   hookshot/text_fit_test.cpp
   hookshot/list_pages_test.cpp

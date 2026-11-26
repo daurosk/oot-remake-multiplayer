@@ -35,6 +35,7 @@
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "coop_back_window.h"
 #include "coop_callers.h"
 #include "coop_camera.h"
 #include "coop_cheats.h"
@@ -1982,6 +1983,7 @@ void Frame(void* ctx, int site) {
         CoopPlaytest::AtFrame();
     }
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
+    CoopBackWindow::Tick();   // row 83: behind another of our games on this PC, one step up (coop_back_window.h)
     if (site == HOS_COOP_SITE_FRAME) {  // row 271: this game's memory once a minute, solo too (coop_host_menu.h)
         // Row 292: read on a thread of its own (it sums every heap of the process: slow), never in the frame.
         static std::uint64_t next_memory_ms = 0;

@@ -272,6 +272,7 @@ def test_epona_seen(pair):
         with pair.setup():                            # the ocarina is set-up too (its own 30 s)
             # the ocarina out as test_rows.test_ocarina_notes (kit save: on d-left = the bridge's LEFT), its first-use note
             # closed with A, then put away (B) and out again, so no note but the song's is played after it
+            pair.need_ocarina("B")                    # its re-equip after the last load first (songs-frogs-733c4d8f)
             pair.press("B", ["LEFT"], frames=12)
             pair.step_both(240)
             assert pair.log["B"].find(OCARINA_OUT), "B: no '%s' 240 frames after LEFT" % OCARINA_OUT

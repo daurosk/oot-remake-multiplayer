@@ -114,6 +114,7 @@ def test_ocarina_notes(pair):
         # 'press A 12' + 'wait 120' closes the first-use "Ocarina Audio Input" note that eats L R Y X ('mark ready').
         # Not taken over: its walk ahead + turn round (:17-22, 'hold LSTICK_UP 40' / 'hold LSTICK_DOWN 4') only make
         # B's shots show the puppet's front; this row judges the sound log, takes no shot, and a walk is not set-up.
+        pair.need_ocarina("A")                # its re-equip after the last load first (songs-frogs-733c4d8f)
         pair.press("A", ["LEFT"], frames=12)
         pair.step_both(240)
         assert pair.log["A"].find(r"ocarina probe: our Link plays the ocarina"),             "A: no 'ocarina probe: our Link plays the ocarina' 240 frames after DLEFT (wave2 hs-ocarina-show)"

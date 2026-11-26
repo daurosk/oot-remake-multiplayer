@@ -84,6 +84,7 @@ def ocarina_out(pair, x, again=False):
     """D-pad Left (the kit save has the ocarina there: hs-ocarina.A.txt 'press DLEFT 12' + 'wait 240'), then the probe
     line. The first time its first-use "Ocarina Audio Input" note is closed with A and the ocarina put away (B) and out
     again, so no note but the song's is played after it (test_epona.test_epona_seen's own steps)."""
+    pair.need_ocarina(x)                              # its re-equip after the last load first (songs-frogs-733c4d8f)
     pair.log[x].mark()
     pair.press(x, ["LEFT"], frames=12)
     pair.step_both(240)
@@ -177,6 +178,7 @@ def test_frog_songs(pair):
             pair.step_both(60)
             at = pair.state("B").get("scene") or ""
             assert at.lower() == RIVER.lower(), "B in %s, not %s" % (at, RIVER)
+            pair.need_ocarina("B")                    # the warp's load: re-equipped before frog_song's LEFT
         frog_song(pair, "ZeldaLullaby", LULLABY_PAID, "songs-frogs-lullaby")
         frog_song(pair, "StormSong", STORM_PAID, "songs-frogs-storms")
         done = True

@@ -34,6 +34,14 @@ FPS = 30              # Ocarina of Time's calc rate on Hookshot: frames -> secon
 OCARINA_EQUIPPED = r"coop: items: ocarina '\w+' equipped by the game from its flags"
 SCENE_LOADED = r"coop: native ui: scene load ended"     # (seen: songs-frogs-733c4d8f hookshot_log-B.txt:4289, then :4581)
 OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's end (the frogs' boot event: 0.7 s)
+# D-pad Left's two module lines (probe-ocarina-2f14b333, 11-26, both games, cited by its game-out-X.txt line): the press
+# ALWAYS starts the game's free-Ocarina event (OCARINA_FREE: B :4810, A :5814; also both frogs SETUP-FAIL runs, 733c4d8f
+# :4748, 58f13b22 :4898). The first time on a boot the game's first-use "Ocarina Audio Input" box is up
+# (probe-oca-12f-30-B.png) and Link does not play yet: OCARINA_PLAYS came only after B closed that box (B :5540, A :6440;
+# 500 frames and a second 30-frame LEFT before it brought nothing). The frogs runs waited for OCARINA_PLAYS alone.
+OCARINA_FREE = r"coop: event: the running event is our free Ocarina"      # coop/host/include/coop/host/event_owner.hpp:58, docs/scenes.md:41
+OCARINA_PLAYS = r"ocarina probe: our Link plays the ocarina"              # lichii/hook/coop_ocarina.cpp:320 (PROBE=1)
+OCARINA_SETTLE = 60   # frames after OCARINA_FREE for OCARINA_PLAYS to come with no box, before B closes a box
 
 
 class SetupFail(Exception):
@@ -322,6 +330,27 @@ class Pair:
         module's re-equip (songs-frogs-733c4d8f)."""
         return self.until("%s: the ocarina back on the D-pad after the load ('%s' since the last '%s')"
                           % (x, OCARINA_EQUIPPED, SCENE_LOADED), lambda: self.ocarina_ready(x), max_frames)
+
+    def ocarina_out(self, x, max_frames=240):
+        """THE way to take game x's ocarina out (test_songs, test_epona, test_rows; needs LICHII_COOP_OCARINA_PROBE=1):
+        need_ocarina, D-pad Left (12 frames), then OCARINA_FREE or OCARINA_PLAYS within max_frames (else AssertionError:
+        nothing came out, the #190 bug's sign). If OCARINA_PLAYS has not come OCARINA_SETTLE frames after that, the
+        first-use box is up: B closes it (the probe's proven press; not A, a note key) and OCARINA_PLAYS must follow.
+        Ends with Link playing (no note sent by the set-up)."""
+        self.need_ocarina(x)
+        pos = self.log[x].mark()
+        self.press(x, ["LEFT"], frames=12)
+        self.until("%s: the ocarina out after D-pad Left ('%s' or '%s')" % (x, OCARINA_FREE, OCARINA_PLAYS),
+                   lambda: self.log[x].find(OCARINA_PLAYS, pos=pos) or self.log[x].find(OCARINA_FREE, pos=pos),
+                   max_frames)
+        try:
+            return self.until("x", lambda: self.log[x].find(OCARINA_PLAYS, pos=pos), OCARINA_SETTLE)
+        except AssertionError:
+            pass
+        self.notes.append("%s: ocarina out with the first-use 'Ocarina Audio Input' box up: closed with B" % x)
+        self.press(x, ["B"], frames=8)
+        return self.until("%s: '%s' after B closed the first-use box" % (x, OCARINA_PLAYS),
+                          lambda: self.log[x].find(OCARINA_PLAYS, pos=pos), max_frames)
 
     def expect_log(self, x, pattern, max_frames=600):
         """A module log line of game x matching `pattern`, written since this test began."""

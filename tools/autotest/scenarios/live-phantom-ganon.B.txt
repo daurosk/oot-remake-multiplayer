@@ -1,0 +1,17 @@
+# live-phantom-ganon B (see the A file).
+mark start
+nofairy
+warp PhantomGanonStage PhantomGanonStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 3900
+mark fight

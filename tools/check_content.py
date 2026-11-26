@@ -167,6 +167,9 @@ def test_name_problems(root, path):
     return found
 
 
+INGAME_DIR, INGAME_SELFTEST = "tools/autotest/ingame/", "tools/autotest/tests/test_ingame.py"
+
+
 def unlisted_python_tests(paths, workflow_text, runner_text=""):
     """Python test files (tools/**/test_*.py and *_test.py) that no workflow names by path and no runner script
     (tools/hookshot/host_compile_check.*) names by file: CI runs them by name, so a new one would never run."""
@@ -176,6 +179,13 @@ def unlisted_python_tests(paths, workflow_text, runner_text=""):
         if not re.match(r"^tools/.*(/test_[^/]*|_test)\.py$", q) or "/" not in q:
             continue
         name = q.rsplit("/", 1)[1]
+        # the in-game suite (tools/autotest/ingame/test_*.py) is played whole on two fake bridges by the selftest
+        # tools/autotest/tests/test_ingame.py (docs/ingame-tests.md): a workflow naming that one runs every row file
+        if q.startswith(INGAME_DIR) and INGAME_SELFTEST in workflow_text:
+            continue
+        # a row port's own selftests (tools/autotest/tests/test_ingame_<row>.py) run inside test_ingame.py (load_tests)
+        if re.match(r"^tools/autotest/tests/test_ingame_[^/]+\.py$", q) and INGAME_SELFTEST in workflow_text:
+            continue
         if q in workflow_text or re.search(r"(?<![A-Za-z0-9_.-])" + re.escape(name) + r"(?![A-Za-z0-9_-])", runner_text):
             continue
         out.append(p)

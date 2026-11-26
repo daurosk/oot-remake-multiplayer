@@ -1001,7 +1001,7 @@ namespace CoopTestInput {
 const std::vector<Kind>& ActKinds() {
     static const std::vector<Kind> kinds = {Kind::kill, Kind::hit,  Kind::hurt,    Kind::place, Kind::face,
                                             Kind::aim,  Kind::wear, Kind::dress,   Kind::assign, Kind::chat,
-                                            Kind::menu, Kind::setflag, Kind::setenum};
+                                            Kind::menu, Kind::setflag, Kind::setenum, Kind::verb};
     return kinds;
 }
 

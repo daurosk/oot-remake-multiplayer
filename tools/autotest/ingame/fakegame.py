@@ -4,19 +4,55 @@ pilot tests look for (a connect, puppets, masks, the ocarina, a shared flag, /te
 
 It proves the runner, not the game: results, budgets, SETUP-FAIL / FLAKY / NO-REF, the summary, shots and their
 compare, the lane fixture. What a reaction logs is copied from the tests' own patterns (the old rows' expect=).
+
+A row port adds its own reactions WITHOUT editing this file: a module ingame/fakes/<name>.py (one per port, its owner's
+file) with any of these hooks, each called for every fake game (A and B), in file-name order:
+    setup(game)                      after the game's own fields are set (game.env = the boot's --env list)
+    lane(fakelane)                   once both games exist and know each other (shared state: fakelane.g["A"/"B"])
+    command(game, m) -> dict|None    before the built-in answer of bridge message m; a dict = the whole reply
+    after(game, m, r)                after the built-in answer r (change r in place)
+    press(game, buttons) -> bool     before the built-in pad reactions; True = handled, the built-in ones are skipped
+    act(game, words) -> bool         before the built-in `act` reactions (words = the line split); True = handled
+    actors(game) -> list             more world actors for the state's world list
+    move_step(game, pos) -> pos|None each frame of a `move`, Link's next [x, y, z]: return a changed one (a wall)
+    state(game, st)                  change the state dict in place
+A hook reacts only where its row is (its scene, its switch, its BT_FAKE_* selftest variable), so ports never collide.
 """
+import importlib.util
 import json
 import math
 import os
 import socket
 import threading
 
+FAKES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fakes")
+
+
+def load_fakes(folder=FAKES):
+    """The row ports' fake modules (ingame/fakes/*.py, not _*.py), in file-name order."""
+    mods = []
+    if not os.path.isdir(folder):
+        return mods
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".py") or name.startswith("_"):
+            continue
+        spec = importlib.util.spec_from_file_location("fakes_" + name[:-3], os.path.join(folder, name))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mods.append(mod)
+    return mods
+
+
+def hooks(mods, name):
+    return [getattr(m, name) for m in mods if callable(getattr(m, name, None))]
+
 GATE = "Npc_Hylia_Soldier_003_GateOpen"
 
 
 class FakeGame:
-    def __init__(self, tag, folder, lane):
+    def __init__(self, tag, folder, lane, env=(), fakes=()):
         self.tag, self.folder, self.lane = tag, folder, lane
+        self.env, self.fakes = list(env), list(fakes)
         os.makedirs(os.path.join(folder, "playtest", "dumps"), exist_ok=True)
         os.makedirs(os.path.join(folder, "playtest", "shots"), exist_ok=True)
         self.log_path = os.path.join(folder, "game-out-%s.txt" % tag)
@@ -33,6 +69,8 @@ class FakeGame:
         self.say("coop: puppet: P%d CoopPuppet_Child_Green spawned after 120 ms" % them)
         if tag == "A":
             self.say("coop: drawing over Hookshot's picture")
+        for h in hooks(self.fakes, "setup"):
+            h(self)
         self.srv = socket.socket()
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
@@ -62,7 +100,19 @@ class FakeGame:
     def in_play(self):
         return not self.at_title and not self.menu_pause
 
+    def env_on(self, want):
+        """Is the switch `want` (NAME=VALUE) on for this game in the boot's env (the 'X=1' or 'A:X=1' form)?"""
+        return any(e == want or e == "%s:%s" % (self.tag, want) for e in self.env)
+
     def state(self):
+        st = self.base_state()
+        for h in hooks(self.fakes, "actors"):
+            st["world"]["actors"].extend(h(self) or [])
+        for h in hooks(self.fakes, "state"):
+            h(self, st)
+        return st
+
+    def base_state(self):
         live = self.in_play()
         return {"frame": self.frame, "paused": self.paused, "scene": self.scene if not self.at_title else None,
                 "pos": list(self.pos) if live else None, "facing": self.facing if live else None,
@@ -76,6 +126,19 @@ class FakeGame:
 
     # -- commands ---------------------------------------------------------------------------------------------
     def answer(self, m):
+        for h in hooks(self.fakes, "command"):
+            r = h(self, m)
+            if r is not None:
+                r.setdefault("id", m.get("id"))
+                r.setdefault("frame", self.frame)
+                r.setdefault("paused", self.paused)
+                return r
+        r = self.builtin_answer(m)
+        for h in hooks(self.fakes, "after"):
+            h(self, m, r)
+        return r
+
+    def builtin_answer(self, m):
         cmd = m.get("cmd")
         r = {"id": m.get("id"), "ok": True}
         if cmd == "hello":
@@ -97,6 +160,10 @@ class FakeGame:
             self.run(40)
             self.scene = m["scene"]
             r.update(arrived=True, via="teleport", map=m["scene"], state=self.state())
+        elif cmd == "move":
+            self.walk(float(m["yaw"]), float(m.get("strength", 1.0)), int(m.get("frames", 1)))
+            r.update(reads=int(m.get("frames", 1)), no_camera=0, stick=[0.0, float(m.get("strength", 1.0))], view=0.0,
+                     state=self.state())
         elif cmd == "act":
             self.act(m["lines"])
             r.update(lines=1, note="ok")
@@ -129,6 +196,8 @@ class FakeGame:
         return r
 
     def press(self, buttons):
+        if any(h(self, buttons) for h in hooks(self.fakes, "press")):
+            return
         o, me = self.other, 1 if self.tag == "A" else 2
         if "PLUS" in buttons:
             self.menu_pause = not self.menu_pause
@@ -148,8 +217,22 @@ class FakeGame:
                 self.later(3, lambda n=n, name=name: self.say("coop: ocarina note %d (Ocarina_%s) sent" % (n, name)))
                 o.later(8, lambda name=name: o.say("coop: puppet: P%d plays sound 'Ocarina_%s'" % (me, name)))
 
+    def walk(self, yaw, strength, frames):
+        """`move` (docs/playtest.md): 0.1 m a frame toward world yaw (0 = +z, 90 = +x); a fakes/ module's move_step
+        may change each step (a wall). From row-53-ocarina-5's b829adf93, made generic by the file's owner."""
+        for _ in range(frames):
+            pos = [self.pos[0] + 0.1 * strength * math.sin(math.radians(yaw)), self.pos[1],
+                   self.pos[2] + 0.1 * strength * math.cos(math.radians(yaw))]
+            for h in hooks(self.fakes, "move_step"):
+                pos = h(self, pos) or pos
+            self.pos = list(pos)
+            self.run(1)
+        self.paused = True
+
     def act(self, line):
         w = line.split()
+        if any(h(self, w) for h in hooks(self.fakes, "act")):
+            return
         o, me = self.other, 1 if self.tag == "A" else 2
         if w[0] == "place":
             self.pos = [float(v) for v in w[1:4]]
@@ -198,10 +281,13 @@ class FakeGame:
 
 
 class FakeLane:
-    def __init__(self, out_dir, lane=1):
+    def __init__(self, out_dir, lane=1, env=(), fakes_dir=FAKES):
         root = os.path.join(out_dir, "fake")
-        self.g = {x: FakeGame(x, os.path.join(root, "lane%d-%s" % (lane, x)), lane) for x in ("A", "B")}
+        mods = load_fakes(fakes_dir)
+        self.g = {x: FakeGame(x, os.path.join(root, "lane%d-%s" % (lane, x)), lane, env, mods) for x in ("A", "B")}
         self.g["A"].other, self.g["B"].other = self.g["B"], self.g["A"]
+        for h in hooks(mods, "lane"):
+            h(self)
 
     def games(self):
         return {x: {"port": g.port, "folder": g.folder, "log": g.log_path} for x, g in self.g.items()}

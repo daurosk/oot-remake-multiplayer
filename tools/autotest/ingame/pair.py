@@ -32,6 +32,11 @@ class SetupFail(Exception):
     """The test could not be set up (the lane, a warp, a give, the set-up took more than 30 s): SETUP-FAIL, not FAIL."""
 
 
+class NoRef(Exception):
+    """NO-REF, never PASS: a look check without a stored reference (the pair fixture's end), or a test that cannot
+    prove its row yet (Pair.unproven). bt_plugin judges it by this TYPE, never by message text."""
+
+
 class TestTimeout(AssertionError):
     """The test ran past its own deadline: FAIL 'timeout' (never retried as a pass)."""
 
@@ -279,13 +284,33 @@ class Pair:
             self.step_both(52)
             ran += 60
 
-    def warp_both(self, scene):
-        """Both games to `scene` (the bridge's `warp`: Longshot's teleport in free play). A first, then B; each warp
-        runs its own game only, so the other is stepped to the same frame count after it."""
+    ARRIVE_IN_EVENT_WAIT = 12   # s per game for arrive_in_event (two warps + checks fit the 30 s set-up)
+
+    def warp_both(self, scene, entrance=None, arrive_in_event=False):
+        """Both games to `scene` (the bridge's `warp`: Longshot's teleport in free play; with an `entrance` (a start of
+        that scene) the game's map change event, which also takes a boss stage: coop_playtest_core.cpp PlanWarp). A
+        first, then B; each warp runs its own game only, so the other is stepped to the same frame count after it.
+        (entrance=: from boss-respawn 6438836b4, taken by the file's owner.)
+        arrive_in_event (twinrova-shots-222-5): a stage whose arrival starts an event (a boss intro). The bridge's warp
+        waits for Link in the scene with NO event (coop_playtest_core.cpp WarpArrived), so it answers 'timeout' with
+        Link already there; then a fresh state with that scene, no load AND an event running counts as the arrival,
+        anything else raises. Each game's wait is ARRIVE_IN_EVENT_WAIT s, and every wait stays inside the deadline."""
+        extra = {} if entrance in (None, "") else {"entrance": entrance}
         for x in ("A", "B"):
             before = self.c[x].last_frame or 0
-            r = self.call(x, "warp", scene=scene, timeout=max(5, int(min(60, self.deadline.left()))))
-            ran = max(0, (r.get("frame") or before) - before)
+            wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event else 60
+            t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
+            self.deadline.check("warp")
+            r = self.c[x].request("warp", check=False, reply_timeout=max(0.2, min(t + 15, self.deadline.left())),
+                                  scene=scene, timeout=t, **extra)        # (the reply wait stays inside the deadline)
+            if not r.get("ok"):
+                st = self.state(x) if arrive_in_event and r.get("error") == "timeout" else None
+                if not (st and (st.get("scene") or "").lower() == scene.lower() and not st.get("loading")
+                        and st.get("event") is True):      # (review-c123-8: a timeout with no event is not an arrival)
+                    raise pc.BridgeError(r)
+                self.notes.append("%s: warp %s answered timeout in the arrival event; in the scene, not loading: "
+                                  "arrived (event %s)" % (x, scene, st.get("event")))
+            ran = max(0, (self.c[x].last_frame or before) - before)
             for y in self.c:
                 if y != x and ran:
                     self.step_other(y, ran)
@@ -325,6 +350,11 @@ class Pair:
             return res        # (the test goes on; bt_plugin labels it NO-REF at its end, never PASS)
         assert res["ok"], "shot %s-%s: %s" % (name, x, res["why"])
         return res
+
+    def unproven(self, reason):
+        """Ends the test as NO-REF (never PASS, never FAIL): the row cannot be proven by this run (no measured value
+        yet, a probe build, ...). `reason` goes into the summary's why."""
+        raise NoRef("NO-REF: %s" % reason)
 
     def no_ref(self):
         return ["%s-%s" % (s["name"], s["game"]) for s in self.shots if s["why"].startswith("NO-REF")]

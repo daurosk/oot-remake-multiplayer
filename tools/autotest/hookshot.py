@@ -1868,6 +1868,9 @@ def main(argv=None):
     r.add_argument("--out", help="run folder (required without --lane; a lane: <its shots>/<name>/<time>)")
     r.add_argument("--name", default="scenario")
     r.add_argument("--script-a", help="(required without --only)")
+    r.add_argument("--check-args", action="store_true",
+                   help="parse and check the run's arguments and its scripts, then exit 0 without starting anything "
+                        "(live.py start --dry-run; the in-game tests' --lane-check-only)")
     r.add_argument("--script-b")
     r.add_argument("--load", help="load.txt: checked only; the load presses A until the game plays")
     r.add_argument("--no-load", action="store_true")
@@ -1935,6 +1938,15 @@ def main(argv=None):
             p.error("--host-in-game: --password of 1 to 64 printable letters")
     elif getattr(a, "b_joins_in_game", False):
         p.error("--b-joins-in-game needs --host-in-game")
+    if a.what == "run" and a.check_args:
+        for path in (a.script_a, a.script_b, getattr(a, "load", None)):
+            if path:
+                try:
+                    parse(read_script(path))
+                except (ScriptError, OSError) as e:
+                    p.error("script %s: %s" % (path, e))
+        print("run arguments OK (--check-args: nothing started)")
+        return 0
     if not a.lane:
         if not ((a.game_a or a.game_b) and a.out):
             p.error("--game-a and/or --game-b, and --out (or --lane N)")

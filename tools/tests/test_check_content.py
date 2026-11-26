@@ -186,6 +186,15 @@ class UnlistedPythonTests(unittest.TestCase):
         listed = self.listed({"tests/CMakeLists.txt": "# host/a_test.cpp\nhost/b_test.cpp # a_test.cpp\n"})
         self.assertEqual(listed, {"tests/host/b_test.cpp"})
 
+    def test_ingame_rows_count_when_their_selftest_runs(self):
+        """tools/autotest/ingame/test_*.py are played whole by tools/autotest/tests/test_ingame.py (row-53-ocarina-5)."""
+        paths = ["tools/autotest/ingame/test_row53.py", "tools/autotest/tests/test_ingame.py",
+                 "tools/autotest/tests/test_ingame_row53.py"]      # (a port's own selftests: test_ingame.py load_tests)
+        self.assertEqual(check_content.unlisted_python_tests(paths, "run: python tools/autotest/tests/test_ingame.py -v"), [])
+        self.assertEqual(check_content.unlisted_python_tests(["tools/autotest/tests/test_ingame_row53.py"], "run: x"),
+                         ["tools/autotest/tests/test_ingame_row53.py"])
+        self.assertEqual(check_content.unlisted_python_tests(paths, "run: python tools/other.py"), paths)
+
     def test_runner_names_match_whole_words(self):
         paths = ["tools/hookshot/z_test.py", "tools/hookshot/xz_test.py"]
         self.assertEqual(check_content.unlisted_python_tests(paths, "", "python xz_test.py\n"), ["tools/hookshot/z_test.py"])

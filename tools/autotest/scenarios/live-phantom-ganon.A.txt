@@ -1,0 +1,25 @@
+# live-phantom-ganon A (boot for live.py start, --boot live-phantom-ganon): both games in Phantom Ganon's fight, past
+# its intro, for ingame/test_bosses.py (row 287). Lines and frames are hs-phantom-ganon-down.A.txt's start, unchanged:
+# nofairy (a bottled fairy revives instead of downing), the boot warp to the boss stage (the bridge's own warp is not
+# used: a boss stage in free play goes by its unproven map-change route), the title, the save load, 2400 + 3900 frames
+# for the arrival and the intro. Switches = the old row's '#! switches' line (header_switches: both games).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_MOVE_PROBE=1
+#! timeout 1500
+mark start
+nofairy
+warp PhantomGanonStage PhantomGanonStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in
+wait 3900
+mark fight

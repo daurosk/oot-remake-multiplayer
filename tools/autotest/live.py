@@ -242,7 +242,37 @@ def ends_text(max_minutes, idle_minutes):
     return (", or ".join(parts) if parts else "never by itself") + " (live.py stop, or a game that ended)"
 
 
+def check_runner(a, games, port, pipe, d):
+    """The exact hookshot.py run arguments this start boots with, checked by the runner's own parser and checks plus a
+    parse of its scripts (run --check-args): (argv, None) when they would work, else (argv, why). Starts nothing."""
+    import contextlib
+    import io
+    argv = runner_argv(a, games, port, pipe, d)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            code = hookshot.main(argv + ["--check-args"])
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 2
+    if code == 0:
+        return argv, None
+    return argv, "hookshot.py run refuses the boot's arguments (exit %s): %s" % (code, " ".join(buf.getvalue().split())[-400:])
+
+
+def dry_run(a):
+    """start --dry-run: check_runner only (no game, server, watchdog, lock or session file). The in-game tests'
+    --lane-check-only runs it, so a boot command that cannot work is a SETUP-FAIL before any run."""
+    games, port, pipe = resolve(a)
+    argv, why = check_runner(a, games, port, pipe, os.path.abspath(a.session))
+    out = {"ok": why is None, "dry_run": True, "lane": a.lane, "runner": argv}
+    if why:
+        out["error"] = why
+    return out
+
+
 def start(a):
+    if getattr(a, "dry_run", False):
+        return dry_run(a)
     if getattr(a, "dll", None) and not a.lane:
         raise SystemExit("--dll needs --lane (it swaps a lane's own module for the session)")
     d = os.path.abspath(a.session)
@@ -253,6 +283,9 @@ def start(a):
     games, port, pipe = resolve(a)
     if getattr(a, "dll", None) and len(games) == 1:
         raise SystemExit("--dll swaps the module of both games of the lane: not with one game alone")
+    _, why = check_runner(a, games, port, pipe, d)     # (before the watchdog and the lane lock: a refusal leaves none)
+    if why:
+        return {"ok": False, "session": d, "lane": a.lane, "lock": "not taken", "error": why}
     for f in (watchdog_file(d), stop_file(d), os.path.join(d, "pids.json")):
         try:
             os.remove(f)
@@ -289,7 +322,12 @@ def start(a):
             out = {"ok": False, "session": d, "lane": a.lane, "error": "--dll: %s" % e}
             out["stop"] = stop(argparse.Namespace(session=d))
             return out
-    code = hookshot.main(runner_argv(a, games, port, pipe, d))
+    try:
+        code = hookshot.main(runner_argv(a, games, port, pipe, d))
+    except SystemExit as e:      # (the runner's own argument check: the watchdog holds the lane lock by now)
+        return {"ok": False, "session": d, "lane": a.lane, "lock": lock,
+                "error": "hookshot.py run refused its arguments (exit %s): the session is closed" % e.code,
+                "stop": stop(argparse.Namespace(session=d))}
     s = load(d)
     for x in session_tags(s):
         log = s["games"][x]["log"]
@@ -869,6 +907,8 @@ def main(argv=None):
     st.add_argument("--lock-wait", type=float, default=0, help="s to wait for a busy lane (default: refuse at once)")
     st.add_argument("--dll", help="(with --lane) a hookshot_coop.dll for this session only: the lane's own is put aside "
                     "and put back when the session ends")
+    st.add_argument("--dry-run", action="store_true", help="check the boot's runner arguments and scripts (hookshot.py "
+                    "run --check-args), start nothing; prints the JSON answer")
     st.add_argument("--playtest", action="store_true",
                     help="turn each game's play-test bridge on (A = p1, B = p2: 5001/5002, lane L 5000+10*L+1/+2)")
     qt = sub.add_parser("quit", help="close one game in the middle of the session (a planned exit, not its end)")

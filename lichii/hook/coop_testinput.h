@@ -206,8 +206,9 @@ std::string WarpGiveUpLine(std::string_view target, double seconds, const std::o
 std::optional<Script> Parse(std::string_view text, std::string& error);
 
 // The kinds the play-test bridge's `act` command may run (hookshot/src/coop_playtest.cpp): kill, hit, hurt, place, face,
-// aim, wear, dress, assign, chat, menu, setflag, setenum. The rest of what a script can do has its own bridge command or
-// makes no sense while the game is held (wait, hold, press, goto, toward, sync, mark, dump, warp, give, stun, drop).
+// aim, wear, dress, assign, chat, menu, setflag, setenum, verb (row 287: a boss move the harness cannot bring about,
+// queued like kill). The rest of what a script can do has its own bridge command or makes no sense while the game is
+// held (wait, hold, press, goto, toward, sync, mark, dump, warp, give, stun, drop).
 const std::vector<Kind>& ActKinds();
 // The word a script line starts with for this kind ("kill", "goto", ...; a timed step: "timed").
 const char* KindWord(Kind kind);

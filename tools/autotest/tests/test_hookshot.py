@@ -805,6 +805,19 @@ class RendererWaitTest(unittest.TestCase):
         self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
         self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
 
+    def test_no_precompile_start_index_line_is_ready(self):
+        # (game-commit-c141: Longshot v3.1.1 RX_VK_PRECOMPILE=0, run-b0ee5af3 noprecompile game-out-A.txt:159; before this
+        # the wait ran to the session's end with the game up: 'the game closed before its renderer started')
+        log = ("[hos host] vk: swapchain 1280x720, 4 images, mailbox (V-Sync Auto)\n"
+               "[hos host] vk: programs: load at create: 37691 notes of 23916 programs indexed, 4 type signatures, 3361 "
+               "compute programs listed, in 9.0 ms (47867 kept program keys); 2 workers in play, 2 while the game loads; "
+               "pipelines from: pipeline caches\n")
+        self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
+        self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
+        # a precompile start's lines are not this one (run-b0ee5af3 default: precompile progress, then its total)
+        self.assertFalse(hs.RENDERER_READY.search(
+            "[hos host] vk: precompile: compute programs: those listed (3361 keys listed: 3361 in the shipped list)"))
+
     def test_times_out_and_notices_a_closed_game(self):
         c = Clock()
         with self.assertRaises(TimeoutError):

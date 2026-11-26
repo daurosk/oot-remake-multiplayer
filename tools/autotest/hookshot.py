@@ -1212,7 +1212,11 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
 # nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
 # Longshot rc.4 builds pipelines at their create (RX_VK_LOAD=create) and logs "vk: start-up: the shaders took N s"
 # instead of rc.3's precompile total.
-RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d")
+# Longshot v3.1.1 with RX_VK_PRECOMPILE=0 (no shader preparation before the title: a test lane's ~11 GB less commit per
+# game, game-commit-c141) logs neither: its programs are loaded at their create calls from the caches, and its ready line
+# is the index of those (gpu/vk/vk_programs.cpp:434, logged once; a default start never writes it: run-b0ee5af3 default).
+RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d"
+                            r"|vk: programs: load at create: \d+ notes of \d+ programs indexed")
 
 
 def read_text(path):

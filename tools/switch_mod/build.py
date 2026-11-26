@@ -22,8 +22,58 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SRC = REPO / "switch" / "proto"
 sys.path.insert(0, str(HERE))
+import deps  # noqa: E402
 import elf2nso  # noqa: E402
 import lift_check  # noqa: E402
+
+NET = REPO / "switch" / "net"
+PROTOCOL_HPP = REPO / "coop" / "protocol" / "include" / "coop" / "protocol" / "messages.hpp"
+
+
+def protocol_version() -> int:
+    import re
+    m = re.search(r"kProtocolVersion\s*=\s*(\d+)", PROTOCOL_HPP.read_text(encoding="utf-8"))
+    if not m:
+        sys.exit("build: kProtocolVersion not found in messages.hpp")
+    return int(m.group(1))
+
+
+def c_string(text: str) -> str:
+    if '"' in text or "\\" in text or not text.isprintable():
+        sys.exit(f"build: {text!r}: no quotes, backslashes or control characters")
+    return '"' + text + '"'
+
+
+def write_join_config(out: Path, join: str, password: str, name: str) -> None:
+    host, _, port = join.rpartition(":")
+    parts = host.split(".")
+    if len(parts) != 4 or not all(p.isdigit() and int(p) < 256 for p in parts) or not port.isdigit():
+        sys.exit("build: --join must be IPv4:port, for example 127.0.0.1:27520")
+    if not 1 <= len(name) <= 15:
+        sys.exit("build: --name must be 1 to 15 characters")
+    if not password:
+        sys.exit("build: --password must not be empty (coop_server needs one)")
+    lines = [
+        "// Written by tools/switch_mod/build.py: the server this module joins.",
+        "#pragma once",
+        f"#define COOP_JOIN_IP {{{', '.join(parts)}}}",
+        f"#define COOP_JOIN_PORT {int(port)}",
+        f"#define COOP_JOIN_PASSWORD {c_string(password)}",
+        f"#define COOP_JOIN_NAME {c_string(name)}",
+        f"#define COOP_PROTOCOL_VERSION {protocol_version()}  // coop/protocol messages.hpp kProtocolVersion",
+    ]
+    (out / "coop_join_config.h").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ENet calls a few optional hooks through pointers: host->compressor (compress, decompress,
+# destroy), host->checksum, host->intercept and packet->freeCallback. switch/net never sets
+# any of them, and ENet calls each only when it is not null, so these branches never run.
+# They are the only indirect calls allowed outside the slot/PLT shapes; a lifting recomp
+# needs an entries line or a trap for them (docs/exefs.md, "Lifting"). Any other function
+# with an unknown indirect call still fails the build.
+ENET_NULL_GUARDED = {"enet_host_destroy", "enet_host_compress", "enet_packet_destroy",
+                     "enet_protocol_send_outgoing_commands", "enet_host_service",
+                     "enet_protocol_receive_incoming_commands", "enet_protocol_handle_incoming_commands"}
 
 CFLAGS = [
     "--target=aarch64-none-elf", "-march=armv8-a", "-O2", "-std=c++20",
@@ -61,16 +111,29 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--llvm")
     ap.add_argument("--out", default=str(REPO / "build" / "switch-proto"))
+    ap.add_argument("--join", default="127.0.0.1:27520", help="server the module joins (IPv4:port)")
+    ap.add_argument("--password", default="exefs-crossplay-test", help="the server's join password")
+    ap.add_argument("--name", default="emulator", help="nickname, 1 to 15 characters")
     a = ap.parse_args()
     clang = find_tool("clang", a.llvm)
     lld = find_tool("ld.lld", a.llvm)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    write_join_config(out, a.join, a.password, a.name)
+    d = deps.fetch_all()
+    inc = ["-nostdlibinc", "-I", str(NET / "shim"), "-I", str(d["enet"] / "include"),
+           "-I", str(d["monocypher"] / "src"), "-I", str(out)]
+    cflags_c = [f for f in CFLAGS if f not in ("-std=c++20", "-fno-rtti", "-Wall", "-Wextra", "-Werror")]
+    units = [(SRC / "start.s", ["--target=aarch64-none-elf", "-march=armv8-a"]),
+             (SRC / "main.cpp", [*CFLAGS, *inc]),
+             (NET / "coop_join.cpp", [*CFLAGS, *inc]),
+             (NET / "enet_nx.cpp", [*CFLAGS, *inc])]
+    units += [(d["enet"] / s, ["-x", "c", *cflags_c, *inc, "-w"]) for s in deps.ENET_SOURCES]
+    units.append((d["monocypher"] / "src" / "monocypher.c", ["-x", "c", *cflags_c, *inc, "-w"]))
     objs = []
-    for src in ("start.s", "main.cpp"):
-        obj = out / (src + ".o")
-        flags = CFLAGS if src.endswith(".cpp") else ["--target=aarch64-none-elf", "-march=armv8-a"]
-        run([clang, *flags, "-c", str(SRC / src), "-o", str(obj)])
+    for src, flags in units:
+        obj = out / (src.parent.name + "-" + src.name + ".o")
+        run([clang, *flags, "-c", str(src), "-o", str(obj)])
         objs.append(str(obj))
     elf = out / "module.elf"
     run([lld, *LDFLAGS, "-T", str(SRC / "module.ld"), "--version-script", str(SRC / "exports.map"),
@@ -79,6 +142,10 @@ def main() -> int:
         problems, entries = lift_check.check(lift_check.Elf(elf.read_bytes()))
     except lift_check.LiftError as e:
         problems, entries = [str(e)], []
+    allowed = [p for p in problems if any(f"(in {f})" in p for f in ENET_NULL_GUARDED)]
+    problems = [p for p in problems if p not in allowed]
+    for p in allowed:
+        print(f"build: allowed (ENet optional hook, never set): {p}")
     if problems:
         sys.exit("build: the module would not lift:\n  " + "\n  ".join(problems))
     lift_check.write_entries(str(out / "subsdk1.entries"), entries)

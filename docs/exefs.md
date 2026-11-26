@@ -10,7 +10,8 @@ The v1 plan is to ship co-op as one ExeFS code module: an AArch64 module (`subsd
 2. finds `main`'s base from the address of `nnMain` (rtld links the module against `main` and `sdk` by name, `nnMain` is at main+0x1202cd0) and checks the build by the offset of `malloc` (0x14c6c90);
 3. applies its hook table (`switch/proto/hooks.h`, below). Entry 0 hooks the game: the per-frame `bl 0x3b4e300` at `main+0x6e70f8` (the frame site co-op has always used, `lichii/hook/coop_svc.h`) becomes a `bl` into the module, which runs its tick and jumps on to the game's frame step with every argument register kept (`start.s`). Before writing, it checks that the site still holds the game's own instruction. If another mod changed it, that hook is skipped. Entry 1 fills the slot for one game function;
 4. calls that game function: the world clock setter `main+0x34522d0` (world manager, seconds), the same call `lichii/hook/coop_time.cpp` makes, once a world is loaded;
-5. sends `coop-proto hello from subsdk1` three times over UDP to `127.0.0.1:27520` with the game's own `nn::socket` (from `sdk`), after initializing it if the game has not yet.
+5. reads one game value, the current scene name (a string at Banc module +0x40, `coop_game_build.h` `.banc_module_ptr`), and logs it when it changes;
+6. joins a coop_server the way a Longshot game does, with the game's own `nn::socket` (from `sdk`), after initializing it if the game has not yet: ENet connect, HELLO with an X25519 key share, JOIN_PROOF, then a sealed WELCOME (see "Joining a session").
 
 No libc, no SDK headers, no code from exlaunch (GPL-2.0) or skyline: the hook is one rewritten `bl`, made writable with `svcSetProcessMemoryPermission` and set back to read+execute.
 
@@ -24,6 +25,16 @@ A recomp such as Longshot lifts every NSO module of the game (rtld, main, subsdk
 - **One hook table, two readers** (`hooks.h`, section `.coop_hooks`, exported as `coop_hooks`). Header: `"COOPHOOK"`, version 1, entry size 32, count, `applied_by_host`. Entries: kind, expected instruction, `main` offset, replacement, slot. Kinds: 1 call redirect (the `bl` at the offset calls the replacement; the slot gets the original target to continue at), 2 entry hook (defined, not used or applied yet), 3 game function (the slot gets `main` + offset). The linker writes module-relative addresses into the table (`--apply-dynamic-relocs`), so a lifter reads it without relocating. On an emulator, `_init` applies the table itself. A lifting recomp applies it at build time (redirect the `bl` in the lifted `main`, turn every call through a slot into a direct call), then sets `applied_by_host` to 1 in its copy of the data; `_init` then patches nothing and makes no kernel calls for hooks.
 
 Still needed on a recomp: `nn::socket` there is a stub, so the module runs offline until the recomp implements the socket functions it imports.
+
+## Joining a session (cross-play)
+
+`switch/net/` is a small freestanding join client: ENet (fetched at the pin in `cmake/enet.cmake`) with its platform layer on `nn::socket` (`enet_nx.cpp`, in place of ENet's `unix.c`), Monocypher (pin in `cmake/monocypher.cmake`) and our own HELLO / JOIN_CHALLENGE / JOIN_PROOF / WELCOME code (`coop_join.cpp`, the wire format of `coop/protocol`). No C or C++ library: `switch/net/shim/` has the few C declarations ENet needs, and at load time they bind to the game's own `malloc`/`free` (main) and `memcpy`/`memset`/`memcmp`/`strlen` (sdk). After WELCOME it answers PING and logs PLAYER_JOINED / PLAYER_LEFT; it is the cross-play proof, not the co-op client.
+
+The server, password and nickname are fixed at build time (`build.py --join 127.0.0.1:27520 --password ... --name emulator`, written to `coop_join_config.h`); the protocol version is read from `messages.hpp`.
+
+`tools/switch_mod/net_host.py` builds the same sources for the PC (freestanding, the same shim headers; `net_host_test.cpp` gives them an `nn::socket` on the PC's sockets), runs known-answer checks (SHA-256, HMAC, HELLO layout) and, with `--server <coop_server> --client <coop_test>`, joins a real coop_server next to a real coop_net client (`coop_test`, the client code Longshot games use). It passes when the freestanding client opens WELCOME and sees the other player. CI runs it in the Linux gcc job.
+
+ENet calls a few optional hooks through pointers (compressor, checksum, intercept, packet free callback). We never set them and ENet calls them only when they are set, so `build.py` allows the indirect calls in exactly those ENet functions (named list) and still fails on any other. A lifting recomp needs a trap or an entries line for them.
 
 ## Build
 

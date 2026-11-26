@@ -502,6 +502,16 @@ jobs:
       - name: Kit dependency licence tests (Linux)
         if: matrix.job == 'gcc'
         run: bash tools/release/tests/kit_deps_test.sh
+      # The ExeFS module's net code (switch/net) built for this PC as the module builds it
+      # (freestanding, shim headers), then joined to this build's coop_server next to a coop_test
+      # client: HELLO, JOIN_PROOF, sealed WELCOME with the other player in it (cross-play handshake).
+      - name: ExeFS net code, PC build + join a real coop_server
+        if: matrix.job == 'gcc'
+        run: |
+          if ! command -v clang >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang
+          fi
+          python3 tools/switch_mod/net_host.py --server build/server/coop_server --client build/tools/coop_test/coop_test
       - name: coop_test, 2 clients for 20 seconds
         if: env.COOP_SOAK == '1'
         run: |

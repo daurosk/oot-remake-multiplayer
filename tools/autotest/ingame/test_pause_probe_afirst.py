@@ -5,7 +5,9 @@ in tb-gate-ui-f9f3b9c2 and smoke-test-75f8e597 A's pause opened (game-out-A.txt 
 coop_pause_tab.cpp:1873) and B's never did (no PlusMenu_00 line in game-out-B.txt). pause-probe-1fab757f-r2 pressed B
 FIRST and both opened, so the A-first order is the one left to measure. Two orders, per game and per 10 frames:
 - back_to_back: A's + then B's + at once (test_pause's own order);
-- after_a_paused: A's +, 60 frames, then B's +.
+- after_a_paused: A's +, 60 frames, then B's +;
+- after_warp: test_smoke's sequence, warp_both to KakarikoVillage_Child (test_warp, test_smoke.py:42), then back to back
+  (run 1 of this probe, 2f734963a, no warp before: B's + reached the pad and B paused in both orders).
 Each line: the state's frame / snapshot_present / not_ready (coop_playtest_core.cpp:828), coop-test-state.txt
 (LICHII_COOP_TEST_STATE=1, coop_hookshot.cpp:2105-2128: pad_came = the last pad with buttons that reached the module's
 pad hook, pad_got = what the game got after co-op's pad order; PLUS = 1 << 10, lichii/hook/coop_testinput.h kPlus;
@@ -59,8 +61,12 @@ def _record(pair, what, pos):
     return out
 
 
-def _probe(pair, gap):
+def _probe(pair, gap, warp=None):
     with pair.setup():
+        if warp:
+            # (test_smoke::test_warp right before test_pause in both failing runs: warp_both(WARP_TO), the boot's own
+            # scene, test_smoke.py:42; set-up 1.1 s after it in tb-gate-ui-f9f3b9c2)
+            pair.warp_both(warp)
         pair.until_in_play("both games in play before the probe", max_frames=P.READY_FRAMES)
     pos = {x: pair.log[x].mark() for x in ("A", "B")}
     _record(pair, "before", pos)
@@ -95,3 +101,10 @@ def test_pause_probe_afirst_back_to_back(pair):
 @pytest.mark.row("probe crawl-337-11: A's +, 60 frames, then B's + - measures only")
 def test_pause_probe_afirst_after_a_paused(pair):
     _probe(pair, gap=60)
+
+
+@pytest.mark.budget(150)
+@pytest.mark.needs_env("LICHII_COOP_TEST_STATE=1")
+@pytest.mark.row("probe crawl-337-11: warp_both (test_warp) then A's + and B's + back to back - measures only")
+def test_pause_probe_afirst_after_warp(pair):
+    _probe(pair, gap=0, warp="KakarikoVillage_Child")

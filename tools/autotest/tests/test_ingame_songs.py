@@ -99,6 +99,16 @@ class Songs(unittest.TestCase):
         self.assertEqual(T.results(s), {"test_frog_songs": "NO-REF"}, p.stdout[-2500:])
         self.assertIn("no stored reference", self.why(s, "test_frog_songs"))
 
+    def test_no_link_sample_at_first_is_stepped_out(self):
+        """gifts-237 16:25: right after the boot the games have no Link sample; the first set-up steps (not SETUP-FAIL)."""
+        for k, args, extra in (("test_frog_songs", ROW, ()), ("test_ocarina_given_saria", GIVEN, ("--save", "no-ocarina"))):
+            out = os.path.join(self.tmp, "stale-" + k)
+            p = T.pytest_run([".", "--fake", "--out", out] + list(args) + list(extra) +
+                             ["-q", "-p", "no:cacheprovider", "-k", k],
+                             env={"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs"), "BT_FAKE_SAVE_DIR": self.tpl,
+                                  "BT_FAKE_SONGS_STALE": "1"})
+            self.assertEqual(T.results(T.summary(out)), {k: "NO-REF"}, p.stdout[-2500:])
+
     def test_frogs_not_shared_fails(self):
         p, s, _ = self.run_fake("noshare", "test_frog_songs", bug="noshare")
         self.assertEqual(T.results(s), {"test_frog_songs": "FAIL"}, p.stdout[-2500:])

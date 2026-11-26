@@ -12,7 +12,8 @@
   away, and the other game's copy is 1 30 frames on (kOnceGifts, coop_shop_sale.h).
 Selftest switches (tests/test_ingame_songs.py): BT_FAKE_SONGS_BUG=noshare -> the other game never gets a frogs' Bool;
 =nopay -> the frogs take no song; =noequip -> a synced ocarina is not mended (the #190 bug: nothing comes out);
-=nogifts -> no gifts line at the session start.
+=nogifts -> no gifts line at the session start. BT_FAKE_SONGS_STALE=1 -> no Link sample for the boot's first 60
+frames (gifts-237's SETUP-FAIL case: the first set-up must step, not read once).
 """
 import json
 import math
@@ -96,6 +97,8 @@ def _at_frogs(game):
 
 
 def state(game, st):
+    if os.environ.get("BT_FAKE_SONGS_STALE") and game.frame < 160:   # the lane boot's first frames: no Link sample yet
+        st.update(pos=None, facing=None, age=None, not_ready="no Link sample has been taken yet")
     if game.frogs:
         st["event"] = True
 

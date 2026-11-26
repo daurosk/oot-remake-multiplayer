@@ -62,6 +62,18 @@ ROW_ENV = ("LICHII_COOP_CHEATS=1", "LICHII_COOP_OCARINA_PROBE=1")   # give/flag 
 GIVEN_ENV = ROW_ENV + ("LICHII_COOP_PUPPET=1",)                     # hs-ocarina-given.A.txt '#! switches'
 
 
+READY_FRAMES = 600     # harness-c133-scene's until_in_play bound (pair.py), the same steps until it is in this base
+
+
+def ready_child(pair):
+    """Both games in play with a FRESH Link sample, stepped (never one read right after the boot: gifts-237 16:25
+    SETUP-FAIL 'no Link sample has been taken yet', B #139 16:26), then child Link (test_rows.need_child_in_play).
+    Once harness-c133-scene 82f9a7a5a is in the base need_child_in_play steps itself; this stays harmless."""
+    pair.until("both games in play (a fresh Link sample, no load, no event)",
+               lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=READY_FRAMES)
+    need_child_in_play(pair)
+
+
 def value(pair, x, name):
     r = pair.flag_read(x, name)
     assert "value" in r, "%s: flag_read %s gave no value: %s" % (x, name, r)
@@ -141,7 +153,7 @@ def frog_song(pair, song, paid, shot):
                  "shared (hs-u5-gifts B)")
 def test_frog_songs(pair):
     with pair.setup():
-        need_child_in_play(pair)
+        ready_child(pair)
         assert pair.log["A"].find(GIFTS_ON, pos=0) and pair.log["B"].find(GIFTS_ON, pos=0), (
             "no '%s' at this boot's session start (the frogs' Bools are not shared)" % GIFTS_ON)
         paid = {"%s %s" % (x, f): value(pair, x, f) for x in ("A", "B") for f in (LULLABY_PAID, STORM_PAID)}
@@ -183,7 +195,7 @@ def way_back(pair, done):
         pair.notes.append("way back after the failure: %s: %s" % (type(e).__name__, e))
         return
     if done:
-        need_child_in_play(pair)
+        ready_child(pair)
 
 
 # -- the given ocarina (#190) and Saria's Song -----------------------------------------------------------------------
@@ -194,7 +206,7 @@ def way_back(pair, done):
 @pytest.mark.row("#190 an ocarina from another player comes out and plays, then Saria's Song (hs-ocarina-given)")
 def test_ocarina_given_saria(pair):
     with pair.setup():
-        need_child_in_play(pair)
+        ready_child(pair)
         testsave.prove(pair, NO_OCARINA)              # neither game holds an ocarina, EquipOcarina "" (SETUP-FAIL else)
         place_in_front(pair, "A", of="B")             # A sees B's Link (its puppet) with the ocarina out
         pair.log["B"].mark()

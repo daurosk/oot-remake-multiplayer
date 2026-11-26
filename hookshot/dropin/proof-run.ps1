@@ -7,7 +7,7 @@
 # Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2] [-SetupOnly] [-BuildOnly] [-ShortRoot C:\lsb]
 # -SetupOnly: the setup proof and the official setup's --check only (installs the tools, checks the game file): no build, no game.
 # -BuildOnly: also the stock build and the offline symbol check (selftest) of its exe; no game start, nothing dropped in.
-param([string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0, [switch]$SetupOnly, [switch]$BuildOnly, [string]$ShortRoot = '')
+param([string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0, [switch]$SetupOnly, [switch]$BuildOnly, [string]$ShortRoot = '', [switch]$FullSpeed)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))        # ...\OOT REMAKE
@@ -55,7 +55,11 @@ try { $disp = Get-TestDisplay -Display $Display } catch { SetupFail $_.Exception
 if (-not $disp.Bounds) { SetupFail "display $($disp.Name) has no bounds" }
 Say "display $($disp.Name) $($disp.Width)x$($disp.Height) ($($disp.Reason))"
 # (the same order: ONE local compile on the PC at a time, held by the folder oot-remake-multiplayer\build.lock, 4 jobs at most)
-if ($Jobs -le 0 -or $Jobs -gt 4) { $Jobs = 4 }
+# -FullSpeed (only while the owner is away; TEST-TURN says when the 4-job/Idle limit is lifted): -Jobs as given, else all
+# CPU threads but four, at Normal priority. build.lock is taken either way.
+if ($FullSpeed) { if ($Jobs -le 0) { $Jobs = [Math]::Max(2, [Environment]::ProcessorCount - 4) } }
+elseif ($Jobs -le 0 -or $Jobs -gt 4) { $Jobs = 4 }
+Say "build: $Jobs jobs, $(if ($FullSpeed) { 'Normal' } else { 'Idle' }) priority"
 $buildLock = Join-Path $root 'oot-remake-multiplayer\build.lock'
 foreach ($t in $Versions) {
     $dl = Join-Path $stockRoot "$t\dl"
@@ -114,7 +118,7 @@ function Run-Setup([string]$setup, [string]$homeDir, [string]$cliArgs, [string]$
     # Idle priority for the setup and every compiler under it (owner 2026-11-26, COORD-LOG "C #122 03:16": local compiles
     # dropped his game's fps): a child of an Idle-class process starts in the Idle class (CreateProcess), so this script
     # lowers itself for the start and goes back to Normal after it.
-    $me = Get-Process -Id $PID; $me.PriorityClass = 'Idle'
+    $me = Get-Process -Id $PID; if (-not $FullSpeed) { $me.PriorityClass = 'Idle' }
     try {
         $p = Start-Process -FilePath $setup -ArgumentList $a -WorkingDirectory (Split-Path -Parent $setup) -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $out "$tag.stdout.txt") -RedirectStandardError (Join-Path $out "$tag.stderr.txt")
@@ -167,7 +171,7 @@ foreach ($t in $Versions) {
             }
             if (-not $locked) { $results[$t] = "FAIL build.lock held by another session for 2 h ($buildLock\owner.txt)"; continue }
             try {
-                Set-Content -LiteralPath (Join-Path $buildLock 'owner.txt') -Encoding utf8 -Value "v1-dropin-proof $stamp stock $t build, pid $PID, $((Get-Date).ToUniversalTime().ToString('HH:mm')) UTC, 4 jobs, Idle"
+                Set-Content -LiteralPath (Join-Path $buildLock 'owner.txt') -Encoding utf8 -Value "v1-dropin-proof $stamp stock $t build, pid $PID, $((Get-Date).ToUniversalTime().ToString('HH:mm')) UTC, $Jobs jobs, $(if ($FullSpeed) { 'Normal' } else { 'Idle' })"
                 Say "$t build.lock taken"
                 $c = Run-Setup $setup $homeDir ("--nup `"$nup`" --out `"$game`" --work `"$work`" --language en-US --jobs $Jobs " +
                                        "--log `"$(Join-Path $out "build-$t.log")`"") "build-$t" 240

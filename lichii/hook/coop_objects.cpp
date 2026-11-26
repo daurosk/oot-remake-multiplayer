@@ -2872,6 +2872,7 @@ public:
                                  g.name.find("EyeSwitch_") == std::string::npos &&
                                  // deku-ladder: the other switch kinds whose plug starts a room event (step, hit, sun)
                                  g.name.find("StepSwitch_") == std::string::npos &&
+                                 g.name.find("SwitchShutter_") == std::string::npos &&  // ai-switches: the door a switch opens
                                  g.name.find("SwitchHit_") == std::string::npos &&
                                  g.name.find("SolarSwitch_") == std::string::npos && !IsProbeSwitch(g.name) &&
                                  !IsRoomAsker(g.name))) {

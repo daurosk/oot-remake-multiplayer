@@ -590,6 +590,8 @@ class HookshotGamesTest(unittest.TestCase):
 
         hk = type("hk", (), {})()
         hk.exe_dir = lambda g: g
+        import hookshot   # (the real rule, not a copy: hookshot.py TEST_LANE_PRECOMPILE, game-commit-c141)
+        hk.test_lane_precompile = hookshot.test_lane_precompile
         hk.restore_save = lambda g: restored.append(g) or True
         hk.Bridge = Bridge
         self.packed = []   # (row 265: the kit's start of the pack, before each game start)
@@ -699,6 +701,22 @@ class HookshotGamesTest(unittest.TestCase):
             hs.subprocess.Popen = popen
         self.assertEqual([e["LICHII_COOP_PROBLEM_ASK"] for e in seen], ["0", "1"])
         self.assertEqual([e["LICHII_COOP_TEST_OWN_SAVE"] for e in seen], ["1", "1"])
+
+    def test_each_start_has_no_precompile_unless_asked(self):
+        # (game-commit-c141) a test game starts without the shader precompile (hookshot.py TEST_LANE_PRECOMPILE);
+        # --precompile default (games.precompile) starts it as players run it; a run's switch wins over both
+        seen, popen = [], hs.subprocess.Popen
+        hs.subprocess.Popen = lambda args, **k: seen.append(k["env"]) or popen(args, **k)
+        try:
+            self.g.start("A", "", wait=False)
+            self.g.precompile = "default"
+            self.g.start("B", "", wait=False)
+            self.g.precompile = "test"
+            self.g.env = ["RX_VK_PRECOMPILE=1"]
+            self.g.start("A", "", wait=False)
+        finally:
+            hs.subprocess.Popen = popen
+        self.assertEqual([e.get("RX_VK_PRECOMPILE") for e in seen], ["0", None, "1"])
 
     def test_log_is_the_captured_output_when_the_game_writes_no_file(self):
         # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>-<n>.txt.

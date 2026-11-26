@@ -805,6 +805,17 @@ class RendererWaitTest(unittest.TestCase):
         self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
         self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
 
+    def test_test_lane_precompile_rule(self):
+        # (game-commit-c141, B #142 GO) test games start without the precompile; 'default' is Longshot's own start
+        # (the rc's stock smoke); an env of the same name (the caller's, a switch, --env) wins over both
+        self.assertEqual(hs.test_lane_precompile({}), {"RX_VK_PRECOMPILE": "0"})
+        self.assertEqual(hs.test_lane_precompile({}, "default"), {})
+        self.assertEqual(hs.test_lane_precompile({"RX_VK_PRECOMPILE": "1"}), {"RX_VK_PRECOMPILE": "1"})
+        with self.assertRaises(ValueError):
+            hs.test_lane_precompile({}, "off")
+        # the switch it sets is one the run lets through (LONGSHOT_SWITCHES_PROVEN), so --env RX_VK_PRECOMPILE=1 works
+        self.assertIsNone(hs.longshot_switch_refused(hs.TEST_LANE_PRECOMPILE[0]))
+
     def test_no_precompile_start_index_line_is_ready(self):
         # (game-commit-c141: Longshot v3.1.1 RX_VK_PRECOMPILE=0, run-b0ee5af3 noprecompile game-out-A.txt:159; before this
         # the wait ran to the session's end with the game up: 'the game closed before its renderer started')
@@ -982,6 +993,8 @@ class RunTest(unittest.TestCase):
             self.assertEqual([p.env["LICHII_COOP_TEST_OWN_SAVE"] for p in started], ["1", "1"])   # each game its own save
             # no crash ask on the title to take the load's A presses (TEST_GAME_DEFAULTS; smoke hs-players, kit-0119)
             self.assertEqual([p.env["LICHII_COOP_PROBLEM_ASK"] for p in started], ["0", "0"])
+            # no shader precompile before the title on a test game (TEST_LANE_PRECOMPILE, game-commit-c141 run-8dd1d8af)
+            self.assertEqual([p.env.get("RX_VK_PRECOMPILE") for p in started], ["0", "0"])
             ga, gb = fakes.values()
             for g in (ga, gb):
                 shots = [os.path.basename(r["path"]) for r in g.cmds("shot")]

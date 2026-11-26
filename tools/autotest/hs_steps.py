@@ -804,6 +804,7 @@ class HookshotGames:
         # Its own save, no crash ask on the title (TEST_GAME_DEFAULTS, as hookshot.py's): a switch can undo it.
         for k, v in TEST_GAME_DEFAULTS:
             env.setdefault(k, v)
+        hk.test_lane_precompile(env, getattr(self, "precompile", "test"))   # (game-commit-c141: hookshot.py's one rule)
         if password:
             env["LICHII_COOP_PASSWORD"] = password
         for kv in self.head["switches"] + self.env:
@@ -1054,6 +1055,9 @@ def main(argv=None):
     r.add_argument("--renderer-stall", type=int, help="while the compile logs progress: seconds without a rise "
                                                       "before it fails (default: hookshot.py's)")
     r.add_argument("--renderer-limit", type=int, help="seconds in all for one renderer start (default: hookshot.py's)")
+    r.add_argument("--precompile", choices=("test", "default"), default="test",
+                   help="test (default): no shader precompile before the title (hookshot.py TEST_LANE_PRECOMPILE); "
+                        "default: Longshot's own start, as players run it")
     a = ap.parse_args(argv)
     if a.cmd == "check":
         bad = 0
@@ -1122,6 +1126,7 @@ def main(argv=None):
     games.server_delay = hk.test_delay_args(a.test_delay_ms, a.test_jitter_ms)
     games.renderer = (a.renderer_wait or games.timeout, a.renderer_stall or hk.RENDERER_STALL,
                       a.renderer_limit or hk.RENDERER_LIMIT)
+    games.precompile = a.precompile
     fails, runner = 1, None
     try:
         games.server_start()

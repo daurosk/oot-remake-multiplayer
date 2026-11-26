@@ -587,6 +587,30 @@ class BootCommand(unittest.TestCase):
                            text=True, timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_precompile_option_reaches_the_runner(self):
+        # (game-commit-c141) live.py start --precompile default -> hookshot.py run --precompile default (the rc's stock
+        # smoke); the test default adds nothing to the runner (hookshot.py's own default is test), and a relaunch keeps it
+        import bt_plugin as B
+        import live
+        base = ["--dry-run", "--session", os.path.join(self.tmp, "s"), "--game-a", os.path.join(self.tmp, "a"),
+                "--boot-a", B.BOOT_A, "--no-load"]
+        r = self.live(*base)
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("--precompile", r["runner"])
+        r = self.live(*(base + ["--precompile", "default"]))
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["runner"][r["runner"].index("--precompile") + 1], "default")
+        run = {"game_a": "a", "port": 1, "pipe": "p", "boot_timeout": 9, "precompile": "default"}
+        argv = live.relaunch_argv(run, "d", "A")
+        self.assertEqual(argv[argv.index("--precompile") + 1], "default")
+        self.assertNotIn("--precompile", live.relaunch_argv(dict(run, precompile="test"), "d", "A"))
+        self.assertNotIn("--precompile", live.relaunch_argv({k: v for k, v in run.items() if k != "precompile"}, "d", "A"))
+        hs = [sys.executable, "-I", os.path.join(AUTOTEST, "hookshot.py"), "run", "--out", self.tmp] + self.games() + [
+            "--script-a", B.BOOT_A, "--script-b", B.BOOT_B, "--check-args"]
+        for v, code in (("default", 0), ("test", 0), ("off", 2)):
+            p = subprocess.run(hs + ["--precompile", v], capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, code, v + ": " + p.stdout + p.stderr)
+
     def test_check_args_refuses_the_sampler_switches(self):
         # (game-commit-c141 run-b8a8a4f3: HOS_SLOW_FRAMES' all-thread sampler crashed the game, 0xc0000005 in
         # RtlVirtualUnwind) refused at --check-args, so live.py start --dry-run (the lane check) is a SETUP-FAIL first

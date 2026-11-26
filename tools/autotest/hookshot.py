@@ -1323,6 +1323,9 @@ def add_renderer_options(p, wait=600):
                    help="while the compile logs progress: seconds without a rise before it fails")
     p.add_argument("--renderer-limit", type=int, default=RENDERER_LIMIT,
                    help="seconds in all for one game's renderer start, progress or not")
+    p.add_argument("--precompile", choices=PRECOMPILE_CHOICES, default="test",
+                   help="test (default): no shader precompile before the title (RX_VK_PRECOMPILE=0, ~11 GB less commit "
+                        "a game); default: Longshot's own start, as players run it (the rc's stock smoke)")
 
 
 # What every test game gets unless the run's switches say otherwise (hs_steps.py TEST_GAME_DEFAULTS, the same):
@@ -1344,6 +1347,26 @@ def test_game_defaults(env):
     """env with TEST_GAME_DEFAULTS set where it has none of its own (the caller's environment or a switch wins)."""
     for k, v in TEST_GAME_DEFAULTS:
         env.setdefault(k, v)
+    return env
+
+
+# A test game's renderer start (game-commit-c141, B #142 GO): no shader precompile before the title. Longshot's release
+# start (ls32 vk_draw.cpp:10555 precompile_wanted) builds every noted pipeline (37691 graphics + 5006 compute) and the
+# driver holds them all for the session: one game 29.5 GB of commit in play, ~31.5 GB of the PC's; with
+# RX_VK_PRECOMPILE=0 18.5 GB / ~20.5 GB (run-8dd1d8af, ONE game; frames no worse, boot 50 s against 55). Pipelines are
+# then loaded at their create calls from the caches (in play: median 0.55 ms, worst 14 ms). Test runs only: a player's
+# kit never starts through this file. --precompile default starts the game as players run it (Longshot's own setting),
+# for the rc's one smoke on stock settings; --env RX_VK_PRECOMPILE=<v> wins over both.
+TEST_LANE_PRECOMPILE = ("RX_VK_PRECOMPILE", "0")
+PRECOMPILE_CHOICES = ("test", "default")
+
+
+def test_lane_precompile(env, precompile="test"):
+    """env with TEST_LANE_PRECOMPILE where it has none (precompile 'test'); 'default': Longshot's own setting."""
+    if precompile not in PRECOMPILE_CHOICES:
+        raise ValueError("--precompile %r: one of %s" % (precompile, ", ".join(PRECOMPILE_CHOICES)))
+    if precompile == "test":
+        env.setdefault(*TEST_LANE_PRECOMPILE)
     return env
 
 
@@ -1680,6 +1703,7 @@ def run(a):
             open(commands[x], "w").close()
             env = dict(os.environ, OOT_COOP_KIT_START="1", HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
             test_game_defaults(env)   # its own save, no crash ask on the title (TEST_GAME_DEFAULTS): a switch can undo it
+            test_lane_precompile(env, getattr(a, "precompile", "test"))   # (game-commit-c141: an --env still wins)
             b_pastes = a.host_in_game and x == "B" and getattr(a, "b_joins_in_game", False)
             if b_pastes:
                 # private-lobby-fix: B also starts with co-op off and joins through its own Multiplayer page (its

@@ -95,6 +95,14 @@ run without `--solo` deselects the solo tests (`needs_solo`). The pair has game 
 It must also have no session line (`coop: on, server`, `connecting`, `welcomed`, `connected`). Otherwise every
 test is a SETUP-FAIL. `--solo` with the no-CS switch is refused. `identity.solo` is true.
 
+Shader precompile: test games start with `RX_VK_PRECOMPILE=0`, so Longshot builds no pipelines before the title and
+loads each one when it is first drawn, from the pipeline caches (`hookshot.py` `TEST_LANE_PRECOMPILE`, applied by
+`hookshot.py run` and `hs_steps.py run`). With Longshot's own start, every noted pipeline (about 42,700) stays in the
+driver for the whole session. One game measured 29.5 GB of commit in play that way and 18.5 GB without the precompile,
+with frame times no worse (game-commit-c141, run-8dd1d8af). `--precompile default` starts the games the way players
+run them; an rc keeps one smoke run that way. `identity.precompile` says which start was used. An
+`--env RX_VK_PRECOMPILE=<v>` wins over both. A player's kit never starts through these tools.
+
 Game B without Character Select: `--env B:COOP_TEST_NO_CHARACTER_SELECT=1` (the switch in
 `tools/autotest/ingame/no_cs.py`) boots game B from `lane<N>-B-nocs` instead of `lane<N>-B`. That folder is made
 only when someone asks for it, with `python -I tools/autotest/lanes.py nocs --lane N` (`--dry-run` first). It is

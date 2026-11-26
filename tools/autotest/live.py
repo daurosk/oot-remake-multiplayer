@@ -195,6 +195,8 @@ def runner_argv(a, games, port, pipe, d):
         argv += ["--env", kv]
     if getattr(a, "display", None):
         argv += ["--display", a.display]
+    if getattr(a, "precompile", "test") != "test":   # (hookshot.py TEST_LANE_PRECOMPILE: test games' default)
+        argv += ["--precompile", a.precompile]
     return argv
 
 
@@ -297,7 +299,8 @@ def start(a):
          "runner": {"game_a": games.get("A") and os.path.abspath(games["A"]),
                     "game_b": games.get("B") and os.path.abspath(games["B"]), "port": port, "pipe": pipe,
                     "server": a.server and os.path.abspath(a.server), "env": list(a.env),
-                    "display": getattr(a, "display", None), "boot_timeout": a.boot_timeout, "password": SERVER_PASSWORD,
+                    "display": getattr(a, "display", None), "precompile": getattr(a, "precompile", "test"),
+                    "boot_timeout": a.boot_timeout, "password": SERVER_PASSWORD,
                     "playtest": playtest_base(a.lane) if getattr(a, "playtest", False) else 0}}
     if a.lane and len(games) == 1:
         s["game_lock"] = next(iter(games))   # one game of the lane: its own lock, the other game stays free
@@ -678,6 +681,8 @@ def relaunch_argv(r, d, x, boot=None, no_load=False, restore=False):
         argv += ["--env", kv]
     if r.get("display"):
         argv += ["--display", r["display"]]
+    if r.get("precompile", "test") != "test":   # (a relaunched game starts as the session's others did)
+        argv += ["--precompile", r["precompile"]]
     return argv
 
 
@@ -909,6 +914,9 @@ def main(argv=None):
     st.add_argument("--lock-wait", type=float, default=0, help="s to wait for a busy lane (default: refuse at once)")
     st.add_argument("--dll", help="(with --lane) a hookshot_coop.dll for this session only: the lane's own is put aside "
                     "and put back when the session ends")
+    st.add_argument("--precompile", choices=("test", "default"), default="test",
+                    help="test (default): no shader precompile before the title (hookshot.py TEST_LANE_PRECOMPILE, "
+                         "~11 GB less commit a game); default: Longshot's own start, as players run it")
     st.add_argument("--dry-run", action="store_true", help="check the boot's runner arguments and scripts (hookshot.py "
                     "run --check-args), start nothing; prints the JSON answer")
     st.add_argument("--playtest", action="store_true",

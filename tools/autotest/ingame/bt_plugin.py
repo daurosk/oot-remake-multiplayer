@@ -95,6 +95,10 @@ def pytest_addoption(parser):
     g.addoption("--save", default=None, metavar="NAME", help="a save profile for this boot (testsave.py: "
                 "ingame/saves/NAME.py FLAGS set in both lane games' autotest-save before the boot, the baseline put "
                 "back after live.py stop); tests marked needs_save(NAME) run only with it")
+    g.addoption("--precompile", choices=("test", "default"), default="test", help="test (default): the lane games "
+                "start with no shader precompile (hookshot.py TEST_LANE_PRECOMPILE, ~11 GB less commit a game); "
+                "default: Longshot's own start, as players run it (the rc's one smoke on stock settings). In "
+                "summary.json 'identity'")
     g.addoption("--solo", action="store_true", help="the SOLO boot (solo.py): lane game A alone, no co-op session "
                 "(no server, no Host/Join); only tests marked needs_solo run, every other test is deselected")
     g.addoption("--pack-game", default=None, metavar="NUP", help="the game's .nup for a pack maker (default: the .nup "
@@ -299,6 +303,8 @@ def boot_args(config, lane, server, session):
         args += ["--env", e]
     if nocs_wanted(config):           # (live.py resolve: --game-b wins over the lane's B with --lane)
         args += ["--game-b", _lanes(config, lane)["b_nocs"]]
+    if (_opt(config, "precompile") or "test") != "test":   # (live.py start --precompile: test is its default)
+        args += ["--precompile", _opt(config, "precompile")]
     return args + ["--max-minutes", str(config.getoption("session_minutes")), "--idle-minutes", "15"]
 
 
@@ -852,6 +858,7 @@ def pytest_sessionfinish(session, exitstatus):
                "identity": {"env": boot_env(config), "expect_commit": config.getoption("expect_commit"),
                             "boot": dict(boot_identity(config.getoption("boot")), name=config.getoption("boot")),
                             "pack": config._bt_pack, "nocs": nocs_wanted(config), "game_b": config._bt_game_b,
+                            "precompile": _opt(config, "precompile") or "test",
                             "save": config._bt_save, "solo": bool(config.getoption("solo"))},
                "pack_out_errors": getattr(config, "_bt_pack_out", None),
                "deselected": config._bt_deselected,

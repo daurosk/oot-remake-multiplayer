@@ -4,10 +4,13 @@
 # Longshot rebuild for co-op. Per version: build stock with the release's own builder (--cli), check its symbols offline
 # (selftest.exe), drop our winmm.dll beside the game's bin\longshot.exe, start the game, wait for our log's frame lines,
 # screenshot, close; winmm.dll removed again on every path. Unattended; exit 0 = PASS (both), 1 = FAIL, 2 = SETUP-FAIL.
-# Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2] [-SetupOnly] [-BuildOnly] [-ShortRoot C:\lsb]
+# Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 -Expect <sha of this checkout> [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2] [-SetupOnly] [-BuildOnly] [-ShortRoot C:\lsb]
 # -SetupOnly: the setup proof and the official setup's --check only (installs the tools, checks the game file): no build, no game.
 # -BuildOnly: also the stock build and the offline symbol check (selftest) of its exe; no game start, nothing dropped in.
-param([string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0, [switch]$SetupOnly, [switch]$BuildOnly, [string]$ShortRoot = '', [switch]$FullSpeed)
+# -Expect <sha>: this checkout's HEAD must start with it and have no uncommitted tracked changes, else SETUP-FAIL (a queued run
+#  runs exactly the reviewed commit; same check as tools\switch_mod\run-crossplay.ps1).
+param([Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{7,40}$')][string]$Expect,
+    [string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0, [switch]$SetupOnly, [switch]$BuildOnly, [string]$ShortRoot = '', [switch]$FullSpeed)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))        # ...\OOT REMAKE
@@ -32,6 +35,12 @@ function SetupFail([string]$m) { Say "SETUP-FAIL $m"; Say "RESULT SETUP-FAIL $m"
 
 # ---- setup proof (each check < 2 min) -------------------------------------------------------------------------------
 Say "v1-dropin-proof $stamp versions $($Versions -join ',') out $out"
+$repo = Split-Path -Parent (Split-Path -Parent $here)                                # this checkout (hookshot\dropin -> repo)
+$sha = try { "$(git -C $repo rev-parse HEAD)".Trim() } catch { '' }
+if (-not $sha -or -not $sha.ToLower().StartsWith($Expect.ToLower())) { SetupFail "checkout $repo is at '$sha', not $Expect" }
+$dirty = @(git -C $repo status --porcelain --untracked-files=no)
+if ($dirty.Count) { SetupFail "checkout $repo has uncommitted changes ($($dirty[0]))" }
+Say "checkout $repo at $sha (expected $Expect)"
 if (-not (Test-Path -LiteralPath $nup)) { SetupFail "no game file at $nup" }
 $dll = Join-Path $here 'out\winmm.dll'
 $self = Join-Path $here 'out\selftest.exe'

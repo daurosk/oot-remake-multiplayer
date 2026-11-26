@@ -46,6 +46,14 @@ RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load
 # 20 a second (playtest_client.py input/move: timeout + frames / 20.0). 0.3 + 0.25 + 5/20 = 0.8 s, x2.5 margin.
 REPLY_MIN_S = 2.0
 CLIENT_FPS = 20.0     # the client's worst stepping rate (playtest_client.py input/move reply waits)
+# The ocarina on the D-pad after a scene load: the module's equip (coop/host/src/game_items.cpp OcarinaEquip: arm() waits
+# kSettleFrames = 30 frames, game_items.hpp:232, with Link known and not busy; the line at game_items.cpp:817; docs/items.md
+# 'The game's own equip') re-equips it from the flags after each load and logs this line; a D-pad press before it takes
+# nothing out (songs-frogs-733c4d8f SETUP-FAIL 11-26: B's line, hookshot_log-B.txt:4581, came after a 0.7 s event at the
+# Kakariko gate and after the test's LEFT; no bridge run had taken an ocarina out before).
+OCARINA_EQUIPPED = r"coop: items: ocarina '\w+' equipped by the game from its flags"
+SCENE_LOADED = r"coop: native ui: scene load ended"     # (seen: songs-frogs-733c4d8f hookshot_log-B.txt:4289, then :4581)
+OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's end (the frogs' boot event: 0.7 s)
 
 
 class SetupFail(Exception):
@@ -355,6 +363,22 @@ class Pair:
                 raise AssertionError("%s: not after %d frames (~%d s of game)" % (what, ran, ran // FPS))
             self.step_both(CHUNK)
             ran += CHUNK
+
+    def ocarina_ready(self, x):
+        """True once game x's module log has OCARINA_EQUIPPED after its last SCENE_LOADED (the boot's or a warp's)."""
+        lines = self.log[x].since(0)
+        load = re.compile(SCENE_LOADED)
+        last = max([i for i, ln in enumerate(lines) if load.search(ln)] or [-1])
+        equip = re.compile(OCARINA_EQUIPPED)
+        return any(equip.search(ln) for ln in lines[last + 1:])
+
+    def need_ocarina(self, x, max_frames=OCARINA_FRAMES):
+        """THE precondition of every D-pad ocarina press (call it inside `with pair.setup():` before the press, after
+        the boot and after every warp): steps both games until game x's ocarina is equipped again since its last scene
+        load (ocarina_ready), else AssertionError naming it (a SETUP-FAIL in a set-up). Without it the press raced the
+        module's re-equip (songs-frogs-733c4d8f)."""
+        return self.until("%s: the ocarina back on the D-pad after the load ('%s' since the last '%s')"
+                          % (x, OCARINA_EQUIPPED, SCENE_LOADED), lambda: self.ocarina_ready(x), max_frames)
 
     def expect_log(self, x, pattern, max_frames=600):
         """A module log line of game x matching `pattern`, written since this test began."""

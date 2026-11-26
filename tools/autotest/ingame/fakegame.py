@@ -61,6 +61,9 @@ class FakeGame:
         self.pos, self.facing = [0.0 if tag == "A" else 4.0, 0.0, 0.0], 0.0
         self.menu_pause, self.title_until, self.at_title = False, None, False
         self.head, self.ocarina, self.flags, self.pending = None, False, {GATE: 0}, []
+        # (the module's ocarina re-equip after each load, Pair.need_ocarina: BT_FAKE_OCARINA_LATE=N frames after the
+        # boot and after each warp, default 0 = at once; before it D-pad Left takes nothing out, songs-frogs-733c4d8f)
+        self.ocarina_late, self.equipped = int(os.environ.get("BT_FAKE_OCARINA_LATE", "0") or 0), False
         self.other = None
         # (selftests of the lane's boot proof, Pair.boot_ready: BT_FAKE_BOOT_EVENT=B leaves B where the save puts it,
         # Graveyard_Child, in an event a warp ends (test-bridge-pilot-fa63e90f r1); BT_FAKE_BOOT_STUCK=B the same but
@@ -78,6 +81,7 @@ class FakeGame:
             self.say("coop: drawing over Hookshot's picture")
         for h in hooks(self.fakes, "setup"):
             h(self)
+        self.equip_later()
         self.srv = socket.socket()
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
@@ -87,6 +91,18 @@ class FakeGame:
         if tag not in os.environ.get("BT_FAKE_NO_MODULE", ""):
             self.say("coop: playtest: listening on 127.0.0.1:%d (control on; dumps and shots in %s)" % (self.port, folder))
         threading.Thread(target=self.serve, daemon=True).start()
+
+    def equip_later(self):
+        """The module's ocarina re-equip after a load (Pair.need_ocarina), BT_FAKE_OCARINA_LATE frames later."""
+        self.equipped = False
+
+        def done():
+            self.equipped = True
+            self.say("coop: items: ocarina 'Item_Ocarina_Fairy' equipped by the game from its flags (slots 13, 16)")
+        if self.ocarina_late > 0:
+            self.later(self.ocarina_late, done)
+        else:
+            done()
 
     def say(self, line):
         with open(self.log_path, "a", encoding="utf-8") as f:
@@ -179,6 +195,9 @@ class FakeGame:
                 return {"id": m.get("id"), "ok": False, "error": "timeout", "message": "fake: still in the event",
                         "frame": self.frame, "paused": self.paused}
             self.scene, self.event = m["scene"], False
+            self.say("coop: native ui: scene load ended (Sequence_IsLoadingBanc): screens handed out once the game's "
+                     "HUD screen has run")
+            self.equip_later()
             r.update(arrived=True, via="teleport", map=m["scene"], state=self.state())
         elif cmd == "move":
             self.walk(float(m["yaw"]), float(m.get("strength", 1.0)), int(m.get("frames", 1)))
@@ -227,6 +246,8 @@ class FakeGame:
             self.later(30, lambda: (setattr(self, "at_title", False), setattr(self, "title_asked", False)))
             return
         if "LEFT" in buttons:
+            if not self.equipped:
+                return                                   # nothing on the D-pad yet: nothing comes out
             self.ocarina = True
             self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina"))
             return

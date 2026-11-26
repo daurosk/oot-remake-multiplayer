@@ -15,8 +15,9 @@ import sys
 
 import pytest
 
+import pair as P
+
 PLUS = 1 << 10
-READY_FRAMES = 300
 
 
 def _test_state(pair, x):
@@ -50,7 +51,7 @@ def _record(pair, what):
 @pytest.mark.row("probe pause-smoke-c143: each game's + (pad hook in/out, Link sample) - measures only")
 def test_pause_probe(pair):
     with pair.setup():
-        pair.until_in_play("both games in play before the probe", max_frames=READY_FRAMES)
+        pair.until_in_play("both games in play before the probe", max_frames=P.READY_FRAMES)
     _record(pair, "before")
     for x in ("B", "A"):
         pair.press(x, ["PLUS"], frames=4)

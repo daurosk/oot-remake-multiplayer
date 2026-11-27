@@ -467,6 +467,9 @@ def fake_live(args, timeout):
     if MODE == 'played':
         return {'ok': False, 'boot': 'FAILED (see steps.txt): the session is closed'}
     if MODE in ('notready', 'nomodule'):          # (started; the boot proof finds B elsewhere, or B has no module)
+        with open(os.path.join(sess, 'steps.txt'), 'w') as f:   # (as hookshot.py run: the lane files put back)
+            f.write('18:00:20 A: lane files: the known set (nothing changed)\\n'
+                    '18:00:33 B: lane files: the known set (nothing changed)\\n')
         return {'ok': True}
     return {'ok': False, 'lock': 'not taken', 'error': 'refused before the session'}
 

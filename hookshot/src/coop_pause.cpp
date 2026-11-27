@@ -45,6 +45,7 @@
 #include "coop_original.h"
 #include "coop_pause_files.h"
 #include "coop_pause_tab.h"
+#include "coop_pause_world.h"
 #include "coop_pvp_game.h"
 #include "coop_room_list.h"
 #include "coop_runtime.h"
@@ -2649,6 +2650,9 @@ static void OpenAsPlayer(CoopPauseMenu::Page page) {
 }
 
 bool TestMenu(const std::string& page) {
+    if (page.rfind("hold release ", 0) == 0) {   // (row 299 probe: the game's own release of PauseMgr hold N)
+        return CoopPauseWorld::TestRelease(page.substr(13));
+    }
     if (page == "host") {
         return TestHost();
     }

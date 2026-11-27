@@ -26,7 +26,8 @@ MAX_FRAMES = 3600
 
 class BridgeError(Exception):
     """The game refused a command (ok false): its error code (bad_request, busy, no_control, not_in_play,
-    not_in_event, wrong_age, refused, not_ready, timeout, failed) and message. `not_in_event`: a warp in free play that only an
+    not_in_event, wrong_age, refused, not_ready, timeout, failed, did_not_stick) and message. `did_not_stick`: a give or
+    flag write the game's next frames put back (a value it keeps elsewhere). `not_in_event`: a warp in free play that only an
     event can take (an entrance, or a map Longshot's teleport does not list); `wrong_age`: not answered now (a scene name ending in the
     other age sets that age first); `refused`: a verb the gate shuts, a strike id with no world list, or a full
     strike queue."""
@@ -179,6 +180,11 @@ class Client:
         """One flag's value, read only: {"kind": int|bool|enum|uint|key64|text|unknown, "value": ...}. An enum's value
         is its hash ("0x..."), which `flag` takes back for that flag in this game run."""
         return self.request("flag_read", name=name)
+
+    def key(self, name):
+        """A host key (F1 to F12, A to Z, 0 to 9) as the window gives it to the module (hos_coop_key): {"key", "vk",
+        "taken", "longshot" (when not taken: "close" or "none")}. docs/playtest.md `key` (port-g7, B #137)."""
+        return self.request("key", key=name)
 
     def give(self, item):
         return self.request("give", item=item)

@@ -17,6 +17,7 @@ import re
 import pytest
 
 import pair as P
+from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
 from test_tunic import stand_apart
 
@@ -29,6 +30,13 @@ CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
 TAGS_ON = r"coop: native tags: name tags on the game's balloons \(\d+ shown, screen 0x[0-9a-f]+\)"
 TAGS_NO_MEMORY = r"coop: native tags: the game gave no memory for the names"
 TAGS_DIST = 3.0   # m: hs-native-tags.A.txt mark "near" ("B stands 3 m in front"); the old file's mid/far walk is not set-up
+# The name tag floats just over the other Link's head: lichii/hook/coop_hook.cpp:196-197 kHeadChild 1.35 / kHeadAdult 1.9
+# (m above the feet; HeadHeight by age), where the module's markers put it (tag_head) and the balloon goes.
+HEAD_M = {"child": 1.35, "adult": 1.9}
+EDGE = 0.9        # |x|, |y| <= 0.9 of the screen (-1..1, kit_move.on_screen): in view, not cut at the edge
+CAM_TRIES = 3     # ZL taps per game at most (the game's own camera reset: docs/playtest.md `shoot`, "taps ZL (the camera
+                  # goes behind him)"); c272735f8: one tap each left B's camera on A's side (rc-release-0120-5's shots)
+CAM_WAIT = 20     # frames after each tap (the camera's swing behind Link; as before)
 
 
 def seen_once(pair, x, pattern, max_frames):
@@ -48,6 +56,44 @@ def seen_not(pair, x, good, bad, max_frames):
     assert line is None, "%s log has /%s/: %s" % (x, bad, line)
 
 
+def other_in_view(pair, x, other, behind=True):
+    """Game x's camera behind its own Link, facing the other player, read from x's state (`view` = the last drawn
+    frame's camera, kit_move.on_screen): the other player's feet and tag point (HEAD_M over the feet) on x's screen,
+    and x's own Link nearer the camera than the other (clip w, the depth: the camera behind x's Link, not on the other's
+    side; behind=False: side by side, as stand_apart, only in view). The other player's place is its own game's Link
+    (x shows it as the puppet). Returns (ok, why)."""
+    st, ot = pair.state(x), pair.state(other)
+    view, own, far = st.get("view"), st.get("pos"), ot.get("pos")
+    if not view or not own or not far:
+        return False, "%s: no view or place (view %s, pos %s, %s's pos %s)" % (x, bool(view), own, other, far)
+    head = [far[0], far[1] + HEAD_M.get(ot.get("age"), HEAD_M["child"]), far[2]]
+    feet_s, head_s, own_s = on_screen(view, far), on_screen(view, head), on_screen(view, own)
+    m = view["clip"]
+
+    def depth(p):
+        return sum(m[12 + j] * v for j, v in enumerate(list(p) + [1.0]))
+    why = "%s: %s's feet %s, tag point %s on screen; own Link at depth %.2f, %s's at %.2f" % (
+        x, other, feet_s, head_s, depth(own), other, depth(far))
+    inside = all(s is not None and abs(s[0]) <= EDGE and abs(s[1]) <= EDGE for s in (feet_s, head_s))
+    return inside and (not behind or (own_s is not None and depth(own) < depth(far))), why
+
+
+def camera_behind_each(pair):
+    """Each game's camera behind its own Link facing the other, by the game's own ZL reset (CAM_TRIES taps each at
+    most), proven per game on state (other_in_view); else SetupFail naming the game and its numbers."""
+    for x, other in (("A", "B"), ("B", "A")):
+        why = ""
+        for n in range(CAM_TRIES):
+            pair.press(x, ["ZL"], frames=8)
+            pair.step_both(CAM_WAIT)
+            ok, why = other_in_view(pair, x, other)
+            if ok:
+                pair.notes.append("camera behind %s after %d ZL: %s" % (x, n + 1, why))
+                break
+        else:
+            raise P.SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
+
+
 @pytest.mark.budget(150)
 @pytest.mark.look
 @pytest.mark.row("regress 0.11.12 step 6: name tags on the game's balloons (s6-ui a-tags, hs-native-tags near)")
@@ -55,17 +101,19 @@ def test_name_tags(pair):
     with pair.setup():
         need_child_in_play(pair)
         place_in_front(pair, "B", of="A", dist=TAGS_DIST)       # B in front of A, facing A: each sees the other
-        # ZL: the camera behind each Link (test_tunic.stand_apart), so the other is in view on each shot
-        pair.press("A", ["ZL"], frames=8)
-        pair.press("B", ["ZL"], frames=8)
-        pair.step_both(20)
+        camera_behind_each(pair)                                 # (each game's own view, proven on its state)
     for x in ("A", "B"):
         seen_not(pair, x, TAGS_ON, TAGS_NO_MEMORY, max_frames=120)
+    for x, other in (("A", "B"), ("B", "A")):                   # (still in view at the shot: the tag on EACH game)
+        ok, why = other_in_view(pair, x, other)
+        assert ok, "%s: the other player's puppet and tag are not in view at the shot: %s" % (x, why)
     # the old marks a-tags and a-tags-2 (200 frames apart): the tag stays over the other Link
     for x in ("A", "B"):
         pair.check_shot(x, "regress-tags-1", tolerance=0.80)    # 0.80: Kakariko's people and birds move
     pair.step_both(200)
-    for x in ("A", "B"):
+    for x, other in (("A", "B"), ("B", "A")):
+        ok, why = other_in_view(pair, x, other)
+        assert ok, "%s: the other player's puppet and tag left the view by the second shot: %s" % (x, why)
         pair.check_shot(x, "regress-tags-2", tolerance=0.80)
     for x in ("A", "B"):
         pair.never_log(x, CRASH)
@@ -223,6 +271,9 @@ def test_sword_handle(pair):
         assert pair.log["A"].find(A_PARTS, pos=0), "A: no '%s' since the boot (the switch did not reach the look)" % A_PARTS
         assert pair.log["B"].find(B_SLOTS, pos=0), "B: other players' gear colours are not on (%s)" % B_SLOTS
         stand_apart(pair)        # A beside B, each camera behind its own Link: A's own hilt on A, the puppet on B
+        ok, why = other_in_view(pair, "B", "A", behind=False)   # (B's shot is of A's puppet: proven on B's state)
+        if not ok:
+            raise P.SetupFail("B: A's puppet not in B's view after stand_apart's ZL: %s" % why)
     seen_once(pair, "A", A_SENT, max_frames=300)
     seen_once(pair, "B", B_GOT, max_frames=300)
     seen_not(pair, "B", B_PAINTED, B_NOT_PAINTED, max_frames=300)

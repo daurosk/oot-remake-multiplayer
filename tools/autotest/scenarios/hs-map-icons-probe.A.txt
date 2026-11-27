@@ -1,0 +1,57 @@
+# hs-map-icons-probe (Hookshot, native-ui-audit item 8 / #255): the other player as a copy of the game's own map icon.
+# LICHII_COOP_MAP_PROBE=1 logs every 5 s (CoopMapIcons::Icons::Probe): the map layout's S_MapIcon_00 and Pa_MapIcon_00
+# panes, the layouts that part pane holds, the game's run-time icon copies one level under the screen, each with its
+# arrow N_PlayerRotate_00 and the floats at +0x60..+0x9c, and our copies' state ("copies up .. shown .. (why)").
+# A turns between "face-*" marks (6 s each: one probe line or more each), then opens - (the Map page, held 14 s) and
+# steps R. Run with the module build's own coop_server (a kit server of another protocol turns B away).
+# Read: the float that changes between face-right / face-down / face-left by a quarter turn = the turn offset
+# (radians or degrees); the copies' "why" (empty = up); shots: B's arrow + name on A's minimap and Map page.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-map-icons-probe
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_MAP_PROBE=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 1
+wait 60
+mark face-start
+wait 360
+stick 1 0 8
+wait 360
+mark face-right
+stick 0 -1 8
+wait 360
+mark face-down
+stick -1 0 8
+wait 360
+mark face-left
+press MINUS             # the - menu opens on the Map page (no tab name: the one left of Characters' row)
+wait 180
+mark panel
+wait 420                # held: at least two probe lines (every 5 s) on the Map page's icons
+mark panel-held
+wait 420
+mark panel-held2
+press R
+wait 120
+mark panel-r1
+press R
+wait 360
+mark panel-r2
+press R
+wait 360
+mark panel-r3
+press B
+wait 240
+mark end

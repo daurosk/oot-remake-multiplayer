@@ -71,7 +71,28 @@ class Run170(unittest.TestCase):
         self.pair = P.Pair(games, client=FakeClient)
         self.pair.session = self.tmp
         self.pair.in_play = lambda st: True
-        self.pair.state = lambda x: {"menu": {"coop": {"open": True, "tab": "multiplayer", "page": "main"}}}
+        # (in play, F1's rule: `menu open main` shows the - menu's Multiplayer tab, main view; B shuts it: C #145)
+        self.minus = {"A": None, "B": None}
+        self.pair.state = lambda x: {"menu": {"coop": {"open": False},
+                                              "minus": ({"open": True, "tab": "multiplayer", "view": self.minus[x]}
+                                                        if self.minus[x] else {"open": False})}}
+        acted = self.pair.act
+
+        def act(x, line):
+            r = acted(x, line)
+            if line == "menu open main":
+                self.minus[x] = "main"
+                with open(self.logs[x], "a") as f:
+                    f.write("coop: test menu open main: asked\n")
+            return r
+        self.pair.act = act
+        self.pressed = []
+
+        def press(x, buttons=(), stick=None, frames=8, rstick=None):
+            self.pressed.append((x, list(buttons)))
+            if "B" in buttons:
+                self.minus[x] = None
+        self.pair.press = press
         self.shots = []
         self.pair.check_shot = lambda x, name: self.shots.append((x, name))
         self.asked = []
@@ -115,11 +136,26 @@ class Run170(unittest.TestCase):
         self.assertFalse([a for a in relaunch[2] + relaunch[3] if a.startswith("--env")])   # (the session back)
         self.assertIn("act", sum((c.calls for c in FakeClient.made), []))   # (B's `menu host`)
         self.assertEqual(self.shots, [("B", "row170-host-page")])
+        self.assertEqual(self.pressed, [("B", ["B"])])            # (the - menu shut as a player shuts it)
+        self.assertIsNone(self.minus["B"])
 
-    def test_mp_page(self):
-        self.assertEqual(self.T.mp_page({"menu": {"coop": {"open": True, "page": "main"}}}), "main")
-        self.assertIsNone(self.T.mp_page({"menu": {"coop": {"open": False}}}))
-        self.assertIsNone(self.T.mp_page({}))
+    def test_page_in_longshots_menu_in_play_fails(self):
+        """The f9f3b9c26 gate's path: in play the page wanted in Longshot's tab (a second home): FAIL, never PASS."""
+        acted = self.pair.act
+
+        def act(x, line):
+            r = acted(x, line)
+            if line == "menu open main":
+                with open(self.logs[x], "a") as f:
+                    f.write("coop: test menu open main: asked\n")
+            return r
+        self.pair.act = act
+        self.pair.state = lambda x: {"menu": {"coop": {"open": True, "tab": "multiplayer", "page": "main"},
+                                              "minus": {"open": False}}}
+        with self.assertRaises(AssertionError) as e:
+            self.go()
+        self.assertIn("main page in the - menu", str(e.exception))
+        self.assertEqual(self.shots, [])
 
     def test_testhost_refusal_fails(self):
         with self.assertRaises(AssertionError) as e:

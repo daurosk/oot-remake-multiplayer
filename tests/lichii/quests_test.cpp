@@ -3,7 +3,9 @@
 
 #include <map>
 #include <set>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "coop_quests.h"
 #include "coop_story.h"
@@ -621,4 +623,110 @@ TEST_CASE("quests: row 150: Get_Epona's end waits only while a race against Ingo
     CHECK_FALSE(before.ranch.busy(key));
     CHECK(before.ranch.write(complete));
     CHECK(before.at(kEpona, "Complete"));
+}
+
+namespace {
+
+// A game with a horse list (OwnedHorseList.ActorName, 10 elements) and the hook's EnsureEpona in small: she is
+// registered at the first empty element when the queue lets us (`room`).
+struct HorseGame : Game {
+    std::vector<std::optional<std::string>> horses = std::vector<std::optional<std::string>>(10, std::string());
+    bool room = true;
+    int registrations = 0;
+    bool ensure() {
+        const auto check = CoopQuests::CheckEpona([this](std::uint32_t i) { return horses.at(i); });
+        if (check.state == CoopQuests::EponaHorse::owned || check.state == CoopQuests::EponaHorse::full) return true;
+        if (check.state == CoopQuests::EponaHorse::unread || !room) return false;
+        horses.at(check.free) = CoopQuests::kEponaActor;
+        ++registrations;
+        return true;
+    }
+    CoopQuests::Store horse_store{
+        inner,
+        [this](std::uint32_t hash) -> std::optional<std::uint32_t> {
+            const auto it = enums.find(hash);
+            if (it == enums.end()) return std::nullopt;
+            return it->second;
+        },
+        [this](std::uint32_t hash, std::uint32_t value) {
+            if (!enums.contains(hash)) return false;
+            enums[hash] = value;
+            ++enum_writes;
+            return true;
+        },
+        nullptr, [this] { return ensure(); }};
+};
+
+} // namespace
+
+TEST_CASE("quests: row 294: owning Epona is OwnedHorseList, read from the game's own data") {
+    CHECK(CoopQuests::kGetEpona == kEpona);
+    CHECK(host::flag_hash("Complete") == CoopQuests::kGetEponaComplete);
+    CHECK(Q(kEpona).steps.back() == std::string("Complete"));
+    const auto list = [](std::vector<std::optional<std::string>> v) {
+        return CoopQuests::CheckEpona([v](std::uint32_t i) { return v.at(i); });
+    };
+    std::vector<std::optional<std::string>> empty(10, std::string());
+    auto c = list(empty);
+    CHECK(c.state == CoopQuests::EponaHorse::missing);
+    CHECK(c.free == 0u);
+    auto won = empty;
+    won[0] = "Animal_Epona_Adult";  // the owner's wrld_03 and the defeated-Ganon save: element 0
+    CHECK(list(won).state == CoopQuests::EponaHorse::owned);
+    auto other = empty;
+    other[0] = "Animal_Horse_Other";
+    c = list(other);
+    CHECK(c.state == CoopQuests::EponaHorse::missing);
+    CHECK(c.free == 1u);
+    std::vector<std::optional<std::string>> full(10, std::string("Animal_Horse_Other"));
+    CHECK(list(full).state == CoopQuests::EponaHorse::full);
+    auto unread = won;
+    unread[0] = std::nullopt;  // nothing decided while an element is unread
+    CHECK(list(unread).state == CoopQuests::EponaHorse::unread);
+}
+
+TEST_CASE("quests: row 294: Get_Epona's shared end comes only with the horse") {
+    const auto key = Key(kEpona);
+    const proto::FlagEntry complete{key, proto::FlagKind::int32,
+                                    static_cast<std::uint32_t>(RankOf(kEpona, "Complete"))};
+    // The player report: the guest won her; the host (no horse, before the race) takes the end. Her
+    // registration comes first, then Complete.
+    HorseGame host;
+    host.step(kEpona, "AfterTalkMalon");
+    CHECK(host.horse_store.write(complete));
+    CHECK(host.at(kEpona, "Complete"));
+    CHECK(host.horses[0] == std::string("Animal_Epona_Adult"));
+    CHECK(host.registrations == 1);
+
+    // The game's queue has no room for us: the end is held (tried again), the step untouched.
+    HorseGame busy;
+    busy.step(kEpona, "ReadyForGambleRace");
+    busy.room = false;
+    CHECK_FALSE(busy.horse_store.write(complete));
+    CHECK(busy.at(kEpona, "ReadyForGambleRace"));
+    CHECK(busy.enum_writes == 0);
+    busy.room = true;
+    CHECK(busy.horse_store.write(complete));
+    CHECK(busy.at(kEpona, "Complete"));
+
+    // The host's save load (write_exact) too: a game that takes the end gets her.
+    HorseGame loaded;
+    loaded.step(kEpona, "NotReady");
+    CHECK(loaded.horse_store.write_exact(complete));
+    CHECK(loaded.horses[0] == std::string("Animal_Epona_Adult"));
+
+    // A game that won her itself: nothing registered again.
+    HorseGame own;
+    own.step(kEpona, "Complete");
+    own.horses[0] = std::string("Animal_Epona_Adult");
+    CHECK(own.horse_store.write(complete));
+    CHECK(own.registrations == 0);
+
+    // Another player's step before the end moves nothing and registers nothing.
+    HorseGame early;
+    early.step(kEpona, "AfterTalkMalon");
+    CHECK(early.horse_store.write(proto::FlagEntry{key, proto::FlagKind::int32,
+                                                   static_cast<std::uint32_t>(RankOf(kEpona, "ReadyForGambleRace"))}));
+    CHECK(early.registrations == 0);
+    CHECK(early.at(kEpona, "AfterTalkMalon"));
 }

@@ -1391,6 +1391,52 @@ class TunicExtraTest(unittest.TestCase):
         boots = re.search(r"kBoots = \{([^}]*)\}", text).group(1)
         self.assertEqual(tuple(re.findall(r'"([^"]+)"', boots)), look_items.BODY_BOOTS)
 
+    def test_body_hair(self):
+        """hair-link: each colour's child model names a hair copy of its own (the child's name has no
+        file: the game's UnifyTex gives it the adult's), as the module names and marks it
+        (hookshot/src/coop_look_parts.cpp ChildHairName, BootsTexels)."""
+        from puppet_pack import look_items, look_live, tunic
+        self.assertIn(look_items.HAIR, look_items.BODY_BOOTS)
+        self.assertIn(look_items.HAIR, look_live.GEAR)
+        self.assertEqual(look_items.child_hair_name("pink"), "Coop_M_Child_Hairs_Alb")
+        self.assertEqual(len(look_items.child_hair_name("pink")), len(look_items.CHILD_HAIR))
+        self.assertEqual(look_items.child_hair_mark("pink"), ord("m"))
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('return std::string("Coop_") + letter + "_Child_Hairs_Alb";', text)
+        self.assertIn("l.letter - 'A' + 'a'", text)   # the lower-case mark
+        # the child's model: its hair renamed only when the pack has the hair copies
+        child = b"\0Mt_Hairs\0Player_Child_Hairs_Alb\0Mt_Leather_Player_Child_Alb\0"
+        self.assertEqual(look_items.body_model_for(child, "red"),
+                         b"\0Mt_Hairs\0Coop_R_Child_Hairs_Alb\0PR_Leather_Player_Child_Alb\0")
+        self.assertEqual(look_items.body_model_for(child, "red", ("Mt_Leather_Player_Child_Alb",)),
+                         b"\0Mt_Hairs\0Player_Child_Hairs_Alb\0PR_Leather_Player_Child_Alb\0")
+        adult = b"\0Mt_Hairs_Player_Adult_Alb\0"
+        self.assertEqual(look_items.body_model_for(adult, "red"), b"\0PR_Hairs_Player_Adult_Alb\0")
+
+    def test_renamed_bntx(self):
+        """hair-link: a one-texture BNTX under a name of another length, laid out as the game's hair
+        texture (dump: _STR at 416, 56 bytes; _DIC's entry bit 1); nothing after the strings moves."""
+        from puppet_pack import look_items, tunic
+        old = look_items.HAIR
+        strs = (b"_STR" + struct.pack("<III", 0x60, 0x60, 0) + struct.pack("<I", 1) + b"\0\0\0\0"
+                + struct.pack("<H", len(old)) + old.encode() + b"\0")
+        strs += b"\0" * (56 - len(strs))
+        data = b"BNTX" + b"\0" * 412 + strs + b"_DIC" + b"\x01\0\0\0" + b"\xff" * 4 + b"tail" * 8
+        out = tunic.renamed_bntx(data, old, "Coop_R_Child_Hairs_Alb")
+        self.assertEqual(len(out), len(data))
+        self.assertEqual(out[:440], data[:440])
+        self.assertEqual(out[440:442], struct.pack("<H", 22))
+        self.assertEqual(out[442:465], b"Coop_R_Child_Hairs_Alb\0")
+        self.assertEqual(out[472:], data[472:])
+        with self.assertRaises(tunic.TunicError):   # another dictionary bit ('a' ends in bit 0)
+            tunic.renamed_bntx(data, old, "Coop_R_Child_Hairs_Ala")
+        with self.assertRaises(tunic.TunicError):   # too long for the section
+            tunic.renamed_bntx(data, old, "Coop_R_Child_Hairs_Alb_and_more_b")
+        with self.assertRaises(tunic.TunicError):   # not its name
+            tunic.renamed_bntx(data, "Mt_Other", "Coop_R_Child_Hairs_Alb")
+
     def test_names(self):
         from puppet_pack import tunic_extra as te
         for n in te.EXTRA:
@@ -3913,7 +3959,8 @@ class NupTest(unittest.TestCase):
                           "Tex/Mt_PantsParts_Player_Child_Alb.bntx.zs", "Tex/Mt_Boots_Player_Adult_Alb.bntx.zs",
                           "Tex/Mt_Leather_Player_Child_Alb.bntx.zs",
                           "Tex/Mt_Glove_Player_Adult_Alb.bntx.zs",        # leather-link: look_items.BODY_BOOTS (adult
-                          "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs"} |  # gloves, upper leather; dumpcheck.OPTIONAL)
+                          "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs",   # gloves, upper leather; dumpcheck.OPTIONAL)
+                          "Tex/Mt_Hairs_Player_Adult_Alb.bntx.zs"} |  # hair-link: look_items.HAIR (BODY_BOOTS)
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

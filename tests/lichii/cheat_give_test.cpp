@@ -187,3 +187,103 @@ TEST_CASE("cheat give: a failed IsGet write is a partial gift, the item is in an
     CHECK(r.text.find("IsGet.Weapon_Range_Bow: write failed") != std::string::npos);
     CHECK_FALSE(CoopCheatGive::Give(f, "Nothing.Like.This").wrote);
 }
+
+namespace {
+
+// Our Link's Life component in a fake game: the game keeps life and max life there and, every frame, writes them
+// into PlayerStatus.Life and PlayerStatus.MaxLife (their mirror). `present` false: no Link (a load, the title).
+struct FakeLink final : CoopCheatGive::LinkLife {
+    bool present = true;
+    std::int32_t life = 16, max = 16;
+    bool set_life(std::int32_t q) override { return present && (life = q, true); }
+    bool set_max(std::int32_t q) override { return present && (max = q, true); }
+    void frame(FakeFlags& f) const {   // the game's own frame: the component's values back into the flags
+        if (!present) return;
+        f.flags.at(coop::host::flag_hash("PlayerStatus.Life")).value = static_cast<std::uint32_t>(life);
+        f.flags.at(coop::host::flag_hash("PlayerStatus.MaxLife")).value = static_cast<std::uint32_t>(max);
+    }
+};
+
+void LifeSave(FakeFlags& f) {
+    f.has("PlayerStatus.Life", FlagKind::int32, 16);
+    f.has("PlayerStatus.MaxLife", FlagKind::int32, 16);
+}
+
+}  // namespace
+
+TEST_CASE("cheat give: the life flags are the mirror of our Link's Life component, the others are not") {
+    using CoopCheatGive::LinkBacked;
+    using CoopCheatGive::LinkWord;
+    CHECK(LinkBacked(coop::host::flag_hash("PlayerStatus.MaxLife")) == LinkWord::max);
+    CHECK(LinkBacked(coop::host::flag_hash("PlayerStatus.Life")) == LinkWord::life);
+    for (const char* other : {"PlayerStatus.MP", "PlayerStatus.MPMax", "PlayerStatus.CurrentRupee", kBombs, kBow}) {
+        CHECK(LinkBacked(coop::host::flag_hash(other)) == LinkWord::none);
+    }
+}
+
+TEST_CASE("cheat give: a flag-only MaxLife gift is put back by the game's next frame (the volvagia-rocks fault)") {
+    // The shape of the fault: the flag written alone reads 20, and the frame writes Link's 16 back over it.
+    FakeFlags f;
+    LifeSave(f);
+    FakeLink link;
+    CHECK(CoopCheatGive::Give(f, "PlayerStatus.MaxLife").changed);
+    CHECK(f.at("PlayerStatus.MaxLife") == 20);
+    link.frame(f);
+    CHECK(f.at("PlayerStatus.MaxLife") == 16);
+}
+
+TEST_CASE("cheat give: MaxLife goes into our Link's component first, so it is kept over the frames") {
+    FakeFlags f;
+    LifeSave(f);
+    FakeLink link;
+    CoopCheatGive::LinkBackedFlags store(f, &link);
+    for (const std::int32_t want : {20, 24, 28}) {
+        const auto r = CoopCheatGive::Give(store, "PlayerStatus.MaxLife");
+        CHECK(r.ok);
+        CHECK(r.changed);
+        CHECK(link.max == want);
+        CHECK(f.at("PlayerStatus.MaxLife") == want);   // (the mirror: a read in the same held call sees it)
+        link.frame(f);
+        link.frame(f);
+        CHECK(f.at("PlayerStatus.MaxLife") == want);   // each next give starts from the last: 20 -> 24 -> 28
+    }
+    CHECK(link.life == 16);   // (a gift raises the most only, as a heart container's flag)
+}
+
+TEST_CASE("cheat give: a setflag of Life through the store goes into the component and is kept") {
+    FakeFlags f;
+    LifeSave(f);
+    FakeLink link;
+    link.max = 56;
+    CoopCheatGive::LinkBackedFlags store(f, &link);
+    const auto key = coop::host::FlagKey(coop::host::flag_hash("PlayerStatus.Life"), 0);
+    CHECK(store.write(FlagEntry(key, FlagKind::int32, 56)));
+    link.frame(f);
+    CHECK(link.life == 56);
+    CHECK(f.at("PlayerStatus.Life") == 56);
+}
+
+TEST_CASE("cheat give: no Link to write into is NOT given, nothing written, and the text says why") {
+    FakeFlags f;
+    LifeSave(f);
+    FakeLink link;
+    link.present = false;
+    CoopCheatGive::LinkBackedFlags store(f, &link);
+    const auto r = CoopCheatGive::Give(store, "PlayerStatus.MaxLife");
+    CHECK_FALSE(r.ok);
+    CHECK_FALSE(r.wrote);
+    CHECK(r.text.find("Life component") != std::string::npos);
+    CHECK(f.at("PlayerStatus.MaxLife") == 16);
+    CoopCheatGive::LinkBackedFlags none(f, nullptr);
+    CHECK_FALSE(CoopCheatGive::Give(none, "PlayerStatus.MaxLife").ok);
+}
+
+TEST_CASE("cheat give: every other flag goes through the store as it is, with or without a Link") {
+    FakeFlags f;
+    BowSave(f);
+    CoopCheatGive::LinkBackedFlags store(f, nullptr);
+    const auto r = CoopCheatGive::Give(store, kBow);
+    CHECK(r.ok);
+    CHECK(f.at(kBow) == 1);
+    CHECK(f.at(kBowGet) == 1);
+}

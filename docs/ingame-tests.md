@@ -88,6 +88,14 @@ emptied ("") in every save, checked in every save after, and read back as `""` b
 SETUP-FAIL. `saves/no-ocarina.py` takes both ocarinas out of both games (`save_flags.NO_OCARINA` and
 `PlayerStatus.EquipOcarina`, issue 190): `test_songs.test_ocarina_given_saria`.
 
+The in-game proof of a save: a profile may also have `EXPECT = {"age": ..., "scene": ..., "items": [...],
+"max_life": N}`, for both games or per game (`{"A": {...}, "B": {...}}`). Every key is optional. The test calls
+`testsave.prove(pair, NAME)` inside `pair.setup()`. It checks that each game is in play, its age, scene and
+max_life from the state, each item's `IsGet.<item>` flag, and every `FLAGS` entry read back from the game by its hash.
+A miss is SETUP-FAIL, naming each game. To prove that the game runs the profile's save, the boot must set none of
+those flags itself (`scenarios/live-deku-gohma-reset.*.txt` is `live-deku-gohma` without them). Rows 138(4)/137
+(`test_boss_reset.py`): `--boot live-deku-gohma-reset --save gohma-alive`.
+
 SOLO boot (owner rule: features that are not multiplayer must also work solo, with co-op idle): `--solo` boots only
 lane game A, with no co-op session. That means `live.py start --only A` without `--server`, so hookshot.py run gives
 it no `LICHII_COOP_SERVER`, and the lane's `coop.ini` has no server line. Only tests marked `@solo.MARK`
@@ -116,7 +124,7 @@ Select, and that its folder is gone. `summary.json` `identity` keeps `nocs` and 
 | PASS | every assert held |
 | FAIL | an assert failed, or the test ran past its `budget` (FAIL `timeout`); a failed test reruns ONCE |
 | FLAKY | failed, then passed on the rerun: never a pass |
-| SETUP-FAIL | the lane, the boot, or the test's own set-up (`with pair.setup():`, under 30 s) did not hold; not rerun |
+| SETUP-FAIL | the lane, the boot, or the test's own set-up (`with pair.setup():`, under 30 s plus 31 s per warp in it) did not hold; not rerun |
 | NO-REF | a look check has no stored reference yet (its shot is kept under `<dir>/lane<L>/new/`), or the test called `pair.unproven(reason)` (it cannot prove its row in this run); judged by the exception type `pair.NoRef`, never by message text |
 | NOT-RUN | `--deadline-min N` passed before it started (never a pass) |
 
@@ -176,7 +184,14 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
   round), the next test first runs the boot proof again (`Pair.recover`): a miss cannot cascade. It waits on game
   state, not on a fixed time: 30 s for the stepped part plus 31 s for each game it has to warp back to the boot
   scene (the worst warp measured, `warp_both` 26.9-31.0 s for both games on a full lane, party-hud-bridge-6947aa3d),
-  so 92 s at most. It is the lane's boot proof, not a test's set-up: a set-up that warps cannot fit 30 s.
+  so 92 s at most. It is the lane's boot proof, not a test's set-up. A test's set-up that warps gets the same
+  31 s (`SETUP_WARP_S`) per game it warps (`warp_one`; `warp_both` = two) on top of its 30 s, inside the test's budget.
+- When that stepped recovery fails, each game not in play at the boot's place is relaunched ONCE through the lane's
+  own boot (`Pair.rejoin`: live.py quit + relaunch), then the boot proof runs again: a game left waiting for input (a
+  pause page, the ocarina UI) never comes back by stepping (tb-gate-ui / tb-pilot-f9f3b9c2). If the relaunch fails
+  too, the lane is lost: that test is SETUP-FAIL with the recovery's notes, and every later test of the lane is
+  SETUP-FAIL `lane lost after <test>: <reason>` at once (was the same doomed recovery for each: 26 in the pilot).
+  A timeout's text keeps its reason and each game's state (read on its own short deadline, `Pair.why_now`).
 - Module proof, before any bridge call: each game's log must have the module's `coop: playtest: listening on
   127.0.0.1:<its port>` line, else every test is SETUP-FAIL `lane N boot: X: the module never started` (with the
   log's last line). `hookshot.py run` counts a game ready only at Longshot's `rx: renderer: Vulkan (` line, not the

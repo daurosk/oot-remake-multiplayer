@@ -72,6 +72,9 @@ GEAR = (
     "Mt_Inner_Armor_Adult_Goron_Alb",
     "Mt_Parts_Armor_Adult_Zora_Alb",
     "Mt_Feather_Armor_Adult_Zora_Alb",
+    # Link's hair (hair-link, BC7; child Link's name has no file: System/Gfx/UnifyTex gives it this
+    # one), painted whole by the module's hair rule (CoopLookPaint::HairRecolour).
+    "Mt_Hairs_Player_Adult_Alb",
     # The metalness textures of the metal parts (#202, look_metal: a painted metal part's metal is
     # painted down with it). In gear.bin for the game's own texels; the item copies name their own.
 ) + METAL_TEXTURES

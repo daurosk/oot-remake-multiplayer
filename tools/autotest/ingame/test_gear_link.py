@@ -6,6 +6,7 @@ other game; with or without Character Select (C #132: the game's own shown bit, 
 | test_gear_hidden_own_and_puppet | part 29 hides A's gear on A's own Link and on A's puppet in B | log + LOOK (shots on each game) |
 | test_gear_shown_again | Hidden off: the pieces come back on both | log + LOOK |
 | test_gear_hidden_without_character_select | game B without the mod: B's own Link, and A's puppet seen on B | log + LOOK; needs no_cs.ENV |
+| test_gear_hidden_solo | co-op idle (no session): Hidden hides and shows again A's own Link | log + LOOK; needs --solo |
 
 Set-up and judging, each cited where used:
 - `menu look link_gear=hidden|none`: test only, the module's MENU verb (lichii/hook/coop_testinput.cpp, hookshot
@@ -15,6 +16,9 @@ Set-up and judging, each cited where used:
   puppet> (N piece(s))` and `characters: equipment shown again on ...` (LOG_INFO "coop: {}", hookshot DressCharacters).
 - Without Character Select: game B booted by harness-c132's switch (no_cs.py: ENV, MARK, the setup proof). Without
   that switch in --env the test is deselected: NOT-RUN in the rc summary = NOT PROVEN, never PASS (C #132).
+- Solo (owner rule: non-multiplayer features work solo, co-op idle): harness-c132's --solo boot (solo.py: MARK, prove()
+  = game A only and its log co-op idle). The module dresses own Link while idle: hookshot coop_hookshot.cpp g_on is set
+  after the 'co-op idle until Host or Join' line (Start), and the FRAME site calls DressCharacters whenever g_on.
 """
 import os
 import sys
@@ -24,6 +28,7 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import no_cs                                               # noqa: E402  (the ONE no-Character-Select game)
+import solo                                                # noqa: E402  (the ONE solo boot: game A alone)
 from test_rows import need_child_in_play, place_in_front   # noqa: E402  (the shared set-up helpers)
 
 HIDDEN_ON = r"characters: equipment hidden on %s \((\d+) piece\(s\)\)"
@@ -123,4 +128,33 @@ def test_gear_hidden_without_character_select(pair):
     finally:
         set_gear(pair, "none", "A")
         set_gear(pair, "none", "B")
+        pair.step_both(30)
+
+
+@solo.MARK
+@pytest.mark.budget(180)
+@pytest.mark.look
+@pytest.mark.row("#293 P4 Link's Equipment hidden solo (co-op idle)")
+def test_gear_hidden_solo(pair):
+    with pair.setup():
+        solo.prove(pair)
+        # stepped to a fresh in-play sample in the boot's scene, child Link, never one read; on a solo pair it reads
+        # game A only (harness-c133-scene 31a934d74: until_in_play defaults to pair.c; review-rows-c130-3 16:47)
+        pair.need_boot_place("child")
+        wears_a_sword(pair, "A")
+    try:
+        mark = pair.log["A"].mark()
+        set_gear(pair, "hidden")
+        pair.expect_log("A", HIDDEN_ON % OWN, max_frames=240)
+        pair.step_both(30)
+        assert pair.log["A"].find(HIDDEN_ON % OWN, pos=mark), "A: own Link's gear not hidden solo"
+        pair.check_shot("A", "gear-link-solo-hidden")
+        mark = pair.log["A"].mark()
+        set_gear(pair, "none")
+        pair.expect_log("A", SHOWN_ON % OWN, max_frames=240)
+        pair.step_both(30)
+        assert pair.log["A"].find(SHOWN_ON % OWN, pos=mark), "A: own Link's gear not shown again solo"
+        pair.check_shot("A", "gear-link-solo-shown")
+    finally:
+        set_gear(pair, "none")
         pair.step_both(30)

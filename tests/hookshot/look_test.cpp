@@ -989,13 +989,20 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
             CHECK(r.part != Part::cap_trim);   // the Cap trim is painted with the tunic (TunicPainted)
             CHECK(r.part != Part::cap_trim_hoods);   // (C4-4: a switch; the hoods take cap_trim's colour, HoodTrim)
             CHECK(r.part != Part::eyes);       // the eyes are the model's parameter (CoopCharColours), no texture
-            CHECK(r.part != Part::hair);       // the hair too
-            CHECK(r.tones != 0);
+            if (r.part == Part::hair) {   // hair-link: Link's hair, painted whole (HairRecolour), no tones
+                CHECK(std::string(g.name) == CoopLookParts::kHairTexture);
+                CHECK(g.format == CoopLookPaint::Format::bc7);
+                CHECK(CoopLookParts::OwnerOf(g.name) == Part::hair);
+            } else {
+                CHECK(r.tones != 0);
+            }
             parts.insert(r.part);
         }
     }
-    CHECK(parts.size() == CoopLook::kParts - 13);   // (and a character's six: CoopCharColours, no texture of ours; Cap trim on hoods: a switch;
+    CHECK(parts.size() == CoopLook::kParts - 12);   // (and a character's six: CoopCharColours, no texture of ours; Cap trim on hoods: a switch;
                                                     //  look-link-cs: Link's vest (tunic textures: vest-link) and equipment (a switch); leather-link: the leather has its own)
+                                                    //  hair-link: the hair has its texture row, Mt_Hairs_Player_Adult_Alb;
+                                                    //  both in: vest + equipment are the 2 new parts with no row of ours, -13 + 1)
 }
 
 TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {
@@ -1414,6 +1421,65 @@ TEST_CASE("look parts: the boots in Link's own model get a copy per tunic colour
             CHECK(t.texels == Marked(want[1].texels, 'M'));
         } else if (t.name == "PB_Leather_Player_Child_Alb") {
             CHECK(t.texels == Marked(Shield(), 'B'));   // no wearer with boots: the game's colour
+        }
+    }
+}
+
+TEST_CASE("look parts: Link's hair is painted whole on your own Link and on each colour's puppet copies") {
+    const std::string kHair = CoopLookParts::kHairTexture, kChild = "Mt_Leather_Player_Child_Alb";
+    // the names: a hair colour adds one piece, last, and only when set (a 0.11.12 look keeps its name)
+    Look look;
+    look[Part::hylian_face] = 0x20A040u;
+    const std::string before = CoopLookParts::Name(look);
+    look[Part::hair] = 0xDD4527u;
+    CHECK(CoopLookParts::Name(look) == before + ".hair-DD4527");
+    Look hair_only;
+    hair_only[Part::hair] = 0xDD4527u;
+    CHECK(CoopLookParts::AnyGear(hair_only));
+    const std::string hair_name = CoopLookParts::Name(hair_only);
+    CHECK(hair_name != CoopLookParts::kBase);
+    CHECK(hair_name.size() > 12);
+    CHECK(hair_name.substr(hair_name.size() - 12) == ".hair-DD4527");
+    // the item copies never name or paint the hair (no item draws it)
+    CHECK(CoopLookParts::CopiesName(CoopLookParts::CopyLooks{hair_only}) == CoopLookParts::kCopiesBase);
+
+    // your own Link: the gear painting paints the hair by Character Select's rule, from the game's texels
+    const auto gear = Colour({{kChild, Shield()}, {kHair, TexelsOf(5)}});
+    const auto painted = CoopLookParts::Painted(*gear, hair_only);
+    std::vector<std::uint8_t> want(TexelsOf(5).size());
+    CoopLookPaint::HairRecolour(CoopLookPaint::Format::bc7, TexelsOf(5), want, 0xDD4527u);
+    CHECK(painted[0].texels == Shield());   // the boots: no colour asked
+    CHECK(painted[1].texels == want);
+    CHECK(CoopLookParts::Painted(*gear, Look{})[1].texels == TexelsOf(5));   // unset: the game's
+
+    // the puppets: each colour's adult copy and the child's, both painted for the colour's wearer, own marks
+    CHECK(CoopLookParts::BootsName(kHair, 'M') == "PM_Hairs_Player_Adult_Alb");
+    CHECK(CoopLookParts::ChildHairName('M') == "Coop_M_Child_Hairs_Alb");
+    CHECK(CoopLookParts::ChildHairName('M').size() == std::string("Player_Child_Hairs_Alb").size());
+    // (Wearer = {letter, boots, leather, hair}: leather-link's leather comes before hair-link's hair)
+    const std::vector<CoopLookParts::Wearer> others{{'M', {}, {}, 0xDD4527u}, {'M', {}, {}, 0x123456u},
+                                                    {'R', 0x00FF00u, {}, {}}};
+    const auto hair = CoopLookParts::AssignHair({}, others);
+    CHECK(hair == CoopLookParts::HairWearers{{'M', 0xDD4527u}});
+    CHECK(CoopLookParts::Assign({}, others) == CoopLookParts::Wearers{{'R', {0x00FF00u}}});
+    CHECK(CoopLookParts::BootsPaintingName(CoopLookParts::Assign({}, others), hair) == "boots.R00FF00.M-hair-DD4527");
+    CHECK(CoopLookParts::BootsPaintingName({}, {}) == CoopLookParts::kBootsBase);
+    const auto plain = CoopLookParts::BootsTexels(*gear, {});
+    REQUIRE(plain.size() == 30);   // ten colours: the child's boots, the adult's hair and the child's hair
+    CHECK(plain[0].name == "PR_Leather_Player_Child_Alb");
+    CHECK(plain[1].name == "PR_Hairs_Player_Adult_Alb");
+    CHECK(plain[1].texels == Marked(TexelsOf(5), 'R'));
+    CHECK(plain[2].name == "Coop_R_Child_Hairs_Alb");
+    CHECK(plain[2].texels == Marked(TexelsOf(5), 'r'));   // (look_items.py child_hair_mark: the letter in lower case)
+    const auto worn = CoopLookParts::BootsTexels(*gear, {}, hair);
+    CHECK(CoopLookTunic::SameLayout(plain, worn));
+    for (const auto& t : worn) {
+        if (t.name == "PM_Hairs_Player_Adult_Alb") {
+            CHECK(t.texels == Marked(want, 'M'));
+        } else if (t.name == "Coop_M_Child_Hairs_Alb") {
+            CHECK(t.texels == Marked(want, 'm'));
+        } else if (t.name == "PB_Hairs_Player_Adult_Alb") {
+            CHECK(t.texels == Marked(TexelsOf(5), 'B'));   // no wearer with a hair colour: the game's
         }
     }
 }

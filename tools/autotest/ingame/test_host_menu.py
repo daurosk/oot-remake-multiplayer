@@ -29,9 +29,10 @@ Needs a module with testhost-170 (715803341); before it, TestHost refuses and th
 Only the Host path is driven. The Join rows on a dead line (JoinPasteNow / JoinLanNow / JoinRoomNow / RejoinNow ->
 Join() EndLauncher) share the same LauncherLive rule but are NOT proven in game here.
 The player-facing part, B's Multiplayer page after the host (the Session view hosting, not 'Co-op is on'), is a bridge
-shot of B: `menu main` (testhost-170 6408faaf4: opens co-op's Multiplayer page, presses nothing), state.menu.coop.page
-== 'main' (coop_menu_state.cpp:30, PageWord kMain), check_shot B 'row170-host-page' (NO-REF until a ref is stored),
-then `menu close`. --expect-commit must contain 6408faaf4 (testhost-170 tip, has d06ef04bb).
+shot of B: `menu open main` (testhost-170 d06ef04bb, C #145: co-op's Multiplayer page where a player has it, in play the
+- menu's Multiplayer tab; presses nothing), state.menu.minus view 'main' (test_menu_pages.page_shown),
+check_shot B 'row170-host-page' (NO-REF until a ref is stored), then shut with B (test_menu_pages.close_menu).
+--expect-commit must contain d06ef04bb.
 """
 import json
 import os
@@ -42,6 +43,7 @@ import time
 import pytest
 
 from pair import SetupFail
+from test_menu_pages import close_menu, open_page
 from test_rows import need_child_in_play
 from test_unfocus import CAP_FPS, MIN_SHARE, POLL_S, windows
 
@@ -133,12 +135,6 @@ def free_port(taken=()):
     raise SetupFail("170: no free UDP port on 127.0.0.1")
 
 
-def mp_page(st):
-    """state.menu.coop's page word when co-op's tab is open (coop_menu_state.cpp:30), else None."""
-    coop = ((st or {}).get("menu") or {}).get("coop") or {}
-    return coop.get("page") if coop.get("open") else None
-
-
 def run_170(pair, dead, host, password, boot_a=BOOT_A, boot_b=BOOT_B):
     """The step itself, after the set-up (the selftests drive it with a fake live.py)."""
     pair.rejoin("B", boot=boot_b, env=["LICHII_COOP_SERVER=127.0.0.1:%d" % dead,
@@ -150,10 +146,12 @@ def run_170(pair, dead, host, password, boot_a=BOOT_A, boot_b=BOOT_B):
     pair.expect_log("B", LISTENING, max_frames=600)
     pair.expect_log("B", START_ENDED, max_frames=600)
     pair.never_log("B", NOT_HOSTING)
-    pair.act("B", "menu main")                        # (6408faaf4: the page opened, nothing pressed)
-    pair.until("170: B's Multiplayer page open", lambda: mp_page(pair.state("B")) == "main", max_frames=120)
+    # (B's Multiplayer page opened, nothing pressed, where a player has it now: in play, the - menu's Multiplayer tab,
+    # the game's own page, so the framebuffer shot has it; test_menu_pages.open_page, F1's rule, C #145)
+    home, _ = open_page(pair, "B", "main")
+    assert home == "minus", "170: B's Multiplayer page showed in %s, not the - menu (B is in play)" % home
     pair.check_shot("B", "row170-host-page")
-    pair.act("B", "menu close")
+    close_menu(pair, "B")
 
     pair.rejoin("A", boot=boot_a, env=["LICHII_COOP_SERVER=127.0.0.1:%d" % host, "LICHII_COOP_PASSWORD=%s" % password])
     pair.expect_log("A", WELCOMED + re.escape("127.0.0.1:%d" % host), max_frames=900)

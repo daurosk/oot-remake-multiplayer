@@ -8,3 +8,7 @@ FLAGS = [
     "bool:0x00c0a2f6=0",            # HavePlayedEvent.Dm_Deku_BossIn
     "bool:0x5882768c=0",            # HavePlayedEvent.Dm_Deku_BossOut
 ]
+# What a game that loaded this save shows (testsave.prove, in the test's set-up): child Link (the lane baseline is the
+# child save: bt_plugin.py DEFAULT_BOOT comment "child save"; the old gohma-alive run's B walked her room as a child).
+# The FLAGS above are read back from the game too.
+EXPECT = {"age": "child"}

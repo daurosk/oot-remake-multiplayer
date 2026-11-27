@@ -22,7 +22,7 @@ Nothing from the game is kept in the tool: everything is made from the user's ow
 """
 from . import byml, sarc
 from .look_live import GEAR, mark_bntx
-from .tunic import COLORS, TunicError, rename
+from .tunic import COLORS, TunicError, rename, renamed_bntx
 
 SLOTS = 4
 COPIES_PER_SLOT = 2
@@ -377,7 +377,24 @@ BODY_BOOTS = (
     # your Leather never paints the puppets' (the game's names are your own Link's).
     "Mt_Glove_Player_Adult_Alb",
     "Mt_Leater_Upper_Player_Adult_Alb",
+    "Mt_Hairs_Player_Adult_Alb",   # hair-link: Link's hair (the module paints it in the hair colour)
 )
+# hair-link: the child's model names its hair "Player_Child_Hairs_Alb", which has no file (the game's
+# System/Gfx/UnifyTex gives it the adult's). Each colour's child model names a copy of its own (as
+# long), the adult's texels under that name, marked with the letter in lower case so no two copies hold
+# the same texels (hookshot/src/coop_look_parts.cpp ChildHairName, BootsTexels: same names and marks).
+HAIR = "Mt_Hairs_Player_Adult_Alb"
+CHILD_HAIR = "Player_Child_Hairs_Alb"
+
+
+def child_hair_name(color):
+    if color not in COLORS:
+        raise TunicError(f"no child hair name for colour {color}")
+    return f"Coop_{COLORS[color][0]}_Child_Hairs_Alb"
+
+
+def child_hair_mark(color):
+    return ord(COLORS[color][0].lower())
 
 
 def boots_name(name, color):
@@ -392,13 +409,21 @@ def boots_mark(color):
     return ord(COLORS[color][0])
 
 
-def body_model_for(model, color):
-    """A body model naming the colour's boots copies instead of the game's boots (those it names)."""
-    for name in BODY_BOOTS:
+def body_model_for(model, color, names=BODY_BOOTS):
+    """A body model naming the colour's boots copies instead of the game's boots (those it names), of
+    the BODY_BOOTS in `names` (the ones the pack has copies of); the child's hair with the adult's."""
+    for name in names:
         model = rename(model, name, boots_name(name, color), at_least=0)
+    if HAIR in names:
+        model = rename(model, CHILD_HAIR, child_hair_name(color), at_least=0)
     return model
 
 
 def boots_texture_for(bntx, name, color):
     """The game's boots texture under the colour's name, its texels marked with the colour's mark."""
     return mark_bntx(rename(bntx, name, boots_name(name, color), at_least=1), boots_mark(color))
+
+
+def child_hair_texture_for(bntx, color):
+    """The game's (adult) hair texture under the colour's child hair name, marked with its mark."""
+    return mark_bntx(renamed_bntx(bntx, HAIR, child_hair_name(color)), child_hair_mark(color))

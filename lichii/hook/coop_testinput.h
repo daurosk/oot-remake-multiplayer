@@ -420,6 +420,9 @@ struct FlagReading {
     std::optional<std::int32_t> live;    // int only
 };
 FlagReading ReadFlag(Core::System& system, std::string_view name);
+// Row 294 (test only, the bridge's `flag NAME[i] "text"`): element i of a String64Array set to `text` through the
+// game's String64Array queue (GameFlags::set_string64_array; "" empties it). False when NAME[i] is not one.
+bool SetStringArrayElement(Core::System& system, std::string_view name, std::string_view text);
 // Write an Enum flag (a name or a 0x hash) to a value given by its hash, through the game's own queue. Only the
 // bridge's `flag` calls it, and only with a value hash that `flag_read` read from that same flag in this game run
 // (CoopPlaytest::EnumValues), so no raw number is ever written to an Enum. Call it inside the held frame. False when

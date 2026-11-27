@@ -140,6 +140,10 @@ bool MovePane(Game& game, std::uint64_t pane, const std::array<float, 2>& at) {
     if (game.Read(pane + addr::kPaneXY, now, sizeof now) && now[0] == at[0] && now[1] == at[1]) return true;
     if (!game.Write(pane + addr::kPaneXY, at.data(), sizeof(float) * 2)) return false;
     if ((flags & (1u << 20)) == 0) return true;
+    return MarkPaneMoved(game, pane);
+}
+
+bool MarkPaneMoved(Game& game, std::uint64_t pane) {
     std::uint32_t word[2] = {};
     if (!game.Read(pane, word, sizeof word)) return false;
     const std::uint32_t mark = word[1] & 0x40u;

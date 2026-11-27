@@ -28,6 +28,22 @@ double IdleFrom(std::string_view value) {
     return s;
 }
 
+std::optional<std::uint32_t> KeyVk(std::string_view name) {
+    if (name.size() == 1) {
+        const char c = name[0];
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return static_cast<std::uint32_t>(c);
+        return std::nullopt;
+    }
+    if (name.size() < 2 || name.size() > 3 || name[0] != 'F') return std::nullopt;
+    int n = 0;
+    for (std::size_t i = 1; i < name.size(); ++i) {
+        if (name[i] < '0' || name[i] > '9') return std::nullopt;
+        n = n * 10 + (name[i] - '0');
+    }
+    if (n < 1 || n > 12 || name[1] == '0') return std::nullopt;
+    return static_cast<std::uint32_t>(0x70 + n - 1);   // (VK_F1 .. VK_F12)
+}
+
 bool ValidTag(std::string_view tag) {
     if (tag.empty() || tag.size() > 64) return false;
     for (const char c : tag) {
@@ -407,7 +423,9 @@ std::optional<Request> ParseRequest(std::string_view line, std::string& error) {
                    val->number <= 2147483647.0) {  // (int32, as the game's Int flags; review-01111-b)
             r.value = std::to_string(static_cast<long long>(val->number));
         } else if (val->kind == K::String && PlainText(val->string, 128)) {
-            r.value = val->string;  // an enum value's name: setenum
+            r.value = val->string;  // an enum value's name: setenum (NAME[i]: a String64Array element's text)
+        } else if (val->kind == K::String && val->string.empty() && r.name.ends_with(']')) {
+            r.value.clear();  // row 294: NAME[i] "" empties a String64Array element
         } else {
             error = "value: a whole number from -2147483648 to 2147483647, true or false, or an enum value's name";
             return std::nullopt;
@@ -474,7 +492,20 @@ std::optional<Request> ParseRequest(std::string_view line, std::string& error) {
         r.tag = tag.value_or("");
         return r;
     }
-    error = "cmd: hello, state, pause, resume, step, input, move, act, warp, flag, flag_read, text, give, dump or shot";
+    if (c == "key") {
+        // A host key as the window gives it to the module (hos_coop_key; port-g7 f1-event C3-1, B #137). A key, not a
+        // character: text is typed with `act chat`, the game's pad is `input`.
+        const auto key = v->Text("key");
+        const auto vk = key ? KeyVk(*key) : std::nullopt;
+        if (!vk) {
+            error = "key: F1 to F12, A to Z or 0 to 9 (a host key, as the window gives it to the module)";
+            return std::nullopt;
+        }
+        r.key = *key;
+        r.vk = *vk;
+        return r;
+    }
+    error = "cmd: hello, state, pause, resume, step, input, move, act, warp, flag, flag_read, text, give, dump, shot or key";
     return std::nullopt;
 }
 
@@ -800,6 +831,16 @@ std::string NotReadyReason(const CoopModJson::Value* status) {
                "load runs none); step a frame in play, then read the state again";
     }
     return "";
+}
+
+std::string StickProblem(const std::vector<StickRead>& reads, int frames) {
+    std::string out;
+    for (const auto& r : reads) {
+        if (!r.before || !r.written || !r.after || *r.written == *r.before || *r.after != *r.before) continue;
+        out += (out.empty() ? "did not stick: " : "; ") + r.name + " written " + std::to_string(*r.written) +
+               ", the game put back " + std::to_string(*r.after) + " within " + std::to_string(frames) + " frames";
+    }
+    return out;
 }
 
 std::string GiveRefusal(const CoopModJson::Value* status) {

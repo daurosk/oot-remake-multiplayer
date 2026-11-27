@@ -222,6 +222,34 @@ def rename(data, old, new, at_least=1, at_most=None):
     return data.replace(a, b)
 
 
+def _dict_bit(name):
+    """The bit a one-entry BNTX dictionary (_DIC) keeps for its name: the first set bit counting from
+    the name's last byte (bit 0 of the last byte first), where it differs from the empty root."""
+    raw = name.encode()
+    for bit in range(len(raw) * 8):
+        if (raw[len(raw) - 1 - bit // 8] >> (bit % 8)) & 1:
+            return bit
+    raise TunicError("an empty texture name")
+
+
+def renamed_bntx(data, old, new):
+    """A one-texture BNTX under a name of another length (hair-link: the child's hair copy). Its
+    string section (_STR: a 16-byte header, the count, the empty name, then the texture's as u16 length + name + NUL)
+    is written again; it must keep its size so nothing after it moves, and the new name must keep the
+    dictionary's bit (_DIC), so the dictionary stays as it is."""
+    s, e = _str_section(data)
+    entry = b"\0\0\0\0" + struct.pack("<H", len(old)) + old.encode() + b"\0"
+    at = data.find(entry, s, e)
+    if at != s + 20 or data.count(old.encode() + b"\0") != 1:
+        raise TunicError(f"the BNTX's string section does not hold '{old}' alone")
+    if _dict_bit(old) != _dict_bit(new):
+        raise TunicError(f"'{new}' would need another dictionary bit than '{old}'")
+    body = data[s:at] + b"\0\0\0\0" + struct.pack("<H", len(new)) + new.encode() + b"\0"
+    if len(body) > e - s:
+        raise TunicError(f"'{new}' does not fit the BNTX's string section")
+    return data[:s] + body + b"\0" * (e - s - len(body)) + data[e:]
+
+
 def tile_for(data, color):
     """The tile of a colour: green is the game's own tile renamed, the rest recoloured."""
     if color == "green":

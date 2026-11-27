@@ -46,14 +46,15 @@ std::string LastResult() {
     return last_;
 }
 
-void Frame(coop::host::FlagStore& game) {
+void Frame(coop::host::FlagStore& game, CoopCheatGive::LinkLife* link) {
+    CoopCheatGive::LinkBackedFlags store(game, link);
     std::deque<std::string> todo;
     {
         std::lock_guard lock(mutex_);
         todo.swap(queue_);
     }
     for (const auto& name : todo) {
-        const std::string result = CoopCheatGive::Give(game, name).text;
+        const std::string result = CoopCheatGive::Give(store, name).text;
         LOG_INFO(Core, "coop: cheat: {}", result);
         std::lock_guard lock(mutex_);
         last_ = result;

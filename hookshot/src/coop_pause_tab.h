@@ -1231,6 +1231,12 @@ bool OpenPlayers() noexcept;
 // F6's to the - menu's Multiplayer tab, its main view. False (F1 left to Longshot's own menu) when the pack has no - tabs
 // of ours, or when nothing can open now (not in free play and no menu up: an event, a load, the title).
 bool OpenMultiplayer() noexcept;
+// The play-test bridge's `menu open PAGE` in free play (C #145; coop_pause.cpp TestMenu): F1's own run, ending on that
+// page's view of the Multiplayer tab instead of its main view, as a player's row there opens it: main, Join, Host,
+// Find a game (the game browser, View::kLan), and Settings and look on Customize, Co-op settings, Commands or Local
+// co-op. Its home in free play is the - menu (coop_menu_tabs_rule.h); Longshot's menu carries no co-op tab then and
+// dropped the old path's want. False as OpenMultiplayer's (the caller then opens Longshot's menu on co-op's tab).
+bool OpenMultiplayerOn(CoopPauseMenu::Page page) noexcept;
 // Whether a - menu opened without tabs of ours this session (an old pack): Longshot's F1 menu keeps co-op's tabs then.
 bool NoMinusTabs() noexcept;
 // Whether our - menu can open now (OpenMultiplayer's own test): tabs of ours, and free play or a game menu up. Not in an

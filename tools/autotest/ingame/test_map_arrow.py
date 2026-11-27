@@ -9,8 +9,8 @@ turned the way they face, on the HUD minimap and on the Map page.
 The arrows and names are drawn through Longshot's overlay (hookshot/src/coop_draw.cpp DrawMap) and a bridge shot leaves
 the overlays out (docs/playtest.md "map_icons"), so the test judges by the state's `map_icons` (coop_map_drawn.h: what
 DrawMap drew that present) and the picture proof is a WINDOW shot with the overlay (pair.window_shot: harness-c133 item
-8, C #133 12:0x). Until that helper is in the harness the test ends NO-REF after its state checks (never PASS on state
-alone: user-facing).
+8, C #133 12:0x; in the harness since b8bd94be8: a pair without a shooter is SETUP-FAIL there, never a pass on state
+alone). With no stored reference yet the test ends NO-REF (user-facing: the owner approves the window references).
 
 Set-up as the old scenario: both games 'warp InsideTheDekuTree Entrance', A 'setflag
 DungeonInfo.InsideTheDekuTree.IsGetMap 1' (the minimap and the Map page need the dungeon's map), A presses MINUS for the
@@ -61,25 +61,21 @@ def icon_of(pair, x, number, view):
 
 
 def window_shots(pair, name):
-    """A's window with the overlay (the arrows are drawn there), via the harness helper (harness-c133 item 8)."""
-    shot = getattr(pair, "window_shot", None)
-    if shot is None:
-        return False
-    shot("A", name)
-    return True
+    """A's window with the overlay (the arrows are drawn there): Pair.window_shot (harness-c133 b8bd94be8)."""
+    pair.window_shot("A", name)
 
 
 def turns_with_b(pair, number, view, tag):
     """B faces each of YAWS; A's arrow of B turns by B's turn each time (either way round: the map's handedness is
-    the picture's). Returns whether window shots were taken."""
-    seen, shot = [], True
+    the picture's). A window shot of A at each turn."""
+    seen = []
     for k, yaw in enumerate(YAWS):
         pair.call("B", "move", yaw=yaw, strength=1.0, frames=TURN_FRAMES)
         pair.step_other("A", TURN_FRAMES)             # (the move ran B only: A to the same frame)
         pair.step_both(SETTLE)
         i = icon_of(pair, "A", number, view)
         seen.append(math.degrees(float(i["turn"])))
-        shot = window_shots(pair, "map-arrow-%s-%d" % (tag, k)) and shot
+        window_shots(pair, "map-arrow-%s-%d" % (tag, k))
     steps = [_diff(seen[k + 1], seen[k]) for k in range(len(seen) - 1)]
     for k, s in enumerate(steps):
         assert abs(abs(s) - 90.0) <= QUARTER_TOL, (
@@ -87,7 +83,6 @@ def turns_with_b(pair, number, view, tag):
                 view, YAWS[k], YAWS[k + 1], s, ["%.1f" % t for t in seen]))
     assert len({round(s / 90.0) for s in steps}) == 1, "%s: the arrow turned back and forth (steps %s)" % (view, steps)
     pair.notes.append("%s turns %s" % (view, ["%.1f" % t for t in seen]))
-    return shot
 
 
 @pytest.mark.budget(300)   # ESTIMATED: two warps + ~2'000 frames + shots
@@ -109,14 +104,11 @@ def test_map_arrow_turns(pair):
         assert len(b) == 1, "A sees players %s, not one other" % b
     number = b[0]
     pair.step_both(60)                                   # hs-map-facing.A.txt 'setflag ...; wait 60; mark mini-1'
-    shot = turns_with_b(pair, number, "minimap", "mini")
+    turns_with_b(pair, number, "minimap", "mini")
     pair.press("A", buttons=["MINUS"], frames=8)
     pair.step_both(OPEN_WAIT)
-    shot = turns_with_b(pair, number, "page", "page") and shot
+    turns_with_b(pair, number, "page", "page")
     pair.press("A", buttons=["B"], frames=8)
     pair.step_both(CLOSE_WAIT)
     mi = pair.state("A").get("map_icons") or {}
     pair.notes.append("after B: view %s" % mi.get("view"))
-    if not shot:
-        pair.unproven("arrows judged by state only: no window shot helper in this harness (harness-c133 item 8); "
-                      "the arrows are overlay, a bridge shot has none")

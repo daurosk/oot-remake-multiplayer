@@ -62,7 +62,12 @@ def fr(ticks):
 # -- driving ----------------------------------------------------------------------------------------------------
 def warp_in(pair, stage):
     """Both games into a boss stage at its own start (coop_start_points.inc rows TwinrovaStage:121,
-    PhantomGanonStage:112; the old 'warp <Stage> <Stage>'), asserted per game."""
+    PhantomGanonStage:112; the old 'warp <Stage> <Stage>'), asserted per game.
+    Called AFTER pair.setup(), never inside it: a two-game warp measures 26.9-31.0 s (pair.py WARP_PAIR_MEASURED_S) and
+    the set-up limit is 30 s (SETUP_LIMIT_S; docs/ingame-tests.md 'a set-up that warps cannot fit 30 s'). In
+    tb-rows-f9f3b9c2-2 the boot-place check + A's boss warp used ~17 s, then B's half of the warp did not fit the 13 s
+    left (SETUP-FAIL 'step not sent (13.2 s left, its reply needs 13.6 s)'). The warp is the row's own first step (the old A.txt:15 / B.txt:3), so a warp that does not arrive is a
+    FAIL of this row, inside the test's own budget."""
     st = pair.warp_both(stage, entrance=stage, arrive_in_event=True)
     for x, s in st.items():
         assert (s.get("scene") or "").lower() == stage.lower() and not s.get("loading"), "%s after the warp: %s" % (
@@ -201,11 +206,11 @@ def test_twinrova_shots(pair):
     with pair.setup():
         need_in_play(pair)
         shooter_on(pair)
-        # 'warp TwinrovaStage TwinrovaStage' (A.txt:15, B.txt:3); start point coop_start_points.inc:121
-        # the shared Pair.warp_both: entrance = the start -> the map change event (a boss stage in free play), and
-        # arrive_in_event: the boss intro starts on arrival, so a 'timeout' reply with Link in the scene is the arrival
-        # (replaces the old 'coop: test warp done' check, warp-A/B)
-        warp_in(pair, "TwinrovaStage")
+    # 'warp TwinrovaStage TwinrovaStage' (A.txt:15, B.txt:3); start point coop_start_points.inc:121
+    # the shared Pair.warp_both: entrance = the start -> the map change event (a boss stage in free play), and
+    # arrive_in_event: the boss intro starts on arrival, so a 'timeout' reply with Link in the scene is the arrival
+    # (replaces the old 'coop: test warp done' check, warp-A/B). Outside the set-up: see warp_in.
+    warp_in(pair, "TwinrovaStage")
     # mark a-in -> 'wait 1800  # the intro, then the fight' (A.txt:27, B.txt:15); sync-A/B on the way
     pair.step_both(fr(1800))
     for x in ("A", "B"):
@@ -252,8 +257,8 @@ def test_phantom_ganon_shots(pair):
     with pair.setup():
         need_in_play(pair)
         shooter_on(pair)
-        # 'warp PhantomGanonStage PhantomGanonStage' (A.txt:11, B.txt:2); start point coop_start_points.inc:112
-        warp_in(pair, "PhantomGanonStage")
+    # 'warp PhantomGanonStage PhantomGanonStage' (A.txt:11, B.txt:2); start point coop_start_points.inc:112
+    warp_in(pair, "PhantomGanonStage")                # (outside the set-up: see warp_in)
     # mark a-in -> 'wait 3900  # the intro, then the fight (run 040054: no boss at 2400, lane1 save)'; sync-A/B
     pair.step_both(fr(3900))
     for x in ("A", "B"):

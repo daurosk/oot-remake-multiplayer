@@ -73,6 +73,16 @@ std::optional<std::int32_t> OurLinkLife();
 // Rows 93/103 (docs/items.md, "The game's own equip"): our Link's actor (Player_Child or Player_Adult) as the
 // object walk last saw it; nothing when no walk saw it in the last 1.5 s. Any thread.
 std::optional<std::uint64_t> OurLinkActor();
+// The play-test give and setflag (coop_cheat_give.h LinkBackedFlags): the addresses of the two words of our Link's
+// Life component (now, the most; quarter hearts), which the game draws the hearts from and mirrors into
+// PlayerStatus.Life/MaxLife each frame. Found now by a fresh walk of the actor list from `main` (the main module),
+// so it needs no session and no earlier walk (solo play, a held game); nothing when no Player_Child or
+// Player_Adult is listed (a load, the title). Test calls only (a held game: no frame runs under it).
+struct LinkLifeWords {
+    std::uint64_t life = 0;
+    std::uint64_t max = 0;
+};
+std::optional<LinkLifeWords> FindOurLinkLife(Core::System& system, std::uint64_t main);
 // Any thread: take `quarters` off our Link at the next walk, as the game's
 // own hit at `at` from `from` (Link flinches), or by writing the life when
 // the game does not take that hit within 0.4 s (LICHII_COOP_PVP_REPLAY=0:

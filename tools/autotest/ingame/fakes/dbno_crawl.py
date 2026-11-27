@@ -22,6 +22,7 @@ import hookshot   # noqa: E402  (BOTTLE_ITEMS: the one bottle list, as the test 
 
 BOTTLES = hookshot.BOTTLE_ITEMS
 CHARSEL = "CharacterMenu_SelectedCharacter"
+NO_CS = "COOP_TEST_NO_CHARACTER_SELECT=1"   # (ingame/no_cs.py SWITCH: lane game B booted without the mod)
 FPS = 30                 # (pair.FPS: the fake's frames -> seconds)
 CRAWL_M, WALK_M = 0.01, 0.08   # metres a frame (the fake's numbers: a crawl well under a walk)
 

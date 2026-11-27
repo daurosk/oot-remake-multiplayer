@@ -10,7 +10,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_ingame as T   # noqa: E402
 
-ROW = ["--env", "LICHII_COOP_PUPPET=1", "--env", "LICHII_COOP_DEBUG_ANIM=1", "--env", "LICHII_COOP_OBJECTS=1"]
+ROW = ["--env", "LICHII_COOP_PUPPET=1", "--env", "LICHII_COOP_DEBUG_ANIM=1", "--env", "LICHII_COOP_OBJECTS=1",
+       "--env", "LICHII_COOP_OCARINA_PROBE=1"]
 BOTH = ("test_epona_sync", "test_epona_seen")
 
 
@@ -29,7 +30,7 @@ class Epona(unittest.TestCase):
         # a bug run: no FLAKY rerun (the rerun of test_epona_sync on the same boot finds Epona won and SKIPs, and the
         # summary would keep that run's empty why; the rerun rule is bt_plugin's own, tested in test_ingame.py)
         p = T.pytest_run([".", "--fake", "--out", out] + (ROW if row else []) + (["--no-rerun"] if bug else []) + [
-            "-q", "-p", "no:cacheprovider", "-k", "test_epona_"], env=env)
+            "-q", "-p", "no:cacheprovider", "-k", "test_epona_sync or test_epona_seen"], env=env)
         return p, T.summary(out)
 
     def why(self, s, test):
@@ -66,7 +67,7 @@ class Epona(unittest.TestCase):
         seen still runs."""
         out = os.path.join(self.tmp, "rep")
         p = T.pytest_run([".", "--fake", "--out", out] + ROW + ["--repeat", "2", "--no-smoke-gate", "-q", "-p",
-                                                                "no:cacheprovider", "-k", "test_epona_"],
+                                                                "no:cacheprovider", "-k", "test_epona_sync or test_epona_seen"],
                          env={"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")})
         r = T.results(T.summary(out))
         self.assertEqual(r, {"test_epona_sync[r1]": "NO-REF", "test_epona_seen[r1]": "NO-REF",

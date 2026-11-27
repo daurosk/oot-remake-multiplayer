@@ -15,7 +15,6 @@ BT_FAKE_BROKEN values:
 import os
 
 STAGES = ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage")   # test_boss_respawn.STAGES
-LIFE, MAX_LIFE = "PlayerStatus.Life", "PlayerStatus.MaxLife"
 
 
 def broken():
@@ -23,9 +22,7 @@ def broken():
 
 
 def setup(game):
-    game.br_black = False
-    game.flags.setdefault(LIFE, 16)            # the lane save: 16 quarters (run 20261125-114351 HUD max 16)
-    game.flags.setdefault(MAX_LIFE, 16)
+    game.br_black = False                      # (life: fakegame's link_life, 16/16 = the lane save, run 20261125-114351)
 
 
 def command(game, m):
@@ -43,10 +40,6 @@ def after(game, m, r):
                                          "(2 live)"))
     elif cmd == "warp" and m.get("scene") not in STAGES:
         game.br_black = False
-    elif cmd == "give" and m.get("item") == MAX_LIFE:
-        game.flags[MAX_LIFE] += 4              # coop_cheat_give.cpp Wanted: +4 quarters, the max only
-    elif cmd == "flag_read" and m.get("name") in (LIFE, MAX_LIFE):
-        r["kind"] = "int"
     elif cmd == "input" and m.get("stick") and not game.br_black:
         game.pos[2] += 1.5 * float(m["stick"][1])     # a stick moves Link while he has control
     elif cmd == "shot" and game.br_black and r.get("path"):

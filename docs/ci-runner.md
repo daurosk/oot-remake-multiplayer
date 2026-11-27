@@ -1,11 +1,74 @@
-# Self-hosted CI runner (the owner's PC)
+# Self-hosted CI runners (the owner's PC)
 
-The Build workflow's `windows` job (MSVC build, ctest, kit script tests) can run on
-the owner's PC instead of GitHub's `windows-latest`, which queues and takes 12 to
-22 minutes. Everything else stays on GitHub: linux jobs (no WSL here),
-python-tools, content guard, release attest.
+GitHub's free queue holds our Build runs for hours, so our own runs use the owner's PC:
+3 Linux runners `squadala-wsl-1..3` (label `squadala-wsl`) in a WSL distro of their own,
+`squadala-ci` (Ubuntu 24.04; WSL capped at 20 GB, 24 threads). They run `scope`, `python-tools`
+(ubuntu row) and `linux` (gcc, clang, asan, tsan) while the repo variable `COOP_SELF_HOSTED_LINUX`
+is `on`.
 
-## Who can use it
+They take only daurosk's own push to `main`, `integrate-*`, `release-*` or a tag, and daurosk's
+manual runs (workflow_dispatch: only people with write access can start one). Pull requests,
+forks included, always run on GitHub. Stays on GitHub: `windows` and `python-tools` on Windows,
+`linux-longshot` (built on Ubuntu 22.04 for its glibc 2.35 baseline; the WSL distro is 24.04),
+`windows-hook` (fork pull requests only), Content guard, release attest. The job matrix is the
+same on both: a run on our runners is the full CI. The runners never carry the PC's name (it is
+the owner's name, and public job logs print the machine name): the distro's hostname is
+`squadala-ci` (wsl.conf `[network]`, checked by install-wsl.ps1).
+
+The Windows runner described further down (oot-ci, `daurosk-pc`) is NOT installed: the owner
+dropped it on 2026-11-26 (it would show the PC's name in job logs). `COOP_SELF_HOSTED` stays unset.
+
+**Off switch / runner offline.** A job sent to a runner that is offline waits in the queue (up to
+GitHub's 24 h). Set the variable to `off` and new runs use GitHub's runners again:
+`gh api -X PATCH repos/daurosk/oot-remake-multiplayer/actions/variables/COOP_SELF_HOSTED_LINUX -f value=off`.
+Runs already queued keep their runner: cancel and re-run them. Keep it `off` whenever WSL is held down.
+
+**Memory and disk guard.** The games always win, in two halves:
+- Before a job starts, its hook waits while a test-lane game or offline-queue job runs (a lane lock
+  `oot-remake-multiplayer\laneN.lock`, or a first `LANE1:`/`LANE2:` line of `coord-multiplayer\TEST-TURN` that
+  is not free/none: queue jobs, manual holders and owner-playing lines alike) or Windows' free commit is below
+  75 GB, at most 5 h, then fails the job ("memory guard: waited ..."). It refuses at once when C: has less than
+  60 GB free ("disk guard"). After every job a second hook empties the job's workspace.
+- The offline queue's start gate (`coord-multiplayer\offline\lib\wsl-reserve.ps1`, Get-WslReserveGB) counts a
+  live WSL VM as its whole `.wslconfig` memory cap already taken, so a game pair never starts into memory a
+  running CI job can still grow into.
+The hook reads the Windows side from `/run/squadala-ci/status` ("time, free commit GB, C: free GB, lanes busy
+0/1"), fed every 15 s by `status-feed.ps1` (below; tests: `tools/ci-runner/wsl/status_feed_test.ps1`, windows
+job). A stale, missing or old-format file counts as "not enough" (fail closed). Only the 0/1 enters the distro:
+TEST-TURN text never reaches a public job log.
+
+## Linux runners in WSL
+
+`tools/ci-runner/wsl/`. Same gate as the Windows runner, in `hooks/job-started.sh` (root-owned,
+no switches). The runners have a WSL distro of their own, `squadala-ci` (in
+`%LOCALAPPDATA%\squadala-ci\wsl`); the owner's `Ubuntu-24.04` (local CI, user `lci`, needs `/mnt/c`)
+is not changed. How `squadala-ci` is locked down:
+
+- `%UserProfile%\.wslconfig` (one VM for every distro, so local CI shares the cap): `memory=20GB` (3 jobs at
+  make -j4), `processors=24`, `swap=8GB` (a file on the VM's side, not Windows commit), `autoMemoryReclaim=dropCache`.
+  Never raise them: the test lanes need the rest of the commit.
+- `/etc/wsl.conf`: no Windows interop (a job cannot start Windows programs as the owner) and no
+  Windows drives (`/mnt/c` is gone). install-wsl.ps1 checks both after the restart.
+- Jobs run as `squadala-ci`: no password, no sudo (root in WSL could mount C:), systemd units with
+  `NoNewPrivileges`. `/opt/squadala-ci/bin/sudo` answers the workflow's sudo lines: `apt-get update`
+  is skipped, `apt-get install` passes only for preinstalled packages (`setup.sh` PACKAGES),
+  `sysctl -w vm.mmap_rnd_bits=28` only when it already is 28 (set at boot).
+- Each runner folder `/opt/squadala-ci/runner-N` is root-owned; `squadala-ci` writes only `_work` and
+  `_diag`. Shared: ccache `/var/cache/squadala-ccache` (20 GB cap) and the tool cache.
+- Left as is: the distro reaches the network (it must, for GitHub) and the Windows host's NAT address,
+  so only services bound to 127.0.0.1 on Windows are out of its reach (our listeners bind 127.0.0.1).
+
+Install (owner, normal PowerShell, not elevated; free commit >= 40 GB):
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\wsl\install-wsl.ps1`. It copies the
+scripts in, runs `setup.sh` as root, restarts the distro, registers `squadala-wsl-1..3` (token piped on
+stdin only), and registers the logon task `squadala-ci status feed` (`status-feed.ps1`, hidden), whose
+`wsl.exe` also keeps the distro and its runners up. Then switch on:
+`gh api -X POST repos/daurosk/oot-remake-multiplayer/actions/variables -f name=COOP_SELF_HOSTED_LINUX -f value=on`.
+The runners start at logon (the task); the PC must be logged in. Remove: switch off, then for each runner
+`wsl -d squadala-ci -u root -- systemctl disable --now squadala-ci-runner@N` and delete it in
+Settings > Actions > Runners; `Unregister-ScheduledTask 'squadala-ci status feed'`.
+
+## Windows runner (NOT installed, dropped 2026-11-26): who could use it
 
 The repo is public and takes outside pull requests, so the runner must never run
 code someone else wrote and sent. Two layers:
@@ -78,7 +141,7 @@ Read outside pull requests for hostile build-time code before merging them.
   read-only tokens. That is why only daurosk's reviewed pushes get here at all.
   If it ever happens, run uninstall and install again: that registers a new key.
 
-## Install, switch, remove (owner, elevated PowerShell)
+## Windows runner install, switch, remove (owner, elevated PowerShell; not done)
 
 Use a fresh elevated PowerShell with no transcript on: the scripts pass the
 registration token and the generated password to `config.cmd` on its command line.

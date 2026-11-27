@@ -129,6 +129,13 @@ std::vector<std::string> Wrap(std::string_view clean, std::size_t width, std::si
 // wider; NOT seen on screen yet (the LANE1 screenshot list in reports/menu-chat-01113.md).
 inline constexpr std::size_t kBannerWidth = 2600, kBannerLines = 1;
 inline constexpr std::size_t kNameWidth = 900;   // a speaker's name at most (the rest of the line is said)
+// A line too long for one banner page as the banner shows it (hud-fit-0120): pages of about the same width (the
+// narrowest Wrap that still needs no more pages), each but the last ending " ..." and each but the first starting
+// "... ", every page at most `width`. Before, the greedy Wrap filled each page and left the rest alone: the host's
+// "A loaded a save - the group follows it (26 items, ... 5 other things changed)" (58 em) ended on a page of only
+// "things changed)" (gate-hud shot of 2f734963a, B), which read as a cut line. One page: Wrap's, as it is.
+std::vector<std::string> BannerPages(std::string_view clean, std::size_t width);
+inline constexpr const char* kMoreMark = "...";
 
 // ---------------------------------------------------------------- chat
 inline constexpr std::size_t kSpeakerBytes = 48;

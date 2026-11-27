@@ -35,6 +35,10 @@ std::optional<std::uint16_t> PortFrom(std::string_view value);
 double IdleFrom(std::string_view value);
 // A dump's tag: 1 to 64 of letters, digits, '-' and '_' (it names a file in the dump folder: no path).
 bool ValidTag(std::string_view tag);
+// The bridge `key`'s name as the Windows virtual key the window gives hos_coop_key (WM_KEYDOWN's wParam, which Longshot
+// passes as it is: ls32-src/host/display.c; Linux maps SDL's keys to the same codes: host/posix/display_sdl.c): F1 to F12
+// = 0x70 to 0x7B, A to Z and 0 to 9 = their upper-case ASCII codes. Any other name: none.
+std::optional<std::uint32_t> KeyVk(std::string_view name);
 
 // The game's frame hold. The game's calc thread calls AtFrame at the top of every frame hook; the bridge's thread
 // calls the rest. While held, AtFrame waits (the frame's update has not run yet) and runs the jobs the bridge
@@ -137,6 +141,8 @@ struct Request {
     std::string lines;  // act: one test-script line (kill, hit, hurt, place, ...); PlayNow checks its kind
     std::uint64_t since = 0;  // text: only the texts after this seq (0: all kept)
     std::string layout;       // text: only the layouts whose name has this in it ("": every layout)
+    std::string key;          // key: the host key's name (F1, T, ...) and its virtual key (KeyVk)
+    std::uint32_t vk = 0;
     double timeout_s = 60;
 };
 // The request on one line, or `error` (bad_request's message).
@@ -252,6 +258,18 @@ std::string BodyMember(const std::optional<CoopWorldSnapshot::Snapshot>& snapsho
 // load would put the save's values back over it. Give it the status LinkStatus() read (it ran one frame if the sample
 // was old). No reply at all (no control bridge) is not a refusal: nothing can be told, and the write is safe there.
 std::string GiveRefusal(const CoopModJson::Value* status);
+
+// The read-back of a `give` or a `flag` write (give-life-fix, 2026-11-26): a value the game keeps elsewhere (our Link's
+// Life component, of which PlayerStatus.Life/MaxLife are only the mirror) is put back by the game's next frame, and the
+// write looked done while it was lost. Each flag the call wrote is read before it, right after it, and after
+// kStickFrames frames. One "did not stick" when the write changed the value and those frames put the old one back
+// (a value the game moved on to a third value is its own use, not a lost write); "" when every write kept.
+inline constexpr int kStickFrames = 2;
+struct StickRead {
+    std::string name;
+    std::optional<std::int32_t> before, written, after;
+};
+std::string StickProblem(const std::vector<StickRead>& reads, int frames = kStickFrames);
 
 // `warp`: two ways to change scene. While an event runs, the module's own request (`Sequence_ReservedNextBanc`, the test
 // script's `warp`; the game takes it only then, docs/scenes.md "Free-play scene change"). In free play, Longshot's control

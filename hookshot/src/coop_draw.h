@@ -29,6 +29,7 @@
 #include "coop_dbno_game.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_map_icons.h"
 #include "coop_voice.h"
 #include "hos_coop_draw.h"
 
@@ -194,6 +195,9 @@ float MapArrowTurn(float angle);
 // The voice state after a name as words (" (talking)", " (muted)", "" quiet): the game's own heart lines'
 // (coop_party_hud.h).
 std::string VoiceWords(CoopVoice::Icon icon);
+// The others on the maps for the game's own map icons (coop_map_icons.h): where DrawMap puts them, in the layout's
+// units (the picture as the layout: 3840 x 2160), with their names (and floor words) and our own place.
+CoopMapIcons::Frame MapMarks(const MapShown& m);
 
 // What to draw this present.
 struct Scene {

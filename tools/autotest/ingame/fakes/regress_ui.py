@@ -10,8 +10,10 @@
 - sword handle (only with A:LICHII_COOP_LOOK=kokiri_hilt:blue): A's lines coop_look_live.cpp:768 +
   coop_look_share.cpp:355, B's coop_look_live.cpp:900 + coop_look_share.cpp:334 + coop_look_live.cpp:320.
 Selftest switch (tests/test_ingame_regress_ui.py): BT_FAKE_REGRESS_BUG=tags -> no tag line, the drawn-tags warning
-instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is not painted (:314).
+instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is not painted (:314);
+=camera -> B's ZL leaves B's camera in front of B (c272735f8: B's shots of its own Link's face, no A).
 """
+import math
 import os
 
 STATE_FILE = "coop-test-state.txt"
@@ -59,6 +61,8 @@ def _on(game):
 
 
 def press(game, buttons):
+    if "ZL" in buttons:   # (the game's own camera reset: behind Link along his facing; =camera: B's stays in front)
+        game.rg_cam = not (game.tag == "B" and _bug("camera"))
     if not _on(game) or not game.menu_pause:
         return False
     g = _ts(game)
@@ -106,3 +110,25 @@ def after(game, m, r):
         ("Pa_Button_%02d" % g.rg_focus) if menu else "-", game.frame * 17)
     with open(os.path.join(game.folder, STATE_FILE), "w", encoding="utf-8") as f:
         f.write(line)
+
+
+CAM_BACK, CAM_UP, FOCAL = 3.0, 1.2, 1.2   # m behind (or in front of) Link, m up, 1/tan(half the view)
+
+
+def state(game, st):
+    """The state's `view` (docs/playtest.md: clip = m * [x y z 1] row-major, w the depth) once a ZL was pressed: the
+    camera CAM_BACK behind Link looking along his facing, or (=camera, B) in front of him looking back at his face, the
+    c272735f8 shots. Only set when no other fake set one (setdefault)."""
+    cam = getattr(game, "rg_cam", None)
+    if cam is None or not st.get("pos") or st.get("facing") is None:
+        return
+    look = math.radians(st["facing"] + (0 if cam else 180))
+    fx, fz = math.sin(look), math.cos(look)          # forward (yaw 0 = +z, 90 = +x)
+    rx, rz = fz, -fx                                  # right
+    px, py, pz = st["pos"]
+    cx, cy, cz = px - CAM_BACK * fx, py + CAM_UP, pz - CAM_BACK * fz
+    clip = [FOCAL * rx, 0.0, FOCAL * rz, -FOCAL * (rx * cx + rz * cz),
+            0.0, FOCAL, 0.0, -FOCAL * cy,
+            0.0, 0.0, 0.0, 0.0,
+            fx, 0.0, fz, -(fx * cx + fz * cz)]
+    st.setdefault("view", {"yaw": math.degrees(look) % 360, "pitch": 0.0, "clip": clip, "y_down": False})

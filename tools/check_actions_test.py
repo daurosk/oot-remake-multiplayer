@@ -55,6 +55,50 @@ class CheckActionsTest(unittest.TestCase):
         widened = check_actions.RUNNER_LINE.replace("(github.event_name", "(true || github.event_name")
         self.assertEqual(self.runner(f"    {widened}\n"), [1])
 
+    def test_linux_lines_pass_and_cut_ones_fail(self):
+        for line in (check_actions.RUNNER_LINE_LINUX, check_actions.RUNNER_LINE_MATRIX):
+            self.assertEqual(self.runner(f"    {line}\n"), [])
+            self.assertEqual(self.runner("    " + line.replace(" && vars.COOP_SELF_HOSTED_LINUX == 'on'", "") + "\n"), [1])
+            self.assertEqual(self.runner("    " + line.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'pull_request'") + "\n"), [1])
+        self.assertEqual(self.runner("    runs-on: [self-hosted, squadala-wsl]\n"), [1])
+
+    def test_gate_never_picks_self_hosted_for_a_pull_request(self):
+        # Evaluate the gate the way GitHub does, for every event shape: only daurosk's own push/dispatch passes.
+        import re as _re
+
+        def gate_true(line, ctx):
+            m = _re.search(r"\$\{\{ (.*) && fromJSON", line)
+            expr = m.group(1).replace("matrix.os == 'ubuntu-latest' && ", "")
+            expr = _re.sub(r"startsWith\(github\.ref, '([^']*)'\)", lambda g: repr(ctx["ref"].startswith(g.group(1))), expr)
+            for k in ("repository", "actor", "triggering_actor", "event_name", "ref"):
+                expr = expr.replace(f"github.{k}", repr(ctx[k]))
+            expr = _re.sub(r"vars\.\w+", repr("on"), expr).replace("&&", " and ").replace("||", " or ")
+            return eval(expr)  # noqa: S307 - our own constant expression, made of literals only
+
+        base = {"repository": "daurosk/oot-remake-multiplayer", "actor": "daurosk", "triggering_actor": "daurosk"}
+        cases = [
+            ({"event_name": "push", "ref": "refs/heads/integrate-0120"}, True),
+            ({"event_name": "push", "ref": "refs/heads/main"}, True),
+            ({"event_name": "push", "ref": "refs/tags/v0.12.0"}, True),
+            ({"event_name": "workflow_dispatch", "ref": "refs/heads/ci-speed-c143"}, True),
+            ({"event_name": "push", "ref": "refs/heads/some-work-branch"}, False),
+            ({"event_name": "pull_request", "ref": "refs/pull/9/merge"}, False),
+            ({"event_name": "pull_request", "ref": "refs/heads/main"}, False),
+            ({"event_name": "pull_request_target", "ref": "refs/heads/main"}, False),
+            ({"event_name": "push", "ref": "refs/heads/main", "actor": "someone"}, False),
+            ({"event_name": "workflow_dispatch", "ref": "refs/heads/main", "triggering_actor": "someone"}, False),
+            ({"event_name": "push", "ref": "refs/heads/main", "repository": "fork/oot-remake-multiplayer"}, False),
+        ]
+        for line in (check_actions.RUNNER_LINE_LINUX, check_actions.RUNNER_LINE_MATRIX):
+            for ctx, want in cases:
+                full = dict(base, **ctx)
+                self.assertEqual(gate_true(line, full), want, (line[:40], full))
+        # The (not installed) Windows runner line is push-only (its hook limits the branches): never for a
+        # pull request, a fork or another actor.
+        for ctx, want in cases:
+            if not want and ctx.get("ref") != "refs/heads/some-work-branch":
+                self.assertFalse(gate_true(check_actions.RUNNER_LINE, dict(base, **ctx)), ctx)
+
     def test_runner_through_matrix_fails(self):
         text = "    strategy:\n      matrix:\n        os: [windows-latest, daurosk-pc]\n    runs-on: ${{ matrix.os }}\n"
         self.assertEqual(self.runner(text), [3])

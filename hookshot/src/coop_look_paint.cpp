@@ -909,6 +909,7 @@ std::optional<Format> FormatOf(std::uint32_t bntx_format) {
     if (kind == 0x1a) return Format::bc1;
     if (kind == 0x1c) return Format::bc3;
     if (kind >= 0x2d && kind <= 0x3a) return Format::astc;
+    if (kind == 0x20) return Format::bc7;   // (hair-link: Link's hair)
     return std::nullopt;
 }
 
@@ -931,6 +932,14 @@ std::vector<Rgb> Ends(Format f, std::span<const std::uint8_t> texels) {
         if (f == Format::astc) {
             for (const Rgba& e : AstcEndsOf(Load(b))) {
                 out.push_back(Rgb3(e));
+            }
+            continue;
+        }
+        if (f == Format::bc7) {
+            std::array<std::uint8_t, 16> block{};
+            std::memcpy(block.data(), b, 16);
+            for (const Rgb& e : Bc7Ends(block)) {
+                out.push_back(e);
             }
             continue;
         }
@@ -1006,6 +1015,9 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
             }
             continue;
         }
+        if (f == Format::bc7) {
+            continue;   // (hair-link: a BC7 texture is painted by HairRecolour only, never by tones)
+        }
         std::uint16_t c0, c1;
         std::uint32_t idx;
         std::memcpy(&c0, texels.data() + at + ColourAt(f), 2);
@@ -1028,6 +1040,170 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
         std::memcpy(o + ColourAt(f) + 2, &n1, 2);
         std::memcpy(o + ColourAt(f) + 4, &idx, 4);
         ++changed;
+    }
+    return changed;
+}
+
+// ---- hair-link: BC7 end points and the hair rule (snail-cs-src, MIT, 785d8d0d: tools/texrecolor.py BC7, _widen,
+// _narrow, bc7_blocks; mods/customize.py hair_fn) ----
+namespace {
+struct Bc7Mode {
+    int start, ends, cb, ab, pbits;   // first colour bit, end points, bits a colour channel, alpha bits, p-bits
+    bool shared;                      // one p-bit for a subset's two end points (mode 1)
+};
+constexpr std::array<Bc7Mode, 8> kBc7 = {{{5, 6, 4, 0, 6, false},
+                                          {8, 4, 6, 0, 2, true},
+                                          {9, 6, 5, 0, 0, false},
+                                          {10, 4, 7, 0, 4, false},
+                                          {8, 2, 5, 6, 0, false},
+                                          {8, 2, 7, 8, 0, false},
+                                          {7, 2, 7, 7, 2, false},
+                                          {14, 4, 5, 5, 4, false}}};
+
+int Bc7ModeOf(std::uint8_t first) {
+    for (int m = 0; m < 8; ++m) {
+        if ((first >> m) & 1) return m;
+    }
+    return -1;   // (all zero: padding)
+}
+
+// A field of n bits (with a p-bit below it, if any) as 8 bits, as a decoder does.
+int Widen(int q, int n, int p) {
+    if (p >= 0) q = (q << 1) | p, ++n;
+    return (q << (8 - n)) | (q >> (2 * n - 8));
+}
+
+// The n-bit field whose widening (with the given p-bit) is nearest to the 8-bit c.
+int Narrow(double c, int n, int p) {
+    if (p < 0) return std::clamp(Round(c * ((1 << n) - 1) / 255.0), 0, (1 << n) - 1);
+    const double v = c * ((1 << (n + 1)) - 1) / 255.0;
+    return std::clamp(Round((v - p) / 2.0), 0, (1 << n) - 1);
+}
+
+// Calls fn(rgb 0..255) -> rgb for each end point of a BC7 block and writes back what it gives; nothing for a block
+// of no mode. Returns whether the block has a mode.
+template <typename Fn>
+bool Bc7Map(std::uint8_t* block, Fn&& fn) {
+    const int mode = Bc7ModeOf(block[0]);
+    if (mode < 0) return false;
+    const Bc7Mode& m = kBc7[static_cast<std::size_t>(mode)];
+    V128 v = Load(block);
+    const int r0 = m.start, g0 = r0 + m.ends * m.cb, b0 = g0 + m.ends * m.cb, a0 = b0 + m.ends * m.cb,
+              p0 = a0 + m.ends * m.ab;
+    const int rot = (mode == 4 || mode == 5) ? Bits(v, mode + 1, 2) : 0;   // 1..3: the alpha field holds R, G or B
+    const std::array<int, 3> base = {r0, g0, b0};
+    for (int e = 0; e < m.ends; ++e) {
+        const int p = m.pbits != 0 ? Bits(v, p0 + (m.shared ? e / 2 : e), 1) : -1;
+        std::array<double, 3> rgb{};
+        for (std::size_t k = 0; k < 3; ++k) {
+            rgb[k] = Widen(Bits(v, base[k] + e * m.cb, m.cb), m.cb, p);
+        }
+        if (rot != 0) rgb[static_cast<std::size_t>(rot - 1)] = Widen(Bits(v, a0 + e * m.ab, m.ab), m.ab, -1);
+        const std::array<double, 3> out = fn(rgb);
+        for (std::size_t k = 0; k < 3; ++k) {
+            const double c = std::clamp(out[k], 0.0, 255.0);
+            if (rot == static_cast<int>(k) + 1) {   // (that channel's own field is the alpha: kept as it was)
+                v = WithBits(v, a0 + e * m.ab, m.ab, static_cast<std::uint64_t>(Narrow(c, m.ab, -1)));
+            } else {
+                v = WithBits(v, base[k] + e * m.cb, m.cb, static_cast<std::uint64_t>(Narrow(c, m.cb, p)));
+            }
+        }
+    }
+    Store(v, block);
+    return true;
+}
+
+struct Hsv {
+    double h = 0, s = 0, v = 0;   // all 0..1
+};
+Hsv HsvOf(double r, double g, double b) {   // (0..1 each)
+    const double hi = std::max({r, g, b}), lo = std::min({r, g, b}), d = hi - lo;
+    Hsv o;
+    o.v = hi;
+    o.s = hi > 0 ? d / hi : 0;
+    if (d > 0) {
+        double h = hi == r ? std::fmod((g - b) / d, 6.0) : hi == g ? (b - r) / d + 2.0 : (r - g) / d + 4.0;
+        h /= 6.0;
+        o.h = h < 0 ? h + 1.0 : h;
+    }
+    return o;
+}
+std::array<double, 3> RgbOfHsv(const Hsv& c) {   // (0..1 each)
+    const double h = (c.h - std::floor(c.h)) * 6.0, s = c.s, v = c.v;
+    const double f = h - std::floor(h), p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+    switch (static_cast<int>(std::floor(h)) % 6) {
+    case 0: return {v, t, p};
+    case 1: return {q, v, p};
+    case 2: return {p, v, t};
+    case 3: return {p, q, v};
+    case 4: return {t, p, v};
+    default: return {v, p, q};
+    }
+}
+
+// hair_fn: what a hair colour (`target`, HSV) does to an end colour (0..255) of a texture whose mean is `mean`.
+std::array<double, 3> HairFn(const std::array<double, 3>& rgb, const Hsv& mean, const Hsv& target, double gamma) {
+    const Hsv c = HsvOf(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0);
+    const double dh = std::fmod(c.h - mean.h + 2.5, 1.0) - 0.5;   // (-0.5..0.5)
+    Hsv o;
+    o.h = target.h + 0.5 * dh;
+    o.s = std::clamp(target.s * std::sqrt(c.s / std::max(mean.s, 0.05)), 0.0, 1.0);
+    o.v = std::pow(std::clamp(c.v, 0.0, 1.0), gamma);
+    const auto out = RgbOfHsv(o);
+    return {out[0] * 255.0, out[1] * 255.0, out[2] * 255.0};
+}
+
+// The target's HSV and the gamma that takes the mean brightness to the colour's (the mod's). The colour's brightness
+// is held to 0.03..0.97 as the mean's is, so a pure white or black colour still keeps the strands' shading.
+std::pair<Hsv, double> HairTarget(const Hsv& mean, std::uint32_t colour) {
+    const Rgb t = RgbOf(colour);
+    Hsv target = HsvOf(t[0] / 255.0, t[1] / 255.0, t[2] / 255.0);
+    target.v = std::clamp(target.v, 0.03, 0.97);
+    return {target, std::log(target.v) / std::log(std::clamp(mean.v, 0.03, 0.97))};
+}
+
+Hsv MeanOf(const std::vector<Rgb>& ends) {
+    double r = 0, g = 0, b = 0;
+    for (const Rgb& e : ends) r += e[0], g += e[1], b += e[2];
+    const double n = ends.empty() ? 1.0 : static_cast<double>(ends.size()) * 255.0;
+    return HsvOf(r / n, g / n, b / n);
+}
+}  // namespace
+
+std::vector<Rgb> Bc7Ends(const std::array<std::uint8_t, 16>& block) {
+    std::vector<Rgb> out;
+    std::array<std::uint8_t, 16> copy = block;
+    Bc7Map(copy.data(), [&out](const std::array<double, 3>& rgb) {
+        out.push_back({static_cast<std::uint8_t>(Cl(rgb[0])), static_cast<std::uint8_t>(Cl(rgb[1])),
+                       static_cast<std::uint8_t>(Cl(rgb[2]))});
+        return rgb;
+    });
+    return out;
+}
+
+Rgb HairShift(const Rgb& c, const Rgb& mean, std::uint32_t colour) {
+    const Hsv m = HsvOf(mean[0] / 255.0, mean[1] / 255.0, mean[2] / 255.0);
+    const auto [target, gamma] = HairTarget(m, colour);
+    const auto o = HairFn({double(c[0]), double(c[1]), double(c[2])}, m, target, gamma);
+    return {static_cast<std::uint8_t>(Cl(o[0])), static_cast<std::uint8_t>(Cl(o[1])),
+            static_cast<std::uint8_t>(Cl(o[2]))};
+}
+
+std::size_t HairRecolour(Format f, std::span<const std::uint8_t> texels, std::span<std::uint8_t> out,
+                         std::uint32_t colour) {
+    const std::size_t size = std::min(texels.size(), out.size());
+    if (out.data() != texels.data()) std::memmove(out.data(), texels.data(), size);
+    if (f != Format::bc7) return 0;
+    const Hsv mean = MeanOf(Ends(f, out.first(size)));
+    const std::pair<Hsv, double> tg = HairTarget(mean, colour);
+    const Hsv target = tg.first;
+    const double gamma = tg.second;
+    std::size_t changed = 0;
+    for (std::size_t at = 0; at + 16 <= size; at += 16) {
+        if (Bc7Map(out.data() + at,
+                   [&](const std::array<double, 3>& rgb) { return HairFn(rgb, mean, target, gamma); })) {
+            ++changed;
+        }
     }
     return changed;
 }

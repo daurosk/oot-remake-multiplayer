@@ -80,6 +80,7 @@ OPTIONAL = (
     "Tex/Mt_Leather_Player_Child_Alb.bntx.zs",
     "Tex/Mt_Glove_Player_Adult_Alb.bntx.zs",
     "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs",
+    "Tex/Mt_Hairs_Player_Adult_Alb.bntx.zs",   # (and Link's hair, hair-link)
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
 )

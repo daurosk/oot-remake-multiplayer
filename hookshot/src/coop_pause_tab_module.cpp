@@ -2172,6 +2172,9 @@ bool g_strip_looked = false;
 // opening that has them clears it (LookStrip).
 std::atomic<bool> g_players_no_tabs{false};
 std::atomic<bool> g_players_to_main{false};   // the run is F1's (Multiplayer, main view), not F6's (Players)
+// The page the F1 run ends on (a CoopPauseMenu::Page; -1 its main view): the play-test bridge's `menu open PAGE` in free
+// play (OpenMultiplayerOn, C #145). Only F1's run reads it. Not g_players_page (the Players view's list page, :92).
+std::atomic<int> g_run_page{-1};
 std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
 std::array<std::uint64_t, 4> g_game_words{};   // each game tab's T_Text_00: its drawn width says whether the tab shows a word
@@ -3635,6 +3638,38 @@ void FollowMenu(bool shown) {
     g_live_poke = true;
 }
 
+// Where F1's run ends (kShowPlayers): its main view, or (page >= 0, the bridge's `menu open PAGE`: OpenMultiplayerOn)
+// that page's view, set as the Multiplayer tab's own row for it sets it (RunRow: kViewJoin, kViewHost, kViewLan,
+// kViewMenu and kViewLocal), Settings and look on the page's row of kMenuTabNames (MenuTabPage).
+void ShowRunPage(int page) {
+    using P = CoopPauseMenu::Page;
+    const char* said = "main";
+    switch (page < 0 ? P::kMain : static_cast<P>(page)) {
+    case P::kJoin: SetView(View::kJoin), said = "Join"; break;
+    case P::kHost: SetView(View::kHost), said = "Host"; break;
+    case P::kFind:
+        g_lan_page = 0, g_cell_page = 0, g_cell = -1;
+        SetView(View::kLan);
+        CoopLanNet::Look(true, NowMs());
+        said = "game browser";
+        break;
+    case P::kCustomize:
+    case P::kSettings:
+    case P::kCommands:
+    case P::kLocal:
+        for (int tab = 0; tab < kMenuTabs; ++tab) {
+            if (MenuTabPage(tab) != static_cast<P>(page)) continue;
+            g_menu_tab = tab, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
+            said = kMenuTabNames[static_cast<std::size_t>(tab)];
+        }
+        SetView(View::kMenu);
+        break;
+    default: SetView(View::kMain); break;
+    }
+    LOG_INFO(Core, "coop: pause tab: F1: the Multiplayer tab's {} view, after {} Minus press(es) and {} tap(s)", said,
+             g_players_run.presses(), g_players_run.taps());
+}
+
 // A row's action, or (line >= 0) a line of the details list's (DetailLines' act: their Auto-rejoin) (after the lock:
 // co-op's menu, the Lobby and the chat take their own).
 // The Players view's chat list: how many pages its rows take (coop_chat_history.h).
@@ -4491,10 +4526,13 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     case CoopPlayersOpen::Step::kTapL: in |= kPadL; break;
                     case CoopPlayersOpen::Step::kTapR: in |= kPadR; break;
                     case CoopPlayersOpen::Step::kShowPlayers:
-                        SetView(g_players_to_main.load() ? View::kMain : View::kPlayers);
-                        LOG_INFO(Core, "coop: pause tab: {}: the {} view, after {} Minus press(es) and {} tap(s)",
-                                 g_players_to_main.load() ? "F1" : "F6", g_players_to_main.load() ? "Multiplayer" : "Players",
-                                 g_players_run.presses(), g_players_run.taps());
+                        if (g_players_to_main.load()) {
+                            ShowRunPage(g_run_page.exchange(-1));   // (it says which view)
+                        } else {
+                            SetView(View::kPlayers);
+                            LOG_INFO(Core, "coop: pause tab: F6: the Players view, after {} Minus press(es) and {} tap(s)",
+                                     g_players_run.presses(), g_players_run.taps());
+                        }
                         break;
                     case CoopPlayersOpen::Step::kNoTabs:
                         g_players_no_tabs = true;
@@ -5306,7 +5344,9 @@ bool OpenPlayers() noexcept {
     return true;
 }
 
-bool OpenMultiplayer() noexcept {
+// F1's run to the Multiplayer tab, ending on `page`'s view (-1: its main view; ShowRunPage). A run already going keeps
+// on and takes the newest page.
+static bool StartMultiplayerRun(int page) noexcept {
     if (g_players_no_tabs.load()) return false;
     try {
         std::lock_guard lock(g_players_mutex);
@@ -5314,14 +5354,25 @@ bool OpenMultiplayer() noexcept {
             const bool menu_up = GameMenuUp();
             if (!menu_up && !FreePlayNow()) return false;   // (an event, a load: F1 stays Longshot's)
             g_players_to_main = true;
+            g_run_page = page;
             g_players_run.Start(CoopGameClock::NowMs(), menu_up);
             LOG_INFO(Core, "coop: pause tab: F1: to the Multiplayer tab ({})",
                      menu_up ? "a menu is up: no Minus" : "Minus opens the - menu");
+        } else if (g_players_to_main.load()) {
+            g_run_page = page;
         }
         return true;
     } catch (...) {
     }
     return false;
+}
+
+bool OpenMultiplayer() noexcept {
+    return StartMultiplayerRun(-1);
+}
+
+bool OpenMultiplayerOn(CoopPauseMenu::Page page) noexcept {
+    return StartMultiplayerRun(static_cast<int>(page));
 }
 
 bool NoMinusTabs() noexcept {

@@ -13,10 +13,10 @@ import fakegame  # noqa: E402
 
 
 class FakeAge(unittest.TestCase):
-    def lane(self, env=()):
+    def lane(self, env=(), boot=""):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
-        lane = fakegame.FakeLane(tmp, env=env)     # (every fake in ingame/fakes, as a fake run loads them)
+        lane = fakegame.FakeLane(tmp, env=env, boot=boot)     # (every fake in ingame/fakes, as a fake run loads them)
         self.addCleanup(lane.close)
         return lane
 
@@ -28,7 +28,14 @@ class FakeAge(unittest.TestCase):
 
     def test_the_adult_twinrova_boot_stays_adult_with_every_fake_loaded(self):
         """boss_awake's boot sets the flag; no other hook (dbno_crawl sorts after it) turns it back to child."""
-        self.assertEqual(self.ages(self.lane(env=["LICHII_COOP_DEBUG_BOSS=1"])), {"A": "adult", "B": "adult"})
+        self.assertEqual(self.ages(self.lane(env=["LICHII_COOP_DEBUG_BOSS=1"], boot="live-twinrova-room")),
+                         {"A": "adult", "B": "adult"})
+
+    def test_the_boss_switch_alone_keeps_a_child_boot_child(self):
+        """The switch is on for other boss boots too (live-deku-gohma-reset, a child save: test_boss_reset); only
+        live-twinrova-room's save is adult (boss_awake.ADULT_BOOT)."""
+        self.assertEqual(self.ages(self.lane(env=["LICHII_COOP_DEBUG_BOSS=1"], boot="live-deku-gohma-reset")),
+                         {"A": "child", "B": "child"})
 
     def test_the_flag_alone_decides_each_game(self):
         lane = self.lane()

@@ -356,6 +356,27 @@ std::vector<std::string> Wrap(std::string_view clean, std::size_t width, std::si
     return pages;
 }
 
+std::vector<std::string> BannerPages(std::string_view clean, std::size_t width) {
+    std::vector<std::string> pages = Wrap(clean, width, 1);
+    if (pages.size() <= 1) return pages;
+    const std::size_t mark = Width(kMoreMark) + Width(" ");   // a mark and its space, on each side of a page
+    const std::size_t room = width > 2 * mark + kWideWidth + kGuessWidest ? width - 2 * mark : width;
+    const std::size_t n = Wrap(clean, room, 1).size();
+    // The narrowest width that still makes n pages (a greedy wrap needs no fewer pages on a narrower line).
+    std::size_t lo = 1, hi = room;
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (Wrap(clean, mid, 1).size() <= n) hi = mid;
+        else lo = mid + 1;
+    }
+    pages = Wrap(clean, hi, 1);
+    for (std::size_t k = 0; k < pages.size(); ++k) {
+        if (k > 0) pages[k] = std::string(kMoreMark) + " " + pages[k];
+        if (k + 1 < pages.size()) pages[k] += std::string(" ") + kMoreMark;
+    }
+    return pages;
+}
+
 float ChatFeed::Seconds(std::size_t columns) {
     return std::min(6.0f, 3.0f + 0.06f * static_cast<float>(columns));
 }
@@ -391,7 +412,7 @@ void ChatFeed::Update(const std::vector<ChatIn>& lines, std::uint64_t now_ms) {
             speaker = CutWidth(Clean(said.speaker, kSpeakerBytes), kNameWidth);
             text = Clean(said.text, kTextBytes);
         }
-        const auto pages = Wrap(text, TextWidth(speaker), kBannerLines);
+        const auto pages = BannerPages(text, TextWidth(speaker));   // (kBannerLines: one)
         for (std::size_t k = 0; k < pages.size(); ++k) {
             Shown shown;
             shown.notice = line.notice;
@@ -723,8 +744,10 @@ bool Banner::Step(Game& game, TextRing& ring, const std::optional<std::string>& 
         return false;
     }
     page_ = false;   // (the held line takes the banner over from a page of ours)
-    const auto pages = Wrap(Clean(*held, kTextBytes), kBannerWidth, kBannerLines);
-    const std::string text = pages.empty() ? std::string() : pages.front();   // (one line: what fits the banner)
+    // One line: what fits the banner; a longer held line ends " ..." on its first page (as a page of BannerPages), never
+    // a silent cut.
+    const auto pages = BannerPages(Clean(*held, kTextBytes), kBannerWidth);
+    const std::string text = pages.empty() ? std::string() : pages.front();
     if (holds == Holds::kGames) {
         up_ = false;   // the game's own banner: the held line waits for it, set again once it is gone
         shown_.clear();

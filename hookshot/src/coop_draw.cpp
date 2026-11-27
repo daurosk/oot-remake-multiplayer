@@ -620,6 +620,45 @@ float MapArrowTurn(float angle) {
     return turn < 0 ? turn + kTwoPi : turn;
 }
 
+CoopMapIcons::Frame MapMarks(const MapShown& m) {
+    namespace map = coop::overlay::map;
+    CoopMapIcons::Frame out;
+    if (m.capture == nullptr || (!m.page && !m.minimap)) return out;
+    std::vector<map::Player> players = m.players;
+    map::Player self;
+    self.number = 0;
+    self.position = {m.self[0], m.self[1], m.self[2]};
+    self.scene = m.scene;
+    players.push_back(self);
+    std::vector<map::Icon> icons;
+    if (m.page) {
+        map::picture_icons(*m.page, *m.capture, m.page_floor, players, icons);
+    } else {
+        map::MinimapPanes mini = *m.minimap;
+        mini.edge_inset = 19.3f;   // (DrawMap's at a scale of 1: the layout as the picture)
+        map::minimap_icons(mini, *m.capture, m.minimap_floor, players, icons);
+    }
+    for (const auto& icon : icons) {
+        if (icon.number == 0) {
+            if (!icon.clamped) out.self = std::array<float, 2>{icon.x, icon.y};
+            continue;
+        }
+        CoopMapIcons::Mark k;
+        k.number = icon.number;
+        k.x = icon.x, k.y = icon.y;
+        k.angle = icon.angle;
+        k.clamped = icon.clamped;
+        k.floor_delta = icon.floor_delta;
+        k.rgb = icon.rgb;
+        std::size_t at = 0;
+        while (at < m.players.size() && m.players[at].number != icon.number) ++at;
+        k.name = at < m.names.size() && !m.names[at].empty() ? m.names[at] : "P" + std::to_string(icon.number);
+        k.name += FloorWords(icon.floor_delta);
+        out.marks.push_back(std::move(k));
+    }
+    return out;
+}
+
 std::string FloorWords(int delta) {
     if (delta == 0) {
         return {};

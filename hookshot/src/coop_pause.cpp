@@ -38,6 +38,7 @@
 #include "coop_lobby_tab.h"
 #include "coop_local_start.h"
 #include "coop_menu_handoff.h"
+#include "coop_menu_tabs_rule.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
 #include "coop_mods_tab.h"
@@ -2606,6 +2607,26 @@ CoopMenuState::Tab MenuTab() {
     return tab;
 }
 
+// A test's page opened where a player has it now (C #145), by F1's rule (coop_menu_tabs_rule.h OnF1, the same parts as
+// coop_hookshot.cpp MenuNow): in free play co-op's home is the game's - menu, so the Multiplayer tab there on the page's
+// view (CoopPauseTab::OpenMultiplayerOn, F1's own run); elsewhere (the title, an event, a load) or with a pack without
+// our - tabs, Longshot's menu on co-op's tab (Open). The f9f3b9c26 gate: in free play Open's want was lost, because
+// Longshot's menu carries no co-op tab then (LongshotTabs 0) and takes a want only below its tab count (Longshot
+// gpu/vk/vk_menu.cpp coop_want < coop_tabs), so host170's and test_menu_pages' pages never came.
+static void OpenAsPlayer(CoopPauseMenu::Page page) {
+    static const bool has_pack = CoopPuppetConfig::HasPack();
+    CoopMenuTabsRule::Now now;
+    now.minus_tabs = has_pack && !CoopPauseTab::NoMinusTabs();
+    now.minus_now = now.minus_tabs && CoopPauseTab::MinusMenuNow();
+    now.tab_shown = TabShown();
+    if (CoopMenuTabsRule::OnF1(now) == CoopMenuTabsRule::F1::kMinusMenu && CoopPauseTab::OpenMultiplayerOn(page)) {
+        LOG_INFO(Core, "coop: test menu: {}: the - menu's Multiplayer tab (free play: co-op's home there)",
+                 CoopPauseMenu::PageWord(page));
+        return;
+    }
+    Open(page);
+}
+
 bool TestMenu(const std::string& page) {
     if (page == "host") {
         return TestHost();
@@ -2613,16 +2634,16 @@ bool TestMenu(const std::string& page) {
     if (page == "paste") {   // (the Multiplayer page's "Paste code and join", with this PC's clipboard)
         // (the row is on the Multiplayer page: a player has it open, and the refusal note is drawn there, so the test
         // opens it too; the note is then on screen for a shot)
-        Open(CoopPauseMenu::Page::kMain);
+        OpenAsPlayer(CoopPauseMenu::Page::kMain);
         JoinPasteNow();
         return true;
     }
     if (page == "customize") {
-        Open(CoopPauseMenu::Page::kCustomize);
+        OpenAsPlayer(CoopPauseMenu::Page::kCustomize);
         return true;
     }
     if (page == "main") {   // (the Multiplayer page opened, nothing pressed: its rows for a shot, row 170)
-        Open(CoopPauseMenu::Page::kMain);
+        OpenAsPlayer(CoopPauseMenu::Page::kMain);
         return true;
     }
     // `menu open PAGE` (B #138, port-g7; CoopTestInput::kMenuPages): any page of the tab opened and nothing pressed, for
@@ -2637,7 +2658,7 @@ bool TestMenu(const std::string& page) {
         const std::string_view which = std::string_view(page).substr(5);
         for (const auto& [word, at] : kPages) {
             if (which == word) {
-                Open(at);
+                OpenAsPlayer(at);
                 return true;
             }
         }

@@ -14,6 +14,9 @@
 namespace coop::host {
 class FlagStore;
 }
+namespace CoopCheatGive {
+class LinkLife;
+}
 
 namespace CoopCheats {
 
@@ -34,7 +37,9 @@ void Give(const std::string& name);
 std::string LastResult();
 
 // Present thread, once per frame of the right game: applies queued gifts to
-// the game's flags (the GameFlagStore, not the item merge).
-void Frame(coop::host::FlagStore& game);
+// the game's flags (the GameFlagStore, not the item merge). PlayerStatus.MaxLife
+// goes into our Link's Life component through `link` first (coop_cheat_give.h
+// LinkBackedFlags; null: not given).
+void Frame(coop::host::FlagStore& game, CoopCheatGive::LinkLife* link);
 
 } // namespace CoopCheats

@@ -1,0 +1,16 @@
+# hs-map-icons-probe, B: stands at the Deku Tree's entrance a little off A (A's shots show B's icon).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+stick 0 1 30
+wait 4500               # (A's Map page is held 14 s longer now: B stays on A's map till A's end)
+mark b-end

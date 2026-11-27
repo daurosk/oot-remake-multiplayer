@@ -73,6 +73,10 @@ class GameFlags {
   // Nothing when the text is not 0-terminated within its buffer or not
   // printable ASCII.
   std::optional<std::string> get_string64(std::uint32_t hash);
+  // Element `index` of a String64Array flag (row 294: OwnedHorseList.ActorName, the save's own
+  // horses). The live array, but a write of ours still in the game's queue first. Nothing past the
+  // array's count, or as get_string64.
+  std::optional<std::string> get_string64_array(std::uint32_t hash, std::uint32_t index);
 
   // Queues a write as the game's setter does. False when the flag is
   // unknown, the queue is full, the game applied the queue while this was
@@ -93,6 +97,14 @@ class GameFlags {
   // into its buffer, 0-terminated, without the game's queue, so the live
   // value changes at once. False when the flag is unknown or the text does
   // not fit (at most 63 bytes, printable ASCII).
+  // Row 294: element `index` of a String64Array (at most 63 bytes of printable ASCII), queued as the game's
+  // setter 0x3759470 queues it (M + 0x690 / 0x698 / 0x6a0, docs/flags.md); the applier then writes the live
+  // element and the saved copy, as for the game's own writes. Always the queue, also on Hookshot (the CAS is the
+  // game's own protocol: CoopRuntime::Cas32). False when the flag is unknown, the index is past the live count,
+  // the text does not fit, or the queue has no room for us.
+  static bool set_string64_array(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t index,
+                                 std::string_view text);
+
   static bool set_string64_now(WritableGameMemory& memory, std::uint32_t hash,
                                std::string_view text);
 

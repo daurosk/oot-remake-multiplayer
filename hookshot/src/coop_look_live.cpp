@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <tuple>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -335,7 +336,8 @@ void PaintPuppets(std::uint64_t now_ms) {
 // gear wardrobe paints. Nothing of the game is written.
 std::unique_ptr<CoopLookTunic::Wardrobe> g_boots;
 std::mutex g_boots_mutex;
-std::map<std::string, CoopLookParts::Wearers> g_boots_named;   // guarded: the newest painting's name
+// guarded: the newest painting's name -> each colour's boots, and its hair (hair-link)
+std::map<std::string, std::pair<CoopLookParts::Wearers, CoopLookParts::HairWearers>> g_boots_named;
 std::string g_boots_worn;                                        // the worker's: the name worn
 
 std::optional<std::vector<std::uint8_t>> BootsFile(const std::string& name) {
@@ -344,15 +346,16 @@ std::optional<std::vector<std::uint8_t>> BootsFile(const std::string& name) {
         return std::nullopt;
     }
     CoopLookParts::Wearers wearers;
+    CoopLookParts::HairWearers hair;
     if (name != CoopLookParts::kBootsBase) {
         std::lock_guard lock(g_boots_mutex);
         const auto it = g_boots_named.find(name);
         if (it == g_boots_named.end()) {
             return std::nullopt;
         }
-        wearers = it->second;
+        std::tie(wearers, hair) = it->second;
     }
-    return CoopLookTunic::Pack(CoopLookParts::BootsTexels(*gear, wearers));
+    return CoopLookTunic::Pack(CoopLookParts::BootsTexels(*gear, wearers, hair));
 }
 
 // 0.11.9, exact puppet tunics: each coloured tunic copy (coop_look/puppet-<colour>.bin) repainted for the player it
@@ -498,6 +501,8 @@ void FollowBoots(const std::map<std::uint8_t, CoopColors::TunicCopy>& copies) {
             for (const auto& p : *parts) {
                 if (p.part == static_cast<std::uint8_t>(Part::boots)) {
                     w.boots = p.colour;
+                } else if (p.part == static_cast<std::uint8_t>(Part::hair)) {
+                    w.hair = p.colour;   // (hair-link: the hair copies of his colour's model)
                 }
                 if (p.part == static_cast<std::uint8_t>(Part::link_leather)) {
                     w.leather = p.colour;   // (leather-link)
@@ -507,7 +512,8 @@ void FollowBoots(const std::map<std::uint8_t, CoopColors::TunicCopy>& copies) {
         others.push_back(w);
     }
     const CoopLookParts::Wearers wearers = CoopLookParts::Assign({}, others);
-    const std::string name = CoopLookParts::BootsPaintingName(wearers);
+    const CoopLookParts::HairWearers hair = CoopLookParts::AssignHair({}, others);
+    const std::string name = CoopLookParts::BootsPaintingName(wearers, hair);
     if (name == g_boots_worn) {
         return;
     }
@@ -515,7 +521,7 @@ void FollowBoots(const std::map<std::uint8_t, CoopColors::TunicCopy>& copies) {
     {
         std::lock_guard lock(g_boots_mutex);
         g_boots_named.clear();   // only the newest painting is asked for
-        g_boots_named[name] = wearers;
+        g_boots_named[name] = {wearers, hair};
     }
     LOG_INFO(Core, "coop: look: the puppets' boots are {} now", name);
     g_boots->Wear(name);

@@ -283,6 +283,16 @@ struct BootsPaint {
 };
 // Each colour's paint by its letter; a letter not in it keeps the game's colour.
 using Wearers = std::map<char, BootsPaint>;
+// hair-link: Link's hair is a body texture too (BodyBoots lists Mt_Hairs_Player_Adult_Alb; the adult's copy is
+// "P<letter>_Hairs_Player_Adult_Alb"). The child's model names "Player_Child_Hairs_Alb", which has no file (the
+// game's System/Gfx/UnifyTex gives it the adult's), so each colour's child model names a copy of its own,
+// "Coop_<letter>_Child_Hairs_Alb" (as long; look_items.py child_hair_name), the adult copy's texels marked with
+// the letter in lower case (child_hair_mark), so no two copies hold the same texels.
+inline constexpr const char* kHairTexture = "Mt_Hairs_Player_Adult_Alb";
+std::string ChildHairName(char letter);
+// hair-link: each colour's hair colour (0xRRGGBB) by its letter, its own map beside Wearers (AssignHair); a letter
+// not in it keeps the game's hair.
+using HairWearers = std::map<char, std::uint32_t>;
 // Who paints which colour's boots: your own Link first (`own`: the letter
 // of the model he wears, and his boots colour), then the others in the
 // order given (the first of a letter has it; nothing: the game's colour).
@@ -290,15 +300,21 @@ struct Wearer {
     std::optional<char> letter;
     std::optional<std::uint32_t> boots;
     std::optional<std::uint32_t> leather = std::nullopt;   // (leather-link: part 28; a default, as BootsPaint::leather)
+    std::optional<std::uint32_t> hair = std::nullopt;   // hair-link (part 19); unset = the game's hair (0.11.12), so
+    // a {letter, boots} init is complete (-Wmissing-field-initializers, as TunicPaint::vest)
 };
 Wearers Assign(const Wearer& own, const std::vector<Wearer>& others);
+// hair-link: the same for the hair (the first of a letter has it, with or without a hair colour).
+HairWearers AssignHair(const Wearer& own, const std::vector<Wearer>& others);
 // The boots wardrobe's base (every colour's copies in the game's colour) and
 // the name of a painting: kBootsBase when no colour has boots set.
 inline constexpr const char* kBootsBase = "boots";
-std::string BootsPaintingName(const Wearers& wearers);
+std::string BootsPaintingName(const Wearers& wearers, const HairWearers& hair = {});
 // Every colour's copies of the body boots in `gear` (renamed, painted for
 // its wearer, marked with the letter's code as the pack marks them).
-CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Wearers& wearers);
+// hair-link: the hair's copies in `hair`'s colours, each child copy right after its adult one.
+CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Wearers& wearers,
+                                  const HairWearers& hair = {});
 
 // 0.11.9, exact puppet tunics: the coloured tunic copies (coop_look/puppet-<colour>.bin, "red".."black", each the
 // textures of green.bin in its order), each repainted for the player it is given to (CoopColors::AssignTunicCopies).

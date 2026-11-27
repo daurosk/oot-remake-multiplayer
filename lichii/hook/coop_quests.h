@@ -22,6 +22,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "coop/host/flags.hpp"
@@ -58,6 +59,32 @@ std::optional<std::int32_t> Rank(const Quest& quest, std::uint32_t value);
 
 // The value (step name's hash) at `rank`, or nothing out of range.
 std::optional<std::uint32_t> ValueAt(const Quest& quest, std::int32_t rank);
+
+// Row 294: owning Epona is not Get_Epona's step but the save's OwnedHorseList (GameDataList Struct
+// 0x4920b64f, 10 horses, saved). Its only writer is Animal_Epona_Adult.EventCopyAndRegisterOwnedHorse in
+// Get_Epona.bfevfl's escape subflows, just before Complete. Epona's Song (EventQueryHasOwnedHorse), Gerudo
+// Valley's bridge (EventTriggerRequestOwnedHorseForceChangeBanc) and horseback archery use the owned horse.
+// In two real won saves (the owner's wrld_03, a defeated-Ganon save) the registration left exactly one
+// trace in the save: ActorName[0] = "Animal_Epona_Adult"; every other member (Name, Mane, Saddle, Reins,
+// ColorType, FootType, HorseType, Speed, HorsePower, RoomID, ...) is at its GameDataList default.
+inline constexpr std::uint32_t kGetEpona = 0x92431c55u;          // Enum Step_Get_Epona
+inline constexpr std::uint32_t kGetEponaComplete = 0x4c0a63f4u;  // its Complete
+inline constexpr std::uint32_t kOwnedHorseActorName = 0x7bde80e9u;  // OwnedHorseList.ActorName, String64Array
+inline constexpr std::uint32_t kOwnedHorses = 10;                   // its TotalSize
+inline constexpr const char* kEponaActor = "Animal_Epona_Adult";
+
+enum class EponaHorse {
+    owned,    // her name is in the list
+    missing,  // not there; `free` is the first empty element
+    full,     // not there and no empty element (10 other horses): left alone
+    unread,   // an element could not be read: nothing decided
+};
+struct EponaCheck {
+    EponaHorse state = EponaHorse::unread;
+    std::uint32_t free = 0;
+};
+using ReadHorse = std::function<std::optional<std::string>(std::uint32_t index)>;
+EponaCheck CheckEpona(const ReadHorse& read);
 
 // Adds the quests to `shared` when `on`, making the list when there is none.
 // Returns how many it added.
@@ -104,11 +131,17 @@ class Store final : public coop::host::FlagStore {
     using GetEnum = std::function<std::optional<std::uint32_t>(std::uint32_t hash)>;
     using SetEnum = std::function<bool(std::uint32_t hash, std::uint32_t value)>;
     using GetBool = std::function<std::optional<bool>(std::uint32_t hash)>;
+    // Row 294: true once this game owns Epona (her name in OwnedHorseList.ActorName), registering her
+    // first when she is not there (EnsureEpona); false: not yet (tried again).
+    using OwnHorse = std::function<bool()>;
 
     // `get_bool` reads a saved Bool (row 150: LonLonRanch_PlayingGambleRace, the game's own "a race
-    // against Ingo runs"); none: every Get_Epona race step counts as a race running.
-    Store(coop::host::FlagStore& inner, GetEnum get, SetEnum set, GetBool get_bool = nullptr)
-        : inner_(inner), get_(std::move(get)), set_(std::move(set)), get_bool_(std::move(get_bool)) {}
+    // against Ingo runs"); none: every Get_Epona race step counts as a race running. `own_horse`
+    // (row 294): Get_Epona's Complete is written only once it says true; none: written without.
+    Store(coop::host::FlagStore& inner, GetEnum get, SetEnum set, GetBool get_bool = nullptr,
+          OwnHorse own_horse = nullptr)
+        : inner_(inner), get_(std::move(get)), set_(std::move(set)), get_bool_(std::move(get_bool)),
+          own_horse_(std::move(own_horse)) {}
 
     std::optional<coop::protocol::FlagEntry> read(coop::host::FlagKey key) override;
     bool write(const coop::protocol::FlagEntry& entry) override;
@@ -138,6 +171,7 @@ class Store final : public coop::host::FlagStore {
     GetEnum get_;
     SetEnum set_;
     GetBool get_bool_;
+    OwnHorse own_horse_;
     std::vector<Raised> raised_;
     std::uint64_t refused_ = 0;
 };

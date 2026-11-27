@@ -142,6 +142,9 @@ bool Mouse(float fx, float fy, int event);
 bool TypeKey(std::uint32_t vk, bool repeat);
 bool TypeChar(std::uint32_t byte);
 bool KeysTaken();
+// The play-test bridge's `key` (docs/playtest.md): hos_coop_key's steps (vk, no repeat), as the window's WM_KEYDOWN
+// gives it (ls32-src/host/display.c), without its SDL-thread mark (the bridge's thread is not the window's). True: co-op took it (F1: its route logged as "coop: F1: ..."); false: the key is Longshot's.
+bool BridgeKey(std::uint32_t vk);
 // The chat box or the cheats panel is open (it has the keyboard).
 bool ChatOpen();
 // The key that opens the chat box from now on (the Multiplayer tab's Settings

@@ -62,6 +62,26 @@ class BossShots(unittest.TestCase):
         self.assertEqual(sorted(d["test"] for d in s["deselected"]),
                          ["test_boss_shots.py::test_phantom_ganon_shots", "test_boss_shots.py::test_twinrova_shots"])
 
+    def test_no_warp_inside_the_set_up(self):
+        """A two-game warp (26.9-31.0 s, pair.WARP_PAIR_MEASURED_S) cannot fit the 30 s set-up (tb-rows-f9f3b9c2-2:
+        SETUP-FAIL in the boss warp): no warp call may sit inside a 'with pair.setup()' block of the row file."""
+        import ast
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ingame", "test_boss_shots.py")
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        bad = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.With):
+                continue
+            if not any(isinstance(i.context_expr, ast.Call) and getattr(i.context_expr.func, "attr", "") == "setup"
+                       for i in node.items):
+                continue
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    name = getattr(sub.func, "attr", None) or getattr(sub.func, "id", "")
+                    if name in ("warp_in", "warp_both", "warp_one"):
+                        bad.append("%s at line %d" % (name, sub.lineno))
+        self.assertEqual(bad, [])
+
 
 if __name__ == "__main__":
     unittest.main()

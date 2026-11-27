@@ -42,6 +42,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_cheat_give.cpp"
     "${_coop_hook}/coop_cheat_items.cpp"
     "${_coop_hook}/coop_cheats.cpp"
+    "${_coop_hook}/coop_link_life.cpp"
     "${_coop_hook}/coop_difficulty.cpp"
     "${_coop_hook}/coop_difficulty_game.cpp"
     "${_coop_hook}/coop_ngplus.cpp"

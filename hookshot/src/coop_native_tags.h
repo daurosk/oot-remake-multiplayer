@@ -94,6 +94,9 @@ std::uint64_t ScreenByVtable(Game& game, std::uint64_t vtable_offset);
 // Moves a pane to a layout point as f_8022a3e0 does (x, y kept in the pane, then the layout told). False for a pane
 // f_8022a3e0 would place another way (flag bit 8).
 bool MovePane(Game& game, std::uint64_t pane, const std::array<float, 2>& at);
+// The marking MovePane does after its write (the pane's dirty bit 6, then f_8154d540 tells the layout), for another
+// word of the pane written (coop_map_icons.cpp: the arrow's turn).
+bool MarkPaneMoved(Game& game, std::uint64_t pane);
 
 // B8's probe (LICHII_COOP_MAP_PROBE=1, a run to learn how the game makes its map icons): the layouts a screen object
 // points at straight from its first `bytes` (8-byte words), with the name each layout's resource gives (layout+0xf8

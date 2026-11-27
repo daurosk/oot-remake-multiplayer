@@ -6,7 +6,9 @@
 // its is_green swapped for these tones): the C++ must give the same bytes.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -435,4 +437,90 @@ TEST_CASE("look paint: a base given shades every texture against it, as the tuni
         Recolour(Format::bc3, dark, d, {Rule{0, colour, Takes::all}});
         CHECK(AverageLuma(Format::bc3, d) == doctest::Approx(AverageLuma(Format::bc3, t)).epsilon(0.05));
     }
+}
+
+// ---- hair-link: BC7 and the hair rule (Character Select's hair_fn, snail-cs-src MIT 785d8d0d) ----
+namespace {
+void SetBits(std::array<std::uint8_t, 16>& b, int at, int n, unsigned v) {
+    for (int i = 0; i < n; ++i) {
+        const int bit = at + i;
+        auto& byte = b[static_cast<std::size_t>(bit / 8)];
+        byte = static_cast<std::uint8_t>((byte & ~(1u << (bit % 8))) | (((v >> i) & 1u) << (bit % 8)));
+    }
+}
+// A BC7 mode 6 block (one subset, 7-bit colour + a p-bit each end, 7-bit alpha, 4-bit indices): ends e0, e1 (even
+// values: p-bits 0), alpha 127, the indices a pattern.
+std::array<std::uint8_t, 16> Mode6(const Rgb& e0, const Rgb& e1) {
+    std::array<std::uint8_t, 16> b{};
+    b[0] = 0x40;   // mode 6: bit 6 the lowest set
+    for (int k = 0; k < 3; ++k) {
+        SetBits(b, 7 + 14 * k, 7, e0[static_cast<std::size_t>(k)] / 2u);
+        SetBits(b, 14 + 14 * k, 7, e1[static_cast<std::size_t>(k)] / 2u);
+    }
+    SetBits(b, 49, 7, 127);
+    SetBits(b, 56, 7, 127);
+    for (int i = 65; i < 128; i += 3) SetBits(b, i, 1, 1);
+    return b;
+}
+double HueOf(const Rgb& c) {
+    const double r = c[0] / 255.0, g = c[1] / 255.0, bl = c[2] / 255.0;
+    const double hi = std::max({r, g, bl}), lo = std::min({r, g, bl}), d = hi - lo;
+    if (d <= 0) return 0;
+    double h = hi == r ? std::fmod((g - bl) / d, 6.0) : hi == g ? (bl - r) / d + 2.0 : (r - g) / d + 4.0;
+    return h < 0 ? h / 6.0 + 1.0 : h / 6.0;
+}
+double HueGap(double a, double b) {
+    const double d = std::fabs(a - b);
+    return std::min(d, 1.0 - d);
+}
+}  // namespace
+
+TEST_CASE("look paint: BC7 is Link's hair format, its end points are read (hair-link)") {
+    CHECK(FormatOf(0x2001) == Format::bc7);   // (Mt_Hairs_Player_Adult_Alb: BNTX format 0x20xx)
+    CHECK(BlockBytes(Format::bc7) == 16);
+    const auto b = Mode6({200, 150, 50}, {100, 60, 20});
+    const auto ends = Bc7Ends(b);
+    REQUIRE(ends.size() == 2);
+    CHECK(ends[0] == Rgb{200, 150, 50});
+    CHECK(ends[1] == Rgb{100, 60, 20});
+    CHECK(Bc7Ends(std::array<std::uint8_t, 16>{}).empty());   // (padding: no mode)
+    // a BC7 texture is never painted by tones
+    std::vector<std::uint8_t> t(b.begin(), b.end()), o(16);
+    CHECK(Recolour(Format::bc7, t, o, {Rule{0xFFFFFFFFu, 0xFF0000u, Takes::all}}) == 0);
+    CHECK(o == t);
+}
+
+TEST_CASE("look paint: hair in any colour is strong, keeps the strands and the rest of the block (hair-link)") {
+    // Link's blond: two blocks of brownish-blond ends and one padding block.
+    std::vector<std::uint8_t> t;
+    for (const auto& b : {Mode6({200, 150, 50}, {100, 60, 20}), Mode6({220, 170, 70}, {150, 100, 30}),
+                          std::array<std::uint8_t, 16>{}}) {
+        t.insert(t.end(), b.begin(), b.end());
+    }
+    for (const std::uint32_t colour : {0xDD4527u, 0x4F8AE1u, 0x30C040u}) {   // red, blue, green
+        CAPTURE(colour);
+        std::vector<std::uint8_t> o(t.size());
+        CHECK(HairRecolour(Format::bc7, t, o, colour) == 2);
+        const Rgb want{static_cast<std::uint8_t>(colour >> 16), static_cast<std::uint8_t>(colour >> 8),
+                       static_cast<std::uint8_t>(colour)};
+        for (std::size_t blk = 0; blk < 2; ++blk) {
+            std::array<std::uint8_t, 16> b{};
+            std::copy_n(o.begin() + static_cast<std::ptrdiff_t>(16 * blk), 16, b.begin());
+            for (const Rgb& e : Bc7Ends(b)) {
+                CHECK(HueGap(HueOf(e), HueOf(want)) < 0.06);   // (the 9ab9048f1 weak tint left them blond)
+            }
+            // the mode, the alpha and the indices are as they were (bits 0..6, 49..62, 65..127)
+            CHECK((b[0] & 0x7F) == (t[16 * blk] & 0x7F));
+            for (std::size_t i = 9; i < 16; ++i) CHECK(b[i] == t[16 * blk + i]);
+        }
+        for (std::size_t i = 32; i < 48; ++i) CHECK(o[i] == 0);   // padding as it was
+    }
+    // the strands keep their order of brightness (the shading stays)
+    const Rgb mean{150, 105, 35};
+    const Rgb light = HairShift({220, 170, 70}, mean, 0xDD4527u), dark = HairShift({100, 60, 20}, mean, 0xDD4527u);
+    CHECK(std::max({light[0], light[1], light[2]}) > std::max({dark[0], dark[1], dark[2]}));
+    // another format: copied, not painted
+    std::vector<std::uint8_t> o(t.size());
+    CHECK(HairRecolour(Format::astc, t, o, 0xDD4527u) == 0);
+    CHECK(o == t);
 }

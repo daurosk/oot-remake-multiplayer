@@ -64,6 +64,42 @@ class MenuPages(unittest.TestCase):
         self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-2000:])
         self.assertIn("on its host page", p.stdout)
 
+    def test_fail_on_the_old_free_play_path(self):
+        """C #145, the f9f3b9c26 gate (host170, gate-ui-3): the step wanted Longshot's co-op tab in free play, which
+        Longshot's menu does not carry then, so no page came. The old path must FAIL, never PASS."""
+        p, s = self.run_it("old", env={"BT_FAKE_MENU": "old"})
+        self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-2000:])
+        self.assertIn("on its main page in the - menu (state menu.minus)", p.stdout)
+
+    def test_fail_on_a_second_home(self):
+        """A page that shows in Longshot's tab while the game is in free play: not co-op's home there (one home)."""
+        p, s = self.run_it("longshot", env={"BT_FAKE_MENU": "longshot"})
+        self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-2000:])
+        self.assertIn("on its main page in the - menu", p.stdout)
+
+
+class PageShown(unittest.TestCase):
+    """test_menu_pages.page_shown: which home shows which page, from the bridge state (docs/playtest.md "menu")."""
+
+    def test_homes_and_words(self):
+        import test_menu_pages as T
+
+        def st(minus=None, coop=None):
+            return {"menu": {"minus": minus or {"open": False}, "coop": coop or {"open": False}}}
+        self.assertIsNone(T.page_shown(st()))
+        self.assertIsNone(T.page_shown({}))
+        for view, page in (("main", "main"), ("join", "join"), ("host", "host"), ("lan", "find")):
+            self.assertEqual(T.page_shown(st({"open": True, "tab": "multiplayer", "view": view})), ("minus", page))
+        native = st({"open": True, "tab": "multiplayer", "view": "menu"}, {"open": True, "page": "settings"})
+        self.assertEqual(T.page_shown(native), ("minus", "settings"))   # (Settings and look: co-op's page natively)
+        self.assertEqual(T.page_shown(st(None, {"open": True, "page": "join"})), ("longshot", "join"))
+        self.assertIsNone(T.page_shown(st({"open": True, "tab": "lobby", "view": "main"})))   # (not Multiplayer)
+        self.assertEqual(T.MINUS_OPEN_FRAMES, 300)   # (F1's run: kMostMs 8000 at 30 fps, and 2 s over)
+
+    def test_minus_frames_cite_the_module(self):
+        src = read("hookshot/src/coop_players_open.h")
+        self.assertIn("inline constexpr std::uint64_t kMostMs = 8000;", src)
+
 
 class MenuWords(unittest.TestCase):
     def test_runner_copies_are_the_header_lists(self):

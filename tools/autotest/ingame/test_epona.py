@@ -50,7 +50,8 @@ COMPLETE, COMPLETE_HASH = "Complete", "0x4c0a63f4"   # epona-seen-run.ps1 header
 SONG_ITEM = "Item_Melody_EponaSong"              # IsGet.Item_Melody_EponaSong (epona-seen-run.ps1 header, docs/items.md)
 # the rows' '#! switches' (hs-epona-sync.A/B.txt, hs-epona-seen.A/B.txt); LICHII_COOP_CHEATS=1 is the default boot's
 # own (scenarios/live-kakariko-child.A.txt), as test_gear.test_adult_gear_shown says.
-ROW_ENV = ("LICHII_COOP_PUPPET=1", "LICHII_COOP_DEBUG_ANIM=1", "LICHII_COOP_OBJECTS=1")
+ROW_ENV = ("LICHII_COOP_PUPPET=1", "LICHII_COOP_DEBUG_ANIM=1", "LICHII_COOP_OBJECTS=1",
+           "LICHII_COOP_OCARINA_PROBE=1")   # (+ the probe: Pair.ocarina_out waits for its line, coop_ocarina.cpp:320)
 
 # pass lines: hs-epona-sync.B.txt / hs-epona-seen.B.txt headers (written by lichii/hook/coop_ride.cpp:323-330, 472-494)
 B_RIDES = r"coop: ride: we ride Animal_Epona_Adult"                  # b-rides

@@ -117,6 +117,29 @@ float TopFrom(std::optional<double> game_hud_bottom, bool own) {
     return std::max(-static_cast<float>(*game_hud_bottom) * kLayoutHeight - kBlockGap, lowest);
 }
 
+std::string FitLabel(const std::string& text) {
+    const std::size_t room = static_cast<std::size_t>(kLabelRoom / kLabelEm * 100.0f);   // (CoopNativeUi::Width units)
+    if (CoopNativeUi::Width(text) <= room) return text;
+    const std::size_t dots = CoopNativeUi::Width("...");
+    std::string out;
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        std::size_t n = 1;   // (one whole UTF-8 letter)
+        while (i + n < text.size() && (static_cast<unsigned char>(text[i + n]) & 0xc0) == 0x80) ++n;
+        const std::size_t w = CoopNativeUi::Width(std::string_view(text).substr(i, n));
+        if (used + w + dots > room) break;
+        out.append(text, i, n);
+        used += w;
+        i += n;
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out + "...";
+}
+
+float LabelX(const std::string& fitted) {
+    return kLabelLeft + static_cast<float>(CoopNativeUi::Width(fitted)) * kLabelEm / 200.0f;
+}
+
 std::string MoreText(std::size_t hidden) {
     return hidden > 0 ? "+" + std::to_string(hidden) : std::string();
 }
@@ -619,10 +642,13 @@ void Hud::Set(Game& game, Pane& p, int state, float frame, const std::array<floa
     Show(game, p, true);
 }
 
-void Hud::SetLabel(Game& game, std::size_t index, const std::string& text, const std::array<float, 2>& at,
-                   float alpha, std::vector<std::string>* log) {
+void Hud::SetLabel(Game& game, std::size_t index, const std::string& line, float y, float alpha,
+                   std::vector<std::string>* log) {
     Label& l = labels_[index];
     if (l.pane == 0) return;
+    // Fitted each frame (cheap: one Width unless cut), so a font measured after the line was first set counts too.
+    const std::string text = FitLabel(line);
+    const std::array<float, 2> at{LabelX(text), y};
     if (!l.placed || l.at != at) {
         if (MovePane(game, l.pane, at)) l.placed = true, l.at = at;
     }
@@ -693,7 +719,7 @@ bool Hud::Step(Game& game, const std::vector<Block>& blocks, std::optional<doubl
     const bool own_shown = !own.empty() && !blocks.empty();
     float top = TopFrom(game_hud_bottom, own_shown);
     if (own_shown) {
-        SetLabel(game, kSelf, own, {kLabelX, top - kLabelHeight / 2.0f}, 1.0f, log);
+        SetLabel(game, kSelf, own, top - kLabelHeight / 2.0f, 1.0f, log);
         top -= kLabelHeight + kBlockGap;
     } else {
         Show(game, labels_[kSelf], false);
@@ -741,12 +767,12 @@ bool Hud::Step(Game& game, const std::vector<Block>& blocks, std::optional<doubl
         if (glow.heart >= 0 && glow_ms > glow_for) glow.heart = -1;
         const bool pinch = LowLife(life, plan.hearts * 4);
         if (live) {   // (its name line: the pack's text part cloned, none without the pack)
-            SetLabel(game, static_cast<std::size_t>(s), b.text, {kLabelX, top - kLabelHeight / 2.0f}, alpha, log);
+            SetLabel(game, static_cast<std::size_t>(s), b.text, top - kLabelHeight / 2.0f, alpha, log);
             StepLive(game, s, plan, top, alpha);
             top -= BlockHeight(plan.hearts);
             continue;
         }
-        SetLabel(game, static_cast<std::size_t>(s), b.text, {kLabelX, top - kLabelHeight / 2.0f}, alpha, log);
+        SetLabel(game, static_cast<std::size_t>(s), b.text, top - kLabelHeight / 2.0f, alpha, log);
         for (int i = 0; i < kHearts; ++i) {
             Pane& p = hearts[static_cast<std::size_t>(i)];
             if (i < plan.hearts) {
@@ -768,7 +794,7 @@ bool Hud::Step(Game& game, const std::vector<Block>& blocks, std::optional<doubl
     }
     const std::string more = MoreText(blocks.size() - std::min(shown, shown_now));
     if (more.empty()) Show(game, labels_[kMore], false);
-    else SetLabel(game, kMore, more, {kLabelX, top - kLabelHeight / 2.0f}, 1.0f, log);
+    else SetLabel(game, kMore, more, top - kLabelHeight / 2.0f, 1.0f, log);
     return true;
 }
 

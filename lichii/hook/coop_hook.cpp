@@ -81,6 +81,7 @@
 #include "coop_chat.h"
 #include "coop_hud.h"  // the HUD's hearts (PLAYER_LIFE), docs/overlay.md
 #include "coop_cheats.h"
+#include "coop_link_life.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
 #ifdef COOP_HOOKSHOT
@@ -198,6 +199,43 @@ constexpr float kHeadAdult = 1.9f;
 
 float HeadHeight(std::optional<coop::protocol::Age> age) {
     return age == coop::protocol::Age::adult ? kHeadAdult : kHeadChild;
+}
+
+// Row 294 (CoopQuests::CheckEpona): Epona in this save's OwnedHorseList, registered when she is not there
+// as the game's own EventCopyAndRegisterOwnedHorse leaves a won save: ActorName[first empty] =
+// Animal_Epona_Adult, through the game's String64Array queue (GameFlags::set_string64_array), so the applier
+// writes the live element and the saved copy. True once she is there or queued (or the list is full of other
+// horses: nothing to give her, the end is not held for it).
+bool EnsureEpona(coop::host::WritableGameMemory& memory, const char* why) {
+    coop::host::GameFlags flags(memory);
+    const auto check = CoopQuests::CheckEpona(
+        [&](std::uint32_t i) { return flags.get_string64_array(CoopQuests::kOwnedHorseActorName, i); });
+    static std::atomic<bool> said_full{false}, said_failed{false};
+    switch (check.state) {
+    case CoopQuests::EponaHorse::owned:
+        return true;
+    case CoopQuests::EponaHorse::unread:
+        return false;
+    case CoopQuests::EponaHorse::full:
+        if (!said_full.exchange(true)) {
+            LOG_WARNING(Core, "coop: story: Epona is not in OwnedHorseList and its {} places are taken: not "
+                              "registered (row 294)", CoopQuests::kOwnedHorses);
+        }
+        return true;
+    case CoopQuests::EponaHorse::missing:
+        break;
+    }
+    if (!coop::host::GameFlags::set_string64_array(memory, CoopQuests::kOwnedHorseActorName, check.free,
+                                                    CoopQuests::kEponaActor)) {
+        if (!said_failed.exchange(true)) {
+            LOG_WARNING(Core, "coop: story: Epona could not be registered yet (OwnedHorseList.ActorName[{}], "
+                              "the game's queue): tried again (row 294)", check.free);
+        }
+        return false;
+    }
+    LOG_INFO(Core, "coop: story: Epona registered as this game's own horse (OwnedHorseList.ActorName[{}] = {}): "
+                   "{} (row 294)", check.free, CoopQuests::kEponaActor, why);
+    return true;
 }
 
 // An environment variable that is set and not "0".
@@ -919,7 +957,8 @@ public:
                 }
             }
             if (cheats_) {
-                CoopCheats::Frame(*game_store);
+                CoopLinkLife::GameLinkLife link(system, base_);   // (MaxLife: our Link's component first)
+                CoopCheats::Frame(*game_store, &link);
             }
             if (sharing_ && load_mend_.ready() && CoopStory::On() &&
                 quest_catch_up_.Due(CoopEvery::NowUs())) {
@@ -1037,7 +1076,9 @@ public:
                     return coop::host::GameFlags::set_enum(*memory, hash, value);
                 },
                 // row 150: Get_Epona's end waits only while a race against Ingo runs here
-                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_bool(hash); });
+                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_bool(hash); },
+                // row 294: and comes only with the horse, registered here first
+                [&memory]() { return EnsureEpona(*memory, "another player won her: Get_Epona's end comes with her"); });
             // Released only after a real load (0.5 s without Link), not on one
             // frame the reader missed; the scene as last read. Timed, not
             // counted in presents: high refresh (Ctrl+U) presents up to 2.75
@@ -1959,11 +2000,14 @@ public:
                         view.scene, event, view.position,
                         reading ? reading->rotation : std::nullopt,
                         reading ? reading->animation : std::nullopt, report.server_now_us,
-                        // epona-sync: Get_Epona (Enum 0x92431c55) at Complete (0x4c0a63f4): Epona is this
-                        // game's own, so she is sent while nobody rides her too (coop_ride.h).
+                        // epona-sync: Epona is this game's own, so she is sent while nobody rides her too
+                        // (coop_ride.h). Row 294: owning her is OwnedHorseList, not Get_Epona's step.
                         [&memory]() {
-                            return memory && coop::host::GameFlags(*memory).get_enum(0x92431c55u) ==
-                                                 std::optional<std::uint32_t>{0x4c0a63f4u};
+                            if (!memory) return false;
+                            coop::host::GameFlags flags(*memory);
+                            return CoopQuests::CheckEpona([&](std::uint32_t i) {
+                                       return flags.get_string64_array(CoopQuests::kOwnedHorseActorName, i);
+                                   }).state == CoopQuests::EponaHorse::owned;
                         });
         // Race mode (coop/protocol/race.hpp): the world's parts run as alone, so this game owns all its enemies,
         // bosses, drops, spawns and its clock; the players still see each other, chat and talk.
@@ -3362,6 +3406,11 @@ private:
         }
         if (in_event) {
             return;
+        }
+        // Row 294: a save at Get_Epona Complete with no owned horse (the end shared without her before 0.12.0:
+        // the field Epona is gone and Ingo no longer races, so she could never be won again) gets her back.
+        if (flags.get_enum(CoopQuests::kGetEpona) == std::optional<std::uint32_t>{CoopQuests::kGetEponaComplete}) {
+            EnsureEpona(memory, "Get_Epona was Complete here with no owned horse (mended)");
         }
         std::vector<CoopQuest::StepWant> wants;
         for (const auto& quest : CoopQuest::Quests()) {

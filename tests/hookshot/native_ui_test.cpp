@@ -362,7 +362,7 @@ TEST_CASE("native ui: the feed shows each line once, in banner pages, game-paced
     for (int i = 0; i < 40; ++i) words += "word ";
     f.Update({{"Mido: " + words, false, 0, 0}}, 20000);
     const std::size_t pages = f.waiting();
-    CHECK(pages == 6);  // 40 words, 7 a page after "Mido: " (24.96 em of the 26 by the guesses)
+    CHECK(pages == 7);  // 40 words after "Mido: ", 6 a page with the "... " marks (hud-fit-0120: 6 pages of 7 before)
     std::uint64_t t = 20000;
     for (std::size_t k = 0; k < pages; ++k) {
         const auto p = f.Next(t);
@@ -729,4 +729,43 @@ TEST_CASE("native ui: the held line waits for the game's own banner, and never c
     CHECK_FALSE(b.Step(w.g, w.ring, ui::HeldBanner(), 0));
     CHECK(w.g.CallsTo(kClose).empty());
     CHECK_FALSE(b.up());  // (pages are free to wait for it again)
+}
+
+// hud-fit-0120 (gate-hud shot of 2f734963a, B: the banner showed a page of only "things changed)"): a long line's
+// pages are about the same width, each but the last ends " ..." and each but the first starts "... ", none wider than
+// the banner, and the words are all there in order.
+TEST_CASE("native ui: banner pages are balanced and marked as going on") {
+    ui::ResetFontWidths();
+    const std::string notice = "A loaded a save - the group follows it (26 items, 2 songs, 1 maps and compasses, "
+                               "1 heart containers, 1 tokens, 5 other things changed)";
+    const auto pages = ui::BannerPages(notice, ui::kBannerWidth);
+    REQUIRE(pages.size() >= 2);
+    CHECK(pages.size() == ui::Wrap(notice, ui::kBannerWidth - 2 * (ui::Width("...") + ui::Width(" ")), 1).size());
+    std::string back;
+    std::size_t narrowest = ui::kBannerWidth, widest = 0;
+    for (std::size_t k = 0; k < pages.size(); ++k) {
+        CAPTURE(pages[k]);
+        CHECK(ui::Width(pages[k]) <= ui::kBannerWidth);
+        std::string body = pages[k];
+        if (k > 0) {
+            REQUIRE(body.rfind("... ", 0) == 0);
+            body = body.substr(4);
+        }
+        if (k + 1 < pages.size()) {
+            REQUIRE(body.size() > 4);
+            CHECK(body.substr(body.size() - 4) == " ...");
+            body.resize(body.size() - 4);
+        }
+        back += (back.empty() ? "" : " ") + body;
+        narrowest = std::min(narrowest, ui::Width(body));
+        widest = std::max(widest, ui::Width(body));
+    }
+    CHECK(back == notice);
+    CHECK(narrowest * 2 >= widest);   // no page a short tail of the line ("things changed)" alone)
+    CHECK(pages.back() != "... things changed)");
+    // A line that fits: one page, unmarked.
+    CHECK(ui::BannerPages("Ruto joined", ui::kBannerWidth) == std::vector<std::string>{"Ruto joined"});
+    CHECK(ui::BannerPages("", ui::kBannerWidth).empty());
+    // One word longer than any page: still every page fits.
+    for (const auto& p : ui::BannerPages(std::string(300, 'W'), ui::kBannerWidth)) CHECK(ui::Width(p) <= ui::kBannerWidth);
 }

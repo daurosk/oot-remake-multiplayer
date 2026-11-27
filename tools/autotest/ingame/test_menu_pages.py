@@ -1,14 +1,22 @@
-"""The bridge's page step (B #138, owner port-g7): `act menu open PAGE` opens any page of the Multiplayer tab on its own,
-nothing pressed, by the path the title's rows open it (CoopPause::TestMenu -> CoopPause::Open -> Menu::Open, the page's
-own row decided: hookshot/src/coop_pause.cpp, coop_pause_menu.cpp). The pages: lichii/hook/coop_testinput.h kMenuPages
-(the one list; CoopPauseMenu::PageWord's words). `menu main` (row 170, testhost-170) stays as the same as
-`menu open main`. Owner rule: every shot of menu UI needs its page opened this way; a row test calls
-`open_page(pair, x, PAGE)` from here, then takes its own shot (window_shot: co-op's pages are Longshot's overlay).
+"""The bridge's page step (B #138, owner port-g7; home rule C #145): `act menu open PAGE` opens any page of the Multiplayer
+tab on its own, nothing pressed, WHERE A PLAYER HAS IT NOW: F1's rule (hookshot/src/coop_pause.cpp OpenAsPlayer,
+coop_menu_tabs_rule.h OnF1). In free play co-op's home is the game's - menu: its Multiplayer tab on the page's view (F1's
+own run, CoopPauseTab::OpenMultiplayerOn). Elsewhere (the title, an event, a load) Longshot's menu on co-op's tab
+(CoopPause::Open). One home per thing: a page in the other home is a FAIL. The pages: lichii/hook/coop_testinput.h
+kMenuPages (the one list; CoopPauseMenu::PageWord's words). `menu main` (row 170, testhost-170) is `menu open main`.
+Owner rule: every shot of menu UI needs its page opened this way; a row test calls `open_page(pair, x, PAGE)` from here,
+then takes its own shot (window_shot for Longshot's tab: its pages are Longshot's overlay).
 
-Judged by state, not by picture: the bridge state's `menu.coop` (docs/playtest.md "menu": co-op's tab of Longshot's
-menu, `open`, `tab`, `page` = PageWord) and the step's own line "coop: test menu open PAGE: asked" (coop_testinput.cpp,
-the menu request). Each page is shut again with `menu close` (HOS_COOP_MENU_WANT_CLOSE). No look of its own: the pages'
-looks are each row test's shots.
+Why (f9f3b9c26 gate, host170 + gate-ui-3, harness-c133-3): the step used to want Longshot's co-op tab in free play too,
+where Longshot's menu carries no co-op tab (LongshotTabs 0) and takes a want only below its tab count (Longshot
+gpu/vk/vk_menu.cpp coop_want < coop_tabs): the module said 'opened on a page' + 'test menu open join: asked' and no page
+ever came.
+
+Judged by state, not by picture (docs/playtest.md "menu"): `menu.minus` {open, tab, view} for the - menu (views main,
+join, host, lan = Find a game, menu = Settings and look, which shows co-op's own page natively, so its page word is
+`menu.coop.page`); `menu.coop` {open, tab, page} for Longshot's tab. Each page is shut again as a player shuts it: the
+- menu with B (a view back to main, then the menu shut: coop_pause_tab.cpp BackOf), Longshot's tab with `menu close`
+(HOS_COOP_MENU_WANT_CLOSE). No look of its own: the pages' looks are each row test's shots.
 """
 import os
 import sys
@@ -17,49 +25,88 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hookshot import MENU_PAGES as PAGES   # noqa: E402  (coop_testinput.h kMenuPages, the runner's checked copy)
+from pair import FPS                      # noqa: E402
 OPEN_FRAMES = 90      # Longshot's menu takes the module's want at its next menu tick (vk_menu.cpp coop::menu_wanted)
+# F1's run gives up after kMostMs 8000 (hookshot/src/coop_players_open.h): its frames at FPS, and 2 s over
+MINUS_OPEN_FRAMES = (8000 // 1000 + 2) * FPS
+PRESS = 8             # a press held 8 frames (as test_key_items / test_map_arrow)
+B_WAIT = 30           # after each B: the view or the strip's slide (kTapGapMs 400 is 12 frames)
+MOST_B = 3            # Settings and look / Join / Host / the browser -> main -> shut (BackOf goes to main)
+MINUS_VIEW_PAGE = {"main": "main", "join": "join", "host": "host", "lan": "find"}   # (view "menu": menu.coop.page)
 
 
 def coop_tab(pair, x):
     return ((pair.state(x).get("menu") or {}).get("coop") or {})
 
 
-def open_page(pair, x, page, max_frames=OPEN_FRAMES):
-    """Game x's Multiplayer tab on `page` (a PAGES word) through the bridge's `act menu open PAGE`; returns the state's
-    menu.coop once it shows that page. AssertionError if the step was not asked or the page did not come."""
+def page_shown(st):
+    """(home, page) of co-op's page that shows in state `st`: home "minus" (the game's - menu, its Multiplayer tab)
+    or "longshot" (co-op's tab of Longshot's menu); None when neither shows."""
+    menu = (st or {}).get("menu") or {}
+    minus, coop = menu.get("minus") or {}, menu.get("coop") or {}
+    if minus.get("open") and minus.get("tab") == "multiplayer":
+        view = minus.get("view")
+        return "minus", (coop.get("page") if view == "menu" and coop.get("open") else MINUS_VIEW_PAGE.get(view, view))
+    if coop.get("open"):
+        return "longshot", coop.get("page")
+    return None
+
+
+def home_now(pair, st):
+    """Where F1's rule puts co-op's page now: the - menu in free play, else Longshot's tab (coop_menu_tabs_rule.h)."""
+    return "minus" if pair.in_play(st) else "longshot"
+
+
+def open_page(pair, x, page):
+    """Game x's Multiplayer tab on `page` (a PAGES word) through the bridge's `act menu open PAGE`, in the home F1's rule
+    names now; returns (home, page). AssertionError if the step was not asked, or the page did not come there."""
     assert page in PAGES, "no page %r (coop_testinput.h kMenuPages)" % page
+    home = home_now(pair, pair.state(x))
     pair.act(x, "menu open %s" % page)
     pair.expect_log(x, r"coop: test menu open %s: asked" % page, max_frames=30)
-    return pair.until("%s: the Multiplayer tab on its %s page (state menu.coop)" % (x, page),
-                      lambda: (lambda t: t if t.get("open") and t.get("page") == page else None)(coop_tab(pair, x)),
-                      max_frames=max_frames)
+    want = (home, page)
+    return pair.until("%s: the Multiplayer tab on its %s page in %s (state menu.%s)"
+                      % (x, page, "the - menu" if home == "minus" else "Longshot's menu",
+                         "minus" if home == "minus" else "coop"),
+                      lambda: want if page_shown(pair.state(x)) == want else None,
+                      max_frames=MINUS_OPEN_FRAMES if home == "minus" else OPEN_FRAMES)
 
 
 def close_menu(pair, x):
+    """Co-op's page shut as a player shuts it: the - menu with B (MOST_B at most), Longshot's tab with `menu close`."""
+    shown = page_shown(pair.state(x))
+    if shown and shown[0] == "minus":
+        for _ in range(MOST_B):
+            pair.press(x, ["B"], frames=PRESS)
+            pair.step_both(B_WAIT)
+            if not page_shown(pair.state(x)):
+                return
+        raise AssertionError("%s: the - menu still shows co-op's page after %d B: %s" % (x, MOST_B,
+                                                                                       page_shown(pair.state(x))))
     pair.act(x, "menu close")
-    pair.until("%s: the menu shut (state menu.coop)" % x, lambda: not coop_tab(pair, x).get("open"),
+    pair.until("%s: the menu shut (state menu.coop)" % x, lambda: not page_shown(pair.state(x)),
                max_frames=OPEN_FRAMES)
 
 
-@pytest.mark.budget(180)
+@pytest.mark.budget(300)   # (8 pages x (the - menu's run <= 10 s + 3 B) in free play)
 @pytest.mark.row("B #138 bridge: every page of the Multiplayer tab opens on its own (menu open main, host, join, "
-                 "local, settings, commands, customize, find)")
+                 "local, settings, commands, customize, find), in the home F1's rule names (C #145)")
 def test_every_page_opens_on_its_own(pair):
     with pair.setup():
         for x in ("A", "B"):
             assert pair.in_play(pair.state(x)), "%s not in play" % x
-            assert not coop_tab(pair, x).get("open"), "%s: co-op's tab shows before the test" % x
+            assert not page_shown(pair.state(x)), "%s: co-op's page shows before the test" % x
     done = False
     try:
         for page in PAGES:
-            got = open_page(pair, "B", page)       # (B: the game regress-lan251 shoots)
-            assert got.get("tab") == "multiplayer", "B: %s opened co-op's %r tab" % (page, got.get("tab"))
-            assert not coop_tab(pair, "A").get("open"), "A's menu opened with B's %s" % page
+            home, _ = open_page(pair, "B", page)       # (B: the game regress-lan251 shoots)
+            assert home == "minus", "B: %s in free play showed in %s, not the - menu (one home)" % (page, home)
+            assert not page_shown(pair.state("A")), "A's menu opened with B's %s" % page
             close_menu(pair, "B")
         done = True
     finally:
         try:
-            if coop_tab(pair, "B").get("open"):
+            if page_shown(pair.state("B")):
                 close_menu(pair, "B")
         except Exception as e:
             if done:

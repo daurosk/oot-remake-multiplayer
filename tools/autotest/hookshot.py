@@ -490,6 +490,8 @@ def parse(text):
                 if w[2].lower() not in MENU_PAGES:
                     fail("want: menu open " + "|".join(MENU_PAGES))
                 s.kind, s.name = "menu", "open " + w[2].lower()
+            elif len(w) == 3 and w[1].lower() == "look" and "=" in w[2]:
+                s.kind, s.name = "menu", "look " + w[2].lower()
             else:
                 if len(w) != 2 or w[1].lower() not in MENU_WORDS:
                     fail("want: menu " + "|".join(MENU_WORDS) + ", menu open " + "|".join(MENU_PAGES)

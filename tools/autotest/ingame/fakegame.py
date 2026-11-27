@@ -49,6 +49,12 @@ def hooks(mods, name):
     return [getattr(m, name) for m in mods if callable(getattr(m, name, None))]
 
 GATE = "Npc_Hylia_Soldier_003_GateOpen"
+# Values the game keeps in our Link's Life component, the flags being only its mirror (coop_cheat_give.h LinkBacked):
+# the module writes the component first and the bridge reads back after STICK_FRAMES (coop_playtest_core.h
+# kStickFrames). BT_FAKE_LIFE_FLAG_ONLY=1 plays the module before give-life-fix: the flag alone is written, the next
+# frame puts Link's value back, and the bridge answers did_not_stick.
+LINK_LIFE = ("PlayerStatus.Life", "PlayerStatus.MaxLife")
+STICK_FRAMES = 2
 
 
 class FakeGame:
@@ -63,11 +69,15 @@ class FakeGame:
         self.pos, self.facing = [0.0 if tag == "A" else 4.0, 0.0, 0.0], 0.0
         self.menu_pause, self.title_until, self.at_title = False, None, False
         self.head, self.ocarina, self.flags, self.pending = None, False, {GATE: 0}, []
+        self.link_life = {"PlayerStatus.Life": 16, "PlayerStatus.MaxLife": 16}   # (our Link's Life component)
         self.gear_hidden = False   # (gear-link: part 29 worn by this game's player)
         self.leather, self.boots = None, None   # (leather-link: parts 28 and 15 worn by this game's player, RRGGBB)
         # (the module's ocarina re-equip after each load, Pair.need_ocarina: BT_FAKE_OCARINA_LATE=N frames after the
         # boot and after each warp, default 0 = at once; before it D-pad Left takes nothing out, songs-frogs-733c4d8f)
         self.ocarina_late, self.equipped = int(os.environ.get("BT_FAKE_OCARINA_LATE", "0") or 0), False
+        # (the play UI up again BT_FAKE_UI_LATE frames after a warp, default 20; a tag in BT_FAKE_UI_NEVER: never)
+        self.ui_late = int(os.environ.get("BT_FAKE_UI_LATE", "20") or 20)
+        self.ui_never = tag in os.environ.get("BT_FAKE_UI_NEVER", "")
         # (the game's first-use "Ocarina Audio Input" box on the boot's first D-pad Left, Pair.ocarina_out: the free-Ocarina
         # event line at once, 'plays the ocarina' only after B closes it; probe-ocarina-2f14b333)
         self.box, self.box_seen = False, False
@@ -190,6 +200,18 @@ class FakeGame:
             h(self, m, r)
         return r
 
+    def write_link_life(self, name, value):
+        """A give or flag of a Life flag: into Link's component (the fixed module), or, with BT_FAKE_LIFE_FLAG_ONLY=1,
+        the flag alone, which the next frame puts back: then the bridge's did_not_stick reply (else None)."""
+        if os.environ.get("BT_FAKE_LIFE_FLAG_ONLY") == "1":
+            was = self.link_life[name]
+            self.run(STICK_FRAMES)
+            return {"ok": False, "error": "did_not_stick",
+                    "message": "did not stick: %s written %d, the game put back %d within %d frames"
+                               % (name, value, was, STICK_FRAMES)}
+        self.link_life[name] = value
+        return None
+
     def builtin_answer(self, m):
         cmd = m.get("cmd")
         r = {"id": m.get("id"), "ok": True}
@@ -219,8 +241,16 @@ class FakeGame:
             if want and want != self.age():
                 self.flags["Sequence_IsChildhood"] = 0 if want == "adult" else 1
             self.scene, self.event = m["scene"], False
+            # (the real module's lines, hookshot/src/coop_hookshot.cpp Frame: the load takes the play UI down, the HUD
+            # screen's run after the arrival puts it up; BT_FAKE_UI_LATE=N frames later, default 20; a tag in
+            # BT_FAKE_UI_NEVER: never up again, Pair._until_play_ui's SETUP-FAIL)
+            self.say("coop: native ui: the game's play UI is down (a scene load or the title): no screen is live")
             self.say("coop: native ui: scene load ended (Sequence_IsLoadingBanc): screens handed out once the game's "
                      "HUD screen has run")
+            if not self.ui_never:
+                self.later(self.ui_late,
+                           lambda: self.say("coop: native ui: the game's play UI is up (patch 0018's HUD screen ran "
+                                            "since the load): its screens are live"))
             self.equip_later()
             r.update(arrived=True, via="teleport", map=m["scene"], state=self.state())
         elif cmd == "move":
@@ -242,7 +272,24 @@ class FakeGame:
             self.act(lines)
             r.update(lines=1, note="ok")
         elif cmd == "give":
-            r["result"] = "given"
+            if m.get("item") in LINK_LIFE:
+                name = m["item"]
+                was = self.link_life[name]
+                lost = self.write_link_life(name, was + 4 if name == "PlayerStatus.MaxLife" else max(was, 1))
+                if lost:
+                    return dict(lost, frame=self.frame, paused=self.paused)
+                r["result"] = "%s %d -> %d" % (name, was, self.link_life[name])
+            else:
+                r["result"] = "given"
+            self.run(STICK_FRAMES)     # (the bridge's read-back)
+        elif cmd == "flag" and m.get("name") in LINK_LIFE:
+            name = m["name"]
+            r["was"] = self.link_life[name]
+            lost = self.write_link_life(name, int(m["value"]))
+            if lost:
+                return dict(lost, frame=self.frame, paused=self.paused)
+            self.run(STICK_FRAMES)
+            r["value"] = self.link_life[name]
         elif cmd == "flag":
             r["was"] = self.flags.get(m["name"], 0)
             self.flags[m["name"]] = m["value"]
@@ -251,6 +298,9 @@ class FakeGame:
                 o = self.other
                 o.later(12, lambda: (o.flags.__setitem__(GATE, 1), o.say("coop: story: bool 0x19898d14 (entry 3) 0 -> 1")))
             r["value"] = m["value"]
+        elif cmd == "flag_read" and m.get("name") in LINK_LIFE:
+            # (the flag is the component's mirror, refreshed every frame: a read gives our Link's Life component)
+            r.update(kind="int", value=self.link_life[m["name"]])
         elif cmd == "flag_read":
             r.update(kind="bool", value=self.flags.get(m["name"]))
         elif cmd == "dump":
@@ -275,7 +325,10 @@ class FakeGame:
             return
         o, me = self.other, 1 if self.tag == "A" else 2
         if "PLUS" in buttons:
-            self.menu_pause = not self.menu_pause
+            # (BT_FAKE_PAUSE_STUCK=B: B's pause page opens and never closes again, the game a test left on a pause page,
+            # tb-gate-ui-f9f3b9c2 test_pause FAIL; only a relaunch brings it back: Pair.recover, crawl-337-11)
+            if not (self.menu_pause and self.tag in os.environ.get("BT_FAKE_PAUSE_STUCK", "")):
+                self.menu_pause = not self.menu_pause
         if "A" in buttons and getattr(self, "title_asked", False) and not self.at_title:
             self.say("fake: A pressed in play after the way back was asked")   # (load_both must never: pilot A :7015)
         if self.at_title and "A" in buttons:

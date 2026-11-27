@@ -515,7 +515,8 @@ TEST_CASE("party hud: our own voice line goes first on the game's text part, the
     const float top = party::TopFrom(0.15, true);
     CHECK(top == party::TopFrom(0.15, false));   // (our line takes the first place; only the stack's lowest start moves up)
     CHECK(party::TopFrom(0.95, true) > party::TopFrom(0.95, false));
-    CHECK(game.Where("Pa_CoopSelf_0") == std::array<float, 2>{party::kLabelX, top - party::kLabelHeight / 2.0f});
+    CHECK(game.Where("Pa_CoopSelf_0") ==
+          std::array<float, 2>{party::LabelX("You (talking)"), top - party::kLabelHeight / 2.0f});
     // the blocks start under it
     CHECK(game.Where(HeartName(0, 0)) == party::HeartAt(top - (party::kLabelHeight + party::kBlockGap), 0));
     CHECK(game.Where("Pa_CoopName_0")[1] == top - (party::kLabelHeight + party::kBlockGap) - party::kLabelHeight / 2.0f);
@@ -896,4 +897,64 @@ TEST_CASE("party hud: a scene load calls nothing into the HUD's layout") {
     CHECK(hud.Step(game, blocks, 0.15, &log));   // found again on the new layout
     CHECK(hud.native());
     CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("the scene load ended") != std::string::npos; }));
+}
+
+// hud-fit-0120 (gate-hud shot of 2f734963a, A: the longest line ran 81 px off the screen's left edge, every line was
+// centred over left-aligned hearts). Every line starts at the hearts' left edge and ends inside kLabelRoom, at the
+// longest a line can be (16 wide letters, voice words, the longest place) and in any language.
+namespace {
+// The line's left and right edges in the parent's units (the pane's middle -/+ half the fitted text).
+std::array<float, 2> LineEdges(const std::string& line) {
+    const std::string shown = party::FitLabel(line);
+    const float half = static_cast<float>(CoopNativeUi::Width(shown)) * party::kLabelEm / 200.0f;
+    return {party::LabelX(shown) - half, party::LabelX(shown) + half};
+}
+}  // namespace
+
+TEST_CASE("party hud fit: every line starts at the hearts' left edge and stays on the picture") {
+    CoopNativeUi::ResetFontWidths();   // (the guesses: never narrower than the game's font)
+    const std::string longest = std::string(16, 'W') + " (talking)  Inside Ganondorf's Castle";
+    const std::vector<std::string> lines = {"You (talking)", "Twenty", "Three", "+1", longest,
+                                            std::string(16, 'W') + " (muted)", longest + " 13/40",
+                                            std::string(200, 'W'), "\xe4\xbd\xa0\xe5\xa5\xbd (talking)  " + longest};
+    for (const auto& b : party::TestBlocks(0)) {
+        CHECK(party::FitLabel(b.text).size() > 0);
+    }
+    for (const auto& line : lines) {
+        CAPTURE(line);
+        const auto [left, right] = LineEdges(line);
+        CHECK(left == doctest::Approx(party::kLabelLeft));             // left-aligned on the hearts
+        CHECK(left >= 0.0f);                                            // never off the left edge
+        CHECK(right <= party::kLabelLeft + party::kLabelRoom + 0.5f);   // never past the room (30% of the picture)
+        CHECK(right <= 3840.0f);
+    }
+    // A short line shows as it is; the longest is cut at its end with "...", its name and voice words kept.
+    CHECK(party::FitLabel("Twenty") == "Twenty");
+    const std::string cut = party::FitLabel(longest);
+    CHECK(cut.size() >= 3);
+    CHECK(cut.substr(cut.size() - 3) == "...");
+    CHECK(cut.rfind(std::string(16, 'W') + " (talking)", 0) == 0);
+    CHECK(party::FitLabel(std::string(16, 'W') + " (talking)") == std::string(16, 'W') + " (talking)");
+}
+
+TEST_CASE("party hud fit: lines are left-aligned on the picture in the fake game, blocks apart") {
+    CoopNativeUi::ResetFontWidths();
+    FakeGame game;
+    game.Hud();
+    party::Hud hud;
+    std::vector<std::string> log;
+    REQUIRE(hud.Step(game, party::TestBlocks(0), std::nullopt, &log, 0, party::TestOwn()));
+    for (const char* pane : {"Pa_CoopSelf_0", "Pa_CoopName_0", "Pa_CoopName_1", "Pa_CoopName_2", "Pa_CoopMore_0"}) {
+        CAPTURE(pane);
+        const std::string shown = game.texts[std::string(pane) + "/T_Text_00"];
+        REQUIRE_FALSE(shown.empty());
+        const float half = static_cast<float>(CoopNativeUi::Width(shown)) * party::kLabelEm / 200.0f;
+        CHECK(game.Where(pane)[0] - half == doctest::Approx(party::kLabelLeft));
+        CHECK(game.Where(pane)[0] + half <= party::kLabelLeft + party::kLabelRoom + 0.5f);
+    }
+    // A name sits nearer its own hearts than the hearts of the block above it.
+    const float name1 = game.Where("Pa_CoopName_1")[1];
+    const float own_row = game.Where(HeartName(1, 0))[1];
+    const float above_row = game.Where(HeartName(0, 10))[1];   // (Twenty: 20 hearts, two rows)
+    CHECK(name1 - own_row < above_row - name1);
 }

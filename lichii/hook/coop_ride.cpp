@@ -465,7 +465,7 @@ public:
         const bool riding =
             own_animation &&
             coop::host::activity_of(std::string_view(own_animation->name)) == coop::host::Activity::riding;
-        // Whether this game has won Epona (Get_Epona Complete), asked once a second: the game's own getter.
+        // Whether this game has won Epona (OwnedHorseList.ActorName holds Animal_Epona_Adult, row 294), asked once a second
         if (owns_epona && (owns_at_us_ == 0 || now_us >= owns_at_us_ + 1'000'000)) {
             const bool owns = owns_epona();
             if (owns != owns_ || owns_at_us_ == 0) {
@@ -612,7 +612,7 @@ private:
     bool logged_none_ = false;
     bool logged_off_ = true;
     u64 mounted_us_ = 0;  // for the log: how long the ride was
-    bool owns_ = false;   // Get_Epona Complete here, as last asked
+    bool owns_ = false;   // Epona in our OwnedHorseList, as last asked
     u64 owns_at_us_ = 0;
     std::unordered_map<u64, std::string> names_;
 };

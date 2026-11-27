@@ -254,6 +254,21 @@ bool Store::racing(const Quest& quest, std::optional<std::int32_t> now) const {
     return get_bool_(kRaceRunning).value_or(true);
 }
 
+EponaCheck CheckEpona(const ReadHorse& read) {
+    EponaCheck out{EponaHorse::full, 0};
+    bool free_seen = false;
+    for (std::uint32_t i = 0; i < kOwnedHorses; ++i) {
+        const auto name = read(i);
+        if (!name) return EponaCheck{};
+        if (*name == kEponaActor) return EponaCheck{EponaHorse::owned, i};
+        if (name->empty() && !free_seen) {
+            free_seen = true;
+            out = EponaCheck{EponaHorse::missing, i};
+        }
+    }
+    return out;
+}
+
 bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact) {
     if (entry.kind != coop::protocol::FlagKind::int32) {
         ++refused_;
@@ -275,6 +290,11 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
             // In the race, or riding out after winning it: left to finish, and
             // held (busy) so it is tried again: a lost race goes back below.
             return false;
+        }
+        // Row 294: Complete without the horse left a game that could never win her (at Complete the
+        // field Epona is gone and Ingo no longer races). The horse is registered first, the end after.
+        if (quest.hash == kGetEpona && now && *now != Last(quest) && own_horse_ && !own_horse_()) {
+            return false;  // not registered yet: tried again
         }
         exact = false;  // never written blind, never over a value not in the list
     }

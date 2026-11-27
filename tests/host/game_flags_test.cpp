@@ -1,3 +1,4 @@
+#include <array>
 #include <bit>
 #include <doctest/doctest.h>
 
@@ -712,4 +713,67 @@ TEST_CASE("flag setters: a String64 goes to the game's push with its text on the
       w, [](std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::optional<std::uint32_t>) { return true; },
       [](const void*, std::size_t) -> std::uint64_t { return 0; }));
   CHECK(calls.size() == 1);
+}
+
+TEST_CASE("game flags: String64Array element, row 294 (OwnedHorseList.ActorName, the save's own horses)") {
+  // The layout the parser 0xdfb0f4/0xdfb310 builds: M + 0x670 table, entries of 0x90, live count +0x70 and items
+  // +0x78, items of 0x50 {char* text, u32 capacity 0x40}.
+  auto w = game();
+  auto& m = w.mem;
+  constexpr std::uint64_t kSaEntries = 0x8a00000000ull, kSaSlots = 0x8a10000000ull, kSaItems = 0x8a20000000ull;
+  table(m, 0x670, kSaEntries, kSaSlots, 0x90, {0x7bde80e9u});
+  m.put_u32(kSaEntries + 0x70, 2);
+  m.put_u64(kSaEntries + 0x78, kSaItems);
+  zero(m, kSaItems, 0x50 * 2);
+  const std::string_view name = "Animal_Epona_Adult";
+  for (std::uint32_t i = 0; i < 2; ++i) {
+    m.put_u64(kSaItems + 0x50 * i, kSaItems + 0x50 * i + 0xc);
+    m.put_u32(kSaItems + 0x50 * i + 8, 0x40);
+  }
+  for (std::size_t i = 0; i < name.size(); ++i) m.put_u8(kSaItems + 0xc + i, static_cast<std::uint8_t>(name[i]));
+  GameFlags f(w);
+  CHECK(f.get_string64_array(0x7bde80e9u, 0) == std::string(name));
+  CHECK(f.get_string64_array(0x7bde80e9u, 1) == std::string());  // an empty slot: ""
+  CHECK_FALSE(f.get_string64_array(0x7bde80e9u, 2));              // past the count
+  CHECK_FALSE(f.get_string64_array(0x12345678u, 0));              // not a String64Array
+  m.put_u32(kSaItems + 0x50 + 8, 0x1000);                         // not a 64-byte buffer
+  CHECK_FALSE(f.get_string64_array(0x7bde80e9u, 1));
+}
+
+TEST_CASE("game flags: String64Array element write, row 294 (the game's setter 0x3759470's queue)") {
+  // The queue the setter fills and the applier (0xb9a710) empties: count M + 0x690, slots of 0x58 at M + 0x698,
+  // word M + 0x6a0; a slot's text buffer at +0 (size +8), the index at +0x50 and the hash at +0x54.
+  auto w = game();
+  auto& m = w.mem;
+  constexpr std::uint64_t kSaEntries = 0x8a00000000ull, kSaSlots = 0x8a10000000ull, kSaItems = 0x8a20000000ull;
+  constexpr std::uint64_t kSaQueue = 0x8a30000000ull, kSaTexts = 0x8a40000000ull;
+  table(m, 0x670, kSaEntries, kSaSlots, 0x90, {0x7bde80e9u});
+  m.put_u32(kSaEntries + 0x70, 10);
+  m.put_u64(kSaEntries + 0x78, kSaItems);
+  zero(m, kSaItems, 0x50 * 10);
+  zero(m, kSaTexts, 0x40 * (10 + kQueueCap));
+  for (std::uint32_t i = 0; i < 10; ++i) {
+    m.put_u64(kSaItems + 0x50 * i, kSaTexts + 0x40 * i);
+    m.put_u32(kSaItems + 0x50 * i + 8, 0x40);
+  }
+  queue(m, 0x670, kSaQueue, 0x58);
+  for (std::uint32_t i = 0; i < kQueueCap; ++i) {
+    m.put_u64(kSaQueue + 0x58 * i, kSaTexts + 0x40 * (10 + i));
+    m.put_u32(kSaQueue + 0x58 * i + 8, 0x40);
+  }
+  GameFlags f(w);
+  CHECK(f.get_string64_array(0x7bde80e9u, 0) == std::string());
+  REQUIRE(GameFlags::set_string64_array(w, 0x7bde80e9u, 0, "Animal_Epona_Adult"));
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x6a0) == 0x30100001u);  // 1 taken, 1 finished
+  CHECK(coop::host::read_u32(w.mem, kSaQueue + 0x50) == 0u);        // the index
+  CHECK(coop::host::read_u32(w.mem, kSaQueue + 0x54) == 0x7bde80e9u);
+  std::array<std::uint8_t, 19> text{};
+  REQUIRE(m.read(kSaTexts + 0x40 * 10, std::span(text)));
+  CHECK(std::string(reinterpret_cast<const char*>(text.data())) == "Animal_Epona_Adult");
+  // Read back before the applier ran: the queued text, for that element only.
+  CHECK(f.get_string64_array(0x7bde80e9u, 0) == std::string("Animal_Epona_Adult"));
+  CHECK(f.get_string64_array(0x7bde80e9u, 1) == std::string());
+  CHECK_FALSE(GameFlags::set_string64_array(w, 0x7bde80e9u, 10, "Animal_Epona_Adult"));  // past the live count
+  CHECK_FALSE(GameFlags::set_string64_array(w, 0x12345678u, 0, "Animal_Epona_Adult"));   // not a String64Array
+  CHECK_FALSE(GameFlags::set_string64_array(w, 0x7bde80e9u, 0, "bad\ntext"));
 }

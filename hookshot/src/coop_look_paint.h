@@ -81,8 +81,9 @@ struct Rule {
 };
 
 // The texture formats this rewrites, as a BNTX names them (the high byte of
-// the format: 0x1a BC1, 0x1c BC3, 0x2d to 0x3a ASTC of any block size).
-enum class Format : std::uint8_t { bc1, bc3, astc };
+// the format: 0x1a BC1, 0x1c BC3, 0x2d to 0x3a ASTC of any block size;
+// hair-link: 0x20 BC7, Link's hair Mt_Hairs_Player_Adult_Alb).
+enum class Format : std::uint8_t { bc1, bc3, astc, bc7 };
 std::optional<Format> FormatOf(std::uint32_t bntx_format);
 std::size_t BlockBytes(Format f);
 
@@ -117,6 +118,22 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
 // grey enough (spread under 35% of its brightness) or too dark to say: not a
 // coloured part such as the Triforce's gold (tools/puppet_pack/look_metal.py forceable).
 bool Forceable(const Rgb& c, std::uint32_t tones);
+
+// hair-link (report 293): a hair texture in any colour, the way Character Select's mod makes its hair palette
+// (snail-cs-src, MIT, Copyright (c) 2026 snaildev99, HEAD 785d8d0d: mods/customize.py hair_fn, tools/texrecolor.py
+// bc7_blocks; THIRD_PARTY_NOTICES.md). Every end colour of every block: its hue goes to the colour's and keeps half of
+// its own difference from the texture's mean hue (the strands), its saturation is the colour's scaled by the square
+// root of its own against the mean's, and its brightness is raised to the power that takes the mean brightness to the
+// colour's (0 and 1 stay). The mean is the texture's end colours' (the mod takes the decoded texels'). BC7 only (the
+// game's hair is BC7): the end points of all eight modes are rewritten in place (p-bits kept, a rotation's alpha
+// field holds that channel), the weights, partitions and alpha stay. Another format, or a block of no mode (all zero:
+// padding), is copied as it is. Returns how many blocks changed.
+std::size_t HairRecolour(Format f, std::span<const std::uint8_t> texels, std::span<std::uint8_t> out,
+                         std::uint32_t colour);
+// The pieces, for the tests: a BC7 block's end colours (RGB, rotation undone; none for a block of no mode), and the
+// colour HairRecolour makes of an end colour `c` for a texture whose mean is `mean`.
+std::vector<Rgb> Bc7Ends(const std::array<std::uint8_t, 16>& block);
+Rgb HairShift(const Rgb& c, const Rgb& mean, std::uint32_t colour);
 
 // --- the pieces, for the tests ---
 

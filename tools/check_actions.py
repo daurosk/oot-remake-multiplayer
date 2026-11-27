@@ -11,11 +11,12 @@ that repository; a 40-hex commit SHA cannot (issue 162). Every `uses:` in
 The tag comment says which release the SHA is, so an update can be checked
 against the action's own tag (gh api repos/<owner>/<repo>/git/ref/tags/<tag>).
 
-It also guards the self-hosted runner on the owner's PC (docs/ci-runner.md). Any
-non-comment line naming `self-hosted` or the `daurosk-pc` label must be exactly
-RUNNER_LINE (a push by daurosk to daurosk's repo, with the repo variable
-COOP_SELF_HOSTED on; everything else gets windows-latest), apart from the step
-test `runner.environment == 'self-hosted'`. A workflow that names the runner must
+It also guards the self-hosted runners on the owner's PC (docs/ci-runner.md). Any
+non-comment line naming `self-hosted` or a runner label (squadala-wsl, daurosk-pc)
+must be exactly one of RUNNER_LINES (Linux: daurosk's own push to main, integrate-*,
+release-* or a tag, or daurosk's manual run, in daurosk's repo, with the repo variable
+COOP_SELF_HOSTED_LINUX on; Windows (not installed): daurosk's push with COOP_SELF_HOSTED
+on; everything else gets the GitHub-hosted image), apart from the step tests `runner.environment == 'self-hosted'` and `!=`. A workflow that names the runner must
 not use pull_request_target.
 Exit code 0 means every check passes, 1 lists the lines to fix.
 """
@@ -47,8 +48,24 @@ def check_text(text):
     return problems
 
 
-RUNNER_WORDS = re.compile(r"self-hosted|daurosk-pc")
+RUNNER_WORDS = re.compile(r"self-hosted|daurosk-pc|squadala-wsl")
 RUNNER_TEST = "runner.environment == 'self-hosted'"
+RUNNER_TEST_NOT = "runner.environment != 'self-hosted'"
+# The one gate (docs/ci-runner.md): daurosk's own push to main, integrate-*, release-* or a tag, or daurosk's
+# manual run, in daurosk's repo, while the repo variable is on. pull_request (forks included) never matches.
+def _gate(var):
+    return (
+        "(github.repository == 'daurosk/oot-remake-multiplayer'"
+        " && github.actor == 'daurosk' && github.triggering_actor == 'daurosk'"
+        f" && vars.{var} == 'on'"
+        " && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push'"
+        " && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')"
+        " || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')))))"
+    )
+
+
+WSL = "fromJSON('[\"self-hosted\", \"linux\", \"x64\", \"squadala-wsl\"]')"
+# windows job -> the Windows runner design (not installed: dropped 2026-11-26), else windows-latest.
 RUNNER_LINE = (
     "runs-on: ${{ (github.event_name == 'push'"
     " && github.repository == 'daurosk/oot-remake-multiplayer'"
@@ -57,6 +74,12 @@ RUNNER_LINE = (
     " && fromJSON('[\"self-hosted\", \"windows\", \"x64\", \"daurosk-pc\"]')"
     " || 'windows-latest' }}"
 )
+# Linux jobs -> the WSL runners (squadala-wsl), else ubuntu-latest; python-tools picks it for its ubuntu row only.
+RUNNER_LINE_LINUX = "runs-on: ${{ " + _gate("COOP_SELF_HOSTED_LINUX") + " && " + WSL + " || 'ubuntu-latest' }}"
+RUNNER_LINE_MATRIX = (
+    "runs-on: ${{ matrix.os == 'ubuntu-latest' && " + _gate("COOP_SELF_HOSTED_LINUX") + " && " + WSL + " || matrix.os }}"
+)
+RUNNER_LINES = (RUNNER_LINE, RUNNER_LINE_LINUX, RUNNER_LINE_MATRIX)
 
 
 def check_runner(text):
@@ -65,10 +88,10 @@ def check_runner(text):
     names_runner = False
     for number, line in enumerate(text.splitlines(), 1):
         code = line.strip()
-        if code.startswith("#") or not RUNNER_WORDS.search(code.replace(RUNNER_TEST, "")):
+        if code.startswith("#") or not RUNNER_WORDS.search(code.replace(RUNNER_TEST, "").replace(RUNNER_TEST_NOT, "")):
             continue
         names_runner = True
-        if code != RUNNER_LINE:
+        if code not in RUNNER_LINES:
             problems.append((number, "self-hosted runner named outside the gated runs-on line"))
     if names_runner and re.search(r"^\s*pull_request_target\s*:", text, re.M):
         problems.append((1, "workflow names the self-hosted runner and uses pull_request_target"))

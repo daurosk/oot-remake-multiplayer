@@ -38,7 +38,10 @@ bool Put(coop::host::FlagStore& game, std::string_view name, std::uint32_t hash,
         return true;
     }
     if (!game.write(coop::protocol::FlagEntry(key, kind, static_cast<std::uint32_t>(value)))) {
-        out.text = Add(out.text, std::string(name) + ": write failed");
+        out.text = Add(out.text, std::string(name) + (LinkBacked(hash) != LinkWord::none
+                                                          ? ": write failed (the game keeps it in our Link's Life "
+                                                            "component, and no Link was found to write it into)"
+                                                          : ": write failed"));
         return false;
     }
     out.changed = true;
@@ -59,6 +62,22 @@ std::int32_t Wanted(const coop::host::ItemFlag& item, std::int32_t was) {
 }
 
 }  // namespace
+
+LinkWord LinkBacked(std::uint32_t hash) {
+    static const std::uint32_t life = coop::host::flag_hash("PlayerStatus.Life");
+    static const std::uint32_t max = coop::host::flag_hash("PlayerStatus.MaxLife");
+    return hash == life ? LinkWord::life : hash == max ? LinkWord::max : LinkWord::none;
+}
+
+bool LinkBackedFlags::write(const coop::protocol::FlagEntry& entry) {
+    const LinkWord word = LinkBacked(entry.key.hash);
+    if (word != LinkWord::none) {
+        if (entry.kind != FlagKind::int32 || link_ == nullptr) return false;
+        const auto quarters = static_cast<std::int32_t>(entry.value);
+        if (!(word == LinkWord::life ? link_->set_life(quarters) : link_->set_max(quarters))) return false;
+    }
+    return flags_.write(entry);
+}
 
 bool IsItemFlag(std::string_view name) { return Find(name) != nullptr; }
 

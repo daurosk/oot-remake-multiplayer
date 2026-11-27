@@ -619,6 +619,37 @@ private:
     Core::Memory::Memory& memory_;
 };
 
+// The actors on the game's live list (from `main`, the main module). False when the list changed under us (or none).
+// `head`/`walked`: the list head and the nodes walked, for the caller's log.
+bool ListActors(Reader& r, u64 main, std::vector<u64>& out, u64* head_out = nullptr, std::size_t* walked_out = nullptr) {
+    const auto manager = r.Ptr(main + kActorManagerPtr);
+    if (!manager) {
+        return false;
+    }
+    const auto lists = r.Ptr(*manager + kManagerLists);
+    if (!lists) {
+        return false;
+    }
+    const u64 head = *lists + kListHead;
+    const auto count = r.Get<u32>(head + kListCount);
+    if (!count) {
+        return false;
+    }
+    std::size_t walked = 0;
+    auto node = r.Ptr(head);
+    while (node && *node != head && walked < kMaxWalk) {
+        ++walked;
+        const auto owner = r.Get<u64>(*node + kNodeOwner);
+        if (owner && *owner + kActorNode == *node) {
+            out.push_back(*owner);
+        }
+        node = r.Ptr(*node);
+    }
+    if (head_out) *head_out = head;
+    if (walked_out) *walked_out = walked;
+    return node && walked == *count;
+}
+
 // The walk's reads as a CoopPuppet::Guest, for CoopShotReflect's hit-list reading (no writes).
 class ReaderGuest final : public CoopPuppet::Guest {
 public:
@@ -6624,30 +6655,9 @@ private:
 
     // The actors on the live list. False when the list changed under us.
     bool List(Reader& r, std::vector<u64>& out) {
-        const auto manager = r.Ptr(main_ + kActorManagerPtr);
-        if (!manager) {
-            return false;
-        }
-        const auto lists = r.Ptr(*manager + kManagerLists);
-        if (!lists) {
-            return false;
-        }
-        const u64 head = *lists + kListHead;
-        const auto count = r.Get<u32>(head + kListCount);
-        if (!count) {
-            return false;
-        }
+        u64 head = 0;
         std::size_t walked = 0;
-        auto node = r.Ptr(head);
-        while (node && *node != head && walked < kMaxWalk) {
-            ++walked;
-            const auto owner = r.Get<u64>(*node + kNodeOwner);
-            if (owner && *owner + kActorNode == *node) {
-                out.push_back(*owner);
-            }
-            node = r.Ptr(*node);
-        }
-        const bool whole = node && walked == *count;
+        const bool whole = ListActors(r, main_, out, &head, &walked);
         // Row 267: once per game process whatever the caller. Not first_: that is cleared only by Walk(), which
         // runs only with LICHII_COOP_DEBUG_OBJECTS, so in normal play every Collect()/Pivot() scan said it.
         if (whole && !list_said_) {
@@ -7079,6 +7089,32 @@ std::optional<std::uint64_t> OurLinkActor() {
         return std::nullopt;
     }
     return actor;
+}
+
+std::optional<LinkLifeWords> FindOurLinkLife(Core::System& system, std::uint64_t main) {
+    if (main == 0) {
+        return std::nullopt;
+    }
+    Reader r(system.ApplicationMemory());
+    std::vector<u64> actors;
+    if (!ListActors(r, main, actors)) {
+        return std::nullopt;
+    }
+    for (const u64 a : actors) {
+        const std::string name = r.Name(a);
+        if (name != "Player_Child" && name != "Player_Adult") {
+            continue;
+        }
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto value = life ? r.Ptr(*life + kLifeValue) : std::nullopt;
+        const auto max = life ? r.Ptr(*life + kLifeMax) : std::nullopt;
+        if (!value || !max) {
+            return std::nullopt;   // (our Link, with no Life component yet)
+        }
+        return LinkLifeWords{*value + 8, *max + 8};   // (the words the walk reads: LifeValue's +8)
+    }
+    return std::nullopt;
 }
 
 void PlaceOurLink(const std::array<float, 3>& at) {

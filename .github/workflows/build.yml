@@ -76,7 +76,7 @@ jobs:
   # Full or python-only (header, 'Scope'). Runs on every event; only a manual run on a work branch can come out
   # python-only. The C++ jobs need it, so it must never be skipped.
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.repository == 'daurosk/oot-remake-multiplayer' && github.actor == 'daurosk' && github.triggering_actor == 'daurosk' && vars.COOP_SELF_HOSTED_LINUX == 'on' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/'))))) && fromJSON('["self-hosted", "linux", "x64", "squadala-wsl"]') || 'ubuntu-latest' }}
     outputs:
       full: ${{ steps.scope.outputs.full }}
     steps:
@@ -99,7 +99,7 @@ jobs:
       matrix:
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
         python: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["3.10", "3.12"]' || '["3.12"]') }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (github.repository == 'daurosk/oot-remake-multiplayer' && github.actor == 'daurosk' && github.triggering_actor == 'daurosk' && vars.COOP_SELF_HOSTED_LINUX == 'on' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/'))))) && fromJSON('["self-hosted", "linux", "x64", "squadala-wsl"]') || matrix.os }}
     name: python-tools (${{ matrix.os }}, ${{ matrix.python }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -254,6 +254,8 @@ jobs:
         run: python tools/puppet_pack/tests/test_eye_switches.py -v
       - name: HUD pack tests
         run: python tools/puppet_pack/tests/test_hud.py -v
+      - name: Puppet pack map icons tests
+        run: python tools/puppet_pack/tests/test_map_icons.py -v
       - name: Party HUD pack tests
         run: python tools/puppet_pack/tests/test_party_hud.py -v
       - name: Look cap tests
@@ -299,6 +301,10 @@ jobs:
   # COOP_SELF_HOSTED is 'on'. Pull requests (forks included), manual runs and
   # pushes by anyone else always get windows-latest. Turn the runner off by
   # setting COOP_SELF_HOSTED to anything else; jobs fall back to GitHub.
+  # (Not installed: the owner dropped the Windows runner on 2026-11-26; COOP_SELF_HOSTED stays unset.)
+  # The Linux jobs (scope, python-tools' ubuntu row, linux) use the WSL runners (squadala-wsl): daurosk's own
+  # push to main, integrate-*, release-* or a tag, or daurosk's manual run, while COOP_SELF_HOSTED_LINUX is
+  # 'on'; pull requests never. linux-longshot stays on ubuntu-22.04 (its glibc 2.35 baseline).
   windows:
     needs: scope
     if: needs.scope.outputs.full == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-'))))
@@ -411,6 +417,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/kit_deps_test.ps1
       - name: CI runner hook tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/job_started_test.ps1
+      - name: WSL runners' lane check tests (status-feed.ps1)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/wsl/status_feed_test.ps1
       - name: CI runner script checks
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/scripts_test.ps1
 
@@ -465,7 +473,7 @@ jobs:
   linux:
     needs: scope
     if: needs.scope.outputs.full == 'true' && (github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.repository == 'daurosk/oot-remake-multiplayer' && github.actor == 'daurosk' && github.triggering_actor == 'daurosk' && vars.COOP_SELF_HOSTED_LINUX == 'on' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/'))))) && fromJSON('["self-hosted", "linux", "x64", "squadala-wsl"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -496,9 +504,16 @@ jobs:
             *) echo "unknown job $JOB"; exit 1 ;;
           esac
           { echo "CC=$cc"; echo "CXX=$cxx"; echo "COOP_ARGS=$args"; echo "COOP_SOAK=$soak"; } >> "$GITHUB_ENV"
+      # The WSL runners share one ccache (setup.sh: /var/cache/squadala-ccache, 20 GB) instead of the Actions cache.
+      - name: Shared ccache on the WSL runners
+        if: runner.environment == 'self-hosted'
+        run: |
+          { echo "CCACHE_DIR=/var/cache/squadala-ccache"; echo "CCACHE_MAXSIZE=20G"; } >> "$GITHUB_ENV"
+          echo "runner $RUNNER_NAME: shared ccache /var/cache/squadala-ccache"
       - name: Install ccache
         run: sudo apt-get install -y -q ccache || { sudo apt-get update -q && sudo apt-get install -y -q ccache; }
       - name: ccache
+        if: runner.environment != 'self-hosted'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .ccache

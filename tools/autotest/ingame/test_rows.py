@@ -103,6 +103,7 @@ def test_hud_blocks(pair):
 
 
 @pytest.mark.budget(240)
+@pytest.mark.needs_env("LICHII_COOP_OCARINA_PROBE=1")   # Pair.ocarina_out waits for the probe's line (pair.OCARINA_PROBE)
 @pytest.mark.row("#152 own ocarina notes sent and played (hs-ocarina)")
 def test_ocarina_notes(pair):
     with pair.setup():

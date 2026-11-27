@@ -98,8 +98,19 @@ inline constexpr float kFirstX = 206.0f - 78.0f * (1.0f - kScale) / 2.0f;
 inline constexpr float kStepX = 78.0f * kScale;
 inline constexpr float kStepY = 61.0f * kScale;
 inline constexpr float kLabelHeight = 76.0f * kScale;      // party_hud.py LABEL_SIZE x LABEL_SCALE
-inline constexpr float kLabelX = kFirstX - 30.0f + 500.0f * kScale;   // the line's middle: its left end at the hearts'
-inline constexpr float kBlockGap = 14.0f;
+// The lines are LEFT-aligned on the hearts' left edge, as 0.11.12's drawn blocks (coop_draw DrawHud at 8a99851f6: the
+// name at the hearts' x, cut with "..." to 30% of the picture's width). The pack's text part (PaEnemyLocation_00) centres
+// its text on the pane, so the pane's middle goes half the line's width right of that edge (LabelX). Until hud-fit-0120
+// the middle was fixed (541): every line was centred over left-aligned hearts, and the longest one (16 W, "(talking)"
+// and "Inside Ganondorf's Castle", 34.7 em) ran 81 px off the screen's left edge (gate-hud shot of 2f734963a, A).
+inline constexpr float kLabelLeft = kFirstX - kStepX / 2.0f;   // the first heart's left edge
+// The line's em in the parent's units: 14.0 to 15.0 px an em of the 1280 x 720 gate-hud shot of the 3840 layout
+// ("Twenty 45/80" 6.27 em 91 px; "(talking)  Inside Ganondorf's Castle 13/40" 18.3 em 273 px; CoopNativeUi::Width with
+// the game's font-medium.otf). The larger, so a line is never cut too late.
+inline constexpr float kLabelEm = 45.0f;
+inline constexpr float kLabelRoom = 0.3f * 3840.0f;            // a line at most 30% of the picture wide (0.11.12's)
+inline constexpr float kBlockGap = 45.0f;   // between blocks: a name sits on its own hearts, apart from the hearts
+                                            // above it (14 before: a name was as near the last block's hearts)
 inline constexpr float kDefaultTop = -330.0f;              // under two rows of hearts and the magic bar
 inline constexpr float kLayoutHeight = 2160.0f;
 inline constexpr float kDimAlpha = 150.0f / 255.0f;        // a player not connected: as the drawn blocks (coop_draw)
@@ -158,6 +169,11 @@ float BlockHeight(int hearts);
 // `own`: our own line ("You" and our voice state) goes first, so the blocks start one line lower.
 float TopFrom(std::optional<double> game_hud_bottom, bool own = false);
 
+// A line as it shows: cut at its end with "..." to kLabelRoom (CoopNativeUi::Width, the game's font), so every line is
+// on the picture whatever the name, voice words, place and language; at least "...".
+std::string FitLabel(const std::string& text);
+// Where a line's pane goes so its (fitted) text starts at kLabelLeft: the pane's middle, in the parent's units.
+float LabelX(const std::string& fitted);
 // "+N" for the players not shown (no slot or no room left on the picture); "" none.
 std::string MoreText(std::size_t hidden);
 // How many of the blocks (their heart counts, in order) are shown from `top` down: at most `slots`, every one on the
@@ -224,8 +240,9 @@ private:
     void Effects(Game& game, Pane& p, bool glowing, std::uint64_t glow_ms, bool pinch, std::uint64_t now_ms,
                  bool defence);
     static void StopAt(Game& game, std::uint64_t anim, float& had, float frame);
-    void SetLabel(Game& game, std::size_t index, const std::string& text, const std::array<float, 2>& at,
-                  float alpha, std::vector<std::string>* log);
+    // A line at height `y` (its middle), left-aligned at kLabelLeft and fitted to kLabelRoom.
+    void SetLabel(Game& game, std::size_t index, const std::string& text, float y, float alpha,
+                  std::vector<std::string>* log);
     std::uint64_t TextPane(Game& game, std::uint64_t layout, const std::string& path, std::string& why);
     static void Alpha(Game& game, std::uint64_t pane, float& had, float alpha);
     std::uint64_t Name(Game& game, const std::string& text);

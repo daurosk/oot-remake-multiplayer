@@ -38,7 +38,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, asb_carry, byml, charsel_ui, coop_menu, dumpcheck, dungeon_rooms, hud, look_cap, look_items, look_live, look_metal, map_captures, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+from . import ainb, asb_carry, byml, charsel_ui, coop_menu, dumpcheck, dungeon_rooms, hud, look_cap, look_items, look_live, look_metal, map_captures, map_icons, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -1643,7 +1643,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 m_data = dicts.decompress(m_raw)
                 data = tunic.model_for(m_data, c, dark=dark is not None)
                 data = tunic_extra.model_names(data, c, names)
-                data = look_items.body_model_for(data, c) if boots else data   # (the puppets' only)
+                data = look_items.body_model_for(data, c, tuple(boots)) if boots else data   # (the puppets' only)
                 own_model = None
                 if own_set and v in SELF_MODEL_VARIANTS:
                     own_model = tunic.model_for(m_data, c, dark=dark is not None, letter=tunic.SELF_LETTER)
@@ -1671,6 +1671,16 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             write(os.path.join(out_romfs, b_dst), recompress(dicts, b_raw, b_data))
             table.add_new(strip_zs(b_dst), table.get(strip_zs(b_rel)) or len(b_data) + PACK_SIZE_MARGIN)
             paths.append(b_dst)
+            if name == look_items.HAIR:
+                # hair-link: the child's model names a hair copy of its own (look_items.child_hair_name).
+                try:
+                    h_data = look_items.child_hair_texture_for(dicts.decompress(b_raw), c)
+                except tunic.TunicError as e:
+                    raise BuildError(f"{b_rel}: {e}")
+                h_dst = f"Tex/{look_items.child_hair_name(c)}.bntx.zs"
+                write(os.path.join(out_romfs, h_dst), recompress(dicts, b_raw, h_data))
+                table.add_new(strip_zs(h_dst), table.get(strip_zs(b_rel)) or len(h_data) + PACK_SIZE_MARGIN)
+                paths.append(h_dst)
         if look_dir:
             write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
             look_files[c] = f"{look_live.DIR}/{c}.bin"
@@ -2579,6 +2589,17 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         except (coop_menu.CoopMenuError, charsel_ui.CharselError, ui_pack.UiPackError, sarc.SarcError, OSError,
                 ValueError, KeyError, IndexError, struct.error) as e:   # (it was made a moment ago: never seen)
             log(f"co-op's - menu screen: NOT made after its trial ({e}); the - menu's tabs have no page this time")
+    # The other players on the game's own maps (map_icons.py, native-ui-audit item 8): hidden copies of the map icon
+    # part in MapMenu_00, after the menus' steps through the same view (ui_run), so their edits of Common are kept.
+    # Hookshot's game only (the module shows them); left out on any trouble: the maps then show no other players.
+    if pause_tab:
+        try:
+            pause_files += map_icons.build(romfs, out_romfs, dicts, table,
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress,
+                                           log, run=ui_run)
+        except (map_icons.MapIconsError, ui_pack.UiPackError, sarc.SarcError, OSError, ValueError, KeyError,
+                IndexError, struct.error) as e:
+            log(f"map icons: left out ({e}); the maps show no other players")
 
     if characters:
         # The mod's own rows first, the pack's own over them, then the player's own Link's heaps (as the mod alone).

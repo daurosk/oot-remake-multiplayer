@@ -39,6 +39,15 @@ FPS = 30              # Ocarina of Time's calc rate on Hookshot: frames -> secon
 WARP_PAIR_MEASURED_S = 31.0
 RECOVER_WARP_S = WARP_PAIR_MEASURED_S   # one game's warp in a recovery: the worst TWO-game warp = 2x one game's (margin)
 RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load, an event's end, in play (stepped)
+BOOT_READY_S = 240.0  # the boot proof's own deadline (out of a load, a warp of a game left elsewhere, an event's end)
+# A recovery whose stepped part failed relaunches each game not in play at the boot's place ONCE (Pair.recover,
+# crawl-337-11): a game left waiting for input (a pause page, tb-gate-ui-f9f3b9c2 test_pause; the ocarina UI,
+# tb-pilot-f9f3b9c2 test_ocarina_notes) never comes back by stepping. Its bound: each game's live.py quit + relaunch
+# (Pair.REJOIN_QUIT_S + REJOIN_BOOT_S, set on Pair below) and the boot proof again (BOOT_READY_S).
+# A warp inside a test's set-up (Pair.setup) gets the same allowance on top of SETUP_LIMIT_S: one warp_one = game x's
+# warp (13.5-15.5 s) + the other game stepped to the same frames (about as long: tb-gate-look-f9f3b9c2-2 SETUP-FAIL,
+# warp_one(A) ~16 s then step_other(B) needed 14.5 s with 13.5 s of the 30 left). The 30 s still bounds the rest.
+SETUP_WARP_S = WARP_PAIR_MEASURED_S
 # The shortest reply wait a call is ever sent with (boss-respawn-bridge-e3e6e253, CAUSE 2: a call sent with the 0.2 s
 # left of a spent deadline timed the socket out; playtest_client.request closes it on any OSError and the bridge lets the
 # game RUN FREE mid-arrival, so every later test's recovery met 'teleport still in progress'). Cited parts: a held
@@ -54,6 +63,15 @@ CLIENT_FPS = 20.0     # the client's worst stepping rate (playtest_client.py inp
 # Kakariko gate and after the test's LEFT; no bridge run had taken an ocarina out before).
 OCARINA_EQUIPPED = r"coop: items: ocarina '\w+' equipped by the game from its flags"
 SCENE_LOADED = r"coop: native ui: scene load ended"     # (seen: songs-frogs-733c4d8f hookshot_log-B.txt:4289, then :4581)
+# The game's play UI (hookshot/src/coop_hookshot.cpp Frame: 'coop: native ui: the game's play UI ' + 'is up (patch 0018's
+# HUD screen ran since the load)...' / 'is down (a scene load or the title)...', CoopNativeUi::GameUiUp). A warp's scene
+# load takes it down; it is up again only once the game's HUD screen has run after the load AND the arrival. Before
+# that the game refuses + (crawl-337-12: pause-warp-34950797, B's PLUS reached the game 1.1 s after warp_both, B's
+# arrival event 5.3 s at ~5 fps, its play UI up only after it (game-out-B.txt :5952 free play, :5980 play UI up), B
+# never paused; pause-warp-826f66cb, the same + 300 frames later, B paused in both repeats). So a warp returns only
+# once the game that warped shows its play UI up again (Pair._until_play_ui).
+PLAY_UI = r"coop: native ui: the game's play UI is (up|down)"
+PLAY_UI_FRAMES = 600  # frames: 2 x the 300-frame wait that let B's + through after its arrival (pause-warp-826f66cb)
 OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's end (the frogs' boot event: 0.7 s)
 # D-pad Left's two module lines (probe-ocarina-2f14b333, 11-26, both games, cited by its game-out-X.txt line): the press
 # ALWAYS starts the game's free-Ocarina event (OCARINA_FREE: B :4810, A :5814; also both frogs SETUP-FAIL runs, 733c4d8f
@@ -62,6 +80,10 @@ OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's 
 # 500 frames and a second 30-frame LEFT before it brought nothing). The frogs runs waited for OCARINA_PLAYS alone.
 OCARINA_FREE = r"coop: event: the running event is our free Ocarina"      # coop/host/include/coop/host/event_owner.hpp:58, docs/scenes.md:41
 OCARINA_PLAYS = r"ocarina probe: our Link plays the ocarina"              # lichii/hook/coop_ocarina.cpp:320 (PROBE=1)
+# OCARINA_PLAYS is the probe's line: written only with this switch (coop_objects.cpp:2992 'if (ocarina_probe_on_)', :7012
+# EnvFlag). Without it no game ever logs it (tb-pilot-f9f3b9c2: env PUPPET + TEST_TO_TITLE only, hookshot_log-A.txt has 0
+# 'ocarina probe' lines, test_ocarina_notes SETUP-FAIL), so ocarina_out refuses to start without it (SetupFail).
+OCARINA_PROBE = "LICHII_COOP_OCARINA_PROBE=1"
 # The no-box wait for OCARINA_PLAYS after LEFT: 240 frames, the scenario's own 'press DLEFT 12' + 'wait 240'
 # (scenarios/hs-ocarina.A.txt:23-24) that run 20261115-185256 proved (docs/items.md:340: the plays line after DLEFT
 # within it). Not shortened: no run measured the no-box gap itself (review-c123-13 17:47). In the box case nothing
@@ -71,6 +93,12 @@ OCARINA_PLAYS_FRAMES = 240
 
 class SetupFail(Exception):
     """The test could not be set up (the lane, a warp, a give, the set-up took more than 30 s): SETUP-FAIL, not FAIL."""
+
+
+class LaneLost(SetupFail):
+    """The lane's recovery failed and so did its one relaunch of the stuck game(s) (Pair.recover): the pair cannot be
+    brought back, so bt_plugin SETUP-FAILs every later test of this lane at once ('lane lost after <test>') instead of
+    repeating the same doomed recovery for each (tb-pilot-f9f3b9c2: 26 cascade SETUP-FAILs of ~28 s each)."""
 
 
 class NoRef(Exception):
@@ -221,6 +249,61 @@ def nocs_check(b, n, lane):
         raise SetupFail("%s still has mods/%s" % (tag, CS_MOD))
 
 
+def kit_build(kit):
+    """The packaged kit's own record of what it was built from: tools/release/make_kit_hookshot.ps1 writes
+    KIT/VERSION.txt 'co-op repo: <git rev-parse HEAD> (<branch>)[ with uncommitted changes]' and
+    'hookshot_coop.dll: <sha256 first 16>', and copies the module to KIT/hookshot/hookshot_coop.dll. Returns
+    {commit, dll, dll_sha256}; SetupFail if the record is missing, dirty, or does not match the kit's module."""
+    vf = os.path.join(kit, "VERSION.txt")
+    try:
+        with open(vf, encoding="utf-8-sig", errors="replace") as fh:
+            ver = fh.read()
+    except OSError:
+        raise SetupFail("no %s (not a kit made by make_kit_hookshot.ps1)" % vf)
+    m = re.search(r"(?m)^co-op repo: ([0-9a-f]{40}) \(.*?\)(.*)$", ver)
+    if not m:
+        raise SetupFail("%s has no 'co-op repo: <40-hex sha>' line" % vf)
+    if "uncommitted" in m.group(2):
+        raise SetupFail("%s: the kit was built with uncommitted changes (no commit names its module)" % vf)
+    dll = os.path.join(kit, "hookshot", "hookshot_coop.dll")
+    have = _sha256_file(dll)
+    if not have:
+        raise SetupFail("no %s" % dll)
+    d16 = re.search(r"(?m)^hookshot_coop\.dll: ([0-9A-Fa-f]{16}) ", ver)
+    if not d16 or d16.group(1).upper() != have.upper()[:16]:
+        raise SetupFail("%s hookshot_coop.dll line %s is not the kit's module %s"
+                        % (vf, d16.group(1) if d16 else "(none)", have.upper()[:16]))
+    return {"commit": m.group(1), "dll": os.path.abspath(dll), "dll_sha256": have.upper()}
+
+
+def write_lane_server(folder, kit, server, protocol="", by=""):
+    """lane-server.txt for a game folder that lane-game-for.ps1 did not install (the short gate's packaged kit pair):
+    the same fields in the same order as offline/lane-game-for.ps1 writes them, from the folder's own module and
+    coop-built-from.txt, so lane_check above reads it as a lane's, plus kit= (the source of commit=).
+    commit= is never the caller's word: it is the kit's own VERSION.txt commit (kit_build), and the folder's module must
+    be the kit's module (sha256), else SetupFail (coop-built-from.txt's commit= is Longshot's, not ours; without this
+    --expect-commit would compare a typed value with itself). Returns the text."""
+    import datetime
+    kb = kit_build(kit)
+    line = _patches_line(os.path.join(folder, "coop-built-from.txt"))
+    if line is None:
+        raise SetupFail("%s has no coop-built-from.txt patches= line (not built by hs.py build?)" % folder)
+    dll = _sha256_file(os.path.join(folder, "hookshot_coop.dll"))
+    if not dll:
+        raise SetupFail("%s has no hookshot_coop.dll" % folder)
+    if dll.upper() != kb["dll_sha256"]:
+        raise SetupFail("%s hookshot_coop.dll %s is not the kit's module %s (kit %s, commit %s)"
+                        % (folder, dll.upper()[:16], kb["dll_sha256"][:16], kit, kb["commit"][:8]))
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")
+    txt = ("# written by tools/autotest/ingame/lane_record.py %s UTC\nby=%s\ncommit=%s\nprotocol=%s\nserver=%s\n"
+           "dll_sha256=%s\npatches_line_sha256=%s\nkit=%s\n"
+           % (stamp, by, kb["commit"], protocol, os.path.abspath(server), dll,
+              hashlib.sha256(line.encode("utf-8")).hexdigest().upper(), os.path.abspath(kit)))
+    with open(os.path.join(folder, "lane-server.txt"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(txt)
+    return txt
+
+
 def _sha256_file(path):
     try:
         h = hashlib.sha256()
@@ -268,6 +351,9 @@ class Pair:
         self.boot_scene = None # the boot's scene (bt_plugin._boot_proof): where every default-boot test starts
         self.notes = []
         self.window_shooter = None   # (x, path) -> path: window shots (windowshot.Shooter; the fake lane's own)
+        # 'NAME=V' / 'A:NAME=V' -> bool: does the boot give that switch (its '#! switches' + --env; bt_plugin lane_pair
+        # sets it). None: not known (a Pair made outside the plugin), nothing is checked.
+        self.has_switch = None
 
     # -- per test ---------------------------------------------------------------------------------------------
     def begin(self, seconds):
@@ -285,10 +371,15 @@ class Pair:
     def setup(self, limit=SETUP_LIMIT_S):
         """A test's set-up: anything that goes wrong in it, or more than `limit` seconds, is SETUP-FAIL (not FAIL).
         While it runs the deadline is min(the test's, `limit`), so every call inside it (reply waits included, see
-        _wait) stops at the limit: a hung set-up is a SETUP-FAIL after `limit` s, not a FAIL at the test's budget."""
+        _wait) stops at the limit: a hung set-up is a SETUP-FAIL after `limit` s, not a FAIL at the test's budget.
+        Each warp in it (warp_one, so warp_both counts two) adds SETUP_WARP_S to that limit (never past the test's
+        deadline): a warp's wall time is the game's load, measured, not a set-up that hangs (kokiri-band-c124-6
+        20:58: a two-game warp in a set-up cannot fit 30 s; 12+ tests warp in their set-up)."""
         outer = self.deadline
         clock = outer.clock
         self.deadline = Deadline(max(0.0, min(limit, outer.left())), clock=clock)
+        was, ctx = getattr(self, "_setup_ctx", None), {"outer": outer, "warps": 0}
+        self._setup_ctx = ctx
         t0 = clock()
         try:
             yield
@@ -298,10 +389,23 @@ class Pair:
             raise SetupFail("set-up: %s: %s" % (type(e).__name__, e)) from e
         finally:
             self.deadline = outer
+            self._setup_ctx = was
         took = clock() - t0
-        if took > limit:
-            raise SetupFail("set-up took %.1f s (limit %.0f s)" % (took, limit))
-        self.notes.append("set-up %.1f s" % took)
+        bound = limit + ctx["warps"] * SETUP_WARP_S
+        warps = " incl %d warp(s)" % ctx["warps"] if ctx["warps"] else ""
+        if took > bound:
+            raise SetupFail("set-up took %.1f s%s (limit %.0f s)" % (took, warps, bound))
+        self.notes.append("set-up %.1f s%s" % (took, warps))
+
+    def _setup_warp(self):
+        """A warp inside a set-up: its deadline grows by SETUP_WARP_S, capped by the test's own (Pair.setup)."""
+        ctx = getattr(self, "_setup_ctx", None)
+        if not ctx:
+            return
+        ctx["warps"] += 1
+        d = self.deadline
+        d.end = min(d.end + SETUP_WARP_S, ctx["outer"].end)
+        d.seconds += SETUP_WARP_S
 
     # -- frames -----------------------------------------------------------------------------------------------
     def _need(self, cmd, frames=0):
@@ -403,7 +507,12 @@ class Pair:
         need_ocarina, D-pad Left (12 frames), then OCARINA_PLAYS within max_frames: done. Else OCARINA_FREE must be
         there (else AssertionError: nothing came out, the #190 bug's sign): the first-use box is up, B closes it (the
         probe's proven press; not A, a note key), and OCARINA_PLAYS must come AFTER the B press (the log is marked right
-        before it), within max_frames. Ends with Link playing (no note sent by the set-up)."""
+        before it), within max_frames. Ends with Link playing (no note sent by the set-up).
+        A boot without OCARINA_PROBE on game x: SetupFail at once (the line can never come; the test's needs_env and the
+        run's --env must carry it)."""
+        if self.has_switch is not None and not self.has_switch("%s:%s" % (x, OCARINA_PROBE)):
+            raise SetupFail("%s: ocarina_out needs %s (OCARINA_PLAYS is the probe's line, coop_objects.cpp:7012): this "
+                            "boot does not set it; add it to the test's needs_env and the run's --env" % (x, OCARINA_PROBE))
         self.need_ocarina(x)
         pos = self.log[x].mark()
         self.press(x, ["LEFT"], frames=12)
@@ -439,18 +548,46 @@ class Pair:
         return "%s: scene=%s loading=%s event=%s not_ready=%s" % (x, st.get("scene"), st.get("loading"), st.get("event"),
                                                                st.get("not_ready"))
 
+    def why_now(self, x, seconds=AWAY_CHECK_S):
+        """why_not(x) for a failure's text, read on its OWN short deadline (as away_from_boot): the test's is often
+        spent by then, and a read with 0 s left raised 'state not sent', which REPLACED the real reason (which game,
+        in what state: tb-pilot-f9f3b9c2, 26 recoveries 'state not sent'). Never raises: a failed read names itself."""
+        outer = self.deadline
+        self.deadline = Deadline(seconds, clock=outer.clock)
+        try:
+            return self.why_not(x)
+        except Exception as e:
+            return "%s: no state (%s: %s)" % (x, type(e).__name__, e)
+        finally:
+            self.deadline = outer
+
+    def at_place(self, x, scene, seconds=AWAY_CHECK_S):
+        """Game x in play (and in `scene` when given), on one read on its own short deadline; a failed read is False."""
+        outer = self.deadline
+        self.deadline = Deadline(seconds, clock=outer.clock)
+        try:
+            st = self.state(x)
+        except Exception:
+            return False
+        finally:
+            self.deadline = outer
+        return self.in_play(st) and (not scene or (st.get("scene") or "").lower() == scene.lower())
+
     def until_in_play(self, what, games=None, max_frames=600):
         """Steps both games until every one of `games` is in play (a fresh Link sample, a scene, no load, no event).
         `games` defaults to the pair's OWN games (self.c): a --solo pair has game A only, and a fixed ('A', 'B')
         read state('B') -> KeyError instead of a SETUP-FAIL (review-rows-c130-3 16:38, need_boot_place).
         A stale sample ('Link sample older than the frame'), a load or an event is a game not ready YET: it is stepped,
         never judged from one read (pilot test-bridge-pilot-fa63e90f: test_boot / test_pause read once, failed on a
-        stale sample). After max_frames: AssertionError naming each game's state."""
+        stale sample). After max_frames: AssertionError naming each game's state. On the deadline (TestTimeout, an
+        AssertionError too) the same, still a TestTimeout: each game's state is read on its own short deadline
+        (why_now), so the timeout keeps its text and gains the games' states (was why_not on the spent deadline: its
+        'state not sent' replaced both, crawl-337-11)."""
         games = tuple(self.c) if games is None else tuple(games)
         try:
             return self.until(what, lambda: all(self.in_play(self.state(x)) for x in games), max_frames)
         except AssertionError as e:
-            raise AssertionError("%s; %s" % (e, "; ".join(self.why_not(x) for x in games))) from None
+            raise type(e)("%s; %s" % (e, "; ".join(self.why_now(x) for x in games))) from None
 
     def boot_ready(self, scene=None, max_frames=BOOT_FRAMES):
         """The lane's boot proof (bt_plugin.lane_pair, NO REPEAT VOIDS after test-bridge-pilot-fa63e90f r1: B was left
@@ -544,34 +681,96 @@ class Pair:
         (the only games boot_ready warps). Was one fixed 30 s for everything: two warps measure 27-31 s, so a
         recovery that warped both games timed out 3/3 (party-hud-bridge-6947aa3d). Every frame wait stays frame-
         bounded (max_frames); every bridge wait stays inside this bound. Anything wrong: SetupFail('recovery: ...')
-        or boot_ready's SetupFail('boot: ...'). Returns boot_ready's states; notes the time and the bound."""
+        or boot_ready's SetupFail('boot: ...'). Returns boot_ready's states; notes the time and the bound.
+        When that stepped part fails, each game not in play at the boot's place is relaunched ONCE (_relaunch_stuck);
+        if that cannot bring the pair back: LaneLost (bt_plugin then SETUP-FAILs the lane's later tests at once)."""
         outer = self.deadline
         clock = outer.clock
         t0 = clock()
-        limit = RECOVER_BASE_S
-        self.deadline = Deadline(max(0.0, min(limit, outer.left())), clock=clock)
+        box = {"limit": RECOVER_BASE_S, "away": []}
         try:
-            try:
-                self.until("both games out of a load before the recovery",
-                           lambda: all(_loaded(self.state(x)) for x in self.c), max_frames)
-                away = [x for x in self.c
-                        if scene and (self.state(x).get("scene") or "").lower() != scene.lower()]
-            except SetupFail:
-                raise
-            except Exception as e:
-                raise SetupFail("recovery: %s: %s" % (type(e).__name__, e)) from e
-            limit = RECOVER_BASE_S + RECOVER_WARP_S * len(away)
-            self.deadline = Deadline(max(0.0, min(limit - (clock() - t0), outer.left())), clock=clock)
-            try:
-                st = self.boot_ready(scene, max_frames)
-            except SetupFail:
-                raise
-            except Exception as e:
-                raise SetupFail("recovery: %s: %s" % (type(e).__name__, e)) from e
+            st = self._recover_stepped(scene, max_frames, outer, t0, box)
+        except Exception as e:
+            fail = e if isinstance(e, SetupFail) else SetupFail("recovery: %s: %s" % (type(e).__name__, e))
+            self.deadline = outer
+            return self._relaunch_stuck(scene, fail, outer, t0)
         finally:
             self.deadline = outer
-        self.notes.append("recovery %.1f s (bound %.0f s, %d warp%s)" % (clock() - t0, limit, len(away),
+        away = box["away"]
+        self.notes.append("recovery %.1f s (bound %.0f s, %d warp%s)" % (clock() - t0, box["limit"], len(away),
                                                                         "" if len(away) == 1 else "s"))
+        return st
+
+    def _recover_stepped(self, scene, max_frames, outer, t0, box):
+        """Pair.recover's stepped part (no relaunch): out of a load, then boot_ready, inside its per-warp bound."""
+        clock = outer.clock
+        self.deadline = Deadline(max(0.0, min(box["limit"], outer.left())), clock=clock)
+        try:
+            self.until("both games out of a load before the recovery",
+                       lambda: all(_loaded(self.state(x)) for x in self.c), max_frames)
+            box["away"] = [x for x in self.c
+                           if scene and (self.state(x).get("scene") or "").lower() != scene.lower()]
+        except SetupFail:
+            raise
+        except Exception as e:
+            raise SetupFail("recovery: %s: %s; %s" % (type(e).__name__, e,
+                                                      "; ".join(self.why_now(x) for x in self.c))) from e
+        box["limit"] = RECOVER_BASE_S + RECOVER_WARP_S * len(box["away"])
+        self.deadline = Deadline(max(0.0, min(box["limit"] - (clock() - t0), outer.left())), clock=clock)
+        try:
+            return self.boot_ready(scene, max_frames)
+        except SetupFail:
+            raise
+        except Exception as e:
+            raise SetupFail("recovery: %s: %s" % (type(e).__name__, e)) from e
+
+    def _relaunch_stuck(self, scene, fail, outer, t0):
+        """The stepped recovery failed (`fail`): each game NOT in play at the boot's place (one read each, own short
+        deadline) is relaunched ONCE through the lane's own boot (Pair.rejoin: live.py quit + relaunch with the boot
+        script x booted with), then the boot proof again (boot_ready, BOOT_READY_S / BOOT_FRAMES). A game left
+        waiting for input (a pause page, the ocarina UI) never comes back by stepping (tb-gate-ui-f9f3b9c2 test_pause,
+        tb-pilot-f9f3b9c2 test_ocarina_notes); no blind button escape (NO GUESSED VALUES). Both games at the place on
+        that read: the recovery holds after all (noted). A game in Pair.no_relaunch ({x: why}, bt_plugin: game A on a
+        host-in-game boot, whose relaunch would end B's session) is never relaunched: LaneLost at once. A relaunch, or the boot proof after it, that fails: LaneLost,
+        with `fail` first in its text. Every step is noted (bt_plugin puts the notes on the test either way)."""
+        clock = outer.clock
+        self.notes.append("recovery: stepped part failed: %s" % fail)
+        whys = {x: self.why_now(x) for x in self.c}
+        bad = [x for x in self.c if not self.at_place(x, scene)]
+        if not bad:
+            self.notes.append("recovery: then both games in play at the boot's place on a fresh read (%.1f s)"
+                              % (clock() - t0))
+            self.deadline = Deadline(AWAY_CHECK_S, clock=clock)
+            try:
+                return {x: self.state(x) for x in self.c}
+            finally:
+                self.deadline = outer
+        never = {x: why for x, why in (getattr(self, "no_relaunch", None) or {}).items() if x in bad}
+        if never:
+            self.notes.append("recovery: not relaunched: %s" % "; ".join("%s (stuck: %s)" % (w, whys[x])
+                                                                     for x, w in never.items()))
+            raise LaneLost("%s; %s" % (fail, "; ".join("%s stuck (%s), not relaunched: %s" % (x, whys[x], w)
+                                                       for x, w in never.items())))
+        try:
+            for x in bad:
+                self.deadline = Deadline(max(0.0, min(self.REJOIN_QUIT_S + self.REJOIN_BOOT_S, outer.left())),
+                                         clock=clock)
+                try:
+                    self.rejoin(x)
+                except Exception as e:
+                    self.notes.append("recovery: %s stuck (%s): relaunch failed: %s: %s" % (x, whys[x], type(e).__name__, e))
+                    raise LaneLost("%s; relaunch of %s (stuck: %s) failed: %s: %s"
+                                   % (fail, x, whys[x], type(e).__name__, e)) from e
+                self.notes.append("recovery: %s stuck (%s): relaunched" % (x, whys[x]))
+            self.deadline = Deadline(max(0.0, min(BOOT_READY_S, outer.left())), clock=clock)
+            try:
+                st = self.boot_ready(scene, BOOT_FRAMES)
+            except Exception as e:
+                self.notes.append("recovery: boot proof after the relaunch failed: %s: %s" % (type(e).__name__, e))
+                raise LaneLost("%s; after relaunching %s: %s: %s" % (fail, ", ".join(bad), type(e).__name__, e)) from e
+        finally:
+            self.deadline = outer
+        self.notes.append("recovery %.1f s with a relaunch of %s" % (clock() - t0, ", ".join(bad)))
         return st
 
     def load_both(self, at_title, max_frames=3600):
@@ -597,6 +796,7 @@ class Pair:
             self.step_both(52)
             ran += 60
 
+    WARP_MARGIN_S = 1.0     # s: warp_one's own wait stays this far under the deadline it read (row-215-confirm)
     TELEPORT_GAP_S = 8      # s: Longshot's one teleport per 8 s per game (docs/playtest.md `warp`, 'still in progress')
     ARRIVE_IN_EVENT_WAIT = 12   # s: the bridge's own wait per game for arrive_in_event; it answers 'timeout' in the
     #                             arrival event, then the arrival is waited for on state (warp_one), not judged here
@@ -622,10 +822,16 @@ class Pair:
         60 s wait, and a 'timeout' is judged on state like arrive_in_event=True (in the scene, not loading, the event
         running), anything else raises."""
         extra = {} if entrance in (None, "") else {"entrance": entrance}
+        self._setup_warp()       # (in a set-up: this warp's measured time on top of its 30 s)
         before = self.c[x].last_frame or 0
+        log_at = self.log[x].size() if isinstance(getattr(self, "log", None), dict) and x in self.log else None
         wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event is True else 60
         for attempt in (1, 2):
-            t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
+            # (the bridge answers by t; t + REPLY_MIN_S, the reply wait _wait checks against a SECOND deadline read, stays
+            # WARP_MARGIN_S under this read: Windows' monotonic clock ticks ~15.6 ms, so a fresh 30 s set-up deadline can
+            # read exactly 30.0 here and 29.98 there, and 'left - 2' truncated left no margin: CI 45885309573
+            # windows 3.10, test_twinrova_wake_late SETUP-FAIL 'warp not sent (30.0 s left, its reply needs 30.0 s)')
+            t = max(1, int(min(wait, self.deadline.left() - REPLY_MIN_S - self.WARP_MARGIN_S)))
             self.deadline.check("warp")
             r = self._request(x, "warp", self._wait("warp", t + REPLY_MIN_S), check=False,
                               scene=scene, timeout=t, **extra)        # (the bridge answers by t; never sent short of it)
@@ -662,7 +868,39 @@ class Pair:
         for y in self.c:
             if y != x and ran:
                 self.step_other(y, ran)
+        if r.get("ok"):
+            # (arrived in free play: the warp ends only when x's play UI is up again; an arrival answered 'timeout' in
+            # its event (arrive_in_event) is left in the event, as the test asked)
+            self._until_play_ui(x, scene, log_at)
         return self.state(x)
+
+    def _until_play_ui(self, x, scene, pos):
+        """After game x's warp to `scene`: x's log since `pos` (before the warp was sent) is read for PLAY_UI lines.
+        None: the play UI did not change (no load took it down), done. The last one 'down': both games are stepped
+        (in step) until an 'up' line comes, at most PLAY_UI_FRAMES, else SetupFail naming the game. The deadline
+        bounds every step (Pair.call)."""
+        log = self.log.get(x) if isinstance(getattr(self, "log", None), dict) else None
+        if log is None or pos is None:
+            return
+        rx = re.compile(PLAY_UI)
+        ran = 0
+        while True:
+            last = None
+            for ln in log.since(pos):
+                m = rx.search(ln)
+                if m:
+                    last = m.group(1)
+            if last != "down":
+                if last == "up":
+                    self.notes.append("%s: warp %s: play UI up again%s" % (x, scene, " after %d frames" % ran if ran
+                                                                            else ""))
+                return
+            if ran >= PLAY_UI_FRAMES:
+                raise SetupFail("%s: warp %s: the game's play UI not up %d frames after the arrival (no '%s' line "
+                                "after its 'down'): + and the HUD are refused until it is"
+                                % (x, scene, ran, "the game's play UI is up"))
+            self.step_both(CHUNK)
+            ran += CHUNK
 
     def step_other(self, y, frames):
         left = int(frames)
@@ -675,13 +913,39 @@ class Pair:
         return self.call(x, "act", lines=line)
 
     def give(self, x, item):
-        return self.call(x, "give", item=item)
+        return self._kept(x, "give", item=item)
 
     def flag(self, x, name, value=1):
-        return self.call(x, "flag", name=name, value=value)
+        return self._kept(x, "flag", name=name, value=value)
+
+    def _kept(self, x, cmd, **args):
+        """A set-up write (give, flag). The bridge reads it back after a few frames of game x (docs/playtest.md):
+        `did_not_stick` (the game put the old value back: a value it keeps elsewhere, as Link's life before
+        give-life-fix) is SETUP-FAIL at once, naming the flag; the other games are stepped by the frames x ran, so
+        the pair stays in step."""
+        before = self.c[x].last_frame or 0
+        try:
+            r = self.call(x, cmd, **args)
+        except pc.BridgeError as e:
+            if e.code == "did_not_stick":
+                raise SetupFail("%s: %s %s did not stick: %s" % (x, cmd, args.get("item") or args.get("name"),
+                                                                 e.reply.get("message"))) from e
+            raise
+        ran = max(0, (self.c[x].last_frame or before) - before)
+        for y in self.c:
+            if y != x and ran:
+                self.step_other(y, ran)
+        return r
 
     def flag_read(self, x, name):
         return self.call(x, "flag_read", name=name)
+
+    def key(self, x, name):
+        """Game x's host key `name` (F1 to F12, A to Z, 0 to 9) through the bridge's `key` (docs/playtest.md; port-g7,
+        B #137): the module's hos_coop_key as the window gives it, no OS key, no focus, no frame run. Reply: key, vk,
+        taken (co-op took it), longshot (not taken: "close", F1 shutting Longshot's menu while co-op's tab shows, or
+        "none"). Step the games after it: what it opens moves at the next frames."""
+        return self.call(x, "key", key=name)
 
     # -- a game leaves and comes back (regress step 4, row 249) ---------------------------------------------------
     REJOIN_QUIT_S = 60       # live.py quit: QUIT_WAIT 15 s to quit, then a kill (live.py:58)
@@ -701,7 +965,7 @@ class Pair:
         this start of game x only (live.py relaunch --env, after the session's own: it wins; row 251:
         LICHII_COOP_SERVER=<LAN IP>:<port>, LICHII_COOP_PASSWORD=); the next rejoin without it starts game x with the
         session's own env again. Returns live.py relaunch's answer; AssertionError if a step did not hold."""
-        if not (self.session and self.live):
+        if not (getattr(self, "session", None) and getattr(self, "live", None)):
             raise SetupFail("rejoin %s: no live.py session (Pair.session / Pair.live) for live.py quit/relaunch" % x)
         live = self.live
         boot = boot or self.boot.get(x)
@@ -735,6 +999,10 @@ class Pair:
         assert h.get("control"), "%s: after the relaunch the bridge has no Longshot control: %s" % (x, h)
         self.notes.append("%s rejoined: quit %s; relaunch %s" % (x, q.get("how"), r.get("boot")))
         return r
+
+    # Pair.recover's ceiling with its one relaunch (_relaunch_stuck): the stepped part (both games warped), then
+    # each game's quit + relaunch, then the boot proof again (bt_plugin's pair fixture gives a recovery this much).
+    RECOVER_RELAUNCH_S = RECOVER_BASE_S + 2 * RECOVER_WARP_S + 2 * (REJOIN_QUIT_S + REJOIN_BOOT_S) + BOOT_READY_S
 
     SERVER_RESTART_S = 30    # live.py server stop (a kill) + start (its own 1 s settle): the call's wall-clock limit
 

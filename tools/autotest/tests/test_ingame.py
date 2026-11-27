@@ -116,8 +116,21 @@ class Suite(unittest.TestCase):
         self.assertEqual(s["counts"]["SETUP-FAIL"], 0, p.stdout[-2000:])
         self.assertTrue(s["tests"])
         for d in s["deselected"]:
-            self.assertTrue(d["needs_env"] or d.get("needs_boot") or d.get("needs_pack") or d.get("needs_solo"), d)   # (a boss row's boot;
-            # a --pack test: port-sweep-c131-6 11:46)
+            self.assertTrue(d["needs_env"] or d.get("needs_boot") or d.get("needs_pack") or d.get("needs_solo")
+                            or d.get("needs_kit"), d)
+            # (a boss row's boot; a --pack test: port-sweep-c131-6 11:46; needs_kit: the gate's kit pair)
+
+    def test_solo_run_of_the_real_suite(self):
+        """--solo on the real suite (gear-link-2): only needs_solo tests run (gear-link's solo row among them), each
+        with no stored reference NO-REF (never PASS), none SETUP-FAIL; every pair test is deselected (needs_pair)."""
+        out = os.path.join(self.tmp, "o")
+        p = pytest_run([".", "--fake", "--solo", "--out", out, "-q"], env={"BT_FAKE_REFS": os.path.join(self.tmp, "r")})
+        s = summary(out)
+        r = results(s)
+        self.assertEqual(r.get("test_gear_hidden_solo"), "NO-REF", p.stdout[-2000:])
+        self.assertEqual(s["counts"]["SETUP-FAIL"], 0, p.stdout[-2000:])
+        self.assertTrue(all(d.get("needs_pair") for d in s["deselected"]), s["deselected"])
+        self.assertGreaterEqual(len(s["deselected"]), suite_size())   # (every test a default run runs is a pair test)
 
     def test_repeat_keeps_one_boot_and_orders_by_round(self):
         out = os.path.join(self.tmp, "o")
@@ -704,7 +717,7 @@ class BootCommand(unittest.TestCase):
         for name in names:
             class Cfg:
                 def getoption(self, opt, name=name):
-                    return {"env": [], "session_minutes": 60, "boot": name}[opt]
+                    return {"env": [], "session_minutes": 60, "boot": name, "kit_ls": None}[opt]
             args = B.boot_args(Cfg(), 1, os.path.join(self.tmp, "coop_server.exe"), os.path.join(self.tmp, "s"))
             i = args.index("--lane")
             args[i:i + 2] = self.games()
@@ -719,7 +732,8 @@ class BootCommand(unittest.TestCase):
 
         class Cfg:
             def getoption(self, name):
-                return {"env": ["LICHII_COOP_PARTY_HUD_PROBE=1"], "session_minutes": 175, "boot": B.DEFAULT_BOOT}[name]
+                return {"env": ["LICHII_COOP_PARTY_HUD_PROBE=1"], "session_minutes": 175, "boot": B.DEFAULT_BOOT,
+                        "kit_ls": None}[name]
         args = B.boot_args(Cfg(), 1, os.path.join(self.tmp, "coop_server.exe"), os.path.join(self.tmp, "s"))
         i = args.index("--lane")
         args[i:i + 2] = self.games()
@@ -751,22 +765,38 @@ class BootCommand(unittest.TestCase):
 
     def test_nocs_switch_boots_b_from_lane_b_nocs(self):
         """--env B:COOP_TEST_NO_CHARACTER_SELECT=1 (no_cs.py's switch): game B boots from lane<N>-B-nocs (--game-b,
-        which live.py resolve takes over the lane's B); without it, no --game-b."""
+        which live.py resolve takes over the lane's B); without it and without --kit-ls, no --game-b. With --kit-ls:
+        --game-a kit/lane<N>-A and exactly ONE --game-b = kit/lane<N>-B, or kit/lane<N>-B-nocs with the switch (the
+        folder P.lane_check(kit_ls, lane, nocs) proves)."""
         import bt_plugin as B
-        for env, nocs in (([], False), ([B.NOCS_ENV], True), (["COOP_TEST_NO_CHARACTER_SELECT=1"], True),
-                          (["A:COOP_TEST_NO_CHARACTER_SELECT=1"], False)):
-            class Cfg:
-                def getoption(self, name, env=env):
-                    return {"env": env, "session_minutes": 60, "boot": B.DEFAULT_BOOT, "kit_ls": self_kit}[name]
-            self_kit = os.path.join(self.tmp, "coop-kit", "ls")
-            args = B.boot_args(Cfg(), 2, "srv", "s")
-            with self.subTest(env=env):
-                self.assertEqual(B.nocs_wanted(Cfg()), nocs)
-                if nocs:
-                    self.assertEqual(args[args.index("--game-b") + 1], os.path.join(self_kit, "lane2-B-nocs"))
-                else:
-                    self.assertNotIn("--game-b", args)
-
+        import lanes as L
+        kit = os.path.join(self.tmp, "coop-kit", "ls")
+        odd = os.path.join(self.tmp, "kit-pair")      # (a --kit-ls whose leaf is not 'ls': review-c123-13 nit)
+        for kit_ls in (None, kit, odd):
+            for env, nocs in (([], False), ([B.NOCS_ENV], True), (["COOP_TEST_NO_CHARACTER_SELECT=1"], True),
+                              (["A:COOP_TEST_NO_CHARACTER_SELECT=1"], False)):
+                class Cfg:
+                    def getoption(self, name, env=env, kit_ls=kit_ls):
+                        return {"env": env, "session_minutes": 60, "boot": B.DEFAULT_BOOT, "kit_ls": kit_ls}[name]
+                args = B.boot_args(Cfg(), 2, "srv", "s")
+                with self.subTest(env=env, kit_ls=kit_ls):
+                    self.assertEqual(B.nocs_wanted(Cfg()), nocs)
+                    base = kit_ls or os.path.join(L.kit_root(), "ls")
+                    if kit_ls:
+                        self.assertEqual(args.count("--game-a"), 1)
+                        self.assertEqual(args[args.index("--game-a") + 1], os.path.join(kit_ls, "lane2-A"))
+                    else:
+                        self.assertNotIn("--game-a", args)
+                    if nocs or kit_ls:
+                        self.assertEqual(args.count("--game-b"), 1, args)
+                        self.assertEqual(args[args.index("--game-b") + 1],
+                                         os.path.join(base, "lane2-B" + ("-nocs" if nocs else "")))
+                        self.assertEqual(args[args.index("--game-b") + 1], B.game_b_folder(Cfg(), 2))
+                    else:
+                        self.assertNotIn("--game-b", args)
+                    # (lane_pair packs into game_a_folder/game_b_folder: the same folders the boot names)
+                    self.assertEqual(B.game_a_folder(Cfg(), 2), os.path.join(base, "lane2-A"))
+                    self.assertEqual(B.game_b_folder(Cfg(), 2), os.path.join(base, "lane2-B" + ("-nocs" if nocs else "")))
 
 HOOK_TESTS = 'import pytest\n\ndef test_hooks(pair):\n    pair.act("A", "frob 3")\n    pair.expect_log("A", r"fake hook: frob 3 on A", max_frames=30)\n    st = pair.state("B")\n    assert any(a.get("name") == "HookActor_B" for a in st["world"]["actors"]), st["world"]\n    assert st.get("hooked") == "shared-1"\n    r = pair.call("A", "ping_hook")\n    assert r.get("pong") is True\n    pair.press("A", ["ZR"], frames=2)\n    pair.expect_log("A", r"fake hook: pressed ZR", max_frames=30)\n\n    import playtest_client as pc\n    with pytest.raises(pc.BridgeError):           # (a plain warp: the boss intro event makes it a timeout)\n        pair.warp_both("BossStage_Test")\n    st = pair.warp_both("BossStage_Test", arrive_in_event=True)\n    assert st["A"]["scene"] == st["B"]["scene"] == "BossStage_Test"\n    assert any("answered timeout in the arrival event" in n for n in pair.notes), pair.notes\n    pair.act("A", "place 0 0 0")\n    pair.call("A", "move", yaw=90, strength=1.0, frames=30)\n    assert pair.state("A")["pos"][0] == 1.0, pair.state("A")["pos"]      # (move_step: the wall at x 1.0)\n    with pytest.raises(pc.BridgeError):           # (a timeout with NO event is not an arrival: review-c123-8)\n        pair.warp_both("NoEventStage_Test", arrive_in_event=True)\n    a_scene, a_frame = pair.state("A")["scene"], pair.state("A")["frame"]\n    st = pair.warp_one("B", "KakarikoVillage_Child")      # (one game; the other stepped the same frames)\n    assert st["scene"] == "KakarikoVillage_Child" and pair.state("A")["scene"] == a_scene\n    assert pair.state("A")["frame"] > a_frame              # (A ran the frames B\'s warp took)\n'
 HOOK_MODULE = 'def setup(game):\n    game.hook_seen = []\n\ndef lane(fl):\n    fl.g["A"].shared = fl.g["B"].shared = {"n": 1}\n\ndef command(game, m):\n    if m.get("cmd") == "ping_hook":\n        return {"ok": True, "pong": True}\n    if m.get("cmd") == "warp" and m.get("scene") in ("BossStage_Test", "NoEventStage_Test"):\n        game.run(40)\n        game.scene = m["scene"]                 # (there, but the bridge says timeout: an intro event, or not)\n        return {"ok": False, "error": "timeout", "message": "still in an event"}\n    return None\n\ndef move_step(game, pos):\n    if game.scene == "BossStage_Test" and pos[0] > 1.0:\n        return [1.0, pos[1], pos[2]]\n    return None\n\ndef after(game, m, r):\n    if m.get("cmd") == "state":\n        r["hooked"] = "shared-%d" % game.shared["n"]\n\ndef press(game, buttons):\n    if "ZR" in buttons:\n        game.say("fake hook: pressed ZR")\n        return True\n    return False\n\ndef act(game, words):\n    if words[0] == "frob":\n        game.say("fake hook: frob %s on %s" % (words[1], game.tag))\n        return True\n    return False\n\ndef actors(game):\n    return [{"id": 99, "name": "HookActor_%s" % game.tag, "kind": "enemy", "pos": [0.0, 0.0, 0.0]}]\n\ndef state(game, st):\n    if game.scene == "BossStage_Test":\n        st["event"] = True                      # (its intro event runs)\n'
@@ -1133,6 +1163,100 @@ class FakeHooks(unittest.TestCase):
             self.assertTrue(m.__name__.startswith("fakes_"))
 
 
+STOP_TESTS = (
+    "import os\n\n"
+    "def test_1_writes_the_stop(pair):\n"
+    "    pair.step_both(5)\n"
+    "    if os.environ.get('STOP_LINE'):\n"
+    "        with open(os.environ['BT_STOP_FILE'], 'w', encoding='utf-8') as f:\n"
+    "            f.write(os.environ['STOP_LINE'] + '\\n')\n\n"
+    "def test_2_after(pair):\n    pair.step_both(5)\n\n"
+    "def test_3_after(pair):\n    pair.step_both(5)\n")
+
+
+class MemwatchStop(unittest.TestCase):
+    """B #141 17:5x (songs-frogs-175889ac booted the lane pair again at 17:51 after the memwatch STOP and the games'
+    close at 17:50): a memory STOP-OFFLINE-QUEUE ends the run (SETUP-FAIL memwatch-stop, then NOT-RUN, the lane closed),
+    a lane's games closed from outside do the same, and a run never boots its lane twice."""
+
+    MEM = "preflight-b2-3 memwatch 17:50:03 UTC: free commit under 4 GB for 30 s"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        d = os.path.join(self.tmp, "t")
+        os.makedirs(d)
+        with open(os.path.join(d, "conftest.py"), "w", encoding="utf-8") as fh:
+            fh.write("import sys\nsys.path.insert(0, %r)\npytest_plugins = ['bt_plugin']\n" % INGAME)
+        with open(os.path.join(d, "test_stop.py"), "w", encoding="utf-8") as fh:
+            fh.write(STOP_TESTS)
+        self.dir, self.stop = d, os.path.join(self.tmp, "STOP-OFFLINE-QUEUE")
+
+    def run_tests(self, line=None, before=None):
+        if before is not None:
+            with open(self.stop, "w", encoding="utf-8") as f:
+                f.write(before + "\n")
+        out = os.path.join(self.tmp, "o")
+        env = {"BT_STOP_FILE": self.stop}
+        if line:
+            env["STOP_LINE"] = line
+        p = pytest_run([".", "--fake", "--no-rerun", "--out", out, "-q", "-p", "no:cacheprovider"], cwd=self.dir,
+                       env=env)
+        return summary(out), p
+
+    def test_a_memory_stop_during_the_run_ends_it(self):
+        s, p = self.run_tests(line=self.MEM)
+        r = results(s)
+        self.assertEqual(r, {"test_1_writes_the_stop": "PASS", "test_2_after": "SETUP-FAIL",
+                             "test_3_after": "NOT-RUN"}, p.stdout[-2000:])
+        row = next(t for t in s["tests"] if t["test"].endswith("test_2_after"))
+        self.assertIn("memwatch-stop: " + self.MEM, row["why"])
+        self.assertTrue(s["stopped"].startswith("memwatch-stop"), s["stopped"])
+        self.assertTrue(s["lane_closed"], s)          # (the lane's session torn down at once)
+
+    def test_a_memory_stop_before_the_run_boots_nothing(self):
+        s, p = self.run_tests(before=self.MEM)
+        r = results(s)
+        self.assertEqual(r["test_1_writes_the_stop"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertEqual({r["test_2_after"], r["test_3_after"]}, {"NOT-RUN"})
+        self.assertFalse(os.path.isdir(os.path.join(self.tmp, "o", "fake")), "the fake lane was booted")
+
+    def test_a_capitalised_memory_stop_counts_too(self):
+        """offline-queue.ps1:207's -match ignores case, so the pytest side must too (review-c123-13 18:03)."""
+        s, p = self.run_tests(line="Memwatch: Free Commit under 4 GB")
+        self.assertEqual(results(s)["test_2_after"], "SETUP-FAIL", p.stdout[-2000:])
+
+    def test_another_stop_lets_the_run_go_on(self):
+        s, p = self.run_tests(line="stop asked by hand (runner exit)")
+        self.assertEqual(set(results(s).values()), {"PASS"}, p.stdout[-2000:])
+
+    def test_no_second_boot_in_one_run(self):
+        import bt_plugin
+        from unittest import mock
+        cfg = type("C", (), {})()
+        with mock.patch.dict(os.environ, {"BT_STOP_FILE": self.stop}):
+            bt_plugin._one_boot(cfg, 2)
+            with self.assertRaisesRegex(P.SetupFail, r"lane2: no second boot in one run"):
+                bt_plugin._one_boot(cfg, 2)
+
+    def test_games_closed_from_outside_not_a_crash(self):
+        import bt_plugin
+        sess = os.path.join(self.tmp, "session")
+        os.makedirs(sess)
+        log = os.path.join(sess, "game-out-B.txt")
+        with open(log, "w", encoding="utf-8") as f:
+            f.write("coop: fine\n")
+        with open(os.path.join(sess, "pids.json"), "w", encoding="utf-8") as f:
+            json.dump({"games": {"A": 11, "B": 22}, "server": 33}, f)
+        with open(os.path.join(sess, "session.json"), "w", encoding="utf-8") as f:
+            json.dump({"started": 0, "games": {"B": {"log": log}}}, f)
+        self.assertIsNone(bt_plugin.games_closed(sess, alive=lambda pid: True))
+        self.assertRegex(bt_plugin.games_closed(sess, alive=lambda pid: pid != 22) or "",
+                         r"^games-closed: game B \(pid 22\)")
+        with open(log, "a", encoding="utf-8") as f:
+            f.write("CRASH: exception 0xc0000005\n")        # (a crash stays the crash handling's: FAIL)
+        self.assertIsNone(bt_plugin.games_closed(sess, alive=lambda pid: pid != 22))
+
 class ReplyWait(unittest.TestCase):
     """boss-respawn-bridge-e3e6e253 CAUSE 2: a call sent with the 0.2 s left of a spent deadline timed the socket out,
     the client closed it, the game ran free mid-arrival and every later recovery SETUP-FAILed ('teleport still in
@@ -1310,6 +1434,38 @@ class OcarinaReady(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, r"B: 'ocarina probe: our Link plays the ocarina' after B closed"):
                 pair.ocarina_out("B")
 
+    def test_ocarina_out_without_the_probe_switch_is_setup_fail_before_any_press(self):
+        """tb-pilot-f9f3b9c2: no LICHII_COOP_OCARINA_PROBE=1 on the boot, so no game logs OCARINA_PLAYS: SetupFail at
+        once, naming the switch; no D-pad press is sent."""
+        pair = self.lane(0)
+        pair.has_switch = lambda want: False
+        at = pair.log["B"].mark()
+        with self.assertRaisesRegex(P.SetupFail, r"B: ocarina_out needs LICHII_COOP_OCARINA_PROBE=1"):
+            pair.ocarina_out("B")
+        self.assertIsNone(pair.log["B"].find(P.OCARINA_FREE, pos=at))
+
+    def test_ocarina_out_asks_for_the_probe_on_its_own_game(self):
+        pair = self.lane(0)
+        asked = []
+        pair.has_switch = lambda want: asked.append(want) or True
+        self.assertTrue(pair.ocarina_out("B"))
+        self.assertEqual(asked, ["B:LICHII_COOP_OCARINA_PROBE=1"])
+
+    def test_boot_switch_check_reads_the_boot_header_and_env(self):
+        import bt_plugin
+
+        class Cfg:
+            def __init__(self, env, boot=bt_plugin.DEFAULT_BOOT):
+                self.o = {"env": env, "boot": boot}
+
+            def getoption(self, k):
+                return self.o[k]
+        self.assertFalse(bt_plugin.boot_switch_check(Cfg([]))("B:LICHII_COOP_OCARINA_PROBE=1"))
+        self.assertTrue(bt_plugin.boot_switch_check(Cfg(["LICHII_COOP_OCARINA_PROBE=1"]))("B:LICHII_COOP_OCARINA_PROBE=1"))
+        self.assertFalse(bt_plugin.boot_switch_check(Cfg(["A:LICHII_COOP_OCARINA_PROBE=1"]))("B:LICHII_COOP_OCARINA_PROBE=1"))
+        # the default boot's own header (live-kakariko-child.A.txt '#! switches LICHII_COOP_CHEATS=1') counts too
+        self.assertTrue(bt_plugin.boot_switch_check(Cfg([]))("B:LICHII_COOP_CHEATS=1"))
+
     def test_ocarina_out_with_nothing_on_the_d_pad_names_it(self):
         pair = self.lane(5000)
         with self.assertRaisesRegex(AssertionError, r"B: the ocarina back on the D-pad"):
@@ -1331,11 +1487,64 @@ class OcarinaReady(unittest.TestCase):
     def test_the_ocarina_tests_pass_on_a_late_re_equip(self):
         out = os.path.join(self.tmp, "o")
         p = pytest_run([".", "--fake", "--no-rerun", "--out", out, "-q", "-p", "no:cacheprovider",
-                        "-k", "ocarina or frog or epona_seen"], env={"BT_FAKE_OCARINA_LATE": "200"})
+                        "-k", "ocarina or frog or epona_seen",
+                        "--env", "LICHII_COOP_OCARINA_PROBE=1"],   # (test_ocarina_notes needs it: pair.OCARINA_PROBE)
+                       env={"BT_FAKE_OCARINA_LATE": "200"})
         r = results(summary(out))
         self.assertTrue(r, p.stdout[-2000:])
         for name, res in r.items():
             self.assertIn(res, ("PASS", "NO-REF", "SKIP"), (name, res, p.stdout[-2000:]))
+
+
+class WarpPlayUi(unittest.TestCase):
+    """A warp returns only once the game that warped shows its play UI up again (crawl-337-12: pause-warp-34950797, B's
+    + right after warp_both was refused in its arrival tail; pause-warp-826f66cb, 300 frames later it paused)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def lane(self, **env):
+        import fakegame
+        from unittest import mock
+        with mock.patch.dict(os.environ, env):
+            lane = fakegame.FakeLane(self.tmp)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=self.tmp)
+        self.addCleanup(pair.close)
+        pair.begin(120)
+        return pair
+
+    def up_lines(self, pair, x):
+        return [ln for ln in pair.log[x].since(0) if "the game's play UI is up" in ln]
+
+    def test_warp_both_returns_with_each_play_ui_up(self):
+        pair = self.lane(BT_FAKE_UI_LATE="150")
+        pair.warp_both("KakarikoVillage_Child")
+        for x in ("A", "B"):
+            self.assertEqual(len(self.up_lines(pair, x)), 1, x)
+            self.assertTrue(any(n.startswith("%s: warp KakarikoVillage_Child: play UI up again after" % x)
+                                for n in pair.notes), pair.notes)
+
+    def test_the_test_s_own_log_start_stays(self):
+        pair = self.lane()
+        pos = pair.log["A"].pos
+        pair.warp_both("KakarikoVillage_Child")
+        self.assertEqual(pair.log["A"].pos, pos)      # (expect_log still reads from the test's start)
+        self.assertIsNotNone(pair.log["A"].find(r"scene load ended"))
+
+    def test_a_play_ui_never_up_is_setup_fail_naming_the_game(self):
+        pair = self.lane(BT_FAKE_UI_NEVER="B")
+        with self.assertRaisesRegex(P.SetupFail, r"^B: warp KakarikoVillage_Child: the game's play UI not up %d"
+                                    % P.PLAY_UI_FRAMES):
+            pair.warp_both("KakarikoVillage_Child")
+        self.assertEqual(len(self.up_lines(pair, "A")), 1)
+
+    def test_no_play_ui_line_is_no_wait(self):
+        pair = self.lane()
+        before = pair.c["A"].last_frame
+        pair._until_play_ui("A", "Nowhere", pair.log["A"].size())
+        self.assertEqual(pair.c["A"].last_frame, before)
 
 
 class SetupLimit(unittest.TestCase):
@@ -1400,8 +1609,9 @@ class SetupLimit(unittest.TestCase):
         with self.assertRaises(P.SetupFail):
             with pair.setup():
                 pair.warp_both("PhantomGanonStage", arrive_in_event=True)
-        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + P.REPLY_MIN_S)      # (+ the re-hold, as above)
-        self.assertTrue(all(w <= P.SETUP_LIMIT_S for w in pair.c["A"].waits), pair.c["A"].waits)
+        # (the warp's own allowance on top of the 30 s, SETUP_WARP_S; + the re-hold, as above)
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + P.SETUP_WARP_S + P.REPLY_MIN_S)
+        self.assertTrue(all(w <= P.SETUP_LIMIT_S + P.SETUP_WARP_S for w in pair.c["A"].waits), pair.c["A"].waits)
 
     def test_short_test_budget_wins(self):
         pair, clock = self.make(10)
@@ -1409,6 +1619,68 @@ class SetupLimit(unittest.TestCase):
             with pair.setup():
                 pair.state("A")
         self.assertLessEqual(pair.c["A"].waits[0], 10)
+
+
+class SetupWarp(unittest.TestCase):
+    """A warp inside a set-up adds SETUP_WARP_S to its 30 s (tb-gate-look-f9f3b9c2-2 SETUP-FAIL: warp_both in a set-up,
+    warp_one(A) ~16 s, then step_other(B) needed 14.5 s with 13.5 s left; 12+ tests warp in their set-up). The 30 s
+    still bounds everything that is not a warp, and the test's own deadline caps it all. Fake clock, RecoverOnState's
+    fake bridge (a warp costs warp_s of the clock): no real waiting."""
+
+    def make(self, budget, warp_s, step_s=0.0):
+        clock = RecoverOnState.Clock()
+        pair = P.Pair.__new__(P.Pair)
+        pair.c = {x: RecoverOnState.SlowWarp(clock, scene="KakarikoVillage_Child", warp_s=warp_s) for x in "AB"}
+        pair.log, pair.shots, pair.notes = {}, [], []
+        pair.deadline = P.Deadline(budget, clock=clock)
+        return pair, clock
+
+    def test_a_measured_two_game_warp_in_a_set_up_passes(self):
+        pair, clock = self.make(420, warp_s=15.5)
+        with pair.setup():
+            pair.warp_both("KokiriForest_Child", "FrontDekuTree")
+            pair.step_both(30)
+        self.assertGreater(clock.t, P.SETUP_LIMIT_S)               # (the VOIDed set-up: more than 30 s, and it passes)
+        self.assertTrue(any("incl 2 warp(s)" in n for n in pair.notes), pair.notes)
+        self.assertEqual(pair.deadline.left(), 420 - clock.t)      # the test's own deadline is back after it
+
+    def test_twice_the_measured_warp_in_a_set_up_still_passes(self):
+        pair, clock = self.make(420, warp_s=P.WARP_PAIR_MEASURED_S)    # (the margin: each game as slow as two)
+        with pair.setup():
+            pair.warp_both("KokiriForest_Child", "FrontDekuTree")
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + 2 * P.SETUP_WARP_S)
+
+    def test_the_30_s_still_bounds_what_is_not_a_warp(self):
+        pair, clock = self.make(420, warp_s=1.0)
+        with self.assertRaises(P.SetupFail) as cm:
+            with pair.setup():
+                pair.warp_one("A", "KokiriForest_Child")
+                while True:                                        # a set-up that hangs after its warp
+                    pair.call("A", "step", frames=100)            # (1 s of the fake clock each)
+        self.assertIn("timeout", str(cm.exception))
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + P.SETUP_WARP_S + 1.0)
+
+    def test_no_warp_no_extra_time(self):
+        pair, clock = self.make(420, warp_s=0)
+        with self.assertRaises(P.SetupFail):
+            with pair.setup():
+                while True:
+                    pair.call("A", "step", frames=100)
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + 1.0)
+
+    def test_the_tests_deadline_caps_the_warp_allowance(self):
+        pair, clock = self.make(40, warp_s=15.5)
+        with self.assertRaises(P.SetupFail):
+            with pair.setup():
+                pair.warp_both("KokiriForest_Child")
+                pair.warp_both("KakarikoVillage_Child")
+        self.assertLessEqual(clock.t, 40 + P.REPLY_MIN_S)
+
+    def test_a_warp_outside_a_set_up_changes_no_deadline(self):
+        pair, clock = self.make(420, warp_s=15.5)
+        end = pair.deadline.end
+        pair.warp_both("KokiriForest_Child")
+        self.assertEqual(pair.deadline.end, end)
 
 
 class RecoverOnState(unittest.TestCase):
@@ -1525,6 +1797,152 @@ class RecoverOnState(unittest.TestCase):
                                 B=dict(scene=self.BOOT, warp_s=12))
         with self.assertRaisesRegex(P.pc.BridgeError, r"^timeout: held; then \d+ frames: A: scene=PhantomGanonStage"):
             pair.warp_one("A", "PhantomGanonStage", arrive_in_event=True)
+
+
+class RecoveryCascade(unittest.TestCase):
+    """crawl-337-11 (tb-pilot-f9f3b9c2: test_ocarina_notes SETUP-FAIL, then all 26 later tests SETUP-FAIL 'recovery
+    after the test before: boot: TestTimeout: timeout after 28 s: state not sent', notes []): (1) a timeout keeps its
+    reason and names each game's state; (2) a game left waiting for input (a pause page) is relaunched once by the
+    recovery; (3) a relaunch that fails loses the lane, and every later test SETUP-FAILs at once with the notes kept."""
+
+    BOOT = RecoverOnState.BOOT
+
+    class Stuck(RecoverOnState.SlowWarp):
+        """A game left on a pause page: never in play by stepping (not_ready, as the real bridge's paused game)."""
+
+        def __init__(self, clock, scene, stuck=False, step_s=0.0):
+            super().__init__(clock, scene, warp_s=0)
+            self.stuck, self.step_s = stuck, step_s
+
+        def request(self, cmd, reply_timeout=None, check=True, **a):
+            if cmd == "step":
+                self.clock.t += self.step_s            # (a slow step: the next state read finds < REPLY_MIN_S left)
+            return super().request(cmd, reply_timeout=reply_timeout, check=check, **a)
+
+        def st(self):
+            return dict(super().st(), not_ready="no fresh Link sample (fake: pause page)" if self.stuck else None)
+
+    def make(self, budget, stuck="B", step_s=0.0):
+        clock = RecoverOnState.Clock()
+        pair = P.Pair.__new__(P.Pair)
+        pair.c = {x: self.Stuck(clock, self.BOOT, stuck=x in stuck, step_s=step_s) for x in "AB"}
+        pair.log, pair.shots, pair.notes = {}, [], []
+        pair.deadline = P.Deadline(budget, clock=clock)
+        return pair, clock
+
+    def test_a_spent_deadline_keeps_its_reason_and_names_each_game(self):
+        # (each game's 10-frame step costs 0.8 s: 5.0 -> 3.4 -> A 2.6 -> B 1.8 s left, under a state read's REPLY_MIN_S
+        # 2.0, so the deadline ends in a 'state not sent', the real runs' case; the old why_not read hit the same)
+        pair, clock = self.make(5.0, step_s=0.7)
+        with self.assertRaises(P.TestTimeout) as cm:
+            pair.until_in_play("both games in play", max_frames=10 ** 6)
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("timeout after 5 s: state not sent"), msg)
+        self.assertIn("B: scene=%s loading=False event=False not_ready=no fresh Link sample (fake: pause page)"
+                      % self.BOOT, msg)
+        self.assertIn("A: scene=%s" % self.BOOT, msg)
+        self.assertEqual(pair.deadline.seconds, 5.0)                   # (the test's deadline is back)
+
+    def test_a_game_on_a_pause_page_is_relaunched_once(self):
+        import bt_plugin
+        pair, clock = self.make(P.Pair.RECOVER_RELAUNCH_S + 5)
+        asked = []
+
+        def rejoin(x):
+            asked.append(x)
+            clock.t += 100                                             # (a relaunch's wall time, inside its bound)
+            pair.c[x].stuck = False
+        pair.rejoin = rejoin
+        st = pair.recover(self.BOOT)
+        self.assertEqual(asked, ["B"])                                 # (only the stuck game, once)
+        self.assertTrue(all(pair.in_play(s) for s in st.values()), st)
+        self.assertTrue(any(n.startswith("recovery: B stuck (B: scene=") and n.endswith("): relaunched")
+                            and "pause page" in n for n in pair.notes), pair.notes)
+        self.assertLessEqual(clock.t, P.Pair.RECOVER_RELAUNCH_S)
+        self.assertGreater(P.Pair.RECOVER_RELAUNCH_S, bt_plugin.RECOVER_S + 2 * (P.Pair.REJOIN_QUIT_S + P.Pair.REJOIN_BOOT_S))
+
+    def test_a_failed_relaunch_loses_the_lane_with_its_reason(self):
+        pair, clock = self.make(P.Pair.RECOVER_RELAUNCH_S + 5)
+        # (no live.py session: Pair.rejoin's own SetupFail, as on the fake lane)
+        with self.assertRaises(P.LaneLost) as cm:
+            pair.recover(self.BOOT)
+        msg = str(cm.exception)
+        self.assertIn("relaunch of B (stuck: B: scene=", msg)
+        self.assertIn("pause page", msg)
+        self.assertNotIn("relaunch of A", msg)
+        self.assertTrue(any("relaunch failed" in n for n in pair.notes), pair.notes)
+        self.assertTrue(any(n.startswith("recovery: stepped part failed: ") for n in pair.notes), pair.notes)
+
+    def test_the_in_game_host_is_never_relaunched(self):
+        """A host-in-game boot (bt_plugin HOST_IN_GAME_BOOTS): A hosts the session, so its relaunch would end B's
+        session and boot_ready would still read both in play (review-c123-15 22:37): LaneLost, rejoin never asked."""
+        pair, clock = self.make(P.Pair.RECOVER_RELAUNCH_S + 5, stuck="A")
+        pair.no_relaunch = {"A": "A hosts the session in game"}
+        asked = []
+        pair.rejoin = lambda x: asked.append(x)
+        with self.assertRaises(P.LaneLost) as cm:
+            pair.recover(self.BOOT)
+        self.assertEqual(asked, [])
+        self.assertIn("A stuck (A: scene=", str(cm.exception))
+        self.assertIn("not relaunched: A hosts the session in game", str(cm.exception))
+
+    def test_backstop_is_above_every_budget_and_skips_the_recovery(self):
+        """pytest-timeout (thread method: ends the worker) must never fire before a test's own budget: it times the
+        function only (the recovery is in the pair fixture) and each test's is its budget + BACKSTOP_MARGIN_S."""
+        import configparser
+        import pytest
+        import bt_plugin
+        ini = configparser.ConfigParser()
+        ini.read(os.path.join(INGAME, "pytest.ini"))
+        self.assertEqual(ini["pytest"]["timeout_func_only"].strip(), "true")
+        floor = float(ini["pytest"]["timeout"])
+
+        class Item:
+            def __init__(self, budget=None):
+                self.marks = {"budget": pytest.mark.budget(budget).mark} if budget else {}
+
+            def get_closest_marker(self, name):
+                return self.marks.get(name)
+
+            def add_marker(self, m):
+                self.marks[m.mark.name] = m.mark
+
+        class Config:
+            def getini(self, name):
+                return str(floor)
+
+        items = [Item(3000), Item(2400), Item(), Item(90)]
+        bt_plugin._backstop(Config(), items)
+        got = [it.marks["timeout"].args[0] for it in items]
+        self.assertEqual(got, [3000 + bt_plugin.BACKSTOP_MARGIN_S, 2400 + bt_plugin.BACKSTOP_MARGIN_S, floor, floor])
+        self.assertGreaterEqual(bt_plugin.BACKSTOP_MARGIN_S, 60)
+
+    def test_suite_lane_lost_once_then_every_later_test_at_once(self):
+        """The fake lane: B's pause page never closes after test_pause (BT_FAKE_PAUSE_STUCK=B). test_pause FAILs, the
+        next test's recovery cannot relaunch B on the fake lane (no live.py): SETUP-FAIL naming B's state, with its
+        notes; every later test SETUP-FAILs 'lane lost after <that test>' without another recovery."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        out = os.path.join(tmp, "o")
+        p = pytest_run([".", "--fake", "--out", out, "-q", "-m", "smoke", "--repeat", "2", "--no-smoke-gate",
+                        "--no-rerun"], env={"BT_FAKE_PAUSE_STUCK": "B"})
+        rows = summary(out)["tests"]
+        names = [r["test"].split("::")[-1] for r in rows]
+        i = next(k for k, n in enumerate(names) if n.startswith("test_pause"))
+        self.assertEqual(rows[i]["result"], "FAIL", p.stdout[-3000:])
+        later = rows[i + 1:]
+        self.assertGreaterEqual(len(later), 2, names)
+        first = later[0]
+        self.assertEqual(first["result"], "SETUP-FAIL", first)
+        self.assertIn("recovery after the test before:", first["why"])
+        self.assertIn("not_ready=no fresh Link sample", first["why"])
+        self.assertIn("relaunch of B", first["why"])
+        self.assertTrue(any("relaunch failed" in n for n in first["notes"]), first)
+        lost_after = names[i + 1]
+        for r in later[1:]:
+            self.assertEqual(r["result"], "SETUP-FAIL", r)
+            self.assertIn("lane lost after %s: " % lost_after, r["why"])
+            self.assertLess(r["seconds"], 5, r)
 
 
 class LaneCheck(unittest.TestCase):

@@ -42,6 +42,13 @@ class RegressUi(unittest.TestCase):
         self.assertEqual(T.results(s), {TAGS: "FAIL"}, p.stdout[-1500:])
         self.assertIn("no memory for the names", s["tests"][0]["why"])
 
+    def test_tags_b_camera_in_front_is_setup_fail(self):
+        """c272735f8 (C #145): B's camera on A's side (B's shots of its own Link's face, no A, no tag): never NO-REF or
+        PASS; the set-up's per-game view check names B."""
+        p, s = self.run_fake("tags-cam", TAGS, bug="camera")
+        self.assertEqual(T.results(s), {TAGS: "SETUP-FAIL"}, p.stdout[-1500:])
+        self.assertIn("B's camera not behind its Link facing A", s["tests"][0]["why"])
+
     def test_title_deselected_without_test_state(self):
         p, s = self.run_fake("title-off", TITLE, env_on=False)
         self.assertNotIn(TITLE, T.results(s), p.stdout[-1500:])

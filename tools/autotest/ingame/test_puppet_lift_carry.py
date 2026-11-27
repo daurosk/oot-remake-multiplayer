@@ -23,10 +23,12 @@ The ESTIMATED values (MOVE_FRAMES, RIDE_FRAMES, V_MIN, CARRY_TOL) are starting v
 as test_native_body.py): until MEASURED cites a lane run's notes, a run whose clear checks hold ends NO-REF
 (pair.unproven) with the measured values, never PASS; a CARRY_TOL miss is listed there, not failed.
 """
+import re
 import statistics
 
 import pytest
 
+import pair as P
 from pair import FPS, SetupFail     # (30: the game's calc rate on Hookshot, pair.py)
 
 ON_LIFT = r"coop: puppet: P%d lift carry: on our lift, carried [0-9.]+ m \(show delay (\d+) ms\)"  # coop_puppet.cpp DrawAt
@@ -38,6 +40,7 @@ ANCHOR = (-3.24, 91.0, -42.68)                      # SwapRestartPosAnchor besid
 ON_M = 0.1                                          # B placed this far over the floor's place (falls onto it)
 FIND_M = 1.0                                        # the lift in A's world list this close to FLOOR (flat)
 MIN_DELAY_S = 0.1                                   # docs/native-puppets.md "Lift carry": show delay >= 100 ms
+BACK_TO = "KakarikoVillage_Child"                   # test_smoke.WARP_TO: the lane's boot map (when the boot names none)
 SAMPLE = 5                                          # frames between world dumps
 STILL_DY = 0.005                                    # m per SAMPLE: the lift stands
 MOVE_FRAMES = 90                                    # ESTIMATED: the lift starts within 3 s of B stepping on
@@ -67,9 +70,22 @@ def lift_and_copy(pair, x):
     return (lift["pos"] if lift else None), (copies[0]["pos"] if copies else None)
 
 
+@pytest.fixture
+def back_after(pair):
+    """Both games back to the boot's scene after the test (as test_boss_respawn.py back_after), so the next test sharing
+    the boot starts there, not in Jabu-Jabu."""
+    yield pair
+    pair.deadline = P.Deadline(120)           # (the test's own deadline may be spent: the way back has its own)
+    try:
+        pair.warp_both(pair.boot_scene or BACK_TO)
+    except Exception as e:                    # noqa: BLE001  (a failed way back is said, never a result of this test)
+        pair.notes.append("way back to %s failed: %s" % (pair.boot_scene or BACK_TO, e))
+
+
 def shots(pair, name):
     """A bridge shot of each game (the copy and the lift are 3D actors: the framebuffer has them). Tolerance 0.80 as
-    test_native_body.py (people in a lit room)."""
+    test_native_body.py (people in a lit room). Not proven to show the copy (no in-view check): for the owner's eye
+    and the NO-REF reference only; the verdict is the world list's."""
     for x in ("A", "B"):
         pair.check_shot(x, name, tolerance=0.80)
 
@@ -77,7 +93,7 @@ def shots(pair, name):
 @pytest.mark.budget(480)   # ESTIMATED: two warps + ~1'100 frames in SAMPLE steps with a world dump each + 2 shots
 @pytest.mark.look
 @pytest.mark.row("Native puppets N5: the other player's copy rides our moving lift on it (not sunk in or floating over it)")
-def test_puppet_lift_carry(pair):
+def test_puppet_lift_carry(pair, back_after):
     with pair.setup():
         pair.need_boot_place(age="child")
         b_nums = others(pair.state("A"))
@@ -123,19 +139,23 @@ def test_puppet_lift_carry(pair):
                 break
     got = [r for r in rows if r is not None]
     lost = len(rows) - len(got)
-    still = [off for (_, off, dy) in got if dy is None or abs(dy) <= STILL_DY]
+    still = [off for (_, off, dy) in got if dy is not None and abs(dy) <= STILL_DY]   # (the 1st has no dy: moving already)
     moving = [(off, abs(dy) * FPS / SAMPLE) for (_, off, dy) in got if dy is not None and abs(dy) * FPS / SAMPLE >= V_MIN]
     assert moving, "no moving sample (speed >= %.1f m/s) in %d samples: lift ys %s" % (
         V_MIN, len(got), ["%.2f" % r[0] for r in got[:20]])
     rest = statistics.median(still) if still else got[0][1]
     speed = statistics.median(v for _, v in moving)
     dev = max(abs(off - rest) for off, _ in moving)
-    pair.notes.append("ride: %d samples (%d lost), %d still, %d moving, speed %.2f m/s, rest offset %.3f m, "
+    ride = ("ride: %d samples (%d lost), %d still, %d moving, speed %.2f m/s, rest offset %.3f m, "
                       "max deviation %.3f m, lift %.2f -> %.2f m" % (len(rows), lost, len(still), len(moving), speed,
                                                                      rest, dev, got[0][0], got[-1][0]))
+    pair.notes.append(ride)
+    if lost:
+        pair.notes.append("%d samples had no lift or copy in A's world list" % lost)
     line = pair.log["A"].find(ON_LIFT % n, pos=mark)
     assert line, "A's log has no 'P%d lift carry: on our lift' line (/%s/): the carry never took the copy" % (n, ON_LIFT % n)
-    bug_m = 0.5 * speed * MIN_DELAY_S
+    delay_s = max(MIN_DELAY_S, int(re.search(ON_LIFT % n, line).group(1)) / 1000.0)   # (the delay the line logged)
+    bug_m = 0.5 * speed * delay_s
     assert dev < bug_m, (
         "the copy was %.3f m off the lift while it moved (rest offset %.3f m, speed %.2f m/s; uncarried it would be "
         ">= %.3f m off): it sank into or floated over the lift" % (dev, rest, speed, 2 * bug_m))
@@ -150,5 +170,5 @@ def test_puppet_lift_carry(pair):
         misses.append("max deviation %.3f m > %.2f" % (dev, CARRY_TOL))
     if not MEASURED:
         pair.unproven("the N5 lift carry thresholds are not measured yet%s (MEASURED: this run's notes: %s)" % (
-            "; misses: " + "; ".join(misses) if misses else "", pair.notes[-1]))
+            "; misses: " + "; ".join(misses) if misses else "", ride))
     assert not misses, "; ".join(misses)

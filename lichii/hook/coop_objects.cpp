@@ -1841,6 +1841,18 @@ std::atomic<u64>& TheLinkActorAt() {
     static std::atomic<u64> ms{0};
     return ms;
 }
+// True PvP's guard probe (docs/native-puppets.md 5.3 B, U5; reports/fable-puppet-pvp-2.md step 2): our Link's two
+// guard words as the last walk read them, packed: bits 0-7 the player part's byte +0x32 (QueryDynamicEquipmentIs
+// PlayerGuardFront's bit 4), bits 8-39 the low word at EquipmentUser +0x13a0 (QueryTargetIsGuarding's bit 5), bit 63
+// read. 0: not read (PvP native off, or no Link). Read only while the PvP glue is on; logged at each strike, never used
+// for a decision until the probe has measured both.
+std::atomic<u64>& TheLinkGuardWords() {
+    static std::atomic<u64> words{0};
+    return words;
+}
+constexpr u64 kGuardPartPlayer = 0x358;   // component table -> the player part (coop_native_player.h kPartPlayer)
+constexpr u64 kGuardPartByte = 0x32;      // its guard byte (U5 read: bit 4 = guards to the front)
+constexpr u64 kGuardEuWord = 0x13a0;      // EquipmentUser (table + kPartsEquipmentUser) -> the word (U5 read: bit 5)
 // Native puppets phase 4 (docs/native-puppets.md 5.1; review M1 of glue part 2): each live _Pvp copy's Life is
 // made invincible once, through the game's own call (CoopPvpNative::kInvincibleReacting with our key), so no hit
 // in any game (our own, an enemy's, a third game's replay) ever takes the copy's hearts. The calc thread, at the
@@ -4724,6 +4736,19 @@ private:
                         const u64 now = SteadyNowMs();
                         TheLinkActorAt().store(now == 0 ? 1 : now);
                     }
+                    if (CoopPvpNativeGame::On()) {  // the U5 guard probe (TheLinkGuardWords)
+                        u64 words = 0;
+                        if (const auto table = r.Ptr(a + kActorComponents)) {
+                            const auto part = r.Ptr(*table + kGuardPartPlayer);
+                            const auto eu = r.Ptr(*table + CoopPuppet::addr::kPartsEquipmentUser);
+                            const auto byte = part ? r.Get<u8>(*part + kGuardPartByte) : std::nullopt;
+                            const auto word = eu ? r.Get<u32>(*eu + kGuardEuWord) : std::nullopt;
+                            if (byte && word) {
+                                words = (u64{1} << 63) | (u64{*word} << 8) | *byte;
+                            }
+                        }
+                        TheLinkGuardWords().store(words);
+                    }
                     // Difficulty: the Life component whose hits from enemies are scaled.
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         if (const auto component = r.Ptr(*table + kComponentLife)) {
@@ -7080,6 +7105,14 @@ std::optional<std::int32_t> OurLinkLife() {
         return std::nullopt;
     }
     return life;
+}
+
+std::optional<std::uint64_t> OurLinkGuardWords() {
+    const u64 words = TheLinkGuardWords().load();
+    if (words == 0 || !OurLinkActor()) {
+        return std::nullopt;
+    }
+    return words;
 }
 
 std::optional<std::uint64_t> OurLinkActor() {

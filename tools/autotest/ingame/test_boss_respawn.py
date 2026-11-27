@@ -50,6 +50,13 @@ sys.path.insert(0, os.path.dirname(HERE))
 import hookshot    # noqa: E402  (BOTTLE_ITEMS: the ONE nofairy list, the scripts' own)
 
 STAGES = ["VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage"]   # coop_start_points.inc, the old pass list
+# boss-respawn-289-6 (brief: "check every boss room with a same-scene respawn for the same cause"): the other main boss
+# rooms, each a coop_start_points.inc row {"<S>", "<S>", x, y, z, false} (no entrance actor: the row 289 cause, the fix's
+# one code path; :4 Barinade, :5 BigOcto, :6 BongoBongo, :39 Ganondorf, :48 Gohma, :110 Morpha, :112 PhantomGanon,
+# :121 Twinrova; the selftest checks each against the table). Their own test (test_respawn_shows_the_boss_room) so a
+# job can run the old pass list and these apart.
+BOSS_ROOMS = ["GohmaStage", "BigOctoStage", "BarinadeStage", "PhantomGanonStage", "MorphaStage", "BongoBongoStage",
+              "TwinrovaStage", "GanondorfStage"]
 BOTTLES = hookshot.BOTTLE_ITEMS   # nofairy's bottles (the scripts' list; checked == coop_testinput.cpp kBottleItems)
 KEEP = "LICHII_COOP_ARRIVAL_STARTER=keep"     # coop_teleport_game.cpp:68-71
 OBJECTS = "LICHII_COOP_DEBUG_OBJECTS=1"
@@ -59,6 +66,11 @@ WARP_S = 31.0          # worst warp of one game on a lane: 26.9/28.8/31.0 s (par
 ARRIVAL_EVENT_S = 48.0  # B's boss-stage arrival event, run 20261125-114351
 IN_PLAY_FRAMES = 2400   # the old scenarios' 'wait 2400' after the load (br289-volvagia, hs-volvagia-rocks)
 BOSS_ARRIVAL_S = 2 * (2 * (WARP_S + ARRIVAL_EVENT_S) + IN_PLAY_FRAMES / P.FPS)   # = 476 s, a CEILING (2x margin)
+# A boss room's intro can outlast IN_PLAY_FRAMES stepped (pair.py BOOT_EVENT_FRAMES: Twinrova's intro, row215-309d7180):
+# a game still IN AN EVENT at IN_PLAY_FRAMES is waited on up to P.BOOT_EVENT_FRAMES, the arrival bound grown once by those
+# frames at P.BOOT_STEP_FPS (the boot proof's own rule, Pair._until_boot_play). A load or no event keeps the 2400.
+EVENT_EXTRA_S = (P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES) / P.BOOT_STEP_FPS   # = 302.5 s
+ROOM_BUDGET_S = int(900 + EVENT_EXTRA_S)      # the old '#! timeout 900' + that one growth = 1202 s
 # B #130 (09:43, via review-rows-c130): the owner's 30 s is the SET-UP CHECK (pair.setup(): in play, no fairy, gives),
 # kept first and at the default limit. The boss-stage arrival is a step after it with its own hard limit: a scene load
 # plus the stage's own arrival event, A then B, then both in play. A miss there is SETUP-FAIL 'boss arrival in <S>: ...'
@@ -126,8 +138,24 @@ def boss_arrival(pair, stage, then=None):
             sts = {x: pair.state(x) for x in ("A", "B")}
             return all(pair.ready(x, v) and (v.get("scene") or "").lower() == stage.lower() for x, v in sts.items())
         phase = "both in play"
-        timed(phase, lambda: pair.until("both games in play in %s after its arrival event" % stage, both_in_play,
-                                        max_frames=IN_PLAY_FRAMES))
+        what = "both games in play in %s after its arrival event" % stage
+
+        def in_play():
+            try:
+                return pair.until(what, both_in_play, max_frames=IN_PLAY_FRAMES)
+            except P.TestTimeout:
+                raise
+            except AssertionError:
+                in_event = [x for x in ("A", "B") if pair.state(x).get("event")]
+                if not in_event:
+                    raise
+            pair.deadline.end += EVENT_EXTRA_S        # (once: the boot proof's growth, one deadline, one wait rule)
+            pair.deadline.seconds += EVENT_EXTRA_S
+            took.append("%s in an event at %d frames: waited on up to %d (+%.0f s)" % (
+                "+".join(in_event), IN_PLAY_FRAMES, P.BOOT_EVENT_FRAMES, EVENT_EXTRA_S))
+            return pair.until(what + " (a game in an event at %d frames: the event ceiling)" % IN_PLAY_FRAMES,
+                              both_in_play, max_frames=P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES)
+        timed(phase, in_play)
         if then:
             phase = "arrival check"
             then()                            # (a check of the arrival itself, e.g. the hearts still in)
@@ -195,6 +223,20 @@ def bleed_out_and_respawn(pair, stage):
 @pytest.mark.row("#289 respawn to the entrance of a boss stage shows the stage (boss-respawn-289 volvagia/dodongo/lizalfos/ganon)")
 @pytest.mark.parametrize("stage", STAGES)
 def test_respawn_shows_the_stage(pair, back_after, stage, request):
+    respawn_shows(pair, stage, request)
+
+
+@pytest.mark.budget(ROOM_BUDGET_S)
+@pytest.mark.look
+@pytest.mark.needs_env(OBJECTS)
+@pytest.mark.row("#289 every main boss room: the respawn to its entrance shows the room (same cause, boss-respawn-289-6)")
+@pytest.mark.parametrize("stage", BOSS_ROOMS)
+def test_respawn_shows_the_boss_room(pair, back_after, stage, request):
+    respawn_shows(pair, stage, request)
+
+
+def respawn_shows(pair, stage, request):
+    """The fixed path in one stage (row 289): bleed-out, respawn to the entrance, the stage shown, control back."""
     if bt_plugin.env_has(bt_plugin.boot_env(request.config), KEEP):
         pytest.skip("this boot keeps the starter (%s): the fixed path is not on it" % KEEP)
     S = re.escape(stage)

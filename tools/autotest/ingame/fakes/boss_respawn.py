@@ -11,10 +11,14 @@ BT_FAKE_BROKEN values:
   BT_FAKE_BROKEN=rocks-<A|B>         (selftest) no rocks on that game
   BT_FAKE_BROKEN=beside             (selftest) A takes the beside move: B respawns next to it, not at the entrance
   BT_FAKE_BROKEN=no-arrival          (selftest) a warp to a boss stage never arrives (the bridge's 'timeout' answer)
+  BT_FAKE_INTRO=<frames>             (selftest) a warp to a boss room (BOSS_ROOMS) starts an intro event of that length
 """
 import os
 
-STAGES = ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage")   # test_boss_respawn.STAGES
+# test_boss_respawn.STAGES + BOSS_ROOMS (the selftest checks they are the same)
+BOSS_ROOMS = ("GohmaStage", "BigOctoStage", "BarinadeStage", "PhantomGanonStage", "MorphaStage", "BongoBongoStage",
+              "TwinrovaStage", "GanondorfStage")
+STAGES = ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage") + BOSS_ROOMS
 
 
 def broken():
@@ -40,6 +44,9 @@ def after(game, m, r):
                                          "(2 live)"))
     elif cmd == "warp" and m.get("scene") not in STAGES:
         game.br_black = False
+    elif cmd == "warp" and m.get("scene") in BOSS_ROOMS and os.environ.get("BT_FAKE_INTRO"):
+        game.event = True                        # (the room's intro: the game is in an event this long)
+        game.later(int(os.environ["BT_FAKE_INTRO"]), lambda: setattr(game, "event", False))
     elif cmd == "input" and m.get("stick") and not game.br_black:
         game.pos[2] += 1.5 * float(m["stick"][1])     # a stick moves Link while he has control
     elif cmd == "shot" and game.br_black and r.get("path"):

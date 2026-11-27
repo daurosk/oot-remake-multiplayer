@@ -115,7 +115,7 @@ TEST_CASE("menu state: the - menu's tabs, closed and on the session's page of th
     m.open = true, m.tab = "multiplayer", m.view = "main", m.details_page = 0, m.details_pages = 2;
     m.key_items = {{"Songs", "3 of 12"}};   // (filled by mistake: page 0 never shows them)
     CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"main\",\"details_page\":0,"
-                          "\"details_pages\":2,\"keys\":false,\"key_items\":null}");
+                          "\"details_pages\":2,\"keys\":false,\"typed_chars\":-1,\"row\":-1,\"list\":false,\"key_items\":null}");
 }
 
 TEST_CASE("menu state: the key items page gives each line's name and value") {
@@ -123,13 +123,14 @@ TEST_CASE("menu state: the key items page gives each line's name and value") {
     m.open = true, m.tab = "multiplayer", m.view = "session", m.details_page = 1, m.details_pages = 2;
     m.key_items = {{"Songs", "3 of 12"}, {"Medallions", "0 of 6"}};
     CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"session\",\"details_page\":1,"
-                          "\"details_pages\":2,\"keys\":false,\"key_items\":[{\"name\":\"Songs\",\"value\":\"3 of 12\"},"
+                          "\"details_pages\":2,\"keys\":false,\"typed_chars\":-1,\"row\":-1,\"list\":false,\"key_items\":[{\"name\":\"Songs\",\"value\":\"3 of 12\"},"
                           "{\"name\":\"Medallions\",\"value\":\"0 of 6\"}]}");
 }
 
 TEST_CASE("menu state: the - menu says when its list is the typing keys (row 297)") {
     Minus m;
-    m.open = true, m.tab = "multiplayer", m.view = "menu", m.keys = true;
+    m.open = true, m.tab = "multiplayer", m.view = "menu", m.keys = true, m.typed_chars = 5, m.row = 1, m.list = true;
     CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"menu\",\"details_page\":0,"
-                          "\"details_pages\":0,\"keys\":true,\"key_items\":null}");
+                          "\"details_pages\":0,\"keys\":true,\"typed_chars\":5,\"row\":1,\"list\":true,"
+                          "\"key_items\":null}");
 }

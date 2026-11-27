@@ -1,7 +1,7 @@
 """Selftests of row 297 (ingame/test_menu_typing.py) on fake bridges (ingame/fakes/menu_typing.py), no game. Run by
 test_ingame.py's load_tests (CI: python tools/autotest/tests/test_ingame.py).
-Fixed module: the keys come, B cancels: not FAIL (NO-REF: the shot has no reference yet). The 0.12.0 bug (no keys),
-typing that never starts, and typing that B does not end: FAIL.
+Fixed module: the keys come, B cancels: not FAIL (NO-REF: the shot has no reference yet). The 0.12.0 bug (no keys, a
+letter typed not shown), typing that never starts, and typing that B does not end: FAIL.
 """
 import os
 import shutil
@@ -41,6 +41,11 @@ class MenuTyping(unittest.TestCase):
         p, s = self.run_it("nokeys", env={"BT_FAKE_TYPING": "nokeys"})
         self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-3000:])
         self.assertIn("no typing keys (row 297)", p.stdout)
+
+    def test_fail_when_the_letter_does_not_show(self):   # (the bug's second half: "wasn't showing the text")
+        p, s = self.run_it("notext", env={"BT_FAKE_TYPING": "notext"})
+        self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-3000:])
+        self.assertIn("the letter typed shows", p.stdout)
 
     def test_fail_when_typing_never_starts(self):
         p, s = self.run_it("nostart", env={"BT_FAKE_TYPING": "nostart"})

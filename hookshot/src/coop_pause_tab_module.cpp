@@ -2907,6 +2907,13 @@ void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
         drawn.tab = tab == static_cast<int>(MinusPage::kMultiplayer) ? "multiplayer" : mods ? "mods" : "lobby";
         drawn.view = ViewWord(view);
         drawn.keys = !mods && !v.typing_lines.empty();   // (row 297: the typing keys drawn on the list)
+        if (drawn.keys) {   // (its first line's value: what is typed, as drawn; counted, never given)
+            const std::string& typed = v.typing_lines[0].value;
+            drawn.typed_chars = static_cast<int>(std::count_if(typed.begin(), typed.end(), [](char c) {
+                return (static_cast<unsigned char>(c) & 0xC0) != 0x80;   // (UTF-8: one per character)
+            }));
+        }
+        drawn.row = row_now, drawn.list = in_list;
         if (!mods && v.typing_lines.empty()) {   // (the details list drawn: DetailLines' own page rule)
             const DetailPaging paging = DetailPages(view, v);
             drawn.details_pages = paging.pages, drawn.details_page = paging.page;

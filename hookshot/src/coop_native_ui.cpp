@@ -653,7 +653,106 @@ Holds Banner::Holding(Game& game, const TextRing& ring) {
     return (text != 0 && (ring.Owns(text) || text == ours_)) ? Holds::kOurs : Holds::kGames;
 }
 
+namespace {
+std::mutex g_stats_mutex;
+BannerStats g_stats;                  // (under g_stats_mutex)
+std::vector<std::string> g_lines;     // (under g_stats_mutex) TakeBannerLines
+std::uint64_t g_line_count = 0;
+
+const char* HoldsWord(Holds h) {
+    switch (h) {
+    case Holds::kNothing: return "shut";
+    case Holds::kOurs: return "ours";
+    case Holds::kGames: return "the game's";
+    }
+    return "?";
+}
+
+void AddLine(std::string line) {   // (under g_stats_mutex)
+    ++g_line_count;
+    if (g_line_count > 300 && g_line_count % 100 != 0) return;
+    if (g_lines.size() < 64) g_lines.push_back("coop: native ui: banner: " + std::move(line));
+}
+
+// The screen's state and request now (-1, 0 when unreadable).
+std::pair<int, int> Look(Game& game, std::uint64_t screen) {
+    std::int8_t request = 0;
+    std::uint8_t state = 0;
+    if (screen == 0 || !ReadValue(game, screen + addr::kScreenRequest, request) ||
+        !ReadValue(game, screen + addr::kScreenState, state)) {
+        return {-1, 0};
+    }
+    return {state, request};
+}
+}  // namespace
+
+BannerStats Stats() {
+    std::lock_guard lock(g_stats_mutex);
+    return g_stats;
+}
+
+std::string StatsJson(const BannerStats& s) {
+    const auto b = [](bool v) { return v ? "true" : "false"; };
+    return std::string("{\"opens\":") + std::to_string(s.opens) + ",\"reopens\":" + std::to_string(s.reopens) +
+           ",\"shut_by_game\":" + std::to_string(s.shut_by_game) + ",\"taken_by_game\":" +
+           std::to_string(s.taken_by_game) + ",\"sets\":" + std::to_string(s.sets) + ",\"type_resets\":" + std::to_string(s.type_resets) + ",\"state\":" +
+           std::to_string(s.state) + ",\"request\":" + std::to_string(s.request) + ",\"holds\":\"" +
+           (s.holds == Holds::kOurs ? "ours" : s.holds == Holds::kGames ? "game" : "shut") + "\",\"page\":" +
+           b(s.page) + ",\"held\":" + b(s.held) + "}";
+}
+
+std::vector<std::string> TakeBannerLines() {
+    std::lock_guard lock(g_stats_mutex);
+    return std::exchange(g_lines, {});
+}
+
+bool Banner::KeptUp(Game& game, std::uint64_t screen) {
+    const auto [state, request] = Look(game, screen);
+    // Up (1 opening, 2 open) or an open already asked, and no close of ours pending (request below 0): it shows, or
+    // is about to. The game's open would play its "open" again, and the Type reset would replay too (BannerStats):
+    // it stays as it is, the text set is all.
+    const bool up = ((state == 1 || state == addr::kStateOpen) && request >= 0) || (state == 0 && request >= 1);
+    if (!up) return false;
+    std::lock_guard lock(g_stats_mutex);
+    ++g_stats.reopens;
+    AddLine("open asked while up (state " + std::to_string(state) + ", request " + std::to_string(request) + ", " +
+            (up_ ? "held line" : page_ ? "page" : "new") + "): kept up, not opened again");
+    return true;
+}
+
+bool Banner::Raise(Game& game, std::uint64_t screen) {
+    {
+        std::lock_guard lock(g_stats_mutex);
+        ++g_stats.opens;
+    }
+    closed_ = false;
+    return Open(game, screen, addr::kInfoOpenMode);
+}
+
+void Banner::Note(Game& game, std::uint64_t screen, Holds holds) {
+    const auto [state, request] = Look(game, screen);
+    std::lock_guard lock(g_stats_mutex);
+    const bool ours_up = page_ || up_;
+    if (holds != noted_) {
+        if (ours_up && noted_ == Holds::kOurs && holds == Holds::kNothing && !closed_) ++g_stats.shut_by_game;
+        if (ours_up && noted_ == Holds::kOurs && holds == Holds::kGames) ++g_stats.taken_by_game;
+        AddLine(std::string(HoldsWord(noted_)) + " -> " + HoldsWord(holds) + " (state " + std::to_string(state) +
+                ", request " + std::to_string(request) + (up_ ? ", held line" : "") + (page_ ? ", page" : "") +
+                (closed_ ? ", our close asked" : "") + ")");
+        noted_ = holds;
+    }
+    g_stats.state = state;
+    g_stats.request = request;
+    g_stats.holds = holds;
+    g_stats.page = page_;
+    g_stats.held = up_;
+}
+
 bool Banner::Set(Game& game, std::uint64_t screen, std::uint64_t ref, bool opening) {
+    {
+        std::lock_guard lock(g_stats_mutex);
+        ++g_stats.sets;
+    }
     // As the game's f_83419b10 puts up a banner of an ordinary kind: its Type animation at its first frame (only
     // kind 0x1d plays it to its end), then T_Text_00. A banner the game showed last as that kind looks ordinary again.
     // Only when it is put up: on a banner of ours that is up the Type is ordinary already, and putting it back at its
@@ -661,6 +760,8 @@ bool Banner::Set(Game& game, std::uint64_t screen, std::uint64_t ref, bool openi
     std::uint64_t type = 0;
     if (opening && ReadValue(game, screen + addr::kInfoType, type) && type != 0) {
         game.Call(game.At(addr::kAnimFirstFrame), {type, 0, 0, 0, 0});
+        std::lock_guard lock(g_stats_mutex);
+        ++g_stats.type_resets;
     }
     if (!SetPane(game, screen, addr::kNameT_Text_00, ref)) return false;
     // What the text box holds after our set: ours from now on, even when the game keeps a copy of its own.
@@ -676,6 +777,7 @@ void Banner::Close(Game& game, std::uint64_t screen) {
         close != 0) {
         game.Call(close, {screen, static_cast<std::uint64_t>(-1), 0, 0, 0});
     }
+    closed_ = true;
 }
 
 bool Banner::Show(Game& game, TextRing& ring, const Shown& page, std::uint64_t now_ms) {
@@ -684,14 +786,15 @@ bool Banner::Show(Game& game, TextRing& ring, const Shown& page, std::uint64_t n
     if (holds == Holds::kGames) return false;  // the game's own banner (or none): the page waits
     const std::uint64_t screen = ScreenByVtable(game, addr::kInfoVtable);
     const std::uint64_t ref = ring.Put(game, BannerText(page));
-    const bool reopen = !(page_ && holds == Holds::kOurs);   // (a page of ours up already: only the text changes)
+    // (a page of ours up already, or a banner of ours that shows: only the text changes, typing-blink-0121)
+    const bool reopen = !(page_ && holds == Holds::kOurs) && !(screen != 0 && KeptUp(game, screen));
     if (screen == 0 || ref == 0 || !Set(game, screen, ref, reopen)) return false;
     // The speaker's colour on the line; a notice (or a text box not found) the game's own.
     if (page.notice || page.colour == 0 || !tint_.Set(game, ring, screen, addr::kNameT_Text_00, page.colour)) {
         tint_.Restore(game, ring);
     }
     // Up with ours already (open, or opening): only the text changed. Shut: opened, with the game's in animation.
-    if (reopen && !Open(game, screen, addr::kInfoOpenMode)) return false;
+    if (reopen && !Raise(game, screen)) return false;
     page_ = true;
     until_ = now_ms + static_cast<std::uint64_t>(page.seconds * 1000.0f);
     return true;
@@ -729,11 +832,18 @@ std::optional<std::string> HeldBanner() {
 bool Banner::Step(Game& game, TextRing& ring, const std::optional<std::string>& held, std::uint64_t now_ms) {
     const std::uint64_t screen = ScreenByVtable(game, addr::kInfoVtable);
     if (screen == 0) {
+        {
+            std::lock_guard lock(g_stats_mutex);
+            g_stats.state = -1;
+            g_stats.page = g_stats.held = false;
+        }
+        noted_ = Holds::kNothing;
         up_ = page_ = false;   // (no banner now: the title, a load; shown again once it is back)
         shown_.clear();
         return held.has_value();
     }
     const Holds holds = Holding(game, ring);
+    Note(game, screen, holds);
     if (holds != Holds::kOurs && tint_.tinted()) {
         tint_.Restore(game, ring);   // (the game's own banner, or shut: its own colour)
     }
@@ -759,11 +869,11 @@ bool Banner::Step(Game& game, TextRing& ring, const std::optional<std::string>& 
     const bool shut = holds == Holds::kNothing;  // closed (by itself, or never opened) and no open asked
     if (text != shown_ || !up_ || shut) {
         // Up with the held line already: only its text changes (the revive's share, the clock), nothing replayed.
-        const bool opening = !up_ || shut;
+        const bool opening = (!up_ || shut) && !KeptUp(game, screen);   // (shows already: typing-blink-0121)
         const std::uint64_t ref = ring.PutFixed(game, 0, text);
         if (ref == 0 || !Set(game, screen, ref, opening)) return true;
         tint_.Restore(game, ring);   // (the held line in the game's own colour)
-        if (opening && !Open(game, screen, addr::kInfoOpenMode)) return true;
+        if (opening && !Raise(game, screen)) return true;
         shown_ = text;
         up_ = true;
     }

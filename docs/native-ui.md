@@ -88,6 +88,12 @@ own layout (`W_Bg_00`, shown), no option, and the game shows its own short notic
   wait meanwhile.
 - **Typing**: while the chat box is open the typed line is on the banner, set again on each change (no opening
   again); chat that comes meanwhile waits; closing the box closes the line at once.
+- **Never opened again while it shows** (typing-blink-0121): the game's open (slot 5) with mode 2 plays the banner's
+  `open` animation from its start whatever its state (its update `f_802f1380` calls slot 70 `f_80795d20` ->
+  `f_802f62e0`: `open`, state back to 1; mode 3 is `open_Direct`). So co-op calls open only on a banner that is shut,
+  closing (state 3) or has our close pending (request below 0); on one that is up (state 1 or 2) or asked open
+  already, a page, the typed line or the held line only sets its text (`Banner::Raise`). The bridge state's `banner`
+  ([playtest.md](playtest.md)) counts the opens, the asks kept, and a banner of ours the game shut or took.
 
 ## Switches and fallbacks
 
@@ -101,6 +107,8 @@ own layout (`W_Bg_00`, shown), no option, and the game shows its own short notic
 - `coop: native ui: first chat line|notice shown on the game's banner`
 - `coop: native ui: the game's banner is not free now; the line waits`
 - `coop: native ui: typing on the game's banner`
+- `coop: native ui: banner: ours -> shut (state 0, request 0, page)` and the like: each change of whose the banner is,
+  `... open asked while up (...): kept up, not opened again` (the first 300 a run, then every 100th)
 - `coop: native ui: banner lines measured with the game's font (N bytes)` (or `... measured by safe guesses`)
 - `coop: native ui: the game gave no memory for its texts; chat drawn as before`
 

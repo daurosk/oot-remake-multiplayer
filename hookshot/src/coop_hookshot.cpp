@@ -86,6 +86,7 @@
 #include "coop_lobby_game.h"
 #include "coop_lobby_tab.h"
 #include "coop_voice.h"
+#include "coop_fresh.h"
 #include "coop_hud.h"
 #include "coop_hud_dim.h"
 #include "coop_hud_hearts.h"
@@ -1371,7 +1372,8 @@ struct PartyShared {
     std::optional<double> game_hud_bottom;
     std::string own;                           // our own line ("You" + voice words), "" none
     bool game_menu_up = false;
-    std::uint64_t ms = 0;                      // when DrawScene left them (SteadyMs): older than a second = none
+    std::uint64_t ms = 0;                      // when DrawScene left them (SteadyMs)
+    std::uint64_t present = 0;                 // and at which present (CoopFresh::Presents)
 };
 PartyShared g_party;
 std::atomic<bool> g_party_native{false};     // the game's HUD showed the blocks last frame (Hud::Step true)
@@ -1472,7 +1474,12 @@ void PartyStep(NativeGame& game, void* ctx, std::uint64_t now) {
     bool menu_up = false;
     {
         std::lock_guard lock(g_party.mutex);
-        if (now < g_party.ms + 1000) blocks = g_party.blocks, own = g_party.own;
+        // Older than a second AND presents went on without DrawScene = none (coop_fresh.h). By the wall clock alone a
+        // game at a frame a second or slower (the bridge stepping frames, a long hitch) found every frame's blocks
+        // stale and hid the other players (testkit-0120 kit-in-play shots, 1.5 s a frame).
+        if (!CoopFresh::Stale(now > g_party.ms ? now - g_party.ms : 0, 1000, g_party.present, CoopFresh::Presents())) {
+            blocks = g_party.blocks, own = g_party.own;
+        }
         bottom = g_party.game_hud_bottom;
         menu_up = g_party.game_menu_up;
     }
@@ -1795,6 +1802,7 @@ CoopDraw::Scene DrawScene() {
         g_party.game_hud_bottom = bottom;
         g_party.game_menu_up = game_menu_up;
         g_party.ms = SteadyMs();
+        g_party.present = CoopFresh::Presents();
     }
     // F6 (ui-audit-01112 B5): the game's own - menu, Multiplayer > Players (coop_players_open.h), when we are in a
     // scene (never on the title or a file screen, where Minus is not the - menu); the drawn list only when the pack has

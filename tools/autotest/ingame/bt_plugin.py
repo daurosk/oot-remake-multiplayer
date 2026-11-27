@@ -193,6 +193,13 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=lambda it: (_rep_of(it), 1 if it.get_closest_marker("leaves_play") else 0,
                                0 if it.get_closest_marker("smoke") else 1, order[id(it)]))
     _deselect_needs_env(config, items)
+
+
+@pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
+def _lane_check_last(config, items):
+    """--lane-check-only after every other plugin's modifyitems, so its 'tests collected N' is what the run gets: pytest's
+    own -k / -m deselection (the mark plugin's modifyitems) ran after ours before, and the chk line counted the tests
+    -k/-m leaves out (B #158: gate-hilt 23:09 'collected 49', pause-press 23:27 'collected 6 not 2')."""
     if config.getoption("lane_check_only"):
         _lane_check_only(config, items)
 

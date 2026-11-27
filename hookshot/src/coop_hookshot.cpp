@@ -127,6 +127,7 @@
 #include "coop_time.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
+#include "coop_pause_world.h"
 #include "coop_longshot_settings.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
@@ -2185,6 +2186,7 @@ bool Start(const HosCoopApi* api) {
     });
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
+    CoopPauseWorld::Init(api);   // row 299's PauseMgr probe (test only: the bridge asks)
     CoopLongshotSettings::Init(api);   // Longshot's own settings for the Settings tab (patch 0032; none from an older Hookshot)
     CoopPause::Init(server);
     CoopTestInput::SetMenuOpener(CoopPause::TestMenu);   // (the autotest's menu step; only a commands file asks it)
@@ -3541,6 +3543,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
     CoopExportGuard::Guard(site, [&] {
         if (g_on) {
             CoopPauseTab::OnScreen(ctx, screen);
+            CoopPauseWorld::OnScreen(ctx);   // (row 299: only a test's `menu hold release N`)
             try {
                 // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
                 // choose_focused would press the game's button under our page)

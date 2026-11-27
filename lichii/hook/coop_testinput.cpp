@@ -528,7 +528,12 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             };
             const std::string page = w.size() >= 2 ? low(w[1]) : std::string{};
             const std::string arg = w.size() == 3 ? low(w[2]) : std::string{};
-            if (page == "look" && arg.find('=') != std::string::npos) {
+            if (page == "hold" && w.size() == 4 && low(w[2]) == "release") {
+                // row 299 probe (hookshot/src/coop_pause_world.h): menu hold release N, the game's own release of the
+                // PauseMgr's hold N at the next menu screen update. Test only.
+                step.kind = Kind::menu;
+                step.mark = "hold release " + std::string(w[3]);
+            } else if (page == "look" && arg.find('=') != std::string::npos) {
                 step.kind = Kind::menu;
                 step.mark = "look " + arg;
             } else if (page == "open") {

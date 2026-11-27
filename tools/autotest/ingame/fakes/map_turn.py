@@ -7,6 +7,9 @@ gives the test with no other player.
   `probe` true, the game's own arrow's words with our turn at index 2 (+0x68; radians, -facing - a quarter, as
   fakes/map_icons.py), no run-time copies. BT_FAKE_MAP_TURN_WORD=<i> puts the turn at another index (the FAIL path's
   selftest), BT_FAKE_MAP_TURN_WORD=none nowhere (the NO-REF path).
+- probe v2 (map-icons-0121): BT_FAKE_MAP_TURN_RAW=<hex place>|matrix adds `arrow_raw` ([0] the template's raw words
+  +0x28..+0xbc, its matrix turned by the same turn); <hex place> also puts the turn at that own word, `matrix` at none
+  (drawn turned by the matrix only). Unset: no `arrow_raw` (a v1 module).
 """
 import math
 import os
@@ -39,3 +42,11 @@ def state(game, st):
         words[int(where)] = _turn(game.facing or 0.0)
     st["map_native"] = {"up": False, "why": "", "table": True, "turn_at": 0, "game_arrow": True,
                         "game_arrow_words": words, "run_arrow_words": [], "probe": True, "shown": []}
+    raw_at = os.environ.get("BT_FAKE_MAP_TURN_RAW")
+    if raw_at:
+        t = _turn(game.facing or 0.0)
+        raw = [0.0] * ((0xc0 - 0x28) // 4)
+        raw[0], raw[1], raw[3], raw[4] = math.cos(t), math.sin(t), -math.sin(t), math.cos(t)
+        if raw_at != "matrix":
+            raw[(int(raw_at, 16) - 0x28) // 4] = t
+        st["map_native"]["arrow_raw"] = [raw]

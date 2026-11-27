@@ -92,6 +92,12 @@ struct State {
     // ProbeArrow only: the same words of the arrows in the game's run-time icon copies under the map screen (Link's
     // arrow among them when the game shows him through a copy, not through its Pa_MapIcon_00 itself), at most 4
     std::vector<std::array<float, 8>> run_arrow_words;
+    // ProbeArrow only (probe v2): each arrow's raw words +0x28..+0xbc (38 floats: the global matrix +0x28..+0x54, 3 x 4
+    // by column, then the pane's own words), [0] the template's, [1..] the run-time copies' in run_arrow_words' order.
+    // The drawn turn is atan2(m[1], m[0]) of the matrix: the test reads it from the frame itself and names the own word
+    // that follows it (no guessed place).
+    static constexpr std::size_t kRawWords = (0xc0 - 0x28) / 4;
+    std::vector<std::array<float, kRawWords>> arrow_raw;
     bool probe = false;                        // true: ProbeArrow's (no copies looked at)
     struct Shown {
         std::size_t copy = 0;

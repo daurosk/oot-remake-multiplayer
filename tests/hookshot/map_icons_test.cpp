@@ -377,6 +377,9 @@ TEST_CASE("map icons: the turn probe reads the game's own arrows fresh, solo, wi
     g.Put<std::uint64_t>(kScreen + 0x100, run);
     const std::uint64_t run_turn = g.Pane(run_player + 0x40, "N_PlayerRotate_00");
     g.Put<float>(run_turn + 0x68, 1.5f);
+    g.Put<float>(run_turn + 0x28, 0.5f);    // probe v2: the copy's global matrix m[0], m[1] (a turned arrow)
+    g.Put<float>(run_turn + 0x2c, -0.25f);
+    g.Put<float>(run_turn + 0xbc, 9.0f);    // the last raw word
     M::Icons icons;
     const M::State st = icons.ProbeArrow(g);
     CHECK(st.probe);
@@ -385,6 +388,13 @@ TEST_CASE("map icons: the turn probe reads the game's own arrows fresh, solo, wi
     CHECK(st.game_arrow_words[2] == doctest::Approx(2.0f));
     REQUIRE(st.run_arrow_words.size() == 1);
     CHECK(st.run_arrow_words[0][2] == doctest::Approx(1.5f));
+    // probe v2: raw +0x28..+0xbc, [0] the template's, [1] the copy's; +0x60 is raw index 14
+    REQUIRE(st.arrow_raw.size() == 2);
+    CHECK(st.arrow_raw[0][14 + 2] == doctest::Approx(2.0f));
+    CHECK(st.arrow_raw[1][0] == doctest::Approx(0.5f));
+    CHECK(st.arrow_raw[1][1] == doctest::Approx(-0.25f));
+    CHECK(st.arrow_raw[1][16] == doctest::Approx(1.5f));
+    CHECK(st.arrow_raw[1][M::State::kRawWords - 1] == doctest::Approx(9.0f));
     CHECK(st.shown.empty());
     CHECK(g.touched.empty());
     CHECK(g.texts.empty());
@@ -393,6 +403,8 @@ TEST_CASE("map icons: the turn probe reads the game's own arrows fresh, solo, wi
     const std::string js = M::Json(st);
     CHECK(js.find("\"probe\":true") != std::string::npos);
     CHECK(js.find("\"run_arrow_words\":[[0.0000,0.0000,1.5000,") != std::string::npos);
+    CHECK(js.find("\"arrow_raw\":[[") != std::string::npos);
+    CHECK(js.find(",[0.5000,-0.2500,") != std::string::npos);
     // no map screen: says so, reads nothing more
     g.Put<std::uint64_t>(kScreen, 0);
     CHECK(icons.ProbeArrow(g).why == "probe: no map screen");

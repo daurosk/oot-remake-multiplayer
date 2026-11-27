@@ -1,4 +1,4 @@
-From d9373ed5c3a0efc26eeacdc89267465958d498c3 Mon Sep 17 00:00:00 2001
+From 259b0bcc1ae462d769642dc7c82f6d5963befc30 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 12:38:31 -0900
 Subject: [PATCH] Co-op null guards: loads through a puppet's missing
@@ -27,18 +27,45 @@ own exit there; this guard stays as its backstop. Patch 0002's zero
 page (and the module-armed null page) stays too: it covers loads not
 listed here.
 
+nx2/fastfp.py: its copy of emit_function (A64_FASTFP, on by default:
+what the game's lift runs instead of the kit's) writes the same guard,
+and a guarded load joins no fast float run. nx2/chunks.py: Lifter.unless
+goes to the emit's new processes (Windows), as 0005's wraps. Both count
+each guard written (stats unless_emitted); nx2/lift.py prints 'co-op null
+guards: N of M emitted in the lifted C'. tests/test_fastfp_override.py:
+the copy still matches the kit line for line, and a guard cuts a run.
+
 tests/test_coop_null_guards.py: install (build, words, the call before
 each Player load), the words, a real Lifter's emitted text, and the C
-compiled and run on fake memory.
+compiled and run on fake memory; the lift's own chain (nx2/lift.py's
+installs, in a process of its own) writes and counts the guard.
 ---
+ nx2/chunks.py                        |   3 +-
  nx2/coop_hooks.py                    |   2 +
- nx2/coop_null_guards.py              | 119 ++++++++++++
- tests/test_coop_null_guards.py       | 273 +++++++++++++++++++++++++++
- third_party/a64-kit/lift/a64_lift.py |   8 +
- 4 files changed, 402 insertions(+)
+ nx2/coop_null_guards.py              | 119 ++++++++++
+ nx2/fastfp.py                        |  10 +-
+ nx2/lift.py                          |   2 +
+ tests/test_coop_null_guards.py       | 340 +++++++++++++++++++++++++++
+ tests/test_fastfp_override.py        |  14 +-
+ third_party/a64-kit/lift/a64_lift.py |   9 +
+ 8 files changed, 495 insertions(+), 4 deletions(-)
  create mode 100644 nx2/coop_null_guards.py
  create mode 100644 tests/test_coop_null_guards.py
 
+diff --git a/nx2/chunks.py b/nx2/chunks.py
+index f48efd9d..2a3f7dce 100644
+--- a/nx2/chunks.py
++++ b/nx2/chunks.py
+@@ -212,7 +212,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
+ # What the emit reads of the lifter besides the bodies of the functions it emits (a64_lift.Lifter.emit_function and the
+ # methods it calls): sent once to each new process
+ EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks",
+-               "wraps")   # (oot-remake-multiplayer's patch 0005)
++               "wraps",   # (oot-remake-multiplayer's patch 0005)
++               "unless")   # (oot-remake-multiplayer's patch 0023: the null guards, Lifter.unless)
+ _view = None   # (a new process's view: a lifter with the tables only, and its counters)
+ 
+ 
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 index e9905c58..7ebc48de 100644
 --- a/nx2/coop_hooks.py
@@ -177,12 +204,55 @@ index 00000000..7ceb1582
 +    print("co-op null guards: %d of %d loads guarded (a null base reads 0, as on the emulator)" % (
 +        n, len(PLAYER_LOADS) + len(PLAYER_LOADS_LATER) + len(SLOT10_LOADS)))
 +    return n
+diff --git a/nx2/fastfp.py b/nx2/fastfp.py
+index 06771f6e..bd5693c6 100644
+--- a/nx2/fastfp.py
++++ b/nx2/fastfp.py
+@@ -631,9 +631,10 @@ def emit_function(self, e, texts):
+         (k, w) = body[pc]
+         kind = k[0]
+         # (an instruction joins the run when nothing can enter or leave between it and the next: no label, no patch after  # (fastfp)
+-        # it, an op a64emit handled, whose text ff_eligible takes; what it appends below goes to the run instead)  # (fastfp)
++        # it or around it (Lifter.unless, patch 0023), an op a64emit handled, whose text ff_eligible takes; what it appends  # (fastfp)
++        # below goes to the run instead)  # (fastfp)
+         joins = False  # (fastfp)
+-        if ff and kind == "op" and pc not in self.after and not (pc in labels or (pc == e and e in labels)):  # (fastfp)
++        if ff and kind == "op" and pc not in self.after and pc not in self.unless and not (pc in labels or (pc == e and e in labels)):  # (fastfp)
+             t, f = texts[(w, pc) if pc_relative(w) else w]  # (fastfp)
+             if not f & (a64emit.UNHANDLED | a64emit.TERMINATOR):  # (fastfp)
+                 joins = ff_joins(t, dead.get(pc, 0), stores)  # (fastfp)
+@@ -660,7 +661,12 @@ def emit_function(self, e, texts):
+                 if pc in dead:
+                     text = drop_flag_stores(text, dead[pc])
+                     self.stats["dead_flag_stores"] += bin(dead[pc]).count("1")
++                if pc in self.unless:   # (patch 0023)
++                    out.append("if (%s) { %s } else {" % self.unless[pc])
++                    self.stats["unless_emitted"] = self.stats.get("unless_emitted", 0) + 1
+                 out.append(text.rstrip("\n"))
++                if pc in self.unless:
++                    out.append("}")
+                 if pc in self.after:
+                     out.append(self.after[pc])
+                     self.stats["after_patches"] = self.stats.get("after_patches", 0) + 1
+diff --git a/nx2/lift.py b/nx2/lift.py
+index dcbb883b..9b481bba 100644
+--- a/nx2/lift.py
++++ b/nx2/lift.py
+@@ -259,6 +259,8 @@ def main():
+         print("\n".join(chunks.end_side(side, tables)), flush=True)
+         took("runtime tables and standalone files (beside the edits)" if side else "runtime tables and standalone files")
+         L.report()
++        if L.unless:   # (oot-remake-multiplayer's patch 0023: the guards written into the C, not only the ones asked for)
++            print("co-op null guards: %d of %d emitted in the lifted C" % (L.stats.get("unless_emitted", 0), len(L.unless)))
+         if L.stats["entry_gotos"]:   # (nx2/lift_fixes.py, 4)
+             print("functions with code below their entry, started at it by a goto: %d" % L.stats["entry_gotos"])
+         if a.standalone:   # (nx2/entry_hooks.py: one per hook the lift found a function for)
 diff --git a/tests/test_coop_null_guards.py b/tests/test_coop_null_guards.py
 new file mode 100644
-index 00000000..e8e56097
+index 00000000..2642f257
 --- /dev/null
 +++ b/tests/test_coop_null_guards.py
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,340 @@
 +"""Game-free tests of co-op's null guards (nx2/coop_null_guards.py and a64_lift.py's Lifter.unless, oot-remake-multiplayer's
 +patch 0023).
 +
@@ -191,6 +261,9 @@ index 00000000..e8e56097
 +- The words: each is a load through x0 (Player) or the slot-10 chain (x8 to x8), as the docstring says.
 +- A real a64_lift.Lifter over a made-up function (no translator, so no compiler): the guarded instruction is wrapped in
 +  `if (<null base>) { <C instead> } else { ... }` and nothing else in the text changes.
++- The lift's own chain (nx2/lift.py's module level: fastfp's copy of emit_function, guest locals, entry hooks, poll;
++  A64_FASTFP on, its default), in a process of its own: the guard is in the written text and counted as emitted, a
++  guarded load joins no fast float run, and nx2/chunks.py sends Lifter.unless to the emit's new processes (Windows).
 +- The C, compiled into a small program (with $CC, else clang or gcc on PATH; skipped when there is none) around a
 +  stand-in for the load: a null base gives 0 and a log line, a real pointer reads memory as shipped.
 +
@@ -454,10 +527,118 @@ index 00000000..e8e56097
 +                self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"), hex(off))
 +
 +
++MUL = 0x6e22dc23            # fmul v3.4s, v1.4s, v2.4s (a vector multiply: what a fast float run takes)
++MUL_TEXT = "a64_vfpx_mul32(c,c->vreg[3],c->vreg[1],c->vreg[2],4);"
++
++
++def pipeline():
++    """(the lift's chain, in this process): FN's load guarded, and a run of 16 multiplies with a guard on the 9th; prints
++    what the tests below read"""
++    import lift  # noqa: F401  (its module level installs the chain the game's lift uses)
++    import chunks
++    import json
++    lifter = a64_lift.Lifter(FnImage())
++    lifter.discover()
++    lifter.unless[FN + 4] = ("c->x[0] < 0x100000ULL", "c->x[8] = 0;")
++    text = lifter.emit_function(FN, fn_texts())[0]
++    run = object.__new__(a64_lift.Lifter)   # (a made-up function of 16 multiplies, as tests/test_fastfp_override.py)
++    for k, v in vars(lifter).items():
++        setattr(run, k, v)
++    e = 0x2000
++    body = {e + 4 * i: (("op",), MUL) for i in range(16)}
++    body[e + 64] = (("ret",), RET)
++    run.funcs = {e: (body, set())}
++    run.unless = {e + 32: ("c->x[0] < 0x100000ULL", "/* guarded */")}
++    run.stats = type(lifter.stats)()
++    run_text = run.emit_function(e, {MUL: (MUL_TEXT, 0)})[0]
++    print(json.dumps({"emit": "%s.%s" % (a64_lift.Lifter.emit_function.__module__,
++                                         a64_lift.Lifter.emit_function.__qualname__),
++                      "text": text, "emitted": lifter.stats.get("unless_emitted", 0),
++                      "run_text": run_text, "run_stats": dict(run.stats),
++                      "tables": list(chunks.EMIT_TABLES)}))
++
++
++class PipelineTests(unittest.TestCase):
++    """The guards through the lift's own chain, in a new process (nx2/lift.py's installs stay out of the other tests)"""
++
++    @classmethod
++    def setUpClass(cls):
++        import json
++        env = dict(os.environ, A64_FASTFP="1", COOP_LONGSHOT_SOURCE=str(ROOT))
++        r = subprocess.run([sys.executable, "-I", "-B", os.path.abspath(__file__), "--pipeline"], env=env,
++                           capture_output=True, text=True, timeout=600)
++        assert r.returncode == 0, r.stdout + r.stderr
++        cls.got = json.loads(r.stdout.strip().splitlines()[-1])
++
++    def test_the_chain_is_not_the_kits_method(self):
++        self.assertNotEqual(self.got["emit"], "a64_lift.Lifter.emit_function")
++
++    def test_the_guard_is_written_and_counted(self):
++        # (the context's registers, or guest locals where nx2/guest_locals.py gives the function them: x0_, x8_)
++        guard = r"if \((c->x\[0\]|x0_) < 0x100000ULL\) \{ (c->x\[8\]|x8_) = 0; \} else \{\n.*LOAD32\(.*0x7d8\);\n\}"
++        self.assertRegex(self.got["text"], guard)
++        self.assertEqual(self.got["emitted"], 1)
++
++    def test_a_guarded_load_joins_no_fast_float_run(self):
++        stats = self.got["run_stats"]
++        self.assertEqual(self.got["run_text"].count("/* guarded */"), 1, self.got["run_text"])
++        self.assertEqual((stats.get("ff_regions"), stats.get("ff_ops")), (1, 8), self.got["run_text"])
++
++    def test_new_emit_processes_get_the_guards(self):
++        self.assertIn("unless", self.got["tables"])
++
++
 +if __name__ == "__main__":
-+    unittest.main()
++    if "--pipeline" in sys.argv:
++        pipeline()
++    else:
++        unittest.main()
+diff --git a/tests/test_fastfp_override.py b/tests/test_fastfp_override.py
+index 77aac5d9..bdef8913 100644
+--- a/tests/test_fastfp_override.py
++++ b/tests/test_fastfp_override.py
+@@ -101,12 +101,13 @@ MUL = "a64_vfpx_mul32(c,c->vreg[%d],c->vreg[1],c->vreg[2],4);"
+ def lifter(comments):
+     L = object.__new__(a64_lift.Lifter)
+     L.names, L.plt, L.no_local, L.after, L.jt, L.devirt = {}, {}, set(), {}, {}, {}
++    L.unless = {}   # (oot-remake-multiplayer's patch 0023)
+     L.entries, L.comments, L.setjmp_owner = set(), comments, {}
+     L.stats, L.unhandled, L.ijump = collections.Counter(), collections.Counter(), collections.Counter()
+     return L
+ 
+ 
+-def function(L, n_mul, label_at=None, after_at=None):
++def function(L, n_mul, label_at=None, after_at=None, unless_at=None):
+     """A function at 0x1000: n_mul vector multiplies, an integer add, a return; the instruction texts by word"""
+     e = 0x1000
+     body, texts, labels = {}, {}, set()
+@@ -120,6 +121,8 @@ def function(L, n_mul, label_at=None, after_at=None):
+         labels.add(e + 4 * label_at)
+     if after_at is not None:
+         L.after[e + 4 * after_at] = "/* a patch */"
++    if unless_at is not None:   # (patch 0023: a guarded instruction joins no run)
++        L.unless[e + 4 * unless_at] = ("c->x[0] < 0x100000ULL", "/* guarded */")
+     L.funcs = {e: (body, labels)}
+     return e, texts
+ 
+@@ -160,6 +163,15 @@ def check_run():
+     if stats.get("ff_regions") != 1 or stats.get("ff_ops") != 8:
+         fail("a patch after the 9th of 16 multiplies: %s regions of %s ops, not one of 8 (the 7 after it too few)"
+              % (stats.get("ff_regions"), stats.get("ff_ops")))
++    for comments in (False, True):   # (patch 0023: the guard as the kit writes it, with A64_FASTFP off)
++        want, _ = emit(KIT_EMIT, comments, "0", n_mul=12, unless_at=5)
++        got, _ = emit(fastfp.emit_function, comments, "0", n_mul=12, unless_at=5)
++        if got != want or "if (c->x[0] < 0x100000ULL) { /* guarded */ } else {" not in got:
++            fail("a guarded instruction (Lifter.unless): the copy wrote\n%s\nthe kit\n%s" % (got, want))
++    text, stats = emit(fastfp.emit_function, False, "1", n_mul=16, unless_at=8)
++    if stats.get("ff_regions") != 1 or stats.get("ff_ops") != 8 or text.count("/* guarded */") != 1:
++        fail("a guard on the 9th of 16 multiplies: %s regions of %s ops, not one of 8, or no guard written:\n%s"
++             % (stats.get("ff_regions"), stats.get("ff_ops"), text))
+     os.environ.pop("A64_FASTFP", None)
+     print("ok   the copy writes what the kit writes with A64_FASTFP=0; with it on, runs become regions, cut at labels and patches")
+ 
 diff --git a/third_party/a64-kit/lift/a64_lift.py b/third_party/a64-kit/lift/a64_lift.py
-index 2d961c3f..a2031d44 100644
+index 2d961c3f..c4419e44 100644
 --- a/third_party/a64-kit/lift/a64_lift.py
 +++ b/third_party/a64-kit/lift/a64_lift.py
 @@ -973,6 +973,10 @@ class Lifter:
@@ -471,12 +652,13 @@ index 2d961c3f..a2031d44 100644
          # (oot-remake-multiplayer's patch 0005, nx2/coop_world_wraps.py) wrapped functions ({entry: wrap id}): every call and
          # the indirect table reach hos_coop_w_<entry> (a64_hooks.c), which calls the co-op module before and after f_<entry>
          self.wraps = {}
-@@ -1669,7 +1673,11 @@ class Lifter:
+@@ -1669,7 +1673,12 @@ class Lifter:
                      if pc in dead:
                          text = drop_flag_stores(text, dead[pc])
                          self.stats["dead_flag_stores"] += bin(dead[pc]).count("1")
 +                    if pc in self.unless:   # (patch 0023)
 +                        out.append("if (%s) { %s } else {" % self.unless[pc])
++                        self.stats["unless_emitted"] = self.stats.get("unless_emitted", 0) + 1
                      out.append(text.rstrip("\n"))
 +                    if pc in self.unless:
 +                        out.append("}")

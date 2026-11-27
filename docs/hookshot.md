@@ -291,8 +291,10 @@ layers cover it, and both stay:
   their base register holds a real pointer, else the register gets 0, what the emulator reads: the 25 loads through x0
   straight after `bl main+0x82acc0` with no check, main+0x27975f0 (the same component, after a tbz), and the slot-10 chain
   main+0x4b85e4..ec in f_804d84b0 (a guest's crash, guest 0x20). Each word, the call before each Player load and the build
-  id are checked when the game is built; a changed word leaves that one out. Log: `coop: null guard at main+...` (first
-  few uses). main+0x2dceef8 (the bow's wearer) is met first by patch 0038, which takes the game's own exit there; 0023's
+  id are checked when the game is built; a changed word leaves that one out. The game build's log counts the guards
+  written into the lifted C, `co-op null guards: 29 of 29 emitted in the lifted C` (Longshot's fast float copy of the
+  emit, `nx2/fastfp.py`, writes them too, and the emit's new processes on Windows get them); the game's log says
+  `coop: null guard at main+...` the first few uses. main+0x2dceef8 (the bow's wearer) is met first by patch 0038, which takes the game's own exit there; 0023's
   guard is its backstop. No cost on the normal path: Link, who has both components, runs as shipped (one compare).
 - **The module's null page (`hookshot/src/coop_null_page.*`, patch 0002's guard): everything else.** The module arms the
   guest's first MB read-only before its first puppet, so any other read through a missing component (slot 10 is read

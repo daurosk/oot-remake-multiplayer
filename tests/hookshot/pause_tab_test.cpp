@@ -3277,6 +3277,30 @@ TEST_CASE("pause tab (tabs-overhaul-01110 step 2): the Map under CoopMenu_00 hid
     CHECK_FALSE(MapUnderHidden(false, true, false, true, 5000, 6000, 6000));   // (L: given back at once)
 }
 
+TEST_CASE("pause tab (row 295): L from co-op's - page gives the Map page's content back when the same Map screen opens again") {
+    // The player's case: R on the Map (native), co-op's Multiplayer page up, its content hidden under ours; L back:
+    // CoopMenu_00 closes and the Map sequence opens the same Map screen (2 -> 3 -> 1 at the same addresses). That
+    // opening is a look-again (LayoutLookAgain), and before row 295 it forgot "hidden" without showing a pane: the
+    // Map page stayed its backdrop only until the menu was opened again.
+    CHECK(LayoutLookAgain(true, 0x100, 3, 0x100, 1));
+    const MapPaneBack same = MapPaneOnLookAgain(0x5000, 0x5000, true, true, false);
+    CHECK(same.show);
+    CHECK_FALSE(same.place);
+    // A slide cut by the opening: the pane back at its own x (else it stays off to the side, the page as blank).
+    const MapPaneBack slid = MapPaneOnLookAgain(0x5000, 0x5000, false, true, true);
+    CHECK_FALSE(slid.show);
+    CHECK(slid.place);
+    // Not hidden by us, or hidden by the game itself before ours showed: left as it is.
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0x5000, false, true, false).show);
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0x5000, true, false, false).show);
+    // A new Map screen's panes (another address, or none found): never touched.
+    const MapPaneBack other = MapPaneOnLookAgain(0x5000, 0x6000, true, true, true);
+    CHECK_FALSE(other.show);
+    CHECK_FALSE(other.place);
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0, true, true, true).show);
+    CHECK_FALSE(MapPaneOnLookAgain(0, 0, true, true, true).place);
+}
+
 TEST_CASE("pause tab (charsel-native-0119, run 4620f3e7): a screen layout's verdict is looked at again at every opening") {
     // No verdict yet, or another screen object at that layout: look.
     CHECK(LayoutLookAgain(false, 0, -1, 0x100, 1));

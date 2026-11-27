@@ -2537,6 +2537,8 @@ std::array<bool, kMapContentPanes> g_map_content_was{};
 std::array<float, kMapContentPanes> g_map_content_x{};   // their own x when a slide began
 bool g_map_sliding = false;
 bool g_map_hidden = false;                              // (the map screen's updates: one thread)
+std::atomic<int> g_map_page_panes{0}, g_map_page_shown{0};   // (MapPageNow: as its last update left them)
+std::atomic<std::uint64_t> g_map_page_ms{0};
 
 // The page's controller picture's ZL and ZR keys (MinusKeys), in the page's part layout `part`: found, the rest of the
 // picture and the keys' labels hidden, the keys placed beside the heading; the picture itself then shown by
@@ -3116,14 +3118,23 @@ void FollowMapUnder(void* ctx, std::uint64_t screen) {
     g_map_state = map_state;
     if (layout != g_map_layout || reopened) {
         if (g_map_hidden && !reopened) give_back();   // (an old layout's: shown back)
-        g_map_layout = layout, g_map_screen = screen, g_map_hidden = false, g_map_sliding = false;
-        int found = 0;
+        // (row 295: L from ours, native, opens the SAME Map screen again; the panes found where they were are the ones
+        // we hid or moved, so they are given back here, or the Map page stays blank, its backdrop only, until the
+        // menu is opened again. A pane at another address is a new one: never touched)
+        int found = 0, back = 0;
         for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+            const std::uint64_t was = g_map_content[i];
             g_map_content[i] = FindOwnPane(ctx, layout, kMapContent[i]);
             found += g_map_content[i] != 0 ? 1 : 0;
+            if (!reopened) continue;
+            const MapPaneBack b =
+                MapPaneOnLookAgain(was, g_map_content[i], g_map_hidden, g_map_content_was[i], g_map_sliding);
+            if (b.place) PlacePane(ctx, g_map_content[i], g_map_content_x[i]);
+            if (b.show) SetVisible(ctx, g_map_content[i], true), ++back;
         }
-        LOG_INFO(Core, "coop: pause tab: the Map page's content: {} of {} panes found (its backdrop BG_00 stays)", found,
-                 kMapContentPanes);
+        g_map_layout = layout, g_map_screen = screen, g_map_hidden = false, g_map_sliding = false;
+        LOG_INFO(Core, "coop: pause tab: the Map page's content: {} of {} panes found (its backdrop BG_00 stays){}", found,
+                 kMapContentPanes, back != 0 ? fmt::format(", {} hidden by us shown again", back) : std::string{});
     }
     // (the slide: each content pane's own x when it began, the offset added; given back when it ends)
     if (sliding != g_map_sliding) {
@@ -3144,19 +3155,29 @@ void FollowMapUnder(void* ctx, std::uint64_t screen) {
             if (g_map_content[i] != 0) PlacePane(ctx, g_map_content[i], g_map_content_x[i] + off);
         }
     }
-    if (want == g_map_hidden) return;
-    if (want) {
-        for (std::size_t i = 0; i < kMapContentPanes; ++i) {
-            const std::uint64_t q = g_map_content[i];
-            g_map_content_was[i] = q != 0 && (Read<std::uint32_t>(q + 0xa8) & 1u) != 0;
-            if (g_map_content_was[i]) SetVisible(ctx, q, false);
+    if (want != g_map_hidden) {
+        if (want) {
+            for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+                const std::uint64_t q = g_map_content[i];
+                g_map_content_was[i] = q != 0 && (Read<std::uint32_t>(q + 0xa8) & 1u) != 0;
+                if (g_map_content_was[i]) SetVisible(ctx, q, false);
+            }
+        } else {
+            give_back();
         }
-    } else {
-        give_back();
+        g_map_hidden = want;
+        LOG_INFO(Core, "coop: pause tab: the Map page's content under the - menu's page {} (backdrop kept)",
+                 want ? "hidden" : "shown again");
     }
-    g_map_hidden = want;
-    LOG_INFO(Core, "coop: pause tab: the Map page's content under the - menu's page {} (backdrop kept)",
-             want ? "hidden" : "shown again");
+    // (row 295: the play-test bridge's menu.map_page, the panes as this update leaves them)
+    int panes = 0, shown = 0;
+    for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+        const std::uint64_t q = g_map_content[i];
+        if (q == 0) continue;
+        ++panes;
+        shown += (Read<std::uint32_t>(q + 0xa8) & 1u) != 0 ? 1 : 0;
+    }
+    g_map_page_panes = panes, g_map_page_shown = shown, g_map_page_ms = now;
 }
 
 // Native mode, the strip's update (g_mutex): R took ours but CoopMenu_00 never came (another mod's Map.module, or the
@@ -5410,6 +5431,14 @@ std::array<MenuActor, 4> MenuActors() noexcept {
 CoopMenuState::Screen CustomizeScreen() {
     std::lock_guard lock(g_snail_mutex);
     return CoopMenuState::FromDriver(g_snail, g_snail_open, !g_snail_wait && !g_snail_fallback);
+}
+
+CoopMenuState::MapPage MapPageNow() {
+    CoopMenuState::MapPage m;
+    const std::uint64_t seen = g_map_page_ms.load(), now = NowMs();
+    m.up = seen != 0 && now >= seen && now - seen < 300;
+    m.panes = g_map_page_panes.load(), m.shown = g_map_page_shown.load();
+    return m;
 }
 
 CoopMenuState::Minus MinusNow() {

@@ -396,7 +396,8 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     }
     out += "]}";
     out += ",\"coop_menu\":" + Quote(CoopPause::MenuState());
-    out += ",\"menu\":" + CoopMenuState::Json(CoopPause::MenuTab(), CoopPauseTab::CustomizeScreen(), CoopPauseTab::MinusNow());
+    out += ",\"menu\":" + CoopMenuState::Json(CoopPause::MenuTab(), CoopPauseTab::CustomizeScreen(), CoopPauseTab::MinusNow(),
+                                             CoopPauseTab::MapPageNow());
     {
         std::uint64_t presents = 0;
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);

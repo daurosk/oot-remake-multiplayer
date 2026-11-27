@@ -738,6 +738,9 @@ TEST_CASE("native ui: the held line takes the banner from a page of ours, in the
     CHECK(b.up());
     CHECK_FALSE(b.showing());
     CHECK(w.LastText() == "You are down  0:45");
+    // typing-blink-0121: the page's banner is up: the held line only sets its text. (Before: opened again, and the
+    // game's open on a banner that shows plays its "open" animation from the start: the banner went out and in.)
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
     CHECK(w.g.CallsTo(At(ui::addr::kSetColour1)).size() == 2);  // the game's colour back
     CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 60000));  // the page's time long over: the held line is not closed
     CHECK(w.g.CallsTo(kClose).empty());
@@ -805,4 +808,107 @@ TEST_CASE("native ui: banner pages are balanced and marked as going on") {
     CHECK(ui::BannerPages("", ui::kBannerWidth).empty());
     // One word longer than any page: still every page fits.
     for (const auto& p : ui::BannerPages(std::string(300, 'W'), ui::kBannerWidth)) CHECK(ui::Width(p) <= ui::kBannerWidth);
+}
+
+// typing-blink-0121 (owner, v0.12.0: "when typing the typing indicator blinks in and out"). The game's open (slot 5)
+// with mode 2 plays the banner's "open" animation from the start even on a banner that shows (f_802f1380 -> slot 70
+// f_80795d20 -> f_802f62e0 "open", state 1): Banner never asks it of a banner that is up or opening, whatever asks.
+TEST_CASE("native ui: a banner that is up is never opened again: the typed line, a page, the held line") {
+    const ui::BannerStats before = ui::Stats();
+    World w;
+    ui::Banner b;
+    REQUIRE(b.Show(w.g, w.ring, ui::TypingLine("you", "h", false), 0));
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    // The game took the open: opening (state 1, request back to 0, as f_802f1380 leaves them), then open (state 2).
+    w.g.Put<std::uint8_t>(kBanner + ui::addr::kScreenState, 1);
+    w.g.Put<std::int8_t>(kBanner + ui::addr::kScreenRequest, 0);
+    CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 10));
+    REQUIRE(b.Show(w.g, w.ring, ui::TypingLine("you", "he", false), 20));
+    w.g.Put<std::uint8_t>(kBanner + ui::addr::kScreenState, ui::addr::kStateOpen);
+    std::string typed = "he";
+    for (int i = 0; i < 40; ++i) {   // a line typed, a step between each key
+        typed += 'y';
+        CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 30 + 10 * i));
+        REQUIRE(b.Show(w.g, w.ring, ui::TypingLine("you", typed, false), 35 + 10 * i));
+    }
+    CHECK(w.LastText().find("y_") != std::string::npos);
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    // typing-blink-0121 + revive-flicker-0121: one Type reset for the whole line (v0.12.0: one per key, 42 here: each
+    // put the banner's Type animation back at its first frame on a banner that showed, the blink)
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);
+    // A Banner with no page of its own (as after the held line took the banner and let it go) on a banner that
+    // shows ours: kept up, the text set, no open. (Before: opened again.)
+    ui::Banner c;
+    REQUIRE(c.Show(w.g, w.ring, ui::TypingLine("you", "ok", false), 1000));
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    CHECK(w.LastText() == "you: ok_");
+    // The held line takes the banner that shows: its text only. (Before: opened again.)
+    ui::HoldBanner("Saria is helping you up  40%");
+    CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 2000));
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    CHECK(w.LastText() == "Saria is helping you up  40%");
+    ui::HoldBanner("Saria is helping you up  41%");
+    CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 2010));
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    // Shut (by the game): opened, the one open a shut banner needs.
+    w.Shut();
+    CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 2030));
+    CHECK(w.g.CallsTo(kOpen).size() == 2);
+    // Our close asked and not taken yet (request -1, still up): a new page opens it again, or it would shut.
+    ui::EndBanner();
+    w.Up();
+    CHECK_FALSE(b.Step(w.g, w.ring, ui::HeldBanner(), 2040));   // let go: our close
+    w.g.Put<std::int8_t>(kBanner + ui::addr::kScreenRequest, -1);
+    REQUIRE(b.Show(w.g, w.ring, Line("Saria", "hi"), 2050));
+    CHECK(w.g.CallsTo(kOpen).size() == 3);
+    const ui::BannerStats after = ui::Stats();
+    CHECK(after.opens - before.opens == 3);
+    CHECK(after.reopens - before.reopens >= 2);   // the asks kept (c's Show, the held line taking over)
+}
+
+TEST_CASE("native ui: the banner's stats and lines say when the game shut or took a banner of ours") {
+    (void)ui::TakeBannerLines();
+    const ui::BannerStats before = ui::Stats();
+    World w;
+    ui::Banner b;
+    REQUIRE(b.Show(w.g, w.ring, ui::TypingLine("you", "hi", false), 0));
+    w.Up();
+    CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 10));
+    ui::BannerStats s = ui::Stats();
+    CHECK(s.holds == ui::Holds::kOurs);
+    CHECK(s.page);
+    CHECK(s.state == ui::addr::kStateOpen);
+    // Shut without a close of ours: the game's.
+    w.Shut();
+    CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 20));
+    s = ui::Stats();
+    CHECK(s.shut_by_game - before.shut_by_game == 1);
+    CHECK(s.holds == ui::Holds::kNothing);
+    const auto lines = ui::TakeBannerLines();
+    REQUIRE(lines.size() >= 2);
+    CHECK(lines.back().find("coop: native ui: banner: ours -> shut (state 0, request 0") == 0);
+    // Taken: up with the game's text.
+    REQUIRE(b.Show(w.g, w.ring, ui::TypingLine("you", "hi", false), 30));
+    w.Up();
+    CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 40));
+    w.g.Put<std::uint64_t>(kBox + ui::addr::kBoxText, 0x88000000);
+    CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 50));
+    CHECK(ui::Stats().taken_by_game - before.taken_by_game == 1);
+    // Our own close is not the game's.
+    World v;
+    ui::Banner c;
+    const std::uint64_t shut_before = ui::Stats().shut_by_game;
+    REQUIRE(c.Show(v.g, v.ring, Line("Saria", "hi"), 0));
+    v.Up();
+    CHECK_FALSE(c.Step(v.g, v.ring, std::nullopt, 10));
+    CHECK_FALSE(c.Step(v.g, v.ring, std::nullopt, 5000));   // time over: our close
+    v.Shut();
+    CHECK_FALSE(c.Step(v.g, v.ring, std::nullopt, 5010));
+    CHECK(ui::Stats().shut_by_game == shut_before);
+    const std::string json = ui::StatsJson(ui::Stats());
+    CHECK(json.find("\"opens\":") != std::string::npos);
+    CHECK(json.find("\"reopens\":") != std::string::npos);
+    CHECK(json.find("\"type_resets\":") != std::string::npos);
+    CHECK(json.find("\"shut_by_game\":") != std::string::npos);
+    CHECK(json.find("\"holds\":\"shut\"") != std::string::npos);
 }

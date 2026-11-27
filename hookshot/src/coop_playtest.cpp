@@ -36,6 +36,7 @@
 #include "coop_hookshot.h"
 #include "coop_map_drawn.h"
 #include "coop_menu_state.h"
+#include "coop_native_ui.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
 #include "coop_playtest_core.h"
@@ -402,6 +403,7 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
         out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
     }
+    out += ",\"banner\":" + CoopNativeUi::StatsJson(CoopNativeUi::Stats());   // (typing-blink-0121: our banner's opens)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
@@ -754,6 +756,10 @@ std::string Handle(const Request& r) {
         // reaches no wire. A key co-op leaves is Longshot's, and the bridge never plays Longshot's own keys, with one
         // exception: F1 left while co-op's tab shows is Longshot's F1 closing its menu (gpu/vk/vk_menu.cpp, F1 toggles
         // it), done here as HOS_COOP_MENU_WANT_CLOSE does it, so a test can shut what its F1 opened.
+        if (!r.chars.empty()) {   // typed characters (typing-blink-0121): hos_coop_char's steps, one per byte
+            const std::size_t taken = CoopHookshot::BridgeChars(r.chars);
+            return ok("\"text\":" + Quote(r.chars) + ",\"taken\":" + std::to_string(taken));
+        }
         const bool shown = CoopPause::TabShown();
         const std::string head = "\"key\":" + Quote(r.key) + ",\"vk\":" + std::to_string(r.vk);
         if (CoopHookshot::BridgeKey(r.vk)) return ok(head + ",\"taken\":true");

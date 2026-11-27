@@ -59,7 +59,8 @@ def reading(pair, x, label):
     st2, pw2 = pause_world(pair, x)
     b, f1 = places(st2)
     n, common = moved(a, b)
-    line = {"label": label, "snapshot_stale": st2.get("snapshot_stale"), "pos": st2.get("pos"),
+    line = {"label": label, "scene": st2.get("scene"), "age": st2.get("age"),   # (actors_moved means nothing without the scene)
+            "snapshot_stale": st2.get("snapshot_stale"), "pos": st2.get("pos"),
             "holds": held_keys(pw2), "words": pw2.get("words"), "actors_moved": n, "actors_common": common,
             "walk_frames": [f0, f1]}
     pair.notes.append("probe: " + json.dumps(line, sort_keys=True))
@@ -71,8 +72,7 @@ def reading(pair, x, label):
                  "(docs/pause-world.md)")
 def test_pause_world_probe(pair):
     with pair.setup():
-        for x in ("A", "B"):
-            assert pair.in_play(pair.state(x)), "%s not in play" % x
+        pair.need_boot_place()                # both stepped to a fresh in-play sample in the boot's scene (82f9a7a5a)
         _, pw = pause_world(pair, "A")
         assert pw.get("ok"), "A: no PauseMgr read: %r" % pw
     _, before, base = reading(pair, "A", "free play")
@@ -89,7 +89,12 @@ def test_pause_world_probe(pair):
     assert new, "A: the + menu took no PauseMgr hold (menu not open, or the pause is not the PauseMgr's): %r" % menu
     for i in sorted(new):
         pair.act("A", "menu hold release %d" % i)
-        pair.expect_log("A", r"coop: pause world: test release %d key" % i, max_frames=60)
+        # Every end of the module's Release (coop_pause_world_module.cpp Release): the done line ('key K: count c -> a,
+        # notify ... called|NOT called') or one of its three refusals; never its 'waits for' line (asked, not done yet).
+        line = pair.expect_log("A", r"coop: pause world: test release %d(?: key |: no such hold|: count moved|"
+                                    r": no notify)" % i, max_frames=60)
+        pair.notes.append("probe: release %d: %s" % (i, line))
+        assert " key " in line, "A: the menu's hold %d was not let go: %s" % (i, line)
     _, _, released = reading(pair, "A", "+ menu open, its holds let go")
     before_stick = pair.state("A").get("pos")
     pair.press("A", [], stick=[0, 1.0], frames=STICK)

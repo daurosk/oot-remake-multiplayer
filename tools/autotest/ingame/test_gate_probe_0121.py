@@ -106,10 +106,10 @@ def test_probe_epona(pair):
         for i in range(8):
             pair.step_both(30)
             note(pair, "B +%d after Complete: Get_Epona %s, %s %r, lines %s" % (
-                (i + 1) * 30, pair.flag_read("B", GET_EPONA).get("value"), pair.flag_read("B", HORSE).get("value"),
+                (i + 1) * 30, pair.flag_read("B", GET_EPONA).get("value"), HORSE, pair.flag_read("B", HORSE).get("value"),
                 quest_lines(pair, "B", pos)))
         note(pair, "A after B's Complete: Get_Epona %s, %s %r" % (
-            pair.flag_read("A", GET_EPONA).get("value"), pair.flag_read("A", HORSE).get("value")))
+            pair.flag_read("A", GET_EPONA).get("value"), HORSE, pair.flag_read("A", HORSE).get("value")))
     finally:   # (both child in Kakariko again, as test_epona.way_back; Get_Epona stays: the job's own boot only)
         try:
             for x in ("A", "B"):

@@ -6,8 +6,10 @@ BT_FAKE_BOMB_308 is set (tests/test_ingame_bomb_pocket_308.py): nothing here act
 - ZR: a bomb in the presser's hands (1.2 m over its Link), its count -1; A while holding: put down 0.8 m ahead; A near a
   lying bomb: lifted; B while holding: put away (the count +1, the bomb gone on both games).
 - place X Y Z: 'coop: test place X Y Z: done'; face X Z: the turn line (as fakes/carry_304.py).
-Selftest switch BT_FAKE_BOMB_308: ok -> as above; nopocket -> B does nothing (the game has no put-away: a FAIL);
-both -> the put-away also gives the thrower +1 (a FAIL: the thrower's count changed).
+Selftest switch BT_FAKE_BOMB_308: ok -> as above; nopocket -> B does nothing (A still holds it: NO-REF); boom -> B
+does nothing but the bomb goes off (gone, no count: NO-REF); down -> B puts it down (NO-REF); both -> the put-away also
+gives the thrower +1 (a FAIL: the thrower's count changed); stays -> A's count +1 but the bomb stays on B's game (a FAIL:
+the row's bug).
 """
 import math
 import os
@@ -65,8 +67,14 @@ def press(game, buttons):
     elif "A" in buttons and s["holder"] is None and s["bomb"] and \
             math.hypot(game.pos[0] - s["bomb"][0], game.pos[2] - s["bomb"][2]) <= REACH_M:
         s["bomb"], s["holder"] = None, game.tag
+    elif "B" in buttons and s["holder"] == game.tag and mode() == "boom":
+        s["holder"] = None
+    elif "B" in buttons and s["holder"] == game.tag and mode() == "down":
+        s["bomb"], s["holder"] = [game.pos[0] + 5.0, game.pos[1], game.pos[2]], None
     elif "B" in buttons and s["holder"] == game.tag and mode() != "nopocket":
         s["holder"] = None
+        if mode() == "stays":
+            s["stays"] = [game.pos[0], game.pos[1], game.pos[2]]
         game.flags[COUNT] = game.flags.get(COUNT, 0) + 1
         if mode() == "both":
             game.other.flags[COUNT] = game.other.flags.get(COUNT, 0) + 1
@@ -82,4 +90,6 @@ def actors(game):
         return [{"id": 3081, "name": "Item_Bomb", "kind": "other", "pos": [h.pos[0], h.pos[1] + UP, h.pos[2]]}]
     if s["bomb"]:
         return [{"id": 3081, "name": "Item_Bomb", "kind": "other", "pos": list(s["bomb"])}]
+    if s.get("stays") and game.tag == "B":
+        return [{"id": 3081, "name": "Item_Bomb", "kind": "other", "pos": list(s["stays"])}]
     return []

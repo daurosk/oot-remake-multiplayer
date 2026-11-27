@@ -7,7 +7,8 @@ BT_FAKE_CARRY_304 is set (tests/test_ingame_carry_304.py): nothing here acts in 
   rock.A.txt's place in Graveyard_Child, Npc_Zora_Ruto_Child 6 m from where the warp left A in InsideJabuJabuBelly.
 - A pressing A within 1.2 m of it lifts it: from then A's object is 1.2 m over A's Link (the hands box of the test).
 Selftest switch BT_FAKE_CARRY_304: ok -> B's copy is in A's hands too (the fixed game); absent -> B has no copy (row
-304: Ruto is each game's own); rest -> B's copy stays at its rest place (row 305: a carried rock not shown).
+304: Ruto is each game's own); rest -> B's copy stays at its rest place (row 305: a carried rock not shown); far -> B's
+copy follows A 4 m off (beyond MISS_M: a NO-REF miss, the box is not measured).
 """
 import math
 import os
@@ -79,5 +80,7 @@ def actors(game):
         return [{"id": aid, "name": name, "kind": "other", "pos": hands if a.c304["held"] else list(rest)}]
     if mode() == "absent" and name.startswith("Npc_"):
         return []
+    if mode() == "far" and a.c304["held"]:
+        return [{"id": aid + 100, "name": name, "kind": "other", "pos": [hands[0] + 4.0, hands[1], hands[2]]}]
     held = a.c304["held"] and mode() == "ok"
     return [{"id": aid + 100, "name": name, "kind": "other", "pos": hands if held else list(rest)}]

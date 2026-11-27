@@ -4,7 +4,8 @@ the revive and the stick movement are fakes/dbno_crawl.py's (this file runs afte
 the patch 0046 hello line, the room answer / lying ground-move lines and a camera `view` once that row is running.
 
 BT_FAKE_DOWNED_BUG (selftests, tests/test_ingame_downed_move.py):
-  still   the v0.12.0 bug: the downed Link does not move under the stick and no room answer is logged
+  still   the v0.12.0 bug: the downed Link (child or adult) does not move under the stick, and neither the room
+          answer nor the lying ground-move line is logged
   farcam  the view stays the standing camera while downed (no crawl camera)
   nowrap  B's hookshot.exe has no patch 0046 (its hello says 'not wrapped'): a SETUP-FAIL, never a FAIL
 """
@@ -53,10 +54,10 @@ def state(game, st):
     dm = game.downed_move
     if downed(game) and not dm["seen"]:
         dm["seen"], dm["pos"] = True, list(game.pos)
-        if game.age() == "adult":
+        if game.age() == "adult" and not bug("still"):
             game.later(25, lambda: game.say("coop: dbno: our downed Link: the game's action verb 1 let through: he "
                                             "moves lying, in the held pose"))
-        elif not bug("still"):
+        elif game.age() != "adult" and not bug("still"):
             game.later(25, lambda: game.say("coop: dbno: our downed Link: the game's crawl asks for room to stand up: "
                                             "answered no room, the crawl goes on"))
     elif not downed(game):

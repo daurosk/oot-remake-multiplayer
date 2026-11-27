@@ -108,12 +108,13 @@ def test_downed_child_moves(pair):
             assert cam_up is not None, "B: no camera view in the state before the down"
         dc.down(pair)
         pair.expect_log("B", dc.LYING_CHILD, max_frames=600)
-        pair.expect_log("B", NO_ROOM, max_frames=600)    # the game's crawl asked for room and goes on
         pair.step_both(30)
         dc.shots(pair, "downed-child-lying")
         a = pair.state("B")
         fwd_m = dc.stick_move(pair, "B", 0, CRAWL_FRAMES)
         b = pair.state("B")
+        # after the stick (review-rows-c130-7): the game's crawl may ask for room only while he moves
+        pair.expect_log("B", NO_ROOM, max_frames=60)     # the game's crawl asked for room and goes on
         dc.shots(pair, "downed-child-moved", twice=False)
         cam_down = eye_from_link(pair, "B")
         # Turning probe (no assert: what the game's crawl does is the finding): stick right, facing + move direction.

@@ -82,6 +82,10 @@ class DownedMove(unittest.TestCase):
         p, res = run(self.out("still"), CHILD, refs=self.refs, bug="still")
         self.assertEqual(res[CHILD]["result"], "FAIL", p.stdout[-3000:])
 
+    def test_the_v0120_bug_fails_the_adult(self):
+        p, res = run(self.out("still-adult"), ADULT, refs=self.refs, bug="still")
+        self.assertEqual(res[ADULT]["result"], "FAIL", p.stdout[-3000:])
+
     def test_no_crawl_camera_fails_the_child(self):
         p, res = run(self.out("farcam"), CHILD, refs=self.refs, bug="farcam")
         self.assertEqual(res[CHILD]["result"], "FAIL", p.stdout[-3000:])

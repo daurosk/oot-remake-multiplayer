@@ -725,6 +725,21 @@ void MapIcons(void* ctx) {
     }
 }
 
+// The steps that ran a second or more after the one before (coop_hookshot.h SlowStep), for the bridge's state.
+constexpr std::uint64_t kSlowStepMs = 1000;
+std::mutex g_slow_mutex;
+CoopHookshot::SlowStep g_party_slow, g_tags_slow;
+
+void NoteSlow(CoopHookshot::SlowStep& slot, std::uint64_t& last_ms, std::uint64_t now, int shown) {
+    const std::uint64_t gap = last_ms != 0 && now > last_ms ? now - last_ms : 0;
+    last_ms = now;
+    if (gap < kSlowStepMs) return;
+    std::lock_guard lock(g_slow_mutex);
+    ++slot.count;
+    slot.gap_ms = gap;
+    slot.shown = shown;
+}
+
 void NativeTags(void* ctx) {
     static const bool on = Env("LICHII_COOP_NATIVE_TAGS") != "0";
     static bool said = false, said_fail = false;
@@ -752,8 +767,13 @@ void NativeTags(void* ctx) {
             spots.push_back(std::move(s));
         }
     }
-    if (spots.empty() && g_balloons.shown() == 0) return;   // solo, or nobody near: the balloons are not touched
+    static std::uint64_t last_tags_ms = 0;
+    if (spots.empty() && g_balloons.shown() == 0) {   // solo, or nobody near: the balloons are not touched
+        NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), 0);
+        return;
+    }
     const bool up = g_balloons.Step(game, spots, markers ? markers->width : 0.0f, markers ? markers->height : 0.0f);
+    NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), up ? static_cast<int>(g_balloons.shown()) : 0);
     if (g_balloons.no_memory()) {
         g_tags_drawn.store(true);
         if (!said_fail) {
@@ -1496,6 +1516,8 @@ void PartyStep(NativeGame& game, void* ctx, std::uint64_t now) {
     hud.IgnorePack(no_pack);
     std::vector<std::string> log;
     const bool on = hud.Step(party, blocks, bottom, &log, now, own);
+    static std::uint64_t last_step_ms = 0;
+    NoteSlow(g_party_slow, last_step_ms, now, on ? static_cast<int>(blocks.size()) : 0);
     for (const auto& l : log) LOG_INFO(Core, "{}", l);
     if (g_party_native.exchange(on) != on) {
         LOG_INFO(Core, "coop: party hud: {}", on ? "on the game's HUD" : "hidden (the game's HUD has none of ours now; nothing drawn instead)");
@@ -1643,6 +1665,16 @@ void NativeStep(void* ctx) {
 }
 
 }  // namespace
+
+SlowStep PartySlow() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_party_slow;
+}
+
+SlowStep TagsSlow() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_tags_slow;
+}
 
 void SetMapOptions(bool players, bool names) {
     g_map_players.store(players);

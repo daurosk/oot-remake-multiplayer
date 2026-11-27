@@ -290,6 +290,7 @@ void Wings::Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
 #include "coop/host/session.hpp"
 #include "coop/presence/presence.hpp"
 #include "coop_emote_game.h"
+#include "coop_navi_probe.h"
 #include "coop_svc.h"
 
 namespace CoopFairy {
@@ -354,6 +355,40 @@ struct Glue {
     std::unique_ptr<Follower> follower;            // the present thread only
     std::unique_ptr<Wings> wings;                  // the calc thread only
     std::atomic<std::uint64_t> main_base{0};       // as last published
+    // Row 316 probe (coop_navi_probe.h): our Npc_Navi as last found, the calc thread only.
+    std::uint64_t probe_navi = 0;
+    std::uint64_t probe_ms = 0;
+    std::uint64_t probe_search_ms = 0;
+    std::uint64_t probe_frames = 0;
+
+    // The calc thread, at a frame's start: our Navi and the live fairies, read only, for the bridge's `navi` member.
+    // Only after a bridge `state` asked (CoopNaviProbe::Wanted), at most every kEveryMs; the Navi re-looked for at most
+    // every Wings::kSearchMs while not found. She is kept while the actor still has her name (present or not: P3).
+    void ProbeNavi(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
+        const std::uint64_t base = main_base.load();
+        if (!CoopNaviProbe::Wanted() || base == 0 ||
+            (probe_ms != 0 && now_ms - std::min(now_ms, probe_ms) < CoopNaviProbe::kEveryMs)) {
+            return;
+        }
+        probe_ms = now_ms;
+        if (probe_navi != 0 && !ActorNamed(guest, probe_navi, "Npc_Navi")) {
+            probe_navi = 0;
+        }
+        if (probe_navi == 0 && now_ms - std::min(now_ms, probe_search_ms) >= Wings::kSearchMs) {
+            probe_search_ms = now_ms;
+            probe_navi = FindActor(guest, base, "Npc_Navi");
+        }
+        CoopNaviProbe::Sample s;
+        s.ms = now_ms;
+        s.frames = ++probe_frames;
+        s.navi = CoopNaviProbe::ReadActor(guest, probe_navi);
+        for (const auto& slot : director->Slots()) {
+            if (slot.phase == CoopPuppet::Phase::live && slot.actor != 0) {
+                s.fairies.push_back(CoopNaviProbe::ReadActor(guest, slot.actor, slot.number));
+            }
+        }
+        CoopNaviProbe::Store(std::move(s));
+    }
 
     Glue() {
         // The cave is there only with the puppets; the fairy follows them.
@@ -390,6 +425,9 @@ struct Glue {
         CoopSvc::AddCaller(kCallerOrder, [this](CoopPuppet::Guest& guest, bool after_call,
                                                 std::uint64_t result, std::uint64_t now_ms) {
             auto call = director->Step(guest, after_call, result, now_ms);
+            if (!after_call) {
+                ProbeNavi(guest, now_ms);
+            }
             if (!after_call && wings) {
                 // The start of a frame: the director has just found its live
                 // fairies, and the copy is made before any call of ours.

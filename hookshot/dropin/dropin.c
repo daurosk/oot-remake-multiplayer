@@ -16,7 +16,6 @@
    SQUADALA_DROPIN=0 in the environment: the proxy only forwards winmm, no hook. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shellapi.h>                /* CommandLineToArgvW (shell32) */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -176,6 +175,19 @@ static void frame_hook(Ctx *c) {
     g_frame_orig(c);
 }
 
+/* argv[1] == "--crash-watch", read from the raw command line (kernel32 GetCommandLineW only: this runs in DllMain under
+   the loader lock, so no shell32 CommandLineToArgvW, which would load and call another DLL there; review-mod-153-2).
+   argv[0] as the CRT splits it: quoted to the next quote, else to the next space or tab. */
+static int is_crash_watch(const wchar_t *c) {
+    static const wchar_t arg[] = L"--crash-watch";
+    if (!c) return 0;
+    if (*c == L'"') { c++; while (*c && *c != L'"') c++; if (*c) c++; }
+    else while (*c && *c != L' ' && *c != L'\t') c++;
+    while (*c == L' ' || *c == L'\t') c++;
+    size_t n = wcslen(arg);
+    return wcsncmp(c, arg, n) == 0 && (c[n] == 0 || c[n] == L' ' || c[n] == L'\t');
+}
+
 static void attach(void) {
     char env[8];
     DWORD e = GetEnvironmentVariableA("SQUADALA_DROPIN", env, sizeof env);
@@ -191,11 +203,7 @@ static void attach(void) {
     /* The game starts a helper of ITSELF early, `longshot --crash-watch <pid> ...` (Longshot v3.2.0
        host/hos_crash_dialog.h HOS_CRASH_WATCH_ARG; also v3.1.1): same exe, same folder, so it loads this winmm.dll too.
        It never runs the guest, so it gets no hook (run 20261126-064809 hooked both processes). */
-    int argc = 0;
-    wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    int helper = argv && argc > 1 && wcscmp(argv[1], L"--crash-watch") == 0;
-    if (argv) LocalFree(argv);
-    if (helper) { dlog("dropin: the game's --crash-watch helper (pid %lu): forwarding winmm only", GetCurrentProcessId()); return; }
+    if (is_crash_watch(GetCommandLineW())) { dlog("dropin: the game's --crash-watch helper (pid %lu): forwarding winmm only", GetCurrentProcessId()); return; }
     if (e && env[0] == '0') { dlog("dropin: SQUADALA_DROPIN=0: forwarding winmm only"); return; }
     Want want[] = {{"f_83b6e300", 0, 0}, {"hos_guest_base", 0, 0}};
     if (!find_symbols(exe, want, 2)) { dlog("dropin: symbols missing: no hook"); return; }

@@ -15,6 +15,6 @@ $sysWinmm = Join-Path $env:SystemRoot "System32\winmm.dll"
 & $py -I (Join-Path $here "gen_winmm.py") $sysWinmm $out
 if ($LASTEXITCODE -ne 0) { Write-Output "BUILD-FAIL gen_winmm"; exit 1 }
 & $cc -O2 -shared -o (Join-Path $out "winmm.dll") (Join-Path $here "dropin.c") (Join-Path $out "winmm_names.c") `
-    (Join-Path $out "winmm_stubs.S") (Join-Path $out "winmm.def") -lshell32 -static "-Wl,--kill-at"
+    (Join-Path $out "winmm_stubs.S") (Join-Path $out "winmm.def") -static "-Wl,--kill-at"
 if ($LASTEXITCODE -ne 0) { Write-Output "BUILD-FAIL compile"; exit 1 }
 Write-Output ("BUILT " + (Join-Path $out "winmm.dll") + " " + (Get-Item (Join-Path $out "winmm.dll")).Length + " bytes")

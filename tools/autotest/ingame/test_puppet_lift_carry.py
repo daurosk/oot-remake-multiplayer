@@ -19,7 +19,7 @@ Steps (B is the copy, P<n> in A's game):
   moved > STILL_DY) are compared to it (V_MIN: shot moment, NO-REF miss only). Without the carry a moving sample is
   off by its own speed x delay (>= 100 ms: docs "Lift carry"), so a sample off by >= half of that is a clear FAIL (the
   copy sank/floated), judged only on samples whose bound is above the rest noise (max |still - rest|) of the same run
-  (none such, or no still sample: a NO-REF miss), as is no
+  (none such, or < MIN_STILL still samples: a NO-REF miss), as is no
   `P<n> lift carry: on our lift` line in A's log (coop_puppet.cpp DrawAt). Shots of both games mid-ride.
 The ESTIMATED values (RIDE_FRAMES, V_MIN, CARRY_TOL) are starting values (worker-rules: no guessed values;
 as test_native_body.py): until MEASURED cites a lane run's notes, a run whose clear checks hold ends NO-REF
@@ -48,6 +48,7 @@ STILL_DY = 0.005                                    # m per SAMPLE: the lift sta
 MOVE_FRAMES = 600                                   # wide bound (20 s): until() ends at the first move, no guess decides
 RIDE_FRAMES = 450                                   # ESTIMATED: 16 m down (FLOOR y 91 -> Lift anchor y 75) at ~2 m/s = 8 s
 STOP_SAMPLES = 6                                    # still this many samples after it moved: the ride is over
+MIN_STILL = 3                                       # still samples needed to measure the rest noise (1 sample: 0)
 V_MIN = 0.5                                         # ESTIMATED m/s: shot moment + a NO-REF miss only (moving = dy > STILL_DY)
 CARRY_TOL = 0.05                                    # ESTIMATED m: the copy's offset to the lift while moving vs at rest
 MEASURED = None   # e.g. "run lift-carry-<sha8>: speed 2.0 m/s, deviation 0.01 m (rest offset 0.0 m)"
@@ -146,7 +147,7 @@ def test_puppet_lift_carry(pair, back_after):
     assert moving, "no moving sample (lift moved > %.3f m per %d frames) in %d samples: lift ys %s" % (
         STILL_DY, SAMPLE, len(got), ["%.2f" % r[0] for r in got[:20]])
     rest = statistics.median(still) if still else got[0][1]
-    noise = max(abs(off - rest) for off in still) if still else None   # the copy's own jitter, measured at rest
+    noise = max(abs(off - rest) for off in still) if len(still) >= MIN_STILL else None   # the copy's jitter at rest
     speed = statistics.median(v for _, v in moving)
     dev = max(abs(off - rest) for off, _ in moving)
     line = pair.log["A"].find(ON_LIFT % n, pos=mark)
@@ -170,8 +171,9 @@ def test_puppet_lift_carry(pair, back_after):
     if not shot_taken:
         shots(pair, "lift-carry-ride")
     misses = []
-    if not still:
-        misses.append("no still sample: the rest offset is the first sample's, no rest noise measured")
+    if len(still) < MIN_STILL:
+        misses.append("%d still samples (< %d): no rest noise measured%s" % (
+            len(still), MIN_STILL, "" if still else ", the rest offset is the first sample's"))
     if not judged:
         misses.append("no moving sample's bound (0.5 x speed x delay) is above the rest noise: carry not judged")
     if still_after < STOP_SAMPLES:

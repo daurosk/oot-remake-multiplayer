@@ -1,9 +1,10 @@
-"""vest-link's colour check (test_vest_link.py; its owner's file, as kokiri-band's bandcheck.py): the pixels that CHANGED
-between two bridge shots of the same place, and how many of them take a colour's hue. No guessed screen region: what a
-recolour changes is found by the change itself.
-
-The defaults (moved, saturated, near) are starting values, NOT MEASURED: test_vest_link.py ends NO-REF until its
-MEASURED cites a lane run's huecheck lines (worker-rules: no guessed values).
+"""The shared colour checks of the look rows (vest-link's file first; hair/vest/leather use it).
+- solid_count / hair_patch / lit (hair-check-0121): the pixels of a colour class in SOLID patches inside a Link's own
+  screen box: the set checks of the hair and the vest rows.
+- left_after_unset (B #148): how much of a wear is left after its unset, on the wear's own pixels (leather's unset row).
+vest-check-0121 removed changed_hue, the whole-frame share of the changed pixels in a hue: it judged the scene (gate-look
+309d7180c: the vest's green share 9-10% though the vest was green in every shot).
+Every threshold cites its measurement where it is set (worker-rules: no guessed values).
 """
 WIDTH = 320
 # left_after_unset's FAIL line: share of the wear's own pixels still in its hue after the unset. MEASURED on the stored
@@ -20,19 +21,6 @@ def hue_of(rgb):
     import colorsys
     r, g, b = ((rgb >> 16) & 255) / 255.0, ((rgb >> 8) & 255) / 255.0, (rgb & 255) / 255.0
     return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
-
-
-def changed_hue(before, after, rgb, width=WIDTH, moved=0.15, saturated=0.25, near=30.0):
-    """A pixel changed when one channel moved by more than `moved` (0..1) from `before` to `after` (both scaled to
-    `width`); it counts as the colour when it is saturated in `after` (HSV S > `saturated`: grey and dark pixels have no
-    hue) and its hue is within `near` degrees of rgb's. Returns {changed, coloured, share, hue}."""
-    import numpy as np
-    a, size = _load(before, width)
-    b, _ = _load(after, width, size)
-    moved_px = np.abs(b - a).max(axis=2) > moved
-    coloured = moved_px & _in_hue(b, rgb, saturated, near)
-    n, c = int(moved_px.sum()), int(coloured.sum())
-    return {"changed": n, "coloured": c, "share": round(c / n, 3) if n else 0.0, "hue": round(hue_of(rgb), 1)}
 
 
 def _load(path, width, size=None):
@@ -92,6 +80,16 @@ SOLID_K, SOLID_D = 5, 0.8            # px at REF_W, share: the patch test
 REF_W = 1280                         # the bridge shot's width (the counts are scaled to it)
 HAIR_GROW = 8                        # px at REF_W: the hair patch grown so a head that swayed is still inside
 CLASSES = {0xDD4527: (-15.0, 2.0, 0.65), 0x4F8AE1: (-15.0, 15.0, 0.25)}
+# vest-check-0121 (vest-link-4, row 293 P2): the vest's classes, MEASURED on the stored gate-look 309d7180c lane-1 shots
+# (coord-multiplayer/offline/gate-look-309d7180/lane1/shots/vest-link-*, 1280x720; boxes by hand: A's own Link
+# 570,370-720,640 on A, A's puppet 665,415-750,565 on B). The vest's pixels (where the green shot is green): yellow hue
+# p10/50/90 43.8/53.6/57.9 deg on A (S median 0.77), 35.3/53.6/100 on B's puppet (S median 0.50); the box's warm scene
+# pixels (the yellow boots, blond hair, skin, ground) hue median 39.5, S up to 1.0, so the YELLOW class is narrow below
+# #FFD000's 48.9 and needs S >= 0.40: gain unset->yellow A +2197 / B +238, no-wear pairs move it at most 61 (A) / 16 (B);
+# swept: (-10,+10,0.5) B +160/17, (-5,+10,0.4) B +216/13, (-8,+10,0.4) the best A and B. GREEN: nothing in the boxes is
+# within 15 deg of #20C020 before the wear (0 on every unset/yellow shot), gain A +2037 / B +282 at S >= 0.25.
+CLASSES[0xFFD000] = (-8.0, 10.0, 0.40)
+CLASSES[0x20C020] = (-15.0, 15.0, 0.25)
 # A picture with nothing lit (a load's black frame: hair-link-309d7180 adult-red-A, every pixel 0.000) is no shot of
 # the hair. MEASURED: the 99th percentile of the brightest channel is 0.000 on those, 0.26 on the darkest real frame
 # (adult-unset-A, a dark forest) and 0.65-0.80 on Kakariko by day; 0.10 sits between black and the darkest real one.

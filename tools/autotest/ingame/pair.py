@@ -46,8 +46,9 @@ BOOT_READY_S = 240.0  # the boot proof's own deadline (out of a load, a warp of 
 # intro at the 2400-frame ceiling. Longshot's present counter in game-out-A.txt ('texture frame N'): the same boot
 # free-running ended the intro by itself between +3994 and +5048 after the arrival (proof01112-hs-twinrova-orders2
 # 20261123-001227 :5041 began at +0 (play at 8229), :7127 12223, :7431 'ended after 76.1 s', :8046 13277); stepped,
-# Kotake's last cut came at the same frame (AS-C07: +3960 vs +3993), the proof stopped at about +4210. So the stepped
-# intro was cut off, not stuck. 6000 = +5048 and ~20%; test_probe_boss_intro.py measures the stepped end itself.
+# Kotake's last cut came at the same frame (AS-C07: +3960 vs +3993), the proof stopped at about +4210. Those two runs
+# INDICATE a stepped intro cut off by the ceiling (not one stuck); NOT proven in one run: test_probe_boss_intro.py
+# measures the stepped end. 6000 = the free run's +5048 and ~20% (read off the free run, until the probe's N).
 BOOT_EVENT_FRAMES = 6000
 # The boot proof's stepping rate (both games, CHUNK at a time, a state read each per chunk): row215-309d7180 lane 1 ran
 # its 2400 frames in ~201.6 s (game-out-A.txt digest t= 286.0 s at the bridge's connect :9353, 487.7 s at the quit).
@@ -674,10 +675,14 @@ class Pair:
         if not in_event or event_frames <= max_frames:
             raise AssertionError("%s%s" % (first, self._event_notes(games, max_frames))) from None
         extra = (event_frames - max_frames) / BOOT_STEP_FPS
+        cap = getattr(self, "_boot_grow_cap", None)    # (Pair.recover: the enclosing deadline's end, never passed)
+        if cap is not None:
+            extra = max(0.0, min(extra, cap - self.deadline.end))
         self.deadline.end += extra
         self.deadline.seconds += extra
-        self.notes.append("boot: %s in an event after %d frames: waited on up to %d (deadline +%.0f s)"
-                          % ("+".join(in_event), max_frames, event_frames, extra))
+        self.notes.append("boot: %s in an event after %d frames: waited on up to %d (deadline +%.0f s%s)"
+                          % ("+".join(in_event), max_frames, event_frames, extra,
+                             ", capped by the enclosing deadline" if cap is not None else ""))
         try:
             return self.until_in_play(what + " (a game in an event at %d frames: the event ceiling)" % max_frames,
                                       games, event_frames - max_frames)
@@ -777,14 +782,21 @@ class Pair:
         clock = outer.clock
         t0 = clock()
         box = {"limit": RECOVER_BASE_S, "away": []}
+        was_cap, self._boot_grow_cap = getattr(self, "_boot_grow_cap", None), outer.end
+        # (the boot proof's event growth, _until_boot_play, stays inside the recovery's own deadline: the fixture's
+        # recovery runs outside pytest-timeout, review-rows-c130-8 S2)
         try:
             st = self._recover_stepped(scene, max_frames, outer, t0, box)
         except Exception as e:
             fail = e if isinstance(e, SetupFail) else SetupFail("recovery: %s: %s" % (type(e).__name__, e))
             self.deadline = outer
-            return self._relaunch_stuck(scene, fail, outer, t0)
+            try:
+                return self._relaunch_stuck(scene, fail, outer, t0)
+            finally:
+                self._boot_grow_cap = was_cap
         finally:
             self.deadline = outer
+            self._boot_grow_cap = was_cap
         away = box["away"]
         self.notes.append("recovery %.1f s (bound %.0f s, %d warp%s)" % (clock() - t0, box["limit"], len(away),
                                                                         "" if len(away) == 1 else "s"))

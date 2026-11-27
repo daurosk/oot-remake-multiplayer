@@ -2217,6 +2217,27 @@ class BootProof(unittest.TestCase):
                             % P.BOOT_EVENT_FRAMES in n for n in pair.notes), pair.notes)
         self.assertAlmostEqual(pair.deadline.seconds - before, (P.BOOT_EVENT_FRAMES - 100) / P.BOOT_STEP_FPS)
 
+    def test_the_event_growth_never_passes_an_enclosing_deadline(self):
+        """review-rows-c130-8 S2: inside Pair.recover the growth is capped at the recovery's own deadline end."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        cap = pair.deadline.end + 5.0
+        pair._boot_grow_cap = cap
+        pair.boot_ready("BossStage", max_frames=100)
+        self.assertLessEqual(pair.deadline.end, cap + 1e-6)
+        self.assertTrue(any("capped by the enclosing deadline" in n for n in pair.notes), pair.notes)
+
+    def test_recover_sets_the_cap_to_its_outer_deadline_and_resets_it(self):
+        pair = self.intro_pair(self.INTRO_FAKE)
+        seen = {}
+
+        def stepped(scene, max_frames, outer, t0, box):
+            seen["cap"], seen["end"] = pair._boot_grow_cap, outer.end
+            return {}
+        pair._recover_stepped = stepped
+        pair.recover("BossStage")
+        self.assertEqual(seen["cap"], seen["end"])
+        self.assertIsNone(pair._boot_grow_cap)
+
     def test_a_load_keeps_the_load_ceiling(self):
         """Only an event gets the longer wait: a stale sample past max_frames is SETUP-FAIL at max_frames."""
         pair = self.lane(BT_FAKE_STALE_FRAMES=5000)

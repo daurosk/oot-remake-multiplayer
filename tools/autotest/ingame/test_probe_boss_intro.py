@@ -15,7 +15,8 @@ DEFAULT boot (a live-twinrova-room boot cannot pass the boot proof, which is wha
 - per game: the state's frame/scene/event before the warp and after it (Pair.warp_one, arrive_in_event=True, the
   shared warp the boot proof and test_row215 use), then a sample every LOOK frames (both games stepped in turn, CHUNK
   at a time: Pair.step_both, the boot proof's own stepping) until both games are out of the event or PROBE_FRAMES ran;
-- each game's 'ended' frame: the first sample with event False after the arrival, and the frames stepped to it;
+- each game's 'ended' frame: the first sample in play by the boot proof's own rule (_ready: Pair.ready, else
+  Pair.in_play: no event, no load, not_ready None; the play UI where the harness reads it), and the frames to it;
 - the module's event and boss-cut lines since the warp (event began / still in its event / ended, 'AS-C..' anims).
 Reading it: an 'ended' for both games = cause (a), and the frames give Pair.BOOT_EVENT_FRAMES its measured value;
 no 'ended' in PROBE_FRAMES (about twice the free run's +5048) = cause (b).
@@ -35,6 +36,14 @@ LOOK = 60             # frames between samples: the 'ended' frame is known to wi
 NOTE_EVERY = 300      # frames between samples kept in the JSON (the transitions are always kept)
 LINES = re.compile(r"coop: event: our Link|coop: objects: anim \S+ \S+ 'AS-|coop: boss: (phase|the game asked)")
 STATE_KEYS = ("frame", "scene", "event", "loading", "not_ready", "age")
+
+
+def _ready(pair, x, st):
+    """The boot proof's own 'in play' (review-rows-c130-8 S3): Pair.ready where the harness has it (pause-press-0121:
+    in_play and the play UI not down), else Pair.in_play (a scene, no load, no event, a fresh sample: not_ready None),
+    so the measured N is the one the boot proof waits for."""
+    ready = getattr(pair, "ready", None)
+    return ready(x, st) if ready else pair.in_play(st)
 
 
 def _keep(st):
@@ -61,12 +70,15 @@ def test_probe_twinrova_intro_frames(pair):
         ran, open_ = 0, set(pair.c)
         while True:
             for x in pair.c:
-                g, st = rec["games"][x], _keep(pair.state(x))
+                raw = pair.state(x)
+                g, st = rec["games"][x], _keep(raw)
                 st["stepped"] = ran
                 last = g["samples"][-1] if g["samples"] else None
                 if last is None or ran % NOTE_EVERY == 0 or last.get("event") != st.get("event"):
                     g["samples"].append(st)
-                if x in open_ and not st.get("event") and not st.get("loading"):
+                if hasattr(pair, "play_ui"):      # (pause-press-0121: the play UI is part of 'in play')
+                    st["play_ui"] = pair.play_ui(x)
+                if x in open_ and _ready(pair, x, raw):
                     g["ended"] = st
                     open_.discard(x)
             if not open_ or ran >= PROBE_FRAMES:

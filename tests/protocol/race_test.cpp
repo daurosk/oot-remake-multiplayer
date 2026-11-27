@@ -58,7 +58,7 @@ using Public = List<Hello, Welcome, Refused, PlayerJoined, PlayerLeft, Ping, Pon
                     TestPayload, Host, PlayerEquip, PlayerPose, JoinChallenge, JoinProof, PlayerLife, PvpMode, PvpHit,
                     PvpHurt, RejoinToken, RejoinClaim, PlayerRide, OcarinaNote, DbnoMode, DbnoStatus, DbnoRevive,
                     DbnoThreat, Difficulty, VoiceFrame, ModList, ModSettings, ModData, LobbyAction, LobbyMutes, LobbyResult,
-                    LocalJoin, LocalJoined, LocalLeave, LinkSound, PlayerLook, JoinKnock, JoinAllow, PvpStrike,
+                    LocalJoin, LocalJoined, LocalLeave, LinkSound, LinkEffect, PlayerLook, JoinKnock, JoinAllow, PvpStrike,
                     PvpResult, PvpNative, Emote>;
 using Envelope = List<LocalSample, LocalMessage>;   // judged by what they carry
 

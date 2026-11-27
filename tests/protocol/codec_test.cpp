@@ -1674,6 +1674,34 @@ TEST_CASE("a Link sound has its number, channel and layout, and only the game's 
   CHECK(decode(bad, m) == Error::bad_value);
 }
 
+TEST_CASE("a Link effect has its number, channel and layout, its end flag, and only the game's own keys pass") {
+  CHECK(static_cast<int>(MessageType::link_effect) == 501);
+  CHECK(channel_of(MessageType::link_effect) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::link_effect, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::link_effect));
+  CHECK(may_send(Sender::server, MessageType::link_effect));
+  Message n = LinkEffect{0, 0, "DinFire"};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const std::string longest(kMaxLinkSoundChars, 'a');
+  const Bytes b = must_encode(LinkEffect{3, kLinkEffectEnd, longest});
+  REQUIRE(b.size() == kHeaderSize + 1 + 1 + 2 + kMaxLinkSoundChars);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LinkEffect>(back) == LinkEffect{3, kLinkEffectEnd, longest});
+  Bytes out;
+  CHECK(encode(LinkEffect{0, 0, ""}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0, longest + "a"}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0, "Din Fire"}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0x02, "DinFire"}, out) == Error::bad_value);  // a flag this build does not know
+  CHECK(encode(LinkEffect{17, 0, "DinFire"}, out) == Error::bad_value);
+  Bytes bad = must_encode(LinkEffect{0, 0, "DinFire"});
+  bad[kHeaderSize + 1] = 0x80;
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+}
+
 TEST_CASE("an emote has its number, channel and layout, and only a known range of ids passes") {
   CHECK(static_cast<int>(MessageType::emote) == 615);
   CHECK(channel_of(MessageType::emote) == kChannelSession);

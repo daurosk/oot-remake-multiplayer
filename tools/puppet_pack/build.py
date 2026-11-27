@@ -71,6 +71,13 @@ KEEP_COMPONENTS = (
 # puppet. `--no-sound` leaves them out (the pack as before).
 SOUND_COMPONENTS = ("SLinkRef", "SoundFootStepRef")
 
+# Effects (row 310, docs/puppet.md "Link effects"): the player's ELink param and the ActorInfo
+# `ELinkUserName` give the puppet its own ELink user, on which the module starts the effects the
+# other player's game starts on its Link (LINK_EFFECT: spin charge, sword trail, Din's Fire, Nayru's
+# Love), bound to the puppet's own bones. `--no-effects` leaves them out (the pack before row 310).
+EFFECT_COMPONENTS = ("ELinkRef",)
+EFFECT_INFO_FIELDS = ("ELinkUserName",)
+
 # The player's footstep param has `ProcType` Player (murmur3 hash 145979025): the steps are
 # worked out by the player's own code, which the puppet does not run, and `IsUseRayCast` casts
 # from the leg bones for the floor. Dark Link (Enemy_MiddleBoss_DarkLink), the game's own copy of
@@ -151,7 +158,7 @@ FIXED_COMPONENTS = {
 
 # ActorInfo fields of the player row that belong to the player only. SLinkUserName names the
 # sound user and is kept unless the pack is built without sound.
-DROP_INFO_FIELDS = ("ActorName", "ELinkUserName")
+DROP_INFO_FIELDS = ("ActorName",)
 SOUND_INFO_FIELDS = ("SLinkUserName",)
 # Always calculated while loaded: the puppet is wherever its player is.
 INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
@@ -749,11 +756,11 @@ def flatten_actor_param(members, actor):
     return comps
 
 
-def make_actor_param(player_components, sound=True, basic_xlink=False):
+def make_actor_param(player_components, sound=True, basic_xlink=False, effects=True):
     missing = [k for k in REQUIRED_COMPONENTS if k not in player_components]
     if missing:
         raise BuildError(f"the player's ActorParam has no {', '.join(missing)}")
-    keep = KEEP_COMPONENTS + (SOUND_COMPONENTS if sound else ())
+    keep = KEEP_COMPONENTS + (SOUND_COMPONENTS if sound else ()) + (EFFECT_COMPONENTS if effects else ())
     comps = {k: player_components[k] for k in keep if k in player_components}
     comps.update(FIXED_COMPONENTS)
     if sound and not basic_xlink and player_components.get("XLinkRef"):
@@ -1195,7 +1202,7 @@ def tunic_model_info(actor, variant, project):
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
                project=None, basic_xlink=False, perception=None, as_ref=None, body=False, liftable=None,
-               carry=False, pvp=None):
+               carry=False, pvp=None, effects=True):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
@@ -1210,7 +1217,7 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     player_components = flatten_actor_param(members, player)
-    doc = make_actor_param(player_components, sound, basic_xlink)
+    doc = make_actor_param(player_components, sound, basic_xlink, effects)
     files = collect_members(members, doc)
     if perception:
         add_perception(doc, player_components, members, actor, files, perception)
@@ -1343,10 +1350,10 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap=None, sound=True, sound_user=None):
+def info_row(player_row, actor, heap=None, sound=True, sound_user=None, effects=True):
     """The puppet's ActorInfo row: the player's, less its player-only fields. `heap`, when given,
     sets InstanceHeapSize (a test switch, `--heap`), keeping the field's BYML type."""
-    drop = DROP_INFO_FIELDS + (() if sound else SOUND_INFO_FIELDS)
+    drop = DROP_INFO_FIELDS + (() if sound else SOUND_INFO_FIELDS) + (() if effects else EFFECT_INFO_FIELDS)
     row = {k: v for k, v in player_row.items() if k not in drop}
     row.update(INFO_OVERRIDES)
     if sound and sound_user:
@@ -2124,7 +2131,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
           skins=(), test_skin=None, game_has=None, game_read=None, skin_effects=False, body=False, liftable=False,
-          pvp=False, characters=None, charsel_native=False):
+          pvp=False, characters=None, charsel_native=False, effects=True):
     """`characters`: find_characters()'s answer, for a puppet per character of the Character Select mod
     (character_actor; each with its quiet copy, as the colours). `tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
@@ -2361,14 +2368,15 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                            basic_xlink=basic_xlink, perception=None if quiet else seen_by,
                                            as_ref=wears[1][v] if wears else None, body=body,
                                            liftable=lift_param, carry=carry_data is not None,
-                                           pvp=clients if pvp_copy else None)
+                                           pvp=clients if pvp_copy else None, effects=effects)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
         number = characters["numbers"][char] if char is not None else None
         sound_list = puppet_sound_list_for(voiced, v, number) if voiced else None
-        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound, sound_list or sound_user))
+        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound, sound_list or sound_user,
+                               effects=effects))
         if project:
             new_ai[-1]["ModelProjectName"] = project
         if wears:
@@ -2675,6 +2683,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                            if voices else {})} if characters else None),
         "test_tunic": test_tunic,
         "sound": sound,
+        "effects": effects,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "perception": bool(seen_by),
         "body": bool(body),
@@ -2764,6 +2773,9 @@ def main(argv=None):
                     help="native puppets phase 4 test (docs/native-puppets.md section 5): every puppet gets a _Pvp "
                          "copy (a body with Link's Tgt sensor, his SensorHit/Life/Reaction/Target params, a LockOn "
                          "and AutoAim attention sender), used with LICHII_COOP_PVP_NATIVE=1; off by default")
+    ap.add_argument("--no-effects", action="store_true",
+                    help="build the puppets without Link's ELink user (the pack before row 310: no other "
+                         "player's effects shown on their puppet)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -2866,7 +2878,8 @@ def _main_build(a, romfs, hud_reader=None):
         skins.append((sid, folder))
     try:
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
-        build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
+        build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, effects=not a.no_effects,
+              player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, pause_tab=a.pause_tab, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),

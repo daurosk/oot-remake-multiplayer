@@ -356,6 +356,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.sound.pending = CoopPuppetSound::State::Step::none;
         } else if (pending_ == Pending::link_sound) {
             CoopLinkSound::Dropped(slot.link_sound);
+        } else if (pending_ == Pending::link_effect) {
+            CoopLinkSound::Dropped(slot.link_effect);
         } else if (pending_ == Pending::flame) {
             CoopPuppetFlame::Dropped(slot.flame);
         }
@@ -372,6 +374,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         for (auto& slot : slots_) {
             if (slot.number == t.number && !t.sounds.empty()) {
                 for (auto& s : t.sounds) {
+                    if (s.effect) {  // LINK_EFFECT (row 310): on the puppet's effect user
+                        if (s.end) {
+                            CoopLinkSound::End(slot.link_effect, std::move(s.name));
+                        } else {
+                            slot.link_effect.heard.Push(std::move(s.name), s.at_ms);
+                        }
+                        continue;
+                    }
                     if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
                         continue;  // the OCARINA_NOTE path plays the notes: not twice
                     }
@@ -811,6 +821,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
         break;
+    case Pending::link_effect:
+        CoopLinkSound::Finish(slot.link_effect, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
     case Pending::head_show:
         slot.head_show = false;
         slot.head_shown = true;
@@ -978,6 +992,17 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                         slot.block, now_ms,
                         [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
                     pending_ = Pending::link_sound;
+                    return c;
+                }
+            }
+            // The player's own effects (row 310, coop_link_sound.h): their own cells, on the puppet's ELink user.
+            {
+                const std::uint64_t user = CoopPuppetSound::EffectUser(guest, slot.actor);
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_effect, effect_budget_, guest, input_.main_base, slot.actor, user,
+                        slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_effect;
                     return c;
                 }
             }
@@ -2602,6 +2627,12 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
             t.sounds = r.sounds;  // too far, or out of sight: not heard
+        } else {
+            for (const auto& s : r.sounds) {
+                if (s.effect && s.end) {
+                    t.sounds.push_back(s);  // an effect's end always: one started while near stops
+                }
+            }
         }
         in.targets.push_back(std::move(t));
     }
@@ -3154,10 +3185,28 @@ void OnEvent(const coop::net::Event& event) {
                 .count());
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[sound->player_number];
-        if (queue.size() >= CoopLinkSound::kHeardMax) {
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
             queue.erase(queue.begin());  // the newest are kept
         }
-        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
+        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms, false, false});
+    } else if (const auto* effect = std::get_if<coop::protocol::LinkEffect>(&event.message);
+               event.kind == EventKind::message && effect != nullptr) {
+        // LINK_EFFECT (row 310): the same queue as the sounds, marked, played on the puppet's effect user.
+        if (effect->player_number == 0 || effect->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        const bool end = (effect->flags & coop::protocol::kLinkEffectEnd) != 0;
+        CoopLinkSound::NoteEffect(effect->player_number, effect->name, end, now_ms);
+        std::lock_guard lock(g_anim_mutex);
+        auto& queue = g_sounds[effect->player_number];
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
+            queue.erase(queue.begin());  // the newest are kept
+        }
+        queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end});
     } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
                event.kind == EventKind::message && emote != nullptr) {
         // EMOTE (coop_emote.h): the puppet holds the emote's animation (Collect); a call is said by its Navi (coop_emote_body.h). An id this

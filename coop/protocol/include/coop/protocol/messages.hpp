@@ -201,6 +201,7 @@ enum class MessageType : std::uint16_t {
   local_message = 464,
   player_look = 430,  // 430 to 434: a look of several parts (docs/protocol.md, "Looks")
   link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
+  link_effect = 501,  // the other Links' effects (row 310; docs/protocol.md, "Link effects")
   boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
   boss_heart = 521,
   boss_alive = 522,
@@ -1377,6 +1378,20 @@ struct LinkSound {
   std::string name;                          // the asset's name
   bool operator==(const LinkSound&) const = default;
 };
+// LINK_EFFECT (501, row 310): an effect the game itself started on the
+// sender's own Link (its ELink user: the spin charge, the sword trail, Din's
+// Fire, Nayru's Love), by its key, relayed to everyone else, who start the same
+// key on that player's puppet with the game's own call. kLinkEffectEnd: the
+// sender's game no longer plays it (a held loop let go): the others stop it.
+// The key follows the LINK_SOUND name rule.
+inline constexpr std::uint8_t kLinkEffectEnd = 0x01;
+inline constexpr std::uint8_t kLinkEffectFlags = kLinkEffectEnd;  // every flag this build knows
+struct LinkEffect {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::uint8_t flags = 0;                    // kLinkEffectEnd
+  std::string name;                          // the effect's key
+  bool operator==(const LinkEffect&) const = default;
+};
 inline bool valid_link_sound_name(std::string_view name) {
   if (name.empty() || name.size() > kMaxLinkSoundChars) return false;
   for (const char ch : name) {
@@ -2340,7 +2355,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, ModData, LobbyAction, LobbyMutes, LobbyResult,
-                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound, LinkEffect,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
                              LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote>;

@@ -287,3 +287,26 @@ TEST_CASE("cheat give: every other flag goes through the store as it is, with or
     CHECK(f.at(kBow) == 1);
     CHECK(f.at(kBowGet) == 1);
 }
+
+TEST_CASE("cheat give: max life stops at the game's most hearts, as a heart container there gives none") {
+    // volvagia-rocks-309d7180 B (2026-11-27 03:47): the 11th give wrote 84, the game put back 80 (20 hearts).
+    FakeFlags f;
+    LifeSave(f);
+    FakeLink link;
+    CoopCheatGive::LinkBackedFlags store(f, &link);
+    f.flags.at(coop::host::flag_hash("PlayerStatus.MaxLife")).value = 76;
+    link.max = 76;
+    auto r = CoopCheatGive::Give(store, "PlayerStatus.MaxLife");
+    CHECK(r.changed);
+    CHECK(link.max == coop::host::kMostMaxLife);
+    CHECK(f.at("PlayerStatus.MaxLife") == 80);
+    r = CoopCheatGive::Give(store, "PlayerStatus.MaxLife");
+    CHECK(r.ok);
+    CHECK_FALSE(r.changed);                       // (no change: already 80; the read-back has nothing to judge)
+    CHECK(r.text.find("already 80") != std::string::npos);
+    CHECK(link.max == 80);
+    // A save above it (a modded one) is never lowered by a gift either.
+    f.flags.at(coop::host::flag_hash("PlayerStatus.MaxLife")).value = 96;
+    CHECK_FALSE(CoopCheatGive::Give(f, "PlayerStatus.MaxLife").changed);
+    CHECK(f.at("PlayerStatus.MaxLife") == 96);
+}

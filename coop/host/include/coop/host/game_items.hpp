@@ -33,6 +33,11 @@
 
 namespace coop::host {
 
+// The game's most hearts: PlayerStatus.MaxLife in quarter hearts (20 hearts). Our Link's Life component never keeps
+// more: a write of 84 came back as 80 within 2 frames with no co-op line (volvagia-rocks-309d7180 B, 2026-11-27
+// 03:47). The one value the give, the hearts-to-Link walk and NG+ use.
+inline constexpr std::int32_t kMostMaxLife = 20 * 4;
+
 enum class ItemRule : std::uint8_t {
   max,         // shared: everyone takes the highest value (owned items, upgrade tiers)
   any,         // shared: true for everyone once true for anyone (IsGet, songs, map, ...)

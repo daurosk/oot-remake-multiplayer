@@ -22,6 +22,7 @@
 #pragma once
 
 #include <algorithm>
+#include "coop/host/game_items.hpp"
 #include <array>
 #include <cmath>
 #include <deque>
@@ -750,7 +751,7 @@ GivenFate StaleGivenFate(const GivenAsk& a);
 // not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
 // write into the component: the flag when another player raised it above
 // ours (at most 20 hearts), else nothing. Never lowers it.
-inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
+inline constexpr std::int32_t kMostLifeQuarters = coop::host::kMostMaxLife;   // (game_items.hpp: one value)
 std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
 // Rows 136/137: the host loaded an older save and its FLAG_RESET lowered MaxLife while our Link stood in a scene
 // (FlagWatcher::reset_lowered). The component keeps the replaced save's max and writes it back, which the max rule

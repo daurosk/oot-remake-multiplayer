@@ -17,7 +17,7 @@ TEST = "test_phantom_ganon_hand_over_no_fall"
 
 class PhantomGanonRow(unittest.TestCase):
     """PASS (with refs) as the fixed game logs it; a fall after the hand-over FAILs (and stays FAIL on its rerun: never
-    FLAKY); a copy in the owner's state (no cause) FAILs."""
+    FLAKY); a copy in the owner's state (no cause) is NO-REF."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -47,10 +47,18 @@ class PhantomGanonRow(unittest.TestCase):
         self.assertEqual(T.results(s), {TEST: "PASS"}, p.stdout[-2000:])
         self.assertIn("cause: his copy stood in CCT move state 1 when made ours; the owner's was 2", json.dumps(s["tests"]))
 
-    def test_no_cause_fails(self):
-        """The copy in the owner's state when made ours: the fix's line has no cause, FAIL (the cause assert bites)."""
-        p, s = self.run_row({"BT_FAKE_PG_SAME": "1"})
-        self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-2000:])
+    def test_no_cause_is_no_ref(self):
+        """The copy in the owner's state when made ours: the row's own asserts hold, the cause is unseen -> NO-REF
+        naming it, never FAIL (review-rows-c130-10 20:53 MUST 1). Refs adopted first, so the NO-REF is the cause's."""
+        refs = os.path.join(self.tmp, "refs")
+        self.run_row({"BT_FAKE_REFS": refs})
+        os.makedirs(refs)
+        new = os.path.join(self.tmp, "o0", "lane1", "new")
+        for f in os.listdir(new):
+            shutil.copyfile(os.path.join(new, f), os.path.join(refs, f))
+        p, s = self.run_row({"BT_FAKE_REFS": refs, "BT_FAKE_PG_SAME": "1"})
+        self.assertEqual(T.results(s), {TEST: "NO-REF"}, p.stdout[-2000:])
+        self.assertIn("cause not seen", json.dumps(s["tests"]))
         self.assertIn("no cause seen", json.dumps(s["tests"]))
 
     def test_fall_after_hand_over_fails(self):

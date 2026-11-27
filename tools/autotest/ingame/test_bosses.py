@@ -38,16 +38,19 @@ CRASH = r"CRASH:|FATAL"                                                # the old
 # (was ..)] move state C (type T, before B)" or "... move state P (..) -> C (..)"; group 3 = C, the state it is in now.
 PROBE = re.compile(r"move probe: %s 0x[0-9a-f]+ (ours|a copy of player \d+):(.*?) move state "
                    r"(?:\d+ \(type \d+, before \d+\) -> )?(\d+) \(type" % PG)
+VERB_ANY = r"coop: test verb %s 139: " % PG    # coop_objects.cpp:7248 (either answer: ours or a copy's 'no boss')
 CCT_ASKED = re.compile(r"%s: CCT move state (\d+) asked of the game: in \(" % PG)   # coop_brain_state.cpp:341
 
 
 def cause(lines):
     """One game's cause, or None when this game never took him over with the fix asking: (the copy's move state, the
-    owner's state the fix asked). The copy's state = its last probe line as a copy before the first fix line."""
-    copy = None
+    owner's state the fix asked). The copy's state = its last probe line as a copy before the first fix line, read
+    only after this game's first `verb PG 139` (the knock-down turns; an intro copy state is never the cause)."""
+    copy, turns_on = None, False
     for ln in lines:
+        turns_on = turns_on or bool(re.search(VERB_ANY, ln))
         m = PROBE.search(ln)
-        if m and m.group(1) != "ours":
+        if m and turns_on and m.group(1) != "ours":
             copy = int(m.group(3))
         a = CCT_ASKED.search(ln)
         if a:
@@ -150,15 +153,21 @@ def test_phantom_ganon_hand_over_no_fall(pair):
     # the fix's own line after a hand-over, on either game (old: down UNPROVEN without it)
     seen = [after_first(lines[x], HANDED, CCT_IN) for x in ("A", "B")]
     assert any(seen), "no '%s' line after a HANDED OVER on either game: the fix's move-state write did not run" % CCT_IN
-    # the cause (phantom-ganon-287-3), on each game that took him over with the fix asking
-    found = {x: cause(lines[x]) for x in ("A", "B")}
-    taken = {x: c for x, c in found.items() if c is not None}
+    shots.check()
+    # the cause (phantom-ganon-287-3), on each game that took him over with the fix asking. A probe result, not the
+    # row's bug (that is the no-fall + fix-line asserts above): an unseen cause is NO-REF naming what was seen, never
+    # a FAIL (review-rows-c130-10 20:53 MUST 1).
+    taken = {x: c for x, c in ((x, cause(lines[x])) for x in ("A", "B")) if c is not None}
+    unseen = []
     for x, (copy, owners) in sorted(taken.items()):
         line = "%s: cause: his copy stood in CCT move state %s when made ours; the owner's was %d" % (x, copy, owners)
         print(line)
         pair.notes.append(line)
-    assert taken, "no game took him over with the fix asking a move state"
-    for x, (copy, owners) in sorted(taken.items()):
-        assert copy is not None, "%s: no move probe line for his copy before the fix's line (probe off?)" % x
-        assert copy != owners, "%s: his copy stood in move state %d, the owner's too: no cause seen" % (x, copy)
-    shots.check()
+        if copy is None:
+            unseen.append("%s: no move probe line for his copy in the knock-down turns before the fix's line" % x)
+        elif copy == owners:
+            unseen.append("%s: his copy stood in move state %d, the owner's too: no cause seen" % (x, copy))
+    if not taken:
+        unseen.append("no game took him over with the fix asking a move state")
+    if unseen:
+        pair.unproven("cause not seen: " + "; ".join(unseen))

@@ -69,8 +69,9 @@ def act(game, words):
         game.say("coop: test verb %s %s: %s" % (PG, w[2], "asked of our boss" if mine else
                                                  "no boss of ours by that name"))
         if mine:
-            o.say("coop: move probe: %s 0x80000007 a copy of player %d: move state 2 (type 1, before 1) -> %s, "
-                  "verbs 139" % (PG, 1 if game.tag == "A" else 2, copy_state(o)))   # the copy's knock-down start
+            line = ("coop: move probe: %s 0x80000007 a copy of player %d: move state 2 (type 1, before 1) -> %s, "
+                    "verbs 139" % (PG, 1 if game.tag == "A" else 2, copy_state(o)))
+            o.later(10, lambda: o.say(line))   # the copy's knock-down start, a few frames on (the owner's news)
             game.later(900, lambda: hand(game, o.tag))       # (his turn goes to the other player)
     elif w[0] == "hurt":
         if b["owner"] == game.tag:

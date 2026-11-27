@@ -34,6 +34,8 @@ The server, password and nickname are fixed at build time (`build.py --join 127.
 
 `tools/switch_mod/net_host.py` builds the same sources for the PC (freestanding, the same shim headers; `net_host_test.cpp` gives them an `nn::socket` on the PC's sockets), runs known-answer checks (SHA-256, HMAC, HELLO layout) and, with `--server <coop_server> --client <coop_test>`, joins a real coop_server next to a real coop_net client (`coop_test`, the client code Longshot games use). It passes when the freestanding client opens WELCOME and sees the other player. CI runs it in the Linux gcc job.
 
+The in-game proof is the bridge test `tools/autotest/ingame/test_exefs_crossplay.py` (opt-in: `--env OOT_TEST_EXEFS_XPLAY=1`). On a test lane's live session (two Longshot games and the lane's coop_server) it builds the module for that session's port, password and the lane's protocol (`--protocol-from <lane commit>`), starts Fritchii with it once both Longshot players are in, and passes when the module logs WELCOME and sees both players, the server logs `joined: emulator (client: exefs-proto ...)`, and each Longshot game logs `coop: player N 'emulator' joined`. Fritchii, the game and the folder its keys come from are taken from `OOT_TEST_FRITCHII`, `OOT_TEST_NUP` and `OOT_TEST_FRITCHII_FROM` (defaults in the test). Its selftests (no game) are `tools/autotest/tests/test_ingame_exefs_crossplay.py`.
+
 ENet calls a few optional hooks through pointers (compressor, checksum, intercept, packet free callback). We never set them and ENet calls them only when they are set, so `build.py` allows the indirect calls in exactly those ENet functions (named list) and still fails on any other. A lifting recomp needs a trap or an entries line for them.
 
 ## Build

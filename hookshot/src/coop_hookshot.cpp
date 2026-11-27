@@ -139,6 +139,7 @@
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
+#include "hos_coop_crawl.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
@@ -2372,6 +2373,9 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         SetBossShooter();
         SetShooterProbe();
         if (g_world_version.exchange(level.version) != level.version) {
+            LOG_INFO(Core, "coop: down but not out: the crawl's room check {}",
+                     WrapIn(HOS_COOP_WRAP_CRAWL_ROOM) ? "wrapped (a downed child keeps crawling)"
+                                                      : "not wrapped in this hookshot.exe (patch 0046)");
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
                      level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
@@ -2820,6 +2824,16 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         }
         x[0] = 1;
         return 1;
+    }
+    if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {
+        // 0.12.1 downed-move (patch 0046, hos_coop_crawl.h): the game's crawl asks whether the player (x0) has room
+        // to stand up. For our downed child the answer is "no room" (the game's false), so its crawl goes on with
+        // its own clips, stick movement and camera; everything else runs the game's own check.
+        if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {
+            x[0] = 0;
+            return 1;
+        }
+        return 0;
     }
     if (id == HOS_COOP_WRAP_SHOOTER_PREPARE || id == HOS_COOP_WRAP_SHOOTER_SHOOT ||
         id == HOS_COOP_WRAP_SHOOTER_SLEEP) {

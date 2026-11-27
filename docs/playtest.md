@@ -252,7 +252,11 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   while none of them shows, else `tab` (`multiplayer`, `lobby`, `mods`), `view` (the rows' view: `main`, `session`,
   `players`, `join`, `lan`, `menu`, ...), `details_page` and `details_pages` of the list on the right of the main and
   Session views (row 223: page `0` the session's lines, page `1` the key items, turned with ZL and ZR; `details_pages`
-  is `2` while the game's key items can be read, `1` when not, `0` on a view without that list) and `key_items`: on
+  is `2` while the game's key items can be read, `1` when not, `0` on a view without that list), `keys` (row 297:
+  `true` while the list on the right is the typing keys: a field typed into, co-op's menu's rows too), `typed_chars`
+  (the characters on the keys' first line, the field as typed with its cursor mark: a count, never the text; `-1`
+  without keys), `row` (the rows' cursor on the left, `-1` none), `list` (the list on the right has the pad) and
+  `key_items`: on
   page `1` its lines (each `{"name", "value"}`, e.g. `{"name":"Songs","value":"3 of 12"}`), else `null`. The
   session's page is never given: it can hold a join code or an address.
 - `map_page` (row 295): the game's own Map page (the - menu's first tab) as its screen's last update left it: `up`

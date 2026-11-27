@@ -92,7 +92,9 @@ std::string MinusJson(const Minus& m) {
     if (!m.open) return "{\"open\":false}";
     std::string out = "{\"open\":true,\"tab\":" + Quote(m.tab) + ",\"view\":" + Quote(m.view) +
                       ",\"details_page\":" + std::to_string(m.details_page) +
-                      ",\"details_pages\":" + std::to_string(m.details_pages) + ",\"key_items\":";
+                      ",\"details_pages\":" + std::to_string(m.details_pages) + ",\"keys\":" + Bool(m.keys) +
+                      ",\"typed_chars\":" + std::to_string(m.typed_chars) + ",\"row\":" + std::to_string(m.row) +
+                      ",\"list\":" + Bool(m.list) + ",\"key_items\":";
     if (m.details_page != 1) return out + "null}";
     out += "[";
     for (std::size_t i = 0; i < m.key_items.size(); ++i) {

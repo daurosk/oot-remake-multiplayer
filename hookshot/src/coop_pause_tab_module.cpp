@@ -2943,6 +2943,14 @@ void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
         drawn.open = true;
         drawn.tab = tab == static_cast<int>(MinusPage::kMultiplayer) ? "multiplayer" : mods ? "mods" : "lobby";
         drawn.view = ViewWord(view);
+        drawn.keys = !mods && !v.typing_lines.empty();   // (row 297: the typing keys drawn on the list)
+        if (drawn.keys) {   // (its first line's value: what is typed, as drawn; counted, never given)
+            const std::string& typed = v.typing_lines[0].value;
+            drawn.typed_chars = static_cast<int>(std::count_if(typed.begin(), typed.end(), [](char c) {
+                return (static_cast<unsigned char>(c) & 0xC0) != 0x80;   // (UTF-8: one per character)
+            }));
+        }
+        drawn.row = row_now, drawn.list = in_list;
         if (!mods && v.typing_lines.empty()) {   // (the details list drawn: DetailLines' own page rule)
             const DetailPaging paging = DetailPages(view, v);
             drawn.details_pages = paging.pages, drawn.details_page = paging.page;
@@ -4482,7 +4490,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // deletes, + is OK; the mouse presses a key it is let go on). The PC's keys go to co-op's menu itself
             // (CoopPause::Key, Char). Nothing reaches the page or the game meanwhile.
             {
-                const bool menu_typing = g_page.Shown() && g_page.Typing() < 0 && ViewShown() == View::kMenu && mv.typing;
+                const bool menu_typing = CoopPauseTab::MenuKeysOn(g_page.Shown(), g_page.MinusTab(), g_page.Typing(),
+                                                                  ViewShown() == View::kMenu, mv.typing);   // (row 297)
                 const std::uint64_t now = NowMs();
                 if (g_menu_typed_last && !menu_typing) {
                     // (the press that ended it, still held now (+, B, A on OK, Enter): not the page's or the game's.
@@ -5206,6 +5215,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             settings_shown = shown && g_page.Which() == 1;
         }
         if (stick != nullptr) g_model_spin = shown ? static_cast<float>(stick[2]) / 32767.0f : 0.0f;   // (Link's turn)
+        if (!shown && stick != nullptr &&
+            CoopPauseTab::MenuKeysOn(false, minus_tab, g_page.Typing(), ViewShown() == View::kMenu, mv.typing)) {
+            stick[0] = 0, stick[1] = 0, stick[2] = 0, stick[3] = 0;   // (row 297: the - menu's keys have the pad, not the game)
+        }
         if (shown && stick != nullptr) {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
             if (typing || g_cell.load() >= 0 || (g_page.Which() == 1 && g_set_row.load() >= 0) ||

@@ -3645,3 +3645,21 @@ TEST_CASE("row 223: DetailPages is the details list's page rule (DetailLines and
     CHECK(DetailPages(View::kLan, v).pages == 0);
     CHECK(DetailPages(View::kPassword, v).pages == 0);
 }
+
+TEST_CASE("pause tab: co-op's menu has the on-screen keys on the - menu's tabs too (row 297)") {
+    const int none = -1, mp = static_cast<int>(MinusPage::kMultiplayer), lobby = static_cast<int>(MinusPage::kLobby);
+    const int mods = static_cast<int>(MinusPage::kMods);
+    // System's page of ours, as before
+    CHECK(MenuKeysOn(true, none, -1, true, true));
+    // row 297: the - menu's Multiplayer tab (co-op's home in free play): Room name, Your name, Port... get the keys
+    CHECK(MenuKeysOn(false, mp, -1, true, true));
+    CHECK(MenuKeysOn(false, lobby, -1, true, true));
+    // the Mods tab types through its own field; nowhere shown, no keys
+    CHECK_FALSE(MenuKeysOn(false, mods, -1, true, true));
+    CHECK_FALSE(MenuKeysOn(false, none, -1, true, true));
+    // not typing, another view, or a field of the page itself typed into (its own keys): none of co-op's menu's
+    CHECK_FALSE(MenuKeysOn(false, mp, -1, true, false));
+    CHECK_FALSE(MenuKeysOn(false, mp, -1, false, true));
+    CHECK_FALSE(MenuKeysOn(false, mp, 6, true, true));
+    CHECK_FALSE(MenuKeysOn(true, none, 0, true, true));
+}

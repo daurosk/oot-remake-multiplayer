@@ -1,7 +1,7 @@
 """Rows 304-306's probe selftest (ingame/test_carry_304.py + ingame/fakes/carry_304.py; owner carry-sync-304), run by
 test_ingame.py's load_tests: the set-up (place X Y Z, face X Z, lift) holds on the fake; B's copy in A's hands is
-NO-REF (hands box not measured, never PASS); a copy left at its rest place or missing on B is FAIL; deselected without
-the row's switch."""
+NO-REF (hands box not measured, never PASS); a copy beyond MISS_M is NO-REF (not measured); a copy left at its rest
+place or missing on B is FAIL; deselected without the row's switch."""
 import os
 import shutil
 import sys
@@ -47,7 +47,13 @@ class Carry304(unittest.TestCase):
     def test_no_copy_fails(self):
         p, s = self.run_fake("absent", "absent")
         self.assertEqual(T.results(s)["test_carry_ruto"], "FAIL", p.stdout[-2000:])
-        self.assertIn("NOT in A's hands in 15 of 15", self.why(s, "test_carry_ruto"))
+        self.assertIn("B has NO copy in 15 of 15", self.why(s, "test_carry_ruto"))
+
+    def test_far_copy_is_no_ref(self):
+        p, s = self.run_fake("far", "far")
+        self.assertEqual(T.results(s), {t: "NO-REF" for t in ALL}, p.stdout[-2000:])
+        for t in ALL:
+            self.assertIn("(MISS_M, not measured) in 15 of 15", self.why(s, t))
 
     def test_without_the_switch_deselected(self):
         p, s = self.run_fake("none", "ok", row=False)

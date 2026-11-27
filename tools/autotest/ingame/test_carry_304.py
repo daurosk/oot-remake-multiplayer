@@ -8,9 +8,11 @@ SAMPLE_EVERY frames, where A's own object is and where B's copy of it is, agains
 | test_carry_rock | (305) a liftable rock A carries: B's copy is lifted with A (not left at its rest place) |
 | test_carry_ruto | (304) child Ruto A carries in Jabu-Jabu: B has her, in A's hands (each game had its own Ruto) |
 
-Until MEASURED cites a probe run (the hands box against real samples), a run whose copy IS in the hands ends
-pair.unproven (NO-REF, never PASS); a copy that is clearly NOT there (absent, or > MISS_M from A's Link in most samples
-while A's own object is in A's hands) FAILS: that is the row's bug.
+No guessed number decides a SETUP-FAIL or a FAIL (review-rows-c130-11 MUST 1). 'A carries it' is judged without
+the hands box: A's own object (the same id) rose above its rest height or left its rest place (`carried`). While A
+carries it, B's copy missing, or still at its rest place, FAILS (the row's bug). A copy further than MISS_M (no source)
+from A's Link is a NO-REF miss, and a copy in the hands box is NO-REF too, until MEASURED cites a probe run (the box
+against real samples); never PASS before that. The notes keep every sample for the measurement.
 
 Sources (worker-rules "no guessed values"):
 - The lane's boot map is KakarikoVillage_Child (test_boss_respawn.BACK_TO); its catch cucco: tools/playtest/data/
@@ -60,6 +62,8 @@ FIND_M = 30.0                                 # the object A lifts: the nearest 
 HANDS_XZ, HANDS_DY = (1.2, (0.2, 2.6))
 MISS_M = 2.5                                  # a copy further than this from A's Link (xz) is not in A's hands
 AWAY_M = 1.0                                  # A's own object this far (xz) from its rest place: it left it
+RISE_M = 0.1                                  # A's own object this much over its rest height: it rose (a resting
+#                                               object keeps its height; not the hands box, which is far larger)
 MISS_SHARE = 0.5                              # FAIL when more than this share of the samples miss
 MEASURED = None
 
@@ -71,6 +75,11 @@ def xz(a, b):
 def in_hands(obj, link):
     return obj is not None and link is not None and xz(obj, link) <= HANDS_XZ and \
         HANDS_DY[0] <= obj[1] - link[1] <= HANDS_DY[1]
+
+
+def carried(obj, rest):
+    """A's own object is off its rest place: risen over its rest height, or moved AWAY_M from it (no hands box)."""
+    return obj is not None and (obj[1] - rest[1] > RISE_M or xz(obj, rest) > AWAY_M)
 
 
 def dump(pair, x, tag):
@@ -100,7 +109,7 @@ def by_id(actors, aid):
 
 def lift(pair, prefix, at, tag, within=FIND_M):
     """A placed NEAR_M from the nearest `prefix` actor to `at` (A's world list), facing it; B placed B_FROM_M behind A
-    looking at A; A presses A. SETUP-FAIL unless A's own object is then in A's hands (A lifted it). Returns
+    looking at A; A presses A. SETUP-FAIL unless A's own object then left its rest place (`carried`). Returns
     (A's object id, B's copy id or None, the object's rest place)."""
     link, actors, _ = dump(pair, "A", "%s-find" % tag)
     obj = nearest(actors, prefix, at, within)
@@ -130,9 +139,11 @@ def lift(pair, prefix, at, tag, within=FIND_M):
     pair.step_both(HOLD_WAIT)
     link, actors, st = dump(pair, "A", "%s-a-held" % tag)
     mine = by_id(actors, obj.get("id"))
-    if not in_hands(mine and mine.get("pos"), link):
-        raise P.SetupFail("A did not lift the %s: its place %s, A's Link %s, prompt %r" % (
-            obj.get("name"), mine and mine.get("pos"), link, st.get("prompt")))
+    pair.notes.append("%s: A held: A's own at %s (rest %s), A's Link %s, prompt %r" % (
+        tag, mine and mine.get("pos"), o, link, st.get("prompt")))
+    if not carried(mine and mine.get("pos"), o):
+        raise P.SetupFail("A did not lift the %s: its place %s (rest %s), A's Link %s, prompt %r" % (
+            obj.get("name"), mine and mine.get("pos"), o, link, st.get("prompt")))
     return obj.get("id"), copy.get("id") if copy else None, o
 
 
@@ -166,9 +177,10 @@ def follow(pair, a_id, b_id, prefix, rest, tag):
     return rows
 
 
-def judge(pair, rows, tag):
-    a_ok = [r for r in rows if in_hands(r["a_obj"], r["a_link"])]
-    miss = [r for r in a_ok if r["b_copy"] is None or xz(r["b_copy"], r["a_link"]) > MISS_M]
+def judge(pair, rows, tag, rest):
+    a_ok = [r for r in rows if carried(r["a_obj"], rest)]
+    gone = [r for r in a_ok if r["b_copy"] is None]
+    far = [r for r in a_ok if r["b_copy"] is not None and xz(r["b_copy"], r["a_link"]) > MISS_M]
     # B still shows it at the rest place after A's own left it: the row's bug itself, in any one sample (the rest place
     # starts NEAR_M from A's Link, inside MISS_M, so the miss share alone let a copy left behind pass; fake 'rest')
     left = [r["i"] for r in a_ok if r["b_at_rest"] and r["a_away"]]
@@ -177,11 +189,13 @@ def judge(pair, rows, tag):
             tag, r["i"], "walk" if r["walking"] else "still", r["a_link"], r["a_obj"], r["b_copy"], r["b_copy_id"],
             " B still has one at rest" if r["b_at_rest"] else ""))
     if not a_ok:
-        pair.unproven("%s: A's own object left A's hands in every sample (A dropped it?)" % tag)
+        pair.unproven("%s: A's own object back at its rest place in every sample (A dropped it?)" % tag)
     assert not left, "%s: B still shows it at its rest place while A carries it away (samples %s)" % (tag, left)
-    assert len(miss) <= MISS_SHARE * len(a_ok), (
-        "%s: B's copy NOT in A's hands in %d of %d samples while A carries it (absent or > %.1f m from A's Link)" % (
-            tag, len(miss), len(a_ok), MISS_M))
+    assert len(gone) <= MISS_SHARE * len(a_ok), (
+        "%s: B has NO copy in %d of %d samples while A carries it" % (tag, len(gone), len(a_ok)))
+    if len(gone) + len(far) > MISS_SHARE * len(a_ok):
+        pair.unproven("%s: B's copy > %.1f m from A's Link (MISS_M, not measured) in %d of %d samples, absent in %d" % (
+            tag, MISS_M, len(far), len(a_ok), len(gone)))
     hands = [r for r in a_ok if in_hands(r["b_copy"], r["a_link"])]
     if MEASURED is None:
         pair.unproven("%s: hands box not measured yet: B's copy in A's hands %d of %d samples" % (
@@ -197,7 +211,7 @@ def test_carry_cucco(pair):
     with pair.setup():
         BR.start_check(pair)
         a_id, b_id, rest = lift(pair, CUCCO, CUCCO_SPOT, "cucco")
-    judge(pair, follow(pair, a_id, b_id, CUCCO, rest, "cucco"), "cucco")
+    judge(pair, follow(pair, a_id, b_id, CUCCO, rest, "cucco"), "cucco", rest)
 
 
 @pytest.mark.budget(int(2 * P.SETUP_LIMIT_S + 2 * P.SETUP_WARP_S + 300))
@@ -210,7 +224,7 @@ def test_carry_rock(pair, back_after):
         pair.warp_both(ROCK_SCENE, ROCK_ENTRANCE)
         pair.until_in_play("both in %s" % ROCK_SCENE)
         a_id, b_id, rest = lift(pair, ROCK, (ROCK_AT[0], 0.0, ROCK_AT[1]), "rock")
-    judge(pair, follow(pair, a_id, b_id, ROCK, rest, "rock"), "rock")
+    judge(pair, follow(pair, a_id, b_id, ROCK, rest, "rock"), "rock", rest)
 
 
 @pytest.mark.budget(int(2 * P.SETUP_LIMIT_S + 2 * P.SETUP_WARP_S + 300))
@@ -223,4 +237,4 @@ def test_carry_ruto(pair, back_after):
         start = pair.warp_both(RUTO_SCENE, RUTO_ENTRANCE)
         pair.until_in_play("both in %s" % RUTO_SCENE)
         a_id, b_id, rest = lift(pair, RUTO, start["A"]["pos"], "ruto", within=500.0)
-    judge(pair, follow(pair, a_id, b_id, RUTO, rest, "ruto"), "ruto")
+    judge(pair, follow(pair, a_id, b_id, RUTO, rest, "ruto"), "ruto", rest)

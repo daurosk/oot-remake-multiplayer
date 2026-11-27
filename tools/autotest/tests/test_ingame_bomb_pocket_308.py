@@ -1,7 +1,8 @@
 """Row 308's probe selftest (ingame/test_bomb_pocket_308.py + ingame/fakes/bomb_pocket_308.py; owner carry-sync-304),
 run by test_ingame.py's load_tests: the set-up (bombs, B's bomb out and down, A at it) holds on the fake; A's pocket of
-B's bomb is NO-REF (shots, no references; never PASS); no put-away or the thrower's count changed is FAIL; deselected
-without the row's switches."""
+B's bomb is NO-REF (shots, no references; never PASS); A still holding it, the bomb gone with no count, or put down
+after 'press B' is NO-REF (UNKNOWN 2/3, not a FAIL); the thrower's count changed or the bomb left on B's game after the
+pocket is FAIL; deselected without the row's switches."""
 import os
 import shutil
 import sys
@@ -37,10 +38,25 @@ class BombPocket308(unittest.TestCase):
         self.assertEqual(T.results(s), {"test_bomb_pocket": "NO-REF"}, p.stdout[-2000:])
         self.assertIn("no stored reference", self.why(s, "test_bomb_pocket"))
 
-    def test_no_put_away_fails(self):
+    def test_still_held_is_no_ref(self):
         p, s = self.run_fake("nopocket", "nopocket")
+        self.assertEqual(T.results(s), {"test_bomb_pocket": "NO-REF"}, p.stdout[-2000:])
+        self.assertIn("A still has the bomb after 'press B'", self.why(s, "test_bomb_pocket"))
+
+    def test_gone_no_count_is_no_ref(self):
+        p, s = self.run_fake("boom", "boom")
+        self.assertEqual(T.results(s), {"test_bomb_pocket": "NO-REF"}, p.stdout[-2000:])
+        self.assertIn("the bomb is gone with A's count 20 -> 20", self.why(s, "test_bomb_pocket"))
+
+    def test_put_down_is_no_ref(self):
+        p, s = self.run_fake("down", "down")
+        self.assertEqual(T.results(s), {"test_bomb_pocket": "NO-REF"}, p.stdout[-2000:])
+        self.assertIn("left A's hands but not into A's pocket", self.why(s, "test_bomb_pocket"))
+
+    def test_left_on_other_game_fails(self):
+        p, s = self.run_fake("stays", "stays")
         self.assertEqual(T.results(s), {"test_bomb_pocket": "FAIL"}, p.stdout[-2000:])
-        self.assertIn("A's count 20 -> 20: not +1", self.why(s, "test_bomb_pocket"))
+        self.assertIn("a bomb is still in the world after A put it away", self.why(s, "test_bomb_pocket"))
 
     def test_thrower_count_changed_fails(self):
         p, s = self.run_fake("both", "both")

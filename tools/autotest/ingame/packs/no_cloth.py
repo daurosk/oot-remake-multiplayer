@@ -4,7 +4,8 @@ the puppet pack as it was before cloth-puppet-313 (every puppet without its clot
 The lane's pack is the tested sha's own, made by the kit's command (offline/lib/lane-pack.ps1: tools/release/kit/
 scripts/kit-paths.ps1 Get-KitPackArgs = build.py --romfs <romfs> --mod-dir <pack> --title-rows --pause-tab). This
 maker makes that pack twice from the tested sha's tools/puppet_pack/build.py over the lane's romfs: once with the
-kit's flags and once with the same flags plus --no-cloth (build.py: "builds the pack as it was before", docs/puppet.md
+kit's flags (read from Get-KitPackArgs at make time) and once with the same flags plus --no-cloth (build.py:
+"builds the pack as it was before", docs/puppet.md
 "Cloth (row 313)"). It returns every file of the --no-cloth pack whose bytes differ from the kit-flag pack (the
 puppet actor packs, the size table, coop_puppet.json with "cloth": false); testpack.py swaps them in for the boot and
 puts the lane's own back after. The cloth's own extra files stay in the lane pack, named by nothing.
@@ -14,10 +15,25 @@ ctx.tools (on sys.path), ctx.romfs, ctx.game_nup, ctx.lane, ctx.say(line).
 """
 import filecmp
 import os
+import re
 import subprocess
 import sys
 
-KIT_FLAGS = ["--title-rows", "--pause-tab"]   # kit-paths.ps1 Get-KitPackArgs (the lane's pack, lane-pack.ps1)
+KIT_PATHS = os.path.join("release", "kit", "scripts", "kit-paths.ps1")   # under the tested sha's tools folder
+
+
+def kit_flags(tools):
+    """The pack flags of the kit's own command, read from kit-paths.ps1 Get-KitPackArgs (the ONE source: the lane's pack
+    is made with it, lane-pack.ps1): its quoted '--' words other than --romfs / --mod-dir (their values are ours)."""
+    with open(os.path.join(tools, KIT_PATHS), encoding="utf-8-sig") as f:
+        text = f.read()
+    m = re.search(r"function Get-KitPackArgs\b[^{]*\{(.*?)\n\}", text, re.S)
+    if not m:
+        raise RuntimeError("no_cloth: no Get-KitPackArgs in %s" % KIT_PATHS)
+    flags = [w for w in re.findall(r"'(--[a-z0-9-]+)'", m.group(1)) if w not in ("--romfs", "--mod-dir")]
+    if not flags:
+        raise RuntimeError("no_cloth: Get-KitPackArgs has no pack flags (%s)" % m.group(1).strip()[:200])
+    return flags
 
 
 def files(root):
@@ -31,7 +47,7 @@ def files(root):
 
 def pack(ctx, mod, extra):
     build = os.path.join(ctx.tools, "puppet_pack", "build.py")
-    argv = [sys.executable, "-I", "-B", build, "--romfs", ctx.romfs, "--mod-dir", mod] + KIT_FLAGS + extra
+    argv = [sys.executable, "-I", "-B", build, "--romfs", ctx.romfs, "--mod-dir", mod] + kit_flags(ctx.tools) + extra
     r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError("no_cloth: build.py %s exit %d: %s" % (" ".join(extra) or "(kit flags)", r.returncode,

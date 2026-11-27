@@ -97,6 +97,24 @@ class PuppetCloth(unittest.TestCase):
         notes = " ".join(n for t in s["tests"] for n in t.get("notes", []))
         self.assertIn("control: copy", notes)
 
+    def test_no_cloth_reads_the_kit_flags(self):
+        """packs/no_cloth.py takes the pack flags from kit-paths.ps1 Get-KitPackArgs (never a copy): the repo's file
+        gives the kit's '--title-rows', '--pause-tab', and a changed function is followed."""
+        import importlib.util
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location("no_cloth_pack", os.path.join(os.path.dirname(here), "ingame",
+                                                                                     "packs", "no_cloth.py"))
+        nc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nc)
+        tools = os.path.dirname(os.path.dirname(here))
+        self.assertEqual(nc.kit_flags(tools), ["--title-rows", "--pause-tab"])
+        fake = os.path.join(self.tmp, "tools")
+        os.makedirs(os.path.dirname(os.path.join(fake, nc.KIT_PATHS)))
+        with open(os.path.join(fake, nc.KIT_PATHS), "w", encoding="utf-8") as f:
+            f.write("function Get-KitPackArgs([string]$Tool, [string]$From, [string]$Mod) {\n"
+                    "    return @('-I', '-B', $Tool, '--romfs', $From, '--mod-dir', $Mod, '--title-rows', '--x-new')\n}\n")
+        self.assertEqual(nc.kit_flags(fake), ["--title-rows", "--x-new"])
+
     def test_parse_takes_nan_words(self):
         """A '-nan(ind)' / 'inf' word (Windows CRT %g of game memory) parses as NaN, never raises."""
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ingame"))

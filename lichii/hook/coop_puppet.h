@@ -690,6 +690,7 @@ private:
         std::uint32_t body_warp = 0;        // frames a place was written and the setter owed
         std::uint32_t body_set = 0;         // setter calls really made
         std::uint32_t body_yield = 0;       // frames the place gave way to our own Link
+        bool lift_carried = false;          // N5: last frame's place was carried by one of our lifts
         float body_moved_max = 0.0f;        // the furthest the game had the body from our last place
         std::optional<Vec3> body_last;      // the place last written
         std::optional<Vec3> body_parked;    // where the body was last parked (hidden); unset: shown

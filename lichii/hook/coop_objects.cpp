@@ -132,6 +132,7 @@
 #include "coop_race_mode.h"
 #include "coop_switch_stand_mode.h"
 #include "coop_lift_ride.h"
+#include "coop_platform_carry.h"
 #include "coop_room_objects.h"
 #include "coop_switch_share.h"
 #include "coop_logic_probe.h"
@@ -2955,6 +2956,18 @@ public:
         // Never in race mode: each player's world is their own there, and a puppet on our lift moved it (the same
         // rule as the switch stander below; the puppets' places are public, so no message gate stops this path).
         const bool world_answers_puppets = !CoopRaceMode::InForce();
+        // N5 (coop_platform_carry.h): the same lifts' places, so a copy standing on one is drawn on it. Never in
+        // race mode: the lifts are not in step there.
+        if (puppet_carry_on_ && world_answers_puppets) {
+            std::vector<CoopPlatformCarry::Lift> carry;
+            carry.reserve(ride_lifts_.size());
+            for (const auto& l : ride_lifts_) {
+                carry.push_back({l.address, {l.position[0], l.position[1], l.position[2]}});
+            }
+            CoopPlatformCarry::TheStore().Feed(carry, SteadyNowMs());
+        } else if (puppet_carry_on_) {
+            CoopPlatformCarry::TheStore().Clear();
+        }
         if (lift_ride_on_ && world_answers_puppets) {
             auto& rider = CoopLiftRide::TheRider();
             rider.Want(CoopLiftRide::Ridden(ride_lifts_, sync_.OthersHere(server_now_us)), main_, SteadyNowMs());
@@ -3333,6 +3346,7 @@ public:
     std::size_t hit_probe_lines_ = 0;
     std::vector<CoopLiftRide::Lift> ride_lifts_;  // jabu-lifts (#65): this walk's lifts
     bool lift_ride_on_ = true;                    // LICHII_COOP_LIFT_RIDE=0 turns it off
+    bool puppet_carry_on_ = true;                 // N5: LICHII_COOP_PUPPET_CARRY=0 turns it off
     std::vector<CoopLiftRide::Lift> stand_switches_;  // ai-switches: this walk's step switches
     std::array<std::size_t, 3> stand_note_{};         // ai-switches: the footprint last said (switches, others, stood)
     bool switch_stand_on_ = true;                     // LICHII_COOP_SWITCH_STAND=0 turns it off
@@ -4867,7 +4881,7 @@ private:
                 }
                 share_switches_.push_back(std::move(s));
             }
-            if (lift_ride_on_ && CoopLiftRide::IsRideLift(known.first)) {
+            if ((lift_ride_on_ || puppet_carry_on_) && CoopLiftRide::IsRideLift(known.first)) {
                 CoopLiftRide::Lift l;
                 l.address = a;
                 l.name = known.first;
@@ -7012,6 +7026,7 @@ Objects& Instance() {
         objects.hit_probe_on_ = EnvFlag("LICHII_COOP_HIT_PROBE");          // enemy-late-kill: log only
         objects.switch_stand_on_ = EnvOnUnlessZero("LICHII_COOP_SWITCH_STAND");      // ai-switches, on unless =0
         objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
+        objects.puppet_carry_on_ = EnvOnUnlessZero("LICHII_COOP_PUPPET_CARRY");      // N5 lift carry, on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;

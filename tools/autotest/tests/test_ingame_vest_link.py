@@ -104,7 +104,9 @@ class VestLink(unittest.TestCase):
         self.assertEqual(results(s), {"test_vest_own_and_puppet": "NO-REF", "test_vest_unset_is_tunic": "NO-REF",
                                       "test_vest_without_character_select": "NO-REF"}, p.stdout[-3000:])
         self.assertIn("the vest colour thresholds are not measured yet", p.stdout)
-        self.assertNotIn("low:", p.stdout)   # (the fake's vest blocks: every share holds)
+        # (judged()'s own "; low: " in the NO-REF reason: a bare "low:" also matched the vest's traceback
+        # line "took the yellow: the vest", CI 45930967885)
+        self.assertNotRegex(p.stdout, r"NO-REF: [^\n]*; low: ")   # (the fake's vest blocks: every share holds)
         # changed_hue: own+puppet 2 steps x 2 games, no-CS 2 x 2; left_after_unset: unset-again 2
         # (no ^: pytest's progress letters may stand before a printed line)
         self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*changed=\d+", p.stdout)), 8, p.stdout[-3000:])

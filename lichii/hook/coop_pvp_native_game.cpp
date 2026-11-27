@@ -371,6 +371,22 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
                 LOG_INFO(Core, "coop: pvp native: U5: our Link's main AS at a strike: {} (guard {})", *anim,
                          CoopPvpNative::GuardAnim(*anim) ? "yes" : "no");
             }
+            // The U5 probe of the game's own guard bits (reports/fable-puppet-pvp-2.md step 2), every strike (at most
+            // 256 lines a run): measured against the AS name above before Guarding uses them.
+            static std::uint32_t guard_bit_lines = 0;
+            if (guard_bit_lines < 256) {
+                ++guard_bit_lines;
+                if (const auto w = CoopObjects::OurLinkGuardWords()) {
+                    const auto part = static_cast<std::uint32_t>(*w & 0xff);
+                    const auto eu = static_cast<std::uint32_t>((*w >> 8) & 0xffffffffu);
+                    const bool as_guard = anim && CoopPvpNative::GuardAnim(*anim);
+                    LOG_INFO(Core, "coop: pvp native: U5 bits at P{}'s strike {}: player +0x32 {:#04x} (bit 4 {}), "
+                                   "EquipmentUser +0x13a0 {:#010x} (bit 5 {}), AS guard {}", a, s.seq, part,
+                             (part >> 4) & 1u, eu, (eu >> 5) & 1u, as_guard ? "yes" : "no");
+                } else {
+                    LOG_INFO(Core, "coop: pvp native: U5 bits at P{}'s strike {}: not read", a, s.seq);
+                }
+            }
             const auto d = CoopPvpNative::DecidePathB(s, pvp_on, view, in, g.tables, g.seq_gate, g.mercy, now_us);
             if (!d) {
                 continue;  // not ours, a repeated seq, PvP off: no answer

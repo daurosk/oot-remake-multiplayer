@@ -35,6 +35,7 @@ import testpack    # noqa: E402
 import testsave    # noqa: E402
 import solo        # noqa: E402
 import windowshot  # noqa: E402
+import fmtcheck    # noqa: E402
 
 RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "SKIP", "NOT-RUN")
 DEFAULT_BUDGET = 120
@@ -193,8 +194,20 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=lambda it: (_rep_of(it), 1 if it.get_closest_marker("leaves_play") else 0,
                                0 if it.get_closest_marker("smoke") else 1, order[id(it)]))
     _deselect_needs_env(config, items)
+    bad = _source_problems(items)
     if config.getoption("lane_check_only"):
-        _lane_check_only(config, items)
+        _lane_check_only(config, items, bad)
+    elif bad:
+        raise pytest.UsageError("SETUP-FAIL source: " + "; ".join(bad))
+
+
+def _source_problems(items):
+    """fmtcheck over the collected test files + the harness files next to this plugin (probe0121-c53046a6 22:41:
+    a '%' with 5 placeholders and 4 values killed a lane run after --lane-check-only said OK)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    files = {os.path.join(here, f) for f in os.listdir(here) if f.endswith(".py") and not f.startswith("test_")}
+    files |= {str(it.fspath) for it in items if str(it.fspath).endswith(".py")}
+    return fmtcheck.check_files(files)
 
 
 def _deselect_line(d):
@@ -403,10 +416,10 @@ def _real_lane_info(config, lane):
     return info
 
 
-def _lane_check_only(config, items):
+def _lane_check_only(config, items, bad=()):
     lanes = [int(x) for x in str(config.getoption("lanes")).split(",") if x.strip()]
     res = {"collected": len(items), "smoke": sum(1 for it in items if it.get_closest_marker("smoke")),
-           "look": sum(1 for it in items if it.get_closest_marker("look")), "lanes": {}}
+           "look": sum(1 for it in items if it.get_closest_marker("look")), "lanes": {}, "source": list(bad)}
     for lane in lanes:
         try:
             if config.getoption("fake"):
@@ -421,7 +434,7 @@ def _lane_check_only(config, items):
             res["lanes"][str(lane)] = dict(info, ok=True)
         except P.SetupFail as e:
             res["lanes"][str(lane)] = {"ok": False, "why": str(e)}
-    res["ok"] = bool(lanes) and bool(items) and all(v["ok"] for v in res["lanes"].values())
+    res["ok"] = bool(lanes) and bool(items) and not bad and all(v["ok"] for v in res["lanes"].values())
     out = config.getoption("out") or os.path.join(os.getcwd(), "ingame-out")
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "setup.json"), "w", encoding="utf-8") as f:
@@ -432,6 +445,8 @@ def _lane_check_only(config, items):
         say("lane%s %s %s" % (lane, "SETUP-OK" if v["ok"] else "SETUP-FAIL",
                               ("commit %s dll %s" % (v.get("commit"), (v.get("dll_sha256") or "")[:16])) if v["ok"]
                               and not v.get("fake") else v.get("why", "fake")))
+    for b in bad:
+        say("SETUP-FAIL source: " + b)
     say("tests collected %d (smoke %d, look %d); RESULT: %s" % (res["collected"], res["smoke"], res["look"],
                                                                "SETUP-ONLY OK" if res["ok"] else "SETUP-FAIL"))
     config._bt_setup = res

@@ -287,7 +287,8 @@ icon part's arrow `N_PlayerRotate_00`, words +0x60..+0x7c), and `shown`: per cop
 `name` and `name_set` (the game's path setter took the label's name). While the copies are not stepped (no turn
 place known, solo, nobody else on the map) it is the turn probe's instead (`Icons::ProbeArrow`, every 30 frames,
 solo too): `probe` true, nothing up or shown, `game_arrow_words` and `run_arrow_words` (the same words of up to 4 of the
-game's run-time icon copies under the map screen), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
+game's run-time icon copies under the map screen) and `arrow_raw` (probe v2: each arrow's raw words +0x28..+0xbc, its
+global matrix first; [0] the template's, [1..] the copies'), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
 Test-only: nothing here changes what is shown.
 
 **`slow_steps`** (the bridge adds it to `state`): `party_hud` and `name_tags`, each the last step of that part that ran

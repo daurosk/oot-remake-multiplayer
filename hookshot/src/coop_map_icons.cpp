@@ -397,6 +397,11 @@ State Icons::ProbeArrow(CoopNativeTags::Game& game) {
         const std::uint64_t turn = ArrowTurnPane(game, table);
         st.game_arrow = turn != 0;
         if (turn != 0) game.Read(turn + 0x60, st.game_arrow_words.data(), sizeof(float) * st.game_arrow_words.size());
+        std::array<float, State::kRawWords> raw{};
+        if (turn != 0) game.Read(turn + 0x28, raw.data(), sizeof(float) * raw.size());
+        st.arrow_raw.push_back(raw);   // [0] the template's (zeros when it has no arrow)
+    } else {
+        st.arrow_raw.emplace_back();
     }
     // The run-time copies, found as Probe finds them: part objects held in the screen's first 0x3000 bytes whose layout
     // is a PaMapIcon_00, their PaMapIconPlayer_00 layout, its N_PlayerRotate_00.
@@ -409,7 +414,12 @@ State Icons::ProbeArrow(CoopNativeTags::Game& game) {
         if (LayoutName(game, p + kPartLayoutAt).rfind(kIconLayout, 0) != 0) continue;
         const std::uint64_t turn = Find(game, PartObjectLayout(game, p, kPlayerLayout), "N_PlayerRotate_00");
         std::array<float, 8> w{};
-        if (turn != 0 && game.Read(turn + 0x60, w.data(), sizeof(float) * w.size())) st.run_arrow_words.push_back(w);
+        std::array<float, State::kRawWords> raw{};
+        if (turn != 0 && game.Read(turn + 0x60, w.data(), sizeof(float) * w.size()) &&
+            game.Read(turn + 0x28, raw.data(), sizeof(float) * raw.size())) {
+            st.run_arrow_words.push_back(w);
+            st.arrow_raw.push_back(raw);
+        }
     }
     return st;
 }
@@ -436,6 +446,12 @@ std::string Json(const State& st) {
     for (std::size_t k = 0; k < st.run_arrow_words.size(); ++k) {
         o += k ? ",[" : "[";
         for (std::size_t i = 0; i < st.run_arrow_words[k].size(); ++i) o += (i ? "," : "") + num(st.run_arrow_words[k][i]);
+        o += "]";
+    }
+    o += "],\"arrow_raw\":[";
+    for (std::size_t k = 0; k < st.arrow_raw.size(); ++k) {
+        o += k ? ",[" : "[";
+        for (std::size_t i = 0; i < st.arrow_raw[k].size(); ++i) o += (i ? "," : "") + num(st.arrow_raw[k][i]);
         o += "]";
     }
     o += std::string("],\"probe\":") + (st.probe ? "true" : "false") + ",\"shown\":[";

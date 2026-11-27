@@ -19,6 +19,15 @@ such, since the module writes radians). PASS: word index 2 (+0x68) follows in ra
 copy (the notes name which, the sign and the reference): kPaneTurn = 0x68 may then be set citing this run. FAIL: it does
 not while another word does (the notes name that one). NO-REF (unproven): no word follows (the game turns another pane).
 
+PROBE v2 (map-icons-0121, B #152 20:38: no stop at kPaneTurn 0): a module with `arrow_raw` (the raw words +0x28..+0xbc
+of each arrow: [0] the template's, [1..] the run-time copies'; the global matrix +0x28..+0x54 first) also gives the
+DRAWN turn of each arrow, atan2(m[1], m[0]) of its global matrix, read from the frame itself, and every own word
++0x28..+0xbc is tried, not only +0x60..+0x7c. The notes then say whether the arrow is drawn turned (the matrix follows)
+and which own word drives it (its place in hex, "+0x.."): FAIL names that place (try it with
+LICHII_COOP_MAP_TURN_AT=<hex>); with the matrix following and no own word, NO-REF says "drawn turned, no own word: the
+turn comes from the matrix / an animation" (the next probe: the arrow's animation or its parent's). A module without
+`arrow_raw` runs the v1 test unchanged.
+
 Set-up as test_map_icons.py (hs-map-facing.A.txt): 'warp InsideTheDekuTree Entrance', the dungeon's map flag (the
 minimap needs it).
 """
@@ -61,6 +70,43 @@ def probe(pair):
     assert mn is not None, "A: map_native is null: no probe published (no map screen, or the map flag not taken)"
     assert mn.get("probe"), "A: map_native is not the probe's (the copies are stepped: %r); a solo boot steps none" % mn
     return mn
+
+
+RAW_AT = 0x28                       # coop_map_icons.h State::arrow_raw: +0x28..+0xbc
+MATRIX_WORDS = 12                   # coop_map_icons.h kPaneMatrix: 3 x 4 by column at +0x28 (m[0], m[1] = the x axis)
+
+
+def drawn_turn(raw):
+    """The turn the arrow is drawn with: the angle of its global matrix's x axis (None: no matrix)."""
+    if len(raw) < 2 or (abs(raw[0]) < 1e-6 and abs(raw[1]) < 1e-6):
+        return None
+    return math.atan2(raw[1], raw[0])
+
+
+def raw_matches(rows, refs):
+    """probe v2: every (source, place, reference, sign, unit) among the own words +0x28+12*4.. that follows, and every
+    (source, reference, sign) whose drawn turn (matrix) follows. Sources: template, run0, run1, ... ([0] = template)."""
+    n = min(len(r["arrow_raw"]) for r in rows)
+    words, drawn = [], []
+    for k in range(n):
+        name = "template" if k == 0 else "run%d" % (k - 1)
+        series = [r["arrow_raw"][k] for r in rows]
+        turns = [drawn_turn(w) for w in series]
+        if all(t is not None for t in turns) and max(turns) - min(turns) > 1e-3:
+            for ref_name, ref in refs.items():
+                s = follows(turns, ref, 2 * math.pi)
+                if s is not None:
+                    drawn.append((name, ref_name, s))
+        for i in range(MATRIX_WORDS, min(len(w) for w in series)):
+            values = [w[i] for w in series]
+            if max(values) - min(values) < 1e-3:
+                continue
+            for ref_name, ref in refs.items():
+                for unit, full in (("rad", 2 * math.pi), ("deg", 360.0)):
+                    s = follows(values, ref, full)
+                    if s is not None:
+                        words.append((name, "+0x%x" % (RAW_AT + 4 * i), ref_name, s, unit))
+    return words, drawn
 
 
 def matches(rows, refs):
@@ -112,13 +158,18 @@ def test_map_turn_probe(pair):
         camera.append(math.radians(st["camera"]) if st.get("camera") is not None else None)
         mn = probe(pair)
         rows.append({"game_arrow_words": list(mn.get("game_arrow_words") or []),
-                     "run_arrow_words": [list(w) for w in mn.get("run_arrow_words") or []]})
+                     "run_arrow_words": [list(w) for w in mn.get("run_arrow_words") or []],
+                     "arrow_raw": [list(w) for w in mn.get("arrow_raw") or []] if "arrow_raw" in mn else None})
         if k in SHOT_AT:
             pair.check_shot("A", "map-turn-%d" % k, SHOT_TOL)
     pair.notes.append("A facing per walk %s: %s deg, camera %s" % (
         YAWS, ["%.1f" % math.degrees(f) for f in facing],
         ["%.1f" % math.degrees(c) if c is not None else None for c in camera]))
-    pair.notes.append("words +0x60.. per facing: %s" % rows)
+    pair.notes.append("words +0x60.. per facing: %s" % [
+        {k: v for k, v in r.items() if k != "arrow_raw"} for r in rows])
+    v2 = all(r["arrow_raw"] is not None for r in rows)
+    if v2:
+        pair.notes.append("probe v2 raw +0x28..+0xbc per facing: %s" % [r["arrow_raw"] for r in rows])
     steps = [_diff(facing[k + 1], facing[k]) for k in range(len(facing) - 1)]
     assert all(abs(abs(d) - QUARTER) <= QUARTER_TOL for d in steps), (
         "the walks did not turn Link a quarter each (facing %s): the probe has nothing to follow" % (
@@ -128,13 +179,25 @@ def test_map_turn_probe(pair):
         refs["facing-camera"] = [f - c for f, c in zip(facing, camera)]
     found = matches(rows, refs)
     pair.notes.append("words that follow (source, index, reference, sign, unit): %s (kPaneTurn index %d)" % (found, TURN_WORD))
+    raw_words, drawn = raw_matches(rows, refs) if v2 else ([], [])
+    if v2:
+        pair.notes.append("probe v2: drawn turn (matrix) follows on %s; own words that follow (source, place, reference, "
+                          "sign, unit): %s" % (drawn or "none", raw_words))
     ours = [m for m in found if m[1] == TURN_WORD and m[4] == "rad"]
+    ours += [(m[0], TURN_WORD, m[2], m[3], m[4]) for m in raw_words if m[1] == "+0x68" and m[4] == "rad" and not ours]
     if ours:
         pair.notes.append("kPaneTurn = 0x68 PROVEN on %s: word = %+d * %s + constant (radians)" % (
             ours[0][0], ours[0][3], ours[0][2]))
         return
+    if raw_words:
+        pytest.fail("the game's own arrow turns at %s (probe v2, drawn turn follows on %s), not at +0x68 in radians: try "
+                    "LICHII_COOP_MAP_TURN_AT=<that place> and set kPaneTurn from it" % (raw_words, drawn or "none"))
     if found:
         pytest.fail("the game's own arrow turns at %s, not at +0x68 in radians (kPaneTurn index %d): set kPaneTurn "
                     "from that one" % (found, TURN_WORD))
+    if drawn:
+        pair.unproven("probe v2: the arrow is drawn turned (matrix follows on %s) but no own word +0x28..+0xbc follows: "
+                      "the turn comes from the matrix / an animation; kPaneTurn stays 0 (next: the arrow's animation)" % drawn)
+        return
     pair.unproven("no word +0x60..+0x7c of the game's own arrows (template or run-time copy) followed Link's facing "
                   "(notes): the game turns another pane; kPaneTurn stays 0")

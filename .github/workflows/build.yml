@@ -157,6 +157,8 @@ jobs:
       # tools/autotest/ingame/test_gear_link.py and tools/autotest/ingame/test_leather_link.py on two fake bridges)
       - name: In-game test system selftests (fake games, no game)
         run: python tools/autotest/tests/test_ingame.py -v
+      - name: In-game test source check ('%' format arity, SETUP-FAIL source; probe0121-c53046a6)
+        run: python tools/autotest/tests/test_fmtcheck.py -v
       - name: In-game rejoin, server restart, lan251 and host-menu (rows 292/170) selftests (fake live.py)
         run: |
           python tools/autotest/tests/test_ingame_rejoin.py -v

@@ -982,7 +982,18 @@ class RunTest(unittest.TestCase):
         start answered ok. Now the run FAILs, naming them."""
         self.two_games(module=False)
 
-    def two_games(self, module):
+    def test_scripts_wait_for_the_modules_commands_reader(self):
+        """gate-mark-0121 (gate-hud / gate-title / gate-host170-309d7180): the first mark was written the second the
+        renderer was ready, before the module's commands reader ran (its 'coop: test commands file' line), and counted
+        NOT taken. Now each script waits for that line: a reader 5 s late still passes, and the steps say the wait."""
+        steps = self.two_games(module=True, reader_after=5.0, mark_late=15.0)
+        # (B's fake starts last, so its reader is still late after the load: the script waited for it)
+        self.assertRegex(steps, r"B: module reads its commands file \(waited [1-9]\.\d s after the save load\)")
+        self.assertRegex(steps, r"A: module reads its commands file \(waited \d+\.\d s after the save load\)")
+        self.assertNotIn("NOT taken", steps)
+        self.assertNotIn("taken late", steps)   # (the wait came first: the marks themselves on time)
+
+    def two_games(self, module, reader_after=0.0, mark_late=0.5):
         import tempfile
         import threading
         done = threading.Event()
@@ -998,8 +1009,15 @@ class RunTest(unittest.TestCase):
                 if module:   # (the module reads its commands file: empties it, as coop_test_commands does)
                     import threading
                     path = self.env["LICHII_COOP_TEST_COMMANDS"]
+                    out = getattr(kw.get("stdout"), "name", None)   # (the game's log by path: run closes its handle)
 
                     def read():
+                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
+                        if reader_after and done.wait(reader_after):
+                            return
+                        if isinstance(out, str):
+                            with open(out, "ab") as f:
+                                f.write(("[hos Presentation Thread] coop: test commands file %s\n" % path).encode())
                         while not done.is_set():
                             try:
                                 if os.path.getsize(path):
@@ -1036,7 +1054,7 @@ class RunTest(unittest.TestCase):
                                 "--out", os.path.join(tmp, "out"), "--name", "t", "--script-a",
                                 os.path.join(tmp, "a.txt"), "--script-b", os.path.join(tmp, "b.txt"),
                                 "--every", "0", "--env", "B:ONLY_B=1", "--env", "BOTH=1",
-                                "--display", "DISPLAY7", "--playtest-ports", "5010", "--mark-late", "0.5"])
+                                "--display", "DISPLAY7", "--playtest-ports", "5010", "--mark-late", str(mark_late)])
             finally:
                 done.set()
                 hs.subprocess.Popen, hs.Bridge.connect = popen, connect
@@ -1050,7 +1068,9 @@ class RunTest(unittest.TestCase):
                     g.close()
                 return
             with open(os.path.join(out, "steps.txt")) as f:
-                self.assertEqual(code, 0, f.read())
+                steps = f.read()
+            self.assertEqual(code, 0, steps)
+            self.assertIn("A: module reads its commands file (", steps)
             self.assertTrue(os.path.isdir(os.path.join(tmp, "A", "user", "save", "u")))   # baseline put back
             self.assertEqual([p.env["HOS_CONTROL_MEM"] for p in started], ["ro", "ro"])
             if hs.WINDOWS:   # each game's window is placed on the chosen monitor: A in the first place, B in the second
@@ -1073,6 +1093,7 @@ class RunTest(unittest.TestCase):
                 self.assertEqual(len(g.cmds("quit")), 1)
                 g.close()
             self.assertEqual(ga.cmds("stick")[0]["y"], 1)
+            return steps
             self.assertEqual([r["buttons"] for r in gb.cmds("press")][-1], ["A"])
             with open(os.path.join(out, "player-A.txt")) as f:
                 a_log = f.read()

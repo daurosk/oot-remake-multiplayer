@@ -1908,7 +1908,7 @@ def run(a):
                 if procs[x].poll() is not None:
                     break
                 time.sleep(0.25)
-            say("%s: module reads its commands file (%.1f s after the renderer)" % (x, time.monotonic() - t0) if seen
+            say("%s: module reads its commands file (waited %.1f s after the save load)" % (x, time.monotonic() - t0) if seen
                 else "%s: no 'coop: test commands file' line in %.0f s (the module may not read its commands)"
                 % (x, a.mark_late))
         errs, players = {}, {}

@@ -5,8 +5,6 @@
 # (lanes busy is only logged: jobs run while the lanes are busy, OWNER GO 2026-11-27) and refuses at C: < 60 GB. That wsl.exe also keeps the distro, and so the runners, running.
 # If it exits it is started again after 15 s.
 #
-# Each tick it also sets the WSL VM process (vmmemWSL / vmmem) to BelowNormal priority, so the lane games win the CPU
-# (Set-VmmemBelowNormal; failures are logged once, never fatal).
 # Lanes busy (review-c123-14: free commit alone cannot see a game pair that is about to grow) comes from the test
 # lanes' own state, never from process names: the lane locks <Root>\oot-remake-multiplayer\lane1.lock / lane2.lock
 # (as offline-queue.ps1 LaneLockHeld reads them), and the first LANE1:/LANE2: lines of <Root>\coord-multiplayer\TEST-TURN
@@ -34,18 +32,6 @@ function Get-LanesBusy([string]$Root) {
     return 0
 }
 
-$script:prioWarned = $false
-# BelowNormal for the WSL VM (CI jobs) so the test-lane games keep the CPU first. Only ever lowers, never raises.
-function Set-VmmemBelowNormal {
-    foreach ($v in @(Get-Process -Name vmmemWSL, vmmem -ErrorAction SilentlyContinue)) {
-        try {
-            if ($v.PriorityClass -ne [Diagnostics.ProcessPriorityClass]::BelowNormal -and $v.PriorityClass -ne [Diagnostics.ProcessPriorityClass]::Idle) {
-                $v.PriorityClass = [Diagnostics.ProcessPriorityClass]::BelowNormal; Write-FeedLog "set $($v.Name) pid $($v.Id) to BelowNormal"
-            }
-        } catch { if (-not $script:prioWarned) { Write-FeedLog "cannot set $($v.Name) priority: $_"; $script:prioWarned = $true } }
-    }
-}
-
 if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by the tests: functions only
 while ($true) {
     $psi = New-Object Diagnostics.ProcessStartInfo
@@ -60,7 +46,6 @@ while ($true) {
             $commit = [math]::Floor($os.FreeVirtualMemory / 1MB)
             $disk = [math]::Floor((New-Object IO.DriveInfo 'C').AvailableFreeSpace / 1GB)
             $p.StandardInput.WriteLine("$commit $disk $(Get-LanesBusy $Root)"); $p.StandardInput.Flush()
-            Set-VmmemBelowNormal
             Start-Sleep -Seconds 15
         }
         Write-FeedLog "wsl.exe exited ($($p.ExitCode))"

@@ -24,7 +24,11 @@ function Invoke-WslStdin([string]$Arguments, [byte[]]$Bytes) {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $wsl; $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true
-    $p = [Diagnostics.Process]::Start($psi)
+    # The stdin writer takes Console.InputEncoding; with UTF-8 (BOM) there it put EF BB BF before the tar
+    # (2026-11-27: 'tar: This does not look like a tar archive'). Start wsl.exe with a BOM-less encoding.
+    $oldIn = $null
+    try { $oldIn = [Console]::InputEncoding; [Console]::InputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+    try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($oldIn) { try { [Console]::InputEncoding = $oldIn } catch { } } }
     $p.StandardInput.BaseStream.Write($Bytes, 0, $Bytes.Length)
     $p.StandardInput.Close()
     $p.WaitForExit()
@@ -91,7 +95,7 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) 
 Register-ScheduledTask -TaskName 'squadala-ci status feed' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'squadala-ci status feed'
 Start-Sleep -Seconds 40
-& $wsl -d $Distro -u root -- sh -c 'echo "status (time, free commit GB, C: free GB): $(cat /run/squadala-ci/status)"; systemctl is-active squadala-ci-runner@1 squadala-ci-runner@2 squadala-ci-runner@3'
+& $wsl -d $Distro -u root -- sh -c 'echo status time/commit GB/C: GB/lanes busy: $(cat /run/squadala-ci/status); systemctl is-active squadala-ci-runner@1 squadala-ci-runner@2 squadala-ci-runner@3'
 # (no quotes inside the jq filter: Windows PowerShell 5.1 splits a native argument at embedded quotes)
 & $Gh api "repos/$Repo/actions/runners" --jq '.runners[] | [.name, .status] | @tsv'
 "WSL runners installed. Linux jobs use them only while the repo variable COOP_SELF_HOSTED_LINUX is on (docs/ci-runner.md)."

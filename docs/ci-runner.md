@@ -26,8 +26,8 @@ Runs already queued keep their runner: cancel and re-run them. Keep it `off` whe
 **Memory and disk guard.** The games always win, in two halves:
 - Jobs RUN while the test lanes are busy (OWNER GO 2026-11-27: the lanes run nearly all the time, so waiting for
   idle lanes gave no throughput). The lanes keep their headroom because the VM is held small (`.wslconfig`
-  memory <= 20GB, processors <= 12 of 32, jobs build with make -j4) and status-feed.ps1 keeps the VM process at
-  BelowNormal priority. Before a job starts, its hook waits while Windows' free commit is below 40 GB (the VM's
+  memory <= 20GB, processors <= 12 of 32, jobs build with make -j4). The VM process (vmmemWSL) cannot be set to
+  a lower priority: Windows denies it ("Access is denied", it is a protected process), so the CPU cap is the limit. Before a job starts, its hook waits while Windows' free commit is below 40 GB (the VM's
   20 GB growth room + 20 GB for a running game pair), at most 5 h, then fails the job ("memory guard: waited ...").
   The lanes-busy flag (lane locks / TEST-TURN LANE lines) is only logged. It refuses at once when C: has less than
   60 GB free ("disk guard"). After every job a second hook empties the job's workspace.

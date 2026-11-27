@@ -22,9 +22,10 @@ class RegressUi(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_fake(self, name, test, env_on=True, bug=None):
+    def run_fake(self, name, test, env_on=True, bug=None, more=None):
         out = os.path.join(self.tmp, name)
         env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")}
+        env.update(more or {})
         if bug:
             env["BT_FAKE_REGRESS_BUG"] = bug
         args = [".", "--fake", "--out", out, "-q", "-p", "no:cacheprovider", "-k", test]
@@ -41,6 +42,13 @@ class RegressUi(unittest.TestCase):
         p, s = self.run_fake("tags-bug", TAGS, bug="tags")
         self.assertEqual(T.results(s), {TAGS: "FAIL"}, p.stdout[-1500:])
         self.assertIn("no memory for the names", s["tests"][0]["why"])
+
+    def test_tags_part_closed_fails(self):
+        """Row 300 (nametags-300): 0.12.0's module (TAGS_ON logged, the tag 'shown' but its balloon part never opened,
+        the screen root hidden) passed this gate on the line + a shot alone; it must FAIL on the name_tags state."""
+        p, s = self.run_fake("tags-closed", TAGS, more={"BT_FAKE_NAMETAGS300": "closed"})
+        self.assertEqual(T.results(s), {TAGS: "FAIL"}, p.stdout[-1500:])
+        self.assertIn("name_tags open and the screen root shown", s["tests"][0]["why"])
 
     def test_tags_b_camera_in_front_is_setup_fail(self):
         """c272735f8 (C #145): B's camera on A's side (B's shots of its own Link's face, no A, no tag): never NO-REF or

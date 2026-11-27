@@ -20,12 +20,9 @@ Checks per viewer x (A, then B), each on its own state and its own framebuffer:
 import pytest
 
 import pair as P
-from test_regress_ui import (CAM_TRIES, CAM_WAIT, CRASH, TAGS_DIST, TAGS_NO_MEMORY, TAGS_ON, other_in_view,
-                             seen_not)
+from test_regress_ui import (CAM_TRIES, CAM_WAIT, CRASH, TAGS_DIST, TAGS_NO_MEMORY, TAGS_ON, TAGS_WAIT, other_in_view,
+                             seen_not, tags_open)
 from test_rows import need_child_in_play
-
-TAGS_WAIT = 120   # frames: the part's in animation and the next tag step (the old TAGS_ON wait, test_regress_ui)
-
 
 def ahead_of(pair, x, other):
     """Puts `other`'s Link TAGS_DIST m in front of x's Link along x's facing (state `facing`: 0 = +z, 90 = +x,
@@ -50,12 +47,6 @@ def camera_behind(pair, x, other):
     raise P.SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
 
 
-def tags_seen(pair, x):
-    t = pair.state(x).get("name_tags")
-    assert isinstance(t, dict), "%s: no name_tags in the bridge's state (a module without nametags-300)" % x
-    return t
-
-
 @pytest.mark.budget(180)
 @pytest.mark.look
 @pytest.mark.row("#300 the other player's name tag over his Link on each game (game's balloon opened, screen root shown)")
@@ -67,11 +58,7 @@ def test_name_tag_over_other(pair):
             ahead_of(pair, x, other)
             camera_behind(pair, x, other)
         seen_not(pair, x, TAGS_ON, TAGS_NO_MEMORY, max_frames=TAGS_WAIT)
-        pair.until("%s name_tags open and the screen root shown" % x,
-                   lambda: (lambda t: t.get("open", 0) >= 1 and t.get("screen_root") is True)(tags_seen(pair, x)),
-                   max_frames=TAGS_WAIT)
-        t = tags_seen(pair, x)
-        assert t.get("shown", 0) >= 1, "%s: no tag of ours on the balloons: %s" % (x, t)
+        t = tags_open(pair, x)
         ok, why = other_in_view(pair, x, other)
         assert ok, "%s: the other player's puppet and tag are not in view at the shot: %s" % (x, why)
         res = pair.check_shot(x, "nametags-300", tolerance=0.80)   # 0.80: Kakariko's people and birds move

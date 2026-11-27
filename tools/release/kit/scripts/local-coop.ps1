@@ -12,7 +12,9 @@
 #    kit reaches every game) and player-key.txt. They join game 1 at their start (the game keeps trying until it is up).
 #  - Controllers (patch 0015, read behind other windows): game 1 pad 1 and the keyboard/mouse, game N pad N with no
 #    keyboard. A player's own choice in Multiplayer > Settings > Controller stays (coop-player.ini).
-#  - Every game in a window, side by side (2) or in quarters (3, 4) of the primary monitor; games 2..N open without
+#  - Every game in a window, side by side (2: each the whole height of its half) or in quarters (3, 4) of the primary
+#    monitor, placed in physical pixels (DPI aware), each drawing a picture of its window's own shape and size
+#    (HOS_OUTPUT_RES / HOS_ASPECT, Hookshot patch 0047: no bars, no 16:9 band in a tall half); games 2..N open without
 #    taking the focus. Each keeps the player's own frame cap, uncapped as a single game (as up to 0.11.12);
 #    coop-options.ini local_fps = 30 or 60 gives every game the same steady cap instead: two to four games can want
 #    more than one PC gives, and Windows hands the window in front the bigger share, so on a weak PC the others get
@@ -31,6 +33,9 @@ $script:KitLocalLinkedPattern = '^(?i)(.+\.(exe|dll|bin|idx|png)|exefs_patches\.
 # The folders a game does not start without (its files, the mods its built code needs).
 $script:KitLocalDirsNeeded = @('romfs', 'mods')
 $script:KitLocalKeys = @('LICHII_COOP_PAD', 'LICHII_COOP_KEYBOARD', 'LICHII_COOP_COLOR')
+# Every variable a game of the session starts with (Set-KitLocalEnvironment), put back after the starts.
+$script:KitLocalRunKeys = $script:KitLocalKeys + @('OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX',
+    'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE')
 
 # How many players on this PC: 1 (just you, as before) or 2 to 4 (local co-op). C2-2 (owner, 0.12.0): a key is never
 # the answer by itself. A solo start asks nothing and is 1 game, always. More games only after the question
@@ -292,20 +297,56 @@ function Write-KitLocalPlayer([string]$Inst, [string]$Kit, [int]$Player, [int]$P
     [System.IO.File]::WriteAllText($ls, $o)
 }
 
-# The windows' places: 2 side by side, 3 and 4 in quarters of $Work (left, top, right, bottom). [x, y, w, h] each.
+# The windows' places: 2 side by side, each the whole height of its half (row 301: a split screen's half, not a 16:9
+# band in its middle), 3 and 4 in quarters of $Work (left, top, right, bottom), in physical pixels. [x, y, w, h] each.
+# Each game draws a picture of its own window's shape (Get-KitLocalClient, Set-KitLocalEnvironment: Hookshot patch 0047).
 function Get-KitLocalRects([int[]]$Work, [int]$Count) {
     $w = $Work[2] - $Work[0]; $h = $Work[3] - $Work[1]
     $cols = 2; $rows = if ($Count -le 2) { 1 } else { 2 }
     $cw = [int][math]::Floor($w / $cols); $ch = [int][math]::Floor($h / $rows)
-    if ($rows -eq 1) {   # (side by side: 16:9 tall at most, in the middle of the height)
-        $ch = [math]::Min($h, [int][math]::Floor($cw * 9 / 16) + 40)
-    }
-    $top = $Work[1] + [int][math]::Floor(($h - $ch * $rows) / 2)
     $out = @()
     for ($i = 0; $i -lt $Count; $i++) {
-        $out += , @(($Work[0] + ($i % $cols) * $cw), ($top + [math]::Floor($i / $cols) * $ch), $cw, $ch)
+        $out += , @(($Work[0] + ($i % $cols) * $cw), ($Work[1] + [math]::Floor($i / $cols) * $ch), $cw, $ch)
     }
     return , $out
+}
+
+# The client area (the picture's part, without the title bar and frame) of a game window placed at $Rect, in physical
+# pixels: [w, h]. $Frame is the window frame's [left, top, right, bottom] at the monitor's DPI (KitLocalWin32.Frame: the
+# game's window is WS_OVERLAPPEDWINDOW, host/display.c). @(0, 0) when it would be too small for a picture.
+function Get-KitLocalClient([int[]]$Rect, [int[]]$Frame) {
+    $w = $Rect[2] - ($Frame[2] - $Frame[0]); $h = $Rect[3] - ($Frame[3] - $Frame[1])
+    if ($w -lt 320 -or $h -lt 360) { return , @(0, 0) }
+    return , @([int]$w, [int]$h)
+}
+
+# The game's own output height in $Folder's longshot_options.ini (output_res=<w>x<h>, or a number saved before:
+# host/nn_applet.c hos_output_parse), 0 when it has none (the game picks its own then).
+function Get-KitLocalOutputHeight([string]$Folder) {
+    $text = ''
+    try { $text = [System.IO.File]::ReadAllText((Join-Path $Folder 'longshot_options.ini')) } catch { return 0 }
+    $v = Get-KitLocalIniValue $text 'output_res'
+    if ($v -match '^\s*(\d+)\s*[xX]\s*(\d+)\s*$') { return [int]$Matches[2] }
+    switch ("$v".Trim()) { '1' { return 1440 } '2' { return 2160 } '3' { return 1080 } '4' { return 1440 } '5' { return 2880 } }
+    return 0
+}
+
+# A game's run switches for its window's shape (Hookshot patch 0047): HOS_OUTPUT_RES the client area's size (a multiple
+# of 8 each way; no taller than the player's own output_res when they chose one, and at most 5120 x 2880's pixels, the
+# shape kept), HOS_ASPECT its shape (w:h, also when the size is not taken), HOS_WINDOW_SIZE the client at 96 dpi (so the
+# window opens at its size). @{} for no client (Get-KitLocalClient @(0, 0)): the game's own picture.
+function Get-KitLocalShapeEnv([int[]]$Client, [int]$Dpi, [int]$OwnHeight = 0) {
+    if (-not $Client -or $Client[0] -le 0 -or $Client[1] -le 0) { return @{} }
+    $w = [double]$Client[0]; $h = [double]$Client[1]
+    $k = 1.0
+    if ($OwnHeight -gt 0 -and $OwnHeight -lt $h) { $k = $OwnHeight / $h }
+    if ($w * $h * $k * $k -gt 5120.0 * 2880) { $k = [math]::Sqrt(5120.0 * 2880 / ($w * $h)) }
+    $ow = [int]([math]::Floor($w * $k / 8) * 8); $oh = [int]([math]::Floor($h * $k / 8) * 8)
+    if ($Dpi -le 0) { $Dpi = 96 }
+    $out = @{ HOS_ASPECT = "$($Client[0]):$($Client[1])" }
+    if ($ow -ge 320 -and $oh -ge 360) { $out['HOS_OUTPUT_RES'] = "${ow}x${oh}" }
+    $out['HOS_WINDOW_SIZE'] = "$([int][math]::Round($w * 96 / $Dpi))x$([int][math]::Round($h * 96 / $Dpi))"
+    return $out
 }
 
 function Initialize-KitLocalWin32 {
@@ -327,15 +368,50 @@ public static class KitLocalWin32 {
             if (p == pid && IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero) { found = h; return false; } return true; }, IntPtr.Zero);
         return found;
     }
-    public static int[] WorkArea() { int[] r = new int[4]; SystemParametersInfo(0x30, 0, r, 0); return r; }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, int[] r);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, int[] r);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(long pt, uint flags);
     [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, int[] info);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+    [DllImport("user32.dll")] static extern bool AdjustWindowRectExForDpi(int[] r, uint style, bool menu, uint ex, uint dpi);
+    [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr m, int kind, out uint x, out uint y);
+    // Row 301 (a 4K screen at 150 %): Windows PowerShell is not DPI aware, so Windows answered it in scaled pixels
+    // (2560 x 1400 for 3840 x 2100) and the windows came out two thirds of their size. Every call here runs with this
+    // thread per-monitor aware (v2, -4), as the game is (host/hos_main.c SetProcessDpiAwarenessContext): physical pixels.
+    static IntPtr Aware() { try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (Exception) { return IntPtr.Zero; } }
+    static void Back(IntPtr old) { if (old != IntPtr.Zero) { try { SetThreadDpiAwarenessContext(old); } catch (Exception) { } } }
+    public static int[] WorkArea() { IntPtr o = Aware(); try { int[] r = new int[4]; SystemParametersInfo(0x30, 0, r, 0); return r; } finally { Back(o); } }
+    // (the primary monitor's DPI: 96 at 100 %, 144 at 150 %)
+    public static int Dpi() { return DpiAt(0, 0); }
+    // (the DPI of the monitor at x, y: the nearest one)
+    public static int DpiAt(int px, int py) {
+        IntPtr o = Aware();
+        try {
+            long pt = ((long)py << 32) | (uint)px; uint x, y;
+            return GetDpiForMonitor(MonitorFromPoint(pt, 2), 0, out x, out y) == 0 && x > 0 ? (int)x : 96;
+        }
+        catch (Exception) { return 96; } finally { Back(o); }
+    }
+    // (the game window's frame at that DPI, [left, top, right, bottom] around a client at 0,0: WS_OVERLAPPEDWINDOW)
+    public static int[] Frame(int dpi) {
+        int[] r = new int[4];
+        try { if (AdjustWindowRectExForDpi(r, 0x00CF0000, false, 0, (uint)dpi)) return r; } catch (Exception) { }
+        int b = 8 * dpi / 96; return new int[] { -b, -(b + 23 * dpi / 96), b, b };
+    }
+    public static bool Place(IntPtr h, int x, int y, int w, int hh) {
+        IntPtr o = Aware(); try { return SetWindowPos(h, IntPtr.Zero, x, y, w, hh, 0x0010 | 0x0004 | 0x0200); } finally { Back(o); }   // NOACTIVATE|NOZORDER|NOOWNERZORDER
+    }
+    public static int[] Rect(IntPtr h) { IntPtr o = Aware(); try { int[] r = new int[4]; return GetWindowRect(h, r) ? r : null; } finally { Back(o); } }
+    public static int[] Client(IntPtr h) { IntPtr o = Aware(); try { int[] r = new int[4]; return GetClientRect(h, r) ? r : null; } finally { Back(o); } }
     // (a window as big as its whole monitor: full screen, left as it is)
     public static bool FillsScreen(IntPtr h) {
-        int[] w = new int[4]; if (!GetWindowRect(h, w)) return false;
-        int[] mi = new int[10]; mi[0] = 40; if (!GetMonitorInfo(MonitorFromWindow(h, 2), mi)) return false;
-        return w[0] <= mi[1] && w[1] <= mi[2] && w[2] >= mi[3] && w[3] >= mi[4];
+        IntPtr o = Aware();
+        try {
+            int[] w = new int[4]; if (!GetWindowRect(h, w)) return false;
+            int[] mi = new int[10]; mi[0] = 40; if (!GetMonitorInfo(MonitorFromWindow(h, 2), mi)) return false;
+            return w[0] <= mi[1] && w[1] <= mi[2] && w[2] >= mi[3] && w[3] >= mi[4];
+        } finally { Back(o); }
     }
 }
 '@
@@ -347,10 +423,36 @@ function Get-KitLocalWorkArea {
     return @(0, 0, 1920, 1040)
 }
 
+# The session's layout for $Count games: @{ Rects = Get-KitLocalRects's; Dpi; Frame; Clients = each window's client }.
+# $Work: another work area than the primary monitor's (the in-game test's display: tools/autotest/ingame/split_layout.ps1).
+function Get-KitLocalLayout([int]$Count, [int[]]$Work = $null) {
+    if (-not $Work) { $Work = Get-KitLocalWorkArea }
+    $dpi = 96; $frame = @(-8, -31, 8, 8)
+    try { Initialize-KitLocalWin32; $dpi = [KitLocalWin32]::DpiAt($Work[0], $Work[1]); $frame = [KitLocalWin32]::Frame($dpi) } catch { }
+    $rects = Get-KitLocalRects $Work $Count
+    $clients = @()
+    foreach ($r in $rects) { $clients += , (Get-KitLocalClient $r $frame) }
+    return @{ Rects = $rects; Dpi = $dpi; Frame = $frame; Clients = $clients }
+}
+
+# The switches for player $Player's window in $Layout, with the player's own output height from $Folder's options file.
+function Get-KitLocalPlayerShape([hashtable]$Layout, [int]$Player, [string]$Folder) {
+    if (-not $Layout -or $Player -lt 1 -or $Player -gt $Layout.Clients.Count) { return @{} }
+    return Get-KitLocalShapeEnv $Layout.Clients[$Player - 1] $Layout.Dpi (Get-KitLocalOutputHeight $Folder)
+}
+
+# One window to its place (physical pixels, not activated); a line for the log: the rect asked, the client it got.
+function Set-KitLocalWindowPlace([IntPtr]$Handle, [int[]]$Rect, [int]$Player) {
+    $ok = [KitLocalWin32]::Place($Handle, $Rect[0], $Rect[1], $Rect[2], $Rect[3])
+    $c = [KitLocalWin32]::Client($Handle)
+    $got = if ($c) { "$($c[2] - $c[0])x$($c[3] - $c[1])" } else { '?' }
+    Write-Host "  window $Player at $($Rect[0]),$($Rect[1]) $($Rect[2])x$($Rect[3]) (picture area $got)$(if (-not $ok) { ': not moved' })"
+}
+
 # Puts each game's window in its place once it shows ($Seconds at most for all), without activating any.
-function Set-KitLocalWindows([System.Diagnostics.Process[]]$Games, [int]$Seconds = 120) {
+function Set-KitLocalWindows([System.Diagnostics.Process[]]$Games, [int]$Seconds = 120, [hashtable]$Layout = $null) {
     try { Initialize-KitLocalWin32 } catch { return 0 }
-    $rects = Get-KitLocalRects (Get-KitLocalWorkArea) $Games.Count
+    $rects = if ($Layout) { $Layout.Rects } else { Get-KitLocalRects (Get-KitLocalWorkArea) $Games.Count }
     $placed = @{}
     $until = (Get-Date).AddSeconds($Seconds)
     while ($placed.Count -lt $Games.Count -and (Get-Date) -lt $until) {
@@ -358,8 +460,7 @@ function Set-KitLocalWindows([System.Diagnostics.Process[]]$Games, [int]$Seconds
             if ($placed[$i] -or $Games[$i].HasExited) { if ($Games[$i].HasExited) { $placed[$i] = $true }; continue }
             $h = [KitLocalWin32]::MainWindow([uint32]$Games[$i].Id)
             if ($h -eq [IntPtr]::Zero) { continue }
-            $r = $rects[$i]
-            [void][KitLocalWin32]::SetWindowPos($h, [IntPtr]::Zero, $r[0], $r[1], $r[2], $r[3], 0x0010 -bor 0x0004 -bor 0x0200)   # NOACTIVATE|NOZORDER|NOOWNERZORDER
+            Set-KitLocalWindowPlace $h $rects[$i] ($i + 1)
             $placed[$i] = $true
         }
         Start-Sleep -Milliseconds 500
@@ -369,10 +470,12 @@ function Set-KitLocalWindows([System.Diagnostics.Process[]]$Games, [int]$Seconds
 
 # The variables a game of this session starts with, set in this process for the next Start-Process ($Player 1: the
 # host's; N: a joiner's, whose controller and colour come from its coop-player.ini, not the kit's for player 1).
-function Set-KitLocalEnvironment([int]$Player, [int]$Port, [string]$Password, [int]$Fps) {
-    foreach ($k in $script:KitLocalKeys + @('OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX')) {
+# $Shape: Get-KitLocalShapeEnv's switches for the game's window (its picture of the window's own shape), @{} for none.
+function Set-KitLocalEnvironment([int]$Player, [int]$Port, [string]$Password, [int]$Fps, [hashtable]$Shape = @{}) {
+    foreach ($k in $script:KitLocalRunKeys) {
         Remove-Item -Path "env:$k" -ErrorAction SilentlyContinue
     }
+    foreach ($k in $Shape.Keys) { [Environment]::SetEnvironmentVariable($k, "$($Shape[$k])") }
     if ($Player -eq 1) {
         $env:OOT_COOP_LOCAL_HOST = "${Port}:$Password"
         $env:LICHII_COOP_PAD = '1'
@@ -429,11 +532,12 @@ function Start-KitLocalCoop([string]$Kit, [string]$Exe, [int]$Players, [int]$Pau
     Write-Host '  In each game, load your save or press Continue as usual. Closing game 1 ends the session.'
     $games = @()
     $saved = @{}
-    foreach ($k in $script:KitLocalKeys + @('OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX')) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    foreach ($k in $script:KitLocalRunKeys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    $layout = Get-KitLocalLayout $Players
     try {
         for ($p = 1; $p -le $Players; $p++) {
-            Set-KitLocalEnvironment $p $port $password $fps
             $exeN = if ($p -eq 1) { $Exe } else { Join-Path $folders[$p - 2] (Split-Path -Leaf $Exe) }
+            Set-KitLocalEnvironment $p $port $password $fps (Get-KitLocalPlayerShape $layout $p (Split-Path -Parent $exeN))
             $g = Start-Process -FilePath $exeN -WorkingDirectory (Split-Path -Parent $exeN) -PassThru
             $games += $g
             if ($p -lt $Players) { Start-Sleep -Seconds $Pause }   # (game 1 first: it hosts; the first player in hosts)
@@ -441,7 +545,7 @@ function Start-KitLocalCoop([string]$Kit, [string]$Exe, [int]$Players, [int]$Pau
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
     }
-    $n = Set-KitLocalWindows $games
+    $n = Set-KitLocalWindows $games 120 $layout
     Write-Host "Local co-op: $n of $Players windows placed."
     return $games
 }
@@ -499,11 +603,12 @@ function Add-KitLocalCoop([string]$Kit, [string]$Exe, [int]$Players, [int]$Port,
     $slow = if ($ram -and $ram -lt 10 * $Players) { "This PC has $ram GB of RAM for $Players games: it may run slowly." } else { '' }
     $started = @(); $failed = @($cannot); $games = @()
     $saved = @{}
-    foreach ($k in $script:KitLocalKeys + @('OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX')) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    foreach ($k in $script:KitLocalRunKeys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    $layout = Get-KitLocalLayout $Players
     try {
         foreach ($p in $want) {
-            Set-KitLocalEnvironment $p $Port $Password $fps
             $exeN = Join-Path $folders[$p - 2] (Split-Path -Leaf $Exe)
+            Set-KitLocalEnvironment $p $Port $Password $fps (Get-KitLocalPlayerShape $layout $p (Split-Path -Parent $exeN))
             $g = $null
             try { $g = Start-Process -FilePath $exeN -WorkingDirectory (Split-Path -Parent $exeN) -PassThru -ErrorAction Stop } catch { if (-not $problem) { $problem = "Player $p's game did not start: $($_.Exception.Message)" } }
             if ($g) { $started += $p; $games += $g } else { $failed += $p }
@@ -515,16 +620,15 @@ function Add-KitLocalCoop([string]$Kit, [string]$Exe, [int]$Players, [int]$Port,
     $problem = ($problem -replace '[\r\n]+', ' ').Trim()   # (one line of the result file)
     $line = "started=$($started -join ',')`r`nrunning=$(@($running | Where-Object { $_ -le $Players }) -join ',')`r`nfailed=$($failed -join ',')`r`nproblem=$problem`r`n"
     if ($Result) { try { [System.IO.File]::WriteAllText($Result, $line) } catch { } }
-    # The windows: every game of the session in its part of the screen (game 1 too when it is in a window).
+    # The windows: every game of the session in its part of the screen (game 1 too when it is in a window). Game 1 started
+    # alone keeps the picture's shape it started with (the game sets it at its start): its picture fits its part, with
+    # bars at two sides when the shapes differ, until it is started again from Start Squadala.bat with the others.
     try {
         Initialize-KitLocalWin32
-        $rects = Get-KitLocalRects (Get-KitLocalWorkArea) $Players
+        $rects = $layout.Rects
         if ($HostPid -gt 0) {
             $h = [KitLocalWin32]::MainWindow([uint32]$HostPid)
-            if ($h -ne [IntPtr]::Zero -and -not [KitLocalWin32]::FillsScreen($h)) {
-                $r = $rects[0]
-                [void][KitLocalWin32]::SetWindowPos($h, [IntPtr]::Zero, $r[0], $r[1], $r[2], $r[3], 0x0010 -bor 0x0004 -bor 0x0200)
-            }
+            if ($h -ne [IntPtr]::Zero -and -not [KitLocalWin32]::FillsScreen($h)) { Set-KitLocalWindowPlace $h $rects[0] 1 }
         }
         $until = (Get-Date).AddSeconds(120)
         $placed = @{}
@@ -534,8 +638,7 @@ function Add-KitLocalCoop([string]$Kit, [string]$Exe, [int]$Players, [int]$Port,
                 if ($games[$i].HasExited) { $placed[$i] = $true; continue }
                 $h = [KitLocalWin32]::MainWindow([uint32]$games[$i].Id)
                 if ($h -eq [IntPtr]::Zero) { continue }
-                $r = $rects[$started[$i] - 1]
-                [void][KitLocalWin32]::SetWindowPos($h, [IntPtr]::Zero, $r[0], $r[1], $r[2], $r[3], 0x0010 -bor 0x0004 -bor 0x0200)
+                Set-KitLocalWindowPlace $h $rects[$started[$i] - 1] $started[$i]
                 $placed[$i] = $true
             }
             Start-Sleep -Milliseconds 500

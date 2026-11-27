@@ -8,7 +8,7 @@ design (coord-multiplayer/reports/navi-sync-316.md "Probes needed"):
 
 Runs only with --env BT_PROBE_NAVI=1 (needs_env: every other run deselects it, so no rc pass carries it). Ends NO-REF
 (Pair.unproven), never PASS: its product is <out>/probe-navi-<X>.json + the bridge shots. Reads only, except the set-up
-writes it restores: PlayerStatus.Life (give/flag need LICHII_COOP_CHEATS=1, test_songs.ROW_ENV) back to what it read.
+writes it restores: PlayerStatus.Life (flag needs LICHII_COOP_CHEATS=1, as test_songs.ROW_ENV) back to what it read.
 Per game (A then B; each game's JSON is written in a finally with any exception's text; one game's exception never
 skips the other's phases):
 - idle: 12 samples 10 frames apart (the slots' names and frames move with her Wait animation);
@@ -26,9 +26,8 @@ import pytest
 from pair import SetupFail
 from test_gear import GATE, SCENE_CHILD
 from test_rows import need_child_in_play, place_in_front
-from test_songs import ROW_ENV
 
-PROBE_ENV = ("BT_PROBE_NAVI=1",) + ROW_ENV
+PROBE_ENV = ("BT_PROBE_NAVI=1", "LICHII_COOP_CHEATS=1")   # give/flag need the cheats (test_songs.ROW_ENV, docs/playtest.md)
 LIFE = "PlayerStatus.Life"           # quarter hearts (fakegame.py LINK_LIFE; docs/items.md)
 LOW_LIFE = 4                         # one heart
 SAMPLES, EVERY = 12, 10

@@ -21,6 +21,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+import game_names              # noqa: E402  (the ONE item name table)
 import ocarina_notes as ON     # noqa: E402  (the ONE key -> note table)
 import playtest_client as pc   # noqa: E402
 from pair import READY_FRAMES   # noqa: E402
@@ -62,7 +63,7 @@ def test_puppets_spawn(pair):
 @pytest.mark.look
 @pytest.mark.row("#91 masks on the other player's puppet (hs-masks)")
 def test_masks_on_puppet(pair):
-    skull = "Armor_Child_Mask_Skull"   # hs-masks.A.txt's give / wear lines
+    skull = game_names.SKULL_MASK   # hs-masks.A.txt's give / wear lines (one table)
     with pair.setup():
         need_child_in_play(pair)
         pair.give("A", "PouchData.%s.StockNum" % skull)

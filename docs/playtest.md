@@ -192,7 +192,7 @@ gated.
 ```
 {"frame":5400,"paused":true,"scene":"KokiriForest_Child","room":null,"pos":[-7.5,0.0,71.1],"facing":90.0,
  "camera":180.0,"life":12,"max_life":12,"rupees":5,"age":"child","event":false,"loading":false,"prompt":"Talk","body":"child",
- "equips":{"weapon":"KokiriSword","shield":"DekuShield","head":null,"armor":"Kokiri","boots":"Normal"},
+ "equips":{"weapon":"Weapon_Sword_Kokiri","shield":null,"head":null,"armor":null,"boots":null},
  "inventory":{"PouchData.Item_Bomb.StockNum":0,"PouchData.Item_Hookshot.StockNum":1},"coop":{"players":[{"number":1,"name":"A","self":true,"state":"connected","scene":"KokiriForest_Child"}]},
  "snapshot_present":5398,"control":true}
 ```

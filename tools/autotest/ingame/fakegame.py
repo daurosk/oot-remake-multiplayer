@@ -27,6 +27,8 @@ import os
 import socket
 import threading
 
+import game_names   # (the ONE item name table: the state's equips are the game's own value names)
+
 FAKES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fakes")
 
 
@@ -180,7 +182,7 @@ class FakeGame:
                 "pos": list(self.pos) if live else None, "facing": self.facing if live else None,
                 "age": self.age() if live else None, "loading": False if live else None, "event": self.event if live else None,
                 "not_ready": None if live else "no fresh Link sample", "control": True,
-                "equips": {"weapon": "KokiriSword", "shield": None, "head": self.head, "armor": "Kokiri", "boots": "Normal"},
+                "equips": {"weapon": game_names.KOKIRI_SWORD, "shield": None, "head": self.head, "armor": None, "boots": None},
                 "coop": {"players": [{"number": 1, "name": "A", "state": "connected"},
                                      {"number": 2, "name": "B", "state": "connected"}]},
                 "world": {"actors": [{"id": 1, "name": "CoopPuppet_Child_Green", "kind": "player",

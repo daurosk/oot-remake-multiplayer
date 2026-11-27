@@ -6,6 +6,7 @@
 // tests drive Page and Probe themselves).
 #include "coop_i18n.h"
 #include "coop_pause_tab.h"
+#include "coop_fresh.h"
 #include "coop_chat_history.h"
 #include "coop_list_pages.h"
 #include "coop_text_fit.h"
@@ -120,6 +121,7 @@ std::array<std::atomic<bool>, kMenuMost + 1> g_menu_line_pick{};
 std::atomic<int> g_menu_open{-1};
 std::atomic<int> g_strip_state{0};            // row 199: the tab strip's state at its last update
 std::atomic<std::uint64_t> g_strip_seen_ms{0};   // and when (GameMenuUp)
+std::atomic<std::uint64_t> g_strip_seen_present{0};   // and at which present (CoopFresh::Presents, MenuUpFrom)
 // Co-op's menu types into its row (a name, a port, the relay): the list's rows are the typing keys then, as for the
 // page's own fields (TypingLines): the key picked, Letter's letter (its place in kMenuLetters) and the rows shown
 // (empty while it does not type). g_mutex.
@@ -3036,11 +3038,11 @@ void SayCharactersHeld(const char* how) {
 // window's or present's thread, OnPad on the input thread). g_players_no_tabs: a - menu opened without tabs of ours.
 std::mutex g_players_mutex;
 CoopPlayersOpen::Run g_players_run;
-// Free play as the module last read it (SetFreePlay: our Link in a scene, no event, no load), and when: a reading older
-// than kFreePlayFreshMs counts as not free.
+// Free play as the module last read it (SetFreePlay: our Link in a scene, no event, no load), when and at which present:
+// stale by FreePlayFresh (coop_pause_tab.h: kFreePlayFreshMs old AND presents went on without a new stamp).
 std::atomic<bool> g_free_play{false};
 std::atomic<std::uint64_t> g_free_play_ms{0};
-constexpr std::uint64_t kFreePlayFreshMs = 500;
+std::atomic<std::uint64_t> g_free_play_present{0};
 // The game's event manager: an event (cutscene, talk, item get) runs while [[main + 0x4e94840] + 0x68] is set
 // (lichii/hook/coop_live_events.h kEventStatePtr / kEventSession, docs/dungeons-boss.md). Read at each Minus press.
 constexpr std::uint64_t kEventStatePtr = 0x4e94840, kEventSession = 0x68;
@@ -3049,7 +3051,9 @@ bool EventNow() {
     return manager != 0 && Read<std::uint64_t>(manager + kEventSession) != 0;
 }
 bool FreePlayNow() {
-    return g_free_play.load() && NowMs() - g_free_play_ms.load() < kFreePlayFreshMs && !EventNow();
+    return FreePlayFresh(g_free_play.load(), g_free_play_ms.load(), NowMs(), g_free_play_present.load(),
+                         CoopFresh::Presents()) &&
+           !EventNow();
 }
 void MinusDecide(int tab, int row) {
     if (tab < 0 || tab >= kMinusTabs) return;
@@ -4027,6 +4031,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kStrip) {   // (row 199: any thread may ask whether the menu is up, GameMenuUp)
             g_strip_state = Read<std::uint8_t>(screen + kScreenState);
             g_strip_seen_ms = NowMs();
+            g_strip_seen_present = CoopFresh::Presents();
         }
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);
@@ -5316,12 +5321,14 @@ void CensusFromMenuState() noexcept {
 bool CharacterCustomizeOpen() noexcept { return g_snail_driven.load(); }
 
 bool GameMenuUp() noexcept {
-    return MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs());
+    return MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs(), g_strip_seen_present.load(),
+                      CoopFresh::Presents());
 }
 
 void SetFreePlay(bool free_play) noexcept {
     g_free_play = free_play;
     g_free_play_ms = NowMs();
+    g_free_play_present = CoopFresh::Presents();
 }
 
 bool OpenPlayers() noexcept {
@@ -5388,7 +5395,9 @@ bool MinusMenuNow() noexcept {
 }
 
 bool OwnMinusPageShown() noexcept {
-    return (g_map_hide.load() || g_minus_on.load()) && MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs());
+    return (g_map_hide.load() || g_minus_on.load()) &&
+           MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs(), g_strip_seen_present.load(),
+                      CoopFresh::Presents());
 }
 
 std::array<MenuActor, 4> MenuActors() noexcept {

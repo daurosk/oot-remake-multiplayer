@@ -5,6 +5,7 @@
 #include "coop_browse.h"
 #include "coop_i18n.h"
 #include "coop_chat_history.h"
+#include "coop_fresh.h"
 #include "coop_list_pages.h"
 #include "coop_mods_tab.h"
 #include "coop_native_ui.h"
@@ -744,6 +745,18 @@ MinusSlideOffsets MinusSlideAt(int from, int to, float p) {
 
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
     return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
+}
+
+bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t seen_present,
+                std::uint64_t now_present) {
+    return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms &&
+           !CoopFresh::Stale(now_ms - seen_ms, kMenuUpMs, seen_present, now_present);
+}
+
+bool FreePlayFresh(bool free_play, std::uint64_t made_ms, std::uint64_t now_ms, std::uint64_t made_present,
+                   std::uint64_t now_present) {
+    return free_play && made_ms != 0 && now_ms >= made_ms &&
+           !CoopFresh::Stale(now_ms - made_ms, kFreePlayFreshMs, made_present, now_present);
 }
 
 bool MapUnderHidden(bool hide, bool up, bool sliding, bool native, std::uint64_t open_ms, std::uint64_t seen_ms,

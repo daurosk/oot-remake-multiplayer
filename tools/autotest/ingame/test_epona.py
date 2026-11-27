@@ -41,6 +41,11 @@ from test_gear import AGE_FLAG, GATE, SCENE_CHILD, shots   # noqa: E402  (the sa
 from test_rows import need_child_in_play                   # noqa: E402
 
 FIELD = "HyruleField_Adult"                       # hs-epona-sync.A/B.txt 'warp HyruleField_Adult ...'
+# ... HyruleField_FrontOfMarket: the rows' own entrance (hs-epona-sync.A/B.txt:11/24). gate-ui-epona-0121: the port
+# warped with no entrance, so B landed at HyruleField_FrontOfLostWoodBridge (S 309d7180c gate-epona game-out-B 4806
+# 'teleport adult to HyruleField_Adult at HyruleField_FrontOfLostWoodBridge'), far from her spot: none in its list.
+FIELD_ENTRANCE = "HyruleField_FrontOfMarket"
+SPOT_WAIT = 240                                   # at most: hs-epona-sync.B.txt:27-28 'place ... # beside Epona' + 'wait 240'
 EPONA = "Animal_Epona_Adult"                      # the horse actor's name (every ride line below)
 EPONA_FIELD = (-100.47, 150.60, 264.55)           # hs-epona.B.txt header: the field Epona of a save that has not won her
 BESIDE = 1.5                                      # hs-epona.B.txt 'place -99.0 151.0 264.5 # beside Epona (1.5 m east)'
@@ -118,7 +123,7 @@ def to_field(pair):
     for x in ("A", "B"):
         pair.flag(x, AGE_FLAG, 0)
     pair.step_both(60)
-    pair.warp_both(FIELD)
+    pair.warp_both(FIELD, entrance=FIELD_ENTRANCE)
     for x in ("A", "B"):
         s = pair.state(x)
         assert pair.in_play(s) and s.get("age") == "adult", "%s not an adult in play in %s (%s, %s)" % (
@@ -221,9 +226,13 @@ def test_epona_sync(pair):
     try:
         with pair.setup():
             to_field(pair)
-            h = horse_pos(pair)
-            assert h and math.dist(h[::2], EPONA_FIELD[::2]) < 5, "no %s standing at the field spot in B's world list (%s)" % (
-                EPONA, h)
+            # B beside her spot first, then the list (hs-epona-sync.B.txt:27-28): the rows never looked from the entrance
+            pair.act("B", "place %.2f %.2f %.2f" % (EPONA_FIELD[0] + BESIDE, EPONA_FIELD[1], EPONA_FIELD[2]))
+            pair.act("B", "face %.2f %.2f" % (EPONA_FIELD[0], EPONA_FIELD[2]))
+            def at_spot():   # (ends as soon as she is listed: the set-up's own 30 s)
+                h = horse_pos(pair)
+                return h if h and math.dist(h[::2], EPONA_FIELD[::2]) < 5 else None
+            h = pair.until("a %s standing at the field spot in B's world list" % EPONA, at_spot, max_frames=SPOT_WAIT)
             watch_from_south(pair, h)
         start = pair.log["A"].mark()
         if not mount(pair, B_RIDES):

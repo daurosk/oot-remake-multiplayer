@@ -1097,9 +1097,14 @@ Owner, 2026-11-27: "link puppets have no cloth physics so things like his cap ar
   `Phive/Cloth/Player_<Age>_C<two letters>.Nin_Ounce_NVN2.bphcl`, where the letters A-P are the character number in
   base 16 (C002 is `CAC`). A character puppet names its own file in its ClothList. A character without a file
   (Link, Retro Link, Gibdo, ReDead, Hylia_MN_004 and Hylia_MX_003 in v0.2.2) keeps Link's cloth.
-- **Probe (for the module, not built yet).** The game's hair code (main+0x4b8340, called from main+0x4b8078 and
-  others) reads `[[[[actor+0x270]+0x50]+0x20]+0x1c8]`. When that is not 0, it reads a count (s32) at +0xd0 and a
-  list at +0xd8. From `[[list]]` it reads a count (s32) at +0x10 and entries at +0x18, 0x78 bytes each, and sets
-  bit 0 of each entry's +0x18 word unless bit 3 is set. A puppet without cloth reads 0 at +0x1c8.
+- **Probe (`LICHII_COOP_DEBUG_CLOTH=1`, `Director::ClothProbe`, read only).** The game's hair code (main+0x4b8340,
+  called from main+0x4b8078 and others; main+0x4b8438..0x4b84b4 in `dump/main.plain`) reads
+  `C = [[[[actor+0x270]+0x50]+0x20]+0x1c8]`. When C is not 0 and its s32 at +0xd0 is at least 1, it reads
+  `O = [[[C+0xd8]]]`, a count (s32) at O+0x10 and entries at [O+0x18], 0x78 bytes each, and sets bit 0 of each
+  entry's u64 at +0x18 (it clears bit 0 instead where bit 3 is set). With the variable set, every shown or held
+  puppet writes once a second (`kClothProbeFrames`, 60 frames) `cloth: P<n> physics <p> set <s> holder <C> n <count>
+  list <O> entries <count>` and the first entry's flags and 30 words as floats, then the same line for our own Link
+  (`P<n> our own Link's`). A puppet without cloth reads holder 0; ours is not 0. With the cloth, the first entry's
+  floats change while the copy moves and settle while it stands.
 - **Not run in a game yet.** Nothing here is proven in a game: the cap swinging on the puppets (child, adult, every
   character), on Epona, in water and wind, and after a warp.

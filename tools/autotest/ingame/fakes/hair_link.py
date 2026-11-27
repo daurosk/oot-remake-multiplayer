@@ -78,7 +78,9 @@ def after(game, m, r):
     if not str(m.get("name", "")).startswith("hair-link-"):
         return   # (only this row's own shots: B #149, a fake never draws on other tests' shots)
     import bandcheck
-    VIEW = _view()
+    # the camera this game's state reports at this shot (the one the test's view.clip box uses): another row's fake may
+    # have given its own camera (st.setdefault above), so never draw with ours unseen (CI 46063218673: whole-suite FAIL)
+    VIEW = game.state().get("view") or _view()
     from PIL import Image, ImageDraw
     mode = os.environ.get("BT_FAKE_HAIR", "")
     blinked = mode == "blink" and str(m.get("name", "")).endswith("-2-%s" % game.tag)

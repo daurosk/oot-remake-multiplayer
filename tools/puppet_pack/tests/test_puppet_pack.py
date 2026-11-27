@@ -3961,7 +3961,10 @@ class NupTest(unittest.TestCase):
                           "Tex/Mt_Glove_Player_Adult_Alb.bntx.zs",        # leather-link: look_items.BODY_BOOTS (adult
                           "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs",   # gloves, upper leather; dumpcheck.OPTIONAL)
                           "Tex/Mt_Hairs_Player_Adult_Alb.bntx.zs"} |  # hair-link: look_items.HAIR (BODY_BOOTS)
-                         {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
+                         {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS} |
+                         {f"Pack/Actor/{src}.pack.zs" for src in (build.PERCEPTION_SOURCE, build.LIFTABLE_SOURCE,
+                                                                   build.ATTENTION_SOURCE)} |
+                         {f"AS/Player_{asb_carry.CARRY_VARIANTS[0]}.root.asb.zs"},   # build.py's carry_src
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"
         nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, dict(self.base, **{seed: (b"seed", nup.CODEC_RAW)}))])

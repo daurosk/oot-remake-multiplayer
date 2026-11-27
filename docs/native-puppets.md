@@ -4,6 +4,43 @@ Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `
 `LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below, and phase 4, PvP on real bodies, `--puppet-pvp` + `LICHII_COOP_PVP_NATIVE` (section 5: the pack, the server and the glue are built; its path B, the victim's own game working out the damage, is not live yet, so today's PvP stays). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
 ([native-player.md](native-player.md)) stay as they are until each phase below is proven in two games.
 
+## STATUS (native-puppets-f, 2026-11-27)
+
+Owner 2026-11-27: "native puppets with perfect PvP and interactions like lifting another child Link player and
+throwing them like child Ruto; hit effects when hitting other players; blocking hits with the shield that shows on the
+other person's screen perfectly synced; puppet physics sync and Navi physics sync". Standing rule: only a young Link
+can be lifted (any Link may lift him), with Ruto's lift and carry animations.
+
+"Proven in 2 games" means a two-game run judged PASS by state and a screenshot of each game. No item has that yet.
+Every switch is off by default; solo and co-op idle have no copy, so none of this runs there.
+
+| Owner item / phase | Built (where) | Proven in 2 games (run) | Missing |
+|---|---|---|---|
+| Bodies (phase 1, `--puppet-body`) | Pack: Link's own shapes, a Free character body, his cloth (build.py). Hook: one rule moves the body (rest, setter, warp; `coop_puppet_body.h`), it gives way to our Link (Yield); host test 11/11 (fable-puppet-body 1effc9493, merged on this branch) | Partly: proof-0116-5 on a487cd77 (COORD-LOG 17:59 UTC 2026-11-19): copies made with bodies, child and adult, 0 CRASH, shots of both games. Walk-into and stand-on NOT judged (the scenario's walk missed). The body rule itself never ran in a game | B1 (A stops at B's copy, A stands on it, no jitter); B2 (the speed field: a walking copy does not carry a rider yet); `Carry` not wired |
+| Lift and throw a young Link like Ruto (phase 3) | Pack `--puppet-liftable`: Ruto's `LiftableRef` on the child copies only, her carried pose `Act_LiftRest_Wait` (asb_carry). Glue `LICHII_COOP_LIFT_PLAYER=1`: `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` (535-539), young-only gates on the lifter, the server (`not_young`) and the lifted game; the throw is `LIFT_PLACE flying` (native-puppets-c, -d; in integrate) | No, never ran: proof-0116-3 (COORD-LOG 14:55 UTC 2026-11-19) PACK FAIL `missing Pack/Actor/Npc_Zora_Ruto_Child_001.pack.zs` | That PACK FAIL's root cause, fixed here: a .nup build extracts only `dumpcheck.REQUIRED + OPTIONAL`, and OPTIONAL lacked Ruto's pack and `AS/Player_Child.root.asb` (both are in the .nup: read 2026-11-27). Then the first lift in a game (UNKNOWNs 1, 7, 8) and the throw's landing on both screens |
+| Bomb hand-over (phase 2) | Protocol 530-532, server rules, glue `LICHII_COOP_BOMB_SHARE=1` (native-puppets-b, -b-2) | No: proof-0116 bomb-handover FAIL, no `BOMB_TAKE` (COORD-LOG 15:10 UTC 2026-11-19) | The director replays the owner's animation on the bomb copy before our walk sees `Lifted` (fable-puppet-body's reading). Not an owner item of 2026-11-27: after the others |
+| Hit effects (the game's own spark, sound, flash on a hit player) | The victim's own hit replay with the strike's kind words (`HurtOurLinkNative`); every other game replays a result on its `_Pvp` copy (`CoopObjects::ReplayOnCopy`: flash, sparks, sound on its invincible Life) (native-puppets-e-3) | No: the PvP pack never built: proof-0116-5 `missing Pack/Actor/Enemy_Amos.pack.zs` (COORD-LOG 17:59 UTC 2026-11-19) | The same PACK FAIL cause, fixed here (`Enemy_Amos` added). Then path B live (next row), so a hit lands; the attacker's own spark comes from its own collision with the `_Pvp` copy (U6, unproven) |
+| PvP damage and knockback | Protocol 540-544, server `on_pvp_strike`, `coop_pvp_native.h` (rings; the rewind check fair at 200 ms: fable-puppet-pvp 15c1f45e1, merged on this branch); path B's amount from the victim's own tables | No | The kinds' multipliers (U2/U7) are not filled, so `PathBLive` is false and every native strike is "kept off"; today's `PVP_HIT` (242) still does the damage. Needs the one probe run (U1, U2, U4, U6, U7) |
+| Shield block, synced on both screens | Path B's guard check (today a guess: "guard" in our Link's AS name and 60 degrees); U5 read from main: the game's own guard bits (EquipmentUser +0x13a0 bit 5, player part +0x32 bit 4; fable-puppet-pvp-2) | No | `Guarding` from the game's two bits (measured once by the probe); the guard result replayed on the attacker's and every other game's copy (the guard reaction and the clang) |
+| Puppet physics sync | The body rule (above); Yield wired; `Carry` pure code only | No | B2's speed field (a walking copy carries a rider); a thrown or knocked-back copy follows its owner's path |
+| Navi physics sync | Each copy has a Navi (`CoopFairy`, `Dm_Npc_Navi`) placed from the copy's place plus a fixed shoulder offset and bob (docs/puppet.md "Fairy": "The remote player's real Navi position is not sent") | No | The owner's real Navi place and state (idle, flying to a target, Z-target) sent and shown, so another player's Navi moves as she does in her own game |
+
+### Plan for the missing items (native-puppets-f: smallest first, each phase its own two-game bridge test)
+
+Every proof is a pytest bridge test in `tools/autotest/ingame` (docs/ingame-tests.md), judged by state, log lines and a
+screenshot of each game. The pack for it is a test pack (`--pack native`, `ingame/packs/native.py`: the tested sha's
+build.py with the lane pack's own options plus the phase's switch); the glue switch goes by `--env`.
+
+| # | Phase | Built in it | Two-game proof (bridge test) |
+|---|---|---|---|
+| N0 | Base | integrate-0121 + fable-puppet-body + fable-puppet-pvp; the .nup list fix (Ruto, the carry AS, Amos, InterestSpotActor) | Host: `test_nup_files_has_the_stand_in_sources`; one full CI |
+| N1 | Bodies in a game | Test pack `native` (`--puppet-body`) | `test_native_body.py`: B stands; A walks into B's copy and stops short of it (state); A placed over the copy stays on its top (y); B walks away with no jump in the copy's `body:` line; shots of both games; 0 CRASH, 0 `unguarded null read` |
+| N2 | Lift, carry and throw a young Link | `--puppet-liftable` in the test pack, `LICHII_COOP_LIFT_PLAYER=1` | `test_native_lift.py`: young A lifts young B's copy: A plays Ruto's lift and carry, B's game puts its Link in A's hands (log, B's place), B's screen shows A's copy in Ruto's carry, A's screen shows B in `Act_LiftRest_Wait` (shots both); A walks, B follows; A throws: B lands where A's screen showed (under 1 m, both states); adult B: no lift, no message |
+| N3 | Hits: damage, knockback, hit effects | `--puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`; the one probe run fills U2/U7, then `PathBLive` | `test_native_pvp.py`: PvP on, A's sword hits B: B's life drops by the game's own amount and B is knocked back (state), `PVP_RESULT taken`; A's screen shows the spark and flash on B's copy (shot at the hit frame) and the sound line; PvP off: the sword passes through |
+| N4 | Shield block on both screens | Guard from the game's own bits (U5); the guard result replayed on every copy | `test_native_guard.py`: B holds the shield facing A, A swings: B's life unchanged, B plays the game's guard reaction, both games' shots show the guard and the spark; from behind: the hit is taken |
+| N5 | Puppet physics sync | B2's speed field, `Carry` wired; thrown and knocked-back copies follow the owner's path | `test_native_body.py`, more cases: A rides walking B's copy; a thrown B's copy on A's screen within 0.3 m of B's own place at each sample |
+| N6 | Navi physics sync | The owner's Navi place and state sent (a new message, claimed in COORD-LOG) and shown on the copy's Navi | `test_native_navi.py`: B Z-targets a sign and B's Navi flies to it; on A's screen B's Navi is there within 0.5 m (state and shot); B idles: the same places |
+
 ## The goal
 
 The other players stop being picture-only puppets and become things the game itself handles:

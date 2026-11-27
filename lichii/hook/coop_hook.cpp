@@ -12,6 +12,7 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop_fresh.h"
 #include "coop/protocol/scene_place.hpp"
 #include "coop_caller_orders.h"
 #include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
@@ -319,6 +320,7 @@ void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std
 
 struct FrameView {
     Clock::time_point at{};
+    std::uint64_t present = 0;       // CoopFresh::Presents() when it was made
     bool game = false;               // Ocarina of the right build
     std::string game_note;           // why not, when not
     std::optional<coop::protocol::Vec3> position;
@@ -331,6 +333,16 @@ struct FrameView {
     std::string camera_note;         // for the panel, when the game runs
     bool event = false;              // our own event hides the others (and the game its HUD)
 };
+
+// For readers on the game's own thread (markers, map view, the player list's own scene): a frame is stale only when it
+// is kFrameStale old AND presents went on without a new one (coop_fresh.h): a game stepped or running a frame a second
+// keeps its last frame. (The panel's "running" line, read by a window of its own, stays by the wall clock alone.)
+bool FrameStale(const FrameView& f) {
+    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - f.at).count();
+    return CoopFresh::Stale(static_cast<std::uint64_t>(age < 0 ? 0 : age),
+                            static_cast<std::uint64_t>(std::chrono::milliseconds(kFrameStale).count()), f.present,
+                            CoopFresh::Presents());
+}
 
 // What the network thread knows, for the window.
 struct RoomView {
@@ -924,6 +936,8 @@ public:
         CoopFrameClock::BeginPresent();  // jitter-b: the game frame this present reads
         FrameView view;
         view.at = Clock::now();
+        CoopFresh::Present();
+        view.present = CoopFresh::Presents();
         const auto reading = Read(system, view);
 
         // The game's flags, when it is the right game and a list is shared.
@@ -2129,7 +2143,7 @@ public:
 
     std::optional<Markers> CurrentMarkers() {
         std::lock_guard lock(view_mutex_);
-        if (Clock::now() - frame_.at >= kFrameStale) {
+        if (FrameStale(frame_)) {
             return std::nullopt;
         }
         return frame_.markers;
@@ -2138,7 +2152,7 @@ public:
     // CurrentMapView (coop_hook.h): from the last frame, as the markers.
     bool CurrentMapView(MapView& v) {
         std::lock_guard lock(view_mutex_);
-        if (Clock::now() - frame_.at >= kFrameStale || !frame_.game || !frame_.scene || !frame_.position) {
+        if (FrameStale(frame_) || !frame_.game || !frame_.scene || !frame_.position) {
             return false;
         }
         v.scene.assign(*frame_.scene);
@@ -2245,7 +2259,7 @@ public:
         std::optional<std::string> own_scene;
         {
             std::lock_guard lock(view_mutex_);
-            if (Clock::now() - frame_.at < kFrameStale) {
+            if (!FrameStale(frame_)) {
                 own_scene = frame_.scene;
             }
         }

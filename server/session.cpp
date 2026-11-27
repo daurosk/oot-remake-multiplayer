@@ -2754,6 +2754,12 @@ bool Session::boss_finishing(const Object& o) {
   return a && coop::protocol::anim::IsDeath(a->name);
 }
 
+bool Session::pre_battle(const Object& o) {
+  if (!o.last_state || !o.last_state->animation) return false;
+  if (o.last_state->life && o.last_state->life->life <= 0) return false;
+  return coop::protocol::anim::IsPreBattle(o.last_state->animation->name);
+}
+
 // Row 215 (owner's playtest, 0.11.8): Ganon at life 0 went P2 -> P1 -> P4 -> P2 -> P1 in his finish (each hit on a
 // copy asked him over to its hitter), and each new owner's verbs drove the others' copies out of their own finish:
 // nobody could stab him. Every rule that moves an object asks here (or answers in finish_handover), so this one check
@@ -3175,6 +3181,22 @@ void Session::run_ownership(std::uint64_t now_us) {
       if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
         if (ask_handover(oid, o, *next, now_us, "its owner's game has not begun the fight (unready: intro or event)")) {
           ++stats_.boss_to_ready;
+        }
+        continue;
+      }
+    }
+
+    // Row 303 (owner 0.12.0: "gohma getting stuck"): a boss still in its pre-battle wait in its owner's game
+    // (Gohma on the ceiling, 'Pre_Battle_*') starts its fight only for a Link that game's AI perceives: its owner's.
+    // Another player under it looked up at a copy that never dropped, for good (lane1 hs-gohma-downed
+    // 20261120-085401: 'ours held Pre_Battle_Ceiling_Wait' 3 x 25 s), and no rule below moved it: that game's claim
+    // (targeting, the hook's WaitsOnCeilingForLink) marks a fight, and a chase is heard only out of one. The player
+    // whose copy claims it in that wait (held handover_chased_us, chased_by: never a game whose own intro has not
+    // played) gets it, its game's AI finds its own Link and the fight begins there, as for a solo player.
+    if (o.boss && pre_battle(o)) {
+      if (auto finder = chased_by(o, owner, now_us); finder && !hands_back_soon(o, *finder, now_us)) {
+        if (ask_handover(oid, o, *finder, now_us, "its pre-battle wait: another player found it (row 303)")) {
+          ++stats_.boss_to_finder;
         }
         continue;
       }

@@ -818,6 +818,15 @@ std::vector<std::string> RowTexts(const SessionView& v);
 // - Lobby: 0 Find a game, 1 Host a game (or Your game), 2 Join a game (or Your game, Copy answer code).
 // - Mods: the Mods tab's own page (coop_mods_tab.h), not rows of these.
 enum class MinusPage { kMultiplayer = 0, kLobby = 1, kMods = 2 };
+// Row 297 (0.12.0): co-op's menu (its Host, Join and Settings pages: Room name, Your name, Port, Relay...) is typed
+// into with the on-screen keys wherever it shows on our page: System's page of ours (`page_shown`) or the - menu's
+// Multiplayer or Lobby tab (`minus_tab`, MinusPage; the Mods tab types through CoopModsTab), while no field of the page
+// itself is typed into (`page_typing` < 0) and the view is co-op's menu. It took System's page alone, so on the - menu
+// (co-op's home in free play since 0.12.0) an A on Room name began typing with no keys, and the row was not drawn again.
+inline bool MenuKeysOn(bool page_shown, int minus_tab, int page_typing, bool view_menu, bool menu_typing) {
+    const bool on_minus = minus_tab >= 0 && minus_tab != static_cast<int>(MinusPage::kMods);
+    return (page_shown || on_minus) && page_typing < 0 && view_menu && menu_typing;
+}
 std::vector<std::string> RowTexts(MinusPage page, const SessionView& v);
 RowAction ActionFor(MinusPage page, int row, const Session& s);
 // A view's rows (kMain: RowTexts). A row with nothing on it is "": the module does not show it (but while the game's

@@ -6,7 +6,7 @@
 
 The net sources are compiled exactly as for the module (freestanding, the shim
 headers in switch/net/shim, no C library headers), only for the PC; the test's
-nn::socket runs on the PC's sockets (net_host_test.cpp).
+nn::socket runs on the PC's sockets (net_host_harness.cpp).
 
 End to end: starts coop_server (password, free port), a real coop_net client
 (coop_test --connect, the client Longshot games use) and the freestanding client;
@@ -66,9 +66,9 @@ def build(clang: str, out: Path, d: dict[str, Path]) -> Path:
         if r.returncode:
             sys.exit(f"net_host: compile failed: {src}")
         objs.append(str(obj))
-    exe = out / ("net_host_test" + (".exe" if os.name == "nt" else ""))
+    exe = out / ("net_host_harness" + (".exe" if os.name == "nt" else ""))
     clangxx = clang.replace("clang.exe", "clang++.exe") if clang.endswith("clang.exe") else clang + "++"
-    cmd = [clangxx, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", str(HERE / "net_host_test.cpp"), *objs,
+    cmd = [clangxx, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", str(HERE / "net_host_harness.cpp"), *objs,
            "-o", str(exe)]
     if os.name == "nt":
         cmd += ["-lws2_32", "-D_CRT_SECURE_NO_WARNINGS"]

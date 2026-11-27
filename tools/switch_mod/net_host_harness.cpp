@@ -4,8 +4,8 @@
 // PC by tools/switch_mod/net_host.py, with nn::socket here on the PC's sockets
 // (BSD sockaddr layout: u8 len, u8 family, like the guest library takes).
 //
-//   net_host_test selftest
-//   net_host_test join <ip> <port> <password> <nickname> <protocol> <seconds> <want_others>
+//   net_host_harness selftest
+//   net_host_harness join <ip> <port> <password> <nickname> <protocol> <seconds> <want_others>
 //
 // selftest: SHA-256 and HMAC-SHA256 known answers (FIPS 180-2 "abc",
 // a known HMAC-SHA256 over 96 bytes), HELLO layout. join: joins the server, exit 0 when WELCOME
@@ -213,6 +213,6 @@ int main(int argc, char** argv) {
 #endif
     if (argc >= 2 && std::strcmp(argv[1], "selftest") == 0) return selftest();
     if (argc >= 2 && std::strcmp(argv[1], "join") == 0) return join(argc, argv);
-    std::printf("usage: net_host_test selftest | join <ip> <port> <password> <nickname> <protocol> <seconds> <want_others>\n");
+    std::printf("usage: net_host_harness selftest | join <ip> <port> <password> <nickname> <protocol> <seconds> <want_others>\n");
     return 2;
 }

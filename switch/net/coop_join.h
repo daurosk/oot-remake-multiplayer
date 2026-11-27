@@ -6,7 +6,7 @@
 // logs PLAYER_JOINED / PLAYER_LEFT / REFUSED.
 //
 // Wire format = coop/protocol (codec.cpp, traffic_crypto.cpp, join_password.cpp).
-// tools/switch_mod/net_host_test.cpp checks every byte this file makes against
+// tools/switch_mod/net_host_harness.cpp checks every byte this file makes against
 // those functions, then joins a real coop_server next to a real coop_net client.
 #pragma once
 #include <stddef.h>

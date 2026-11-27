@@ -2,7 +2,7 @@
 // What the freestanding net code (switch/net) needs from the place it runs.
 // The ExeFS module implements these in switch/proto/main.cpp (debug-string log,
 // the CPU's counter, nn::os::GenerateRandomBytes); the PC test in
-// tools/switch_mod/net_host_test.cpp. Plain C names: no function pointers
+// tools/switch_mod/net_host_harness.cpp. Plain C names: no function pointers
 // (the module stays liftable, docs/exefs.md "Lifting").
 #pragma once
 #include <stddef.h>

@@ -1895,6 +1895,91 @@ TEST_CASE("pause tab: the mouse's steps stop for the player's own, the cursor ou
     CHECK(m.Step(At(t += 16, -1100, 650, 3)) == 0);
 }
 
+namespace {
+
+// Player report 296's page: an option up on the left (row 0), a gap (rows 1 to 3 with nothing on them, hidden), and
+// one below it (row 4).
+RowBoxes GapRows() {
+    RowBoxes b = FiveRows();
+    for (int i = 1; i <= 3; ++i) b[static_cast<std::size_t>(i)].shown = false;
+    return b;
+}
+
+// Longshot's mouse, as the game's cursor sees it: at each move, the cursor goes onto the game's button under the mouse,
+// hidden ones too (FiveRows' slots, whether shown or not).
+int LongshotFocus(float y, int was) {
+    const RowBoxes all = FiveRows();
+    for (int i = 0; i < kRows; ++i) {
+        const RowBox& r = all[static_cast<std::size_t>(i)];
+        if (y >= r.y0 && y <= r.y1) return i;
+    }
+    return was;
+}
+
+}  // namespace
+
+TEST_CASE("pause tab (report 296): the mouse over a gap of the column, between an option up on the left and one below") {
+    const RowBoxes b = GapRows();
+    CHECK(MouseOverRowsGap(b, -1100, -100));    // (row 2's slot, hidden: the gap)
+    CHECK(MouseOverRowsGap(b, -1100, 100));     // (between the slots, still the gap)
+    CHECK_FALSE(MouseOverRowsGap(b, -1100, 600));    // (on the option up on the left)
+    CHECK_FALSE(MouseOverRowsGap(b, -1100, -900));   // (on the one below)
+    CHECK_FALSE(MouseOverRowsGap(b, 0, -100));       // (right of the column: the list's side)
+    CHECK_FALSE(MouseOverRowsGap(RowBoxes{}, -1100, -100));   // (no row read: no column)
+    // Every row shown, the gaps between them are shared (RowAt): no gap left.
+    CHECK_FALSE(MouseOverRowsGap(FiveRows(), -1100, 420));
+}
+
+TEST_CASE("pause tab (report 296): the hover never bounces between the rows on either side of a gap") {
+    // The bounce: the mouse onto the option up on the left gives MouseRows a target; it went on into the gap before the
+    // cursor got there, and each step of ours toward the old target was undone by Longshot's mouse at its next move.
+    MouseRows m;
+    std::uint64_t t = 1000;
+    auto at = [&](float y, int focused) {
+        MouseRows::In in = At(t += 16, -1100, y, focused);
+        in.boxes = GapRows();
+        return in;
+    };
+    int focus = 4;
+    CHECK(m.Step(at(600, focus)) == kPadUp);   // (onto row 0 from row 4: up)
+    focus = 3;
+    m.Step(at(600, focus));                    // (let go)
+    int ours = 0, changes = 0;
+    float y = -200;   // (row 2's slot, hidden: the gap)
+    for (int i = 0; i < 60; ++i) {              // (the mouse wobbles a little over the gap, 1.2 s)
+        y += (i % 2 == 0) ? 6.0f : -6.0f;
+        const int was = focus;
+        focus = LongshotFocus(y, focus);
+        const std::uint64_t step = m.Step(at(y, focus));
+        if ((step & (kPadUp | kPadDown)) != 0) ++ours, focus += (step & kPadUp) != 0 ? -1 : 1;
+        if (focus != was) ++changes;
+    }
+    CHECK(ours == 0);       // (no step of ours while Longshot's mouse has the cursor in the gap)
+    CHECK(focus == 2);      // (where Longshot's mouse put it, row 2's slot under the mouse)
+    CHECK(changes <= 1);    // (it went there once, and stayed)
+    // Onto the option below: one way down, no way back.
+    focus = LongshotFocus(-900, focus);
+    CHECK(m.Step(at(-900, focus)) == 0);   // (Longshot's mouse already put it there)
+    CHECK(focus == 4);
+}
+
+TEST_CASE("pause tab (report 296): MouseHold, the one guard every page's cursor steps go through") {
+    MouseHold h;
+    const RowBoxes b = GapRows();
+    std::uint64_t t = 1000;
+    CHECK_FALSE(h.Step(false, -1100, 600, t, b));          // (the mouse off the game: never held)
+    CHECK(h.Step(true, -1100, 600, t += 16, b));           // (first seen: a move)
+    CHECK(h.Step(true, -1100, 600, t += 100, b));          // (still within kSettleMs of it)
+    CHECK_FALSE(h.Step(true, -1100, 601, t += MouseHold::kSettleMs, b));   // (at rest on a row: our steps may go)
+    CHECK(h.Step(true, -1100, -100, t += 1000, b));         // (moved into the gap)
+    CHECK(h.Step(true, -1100, -100, t += 5000, b));         // (at rest in the gap: still held)
+    CHECK(h.Step(true, 0, 600, t += 16, b));                // (moved onto the list on the right)
+    CHECK_FALSE(h.Step(true, 0, 600, t += 1000, b));        // (at rest there, the page names no button there)
+    CHECK(h.Step(true, 0, 600, t += 16, b, true));          // (the Settings list's Options row under it: held)
+    h.Reset();
+    CHECK(h.Step(true, 0, 600, t += 16, b));                // (after a reset the next read is a move again)
+}
+
 TEST_CASE("pause tab: our page comes and goes at once, and the menu opening on it shows it at once") {
     Page p = UsablePage();
     std::uint64_t now = 1000;

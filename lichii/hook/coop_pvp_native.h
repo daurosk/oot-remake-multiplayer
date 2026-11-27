@@ -144,6 +144,49 @@ public:
         return best;
     }
     bool Empty() const { return places_.empty(); }
+    // The point of the ring's path nearest `point`, among its places from `from_us` on and the straight
+    // lines between two neighbours that are joined: no more than kJoinUs apart in time AND no farther apart
+    // than kJoinMps covers in that time plus kJoinSlackM (a gap is not a path, and a warp is not one either,
+    // however close its two samples are in time: at a sample each 33-50 ms the time alone would join a warp
+    // of any length, and every point of that line would pass as the attacker's place). Nothing when
+    // the ring has no place from then on. The attacker's place is checked with it: the strike's `from` is
+    // where the attacker stood when it HIT, which is later than `seen_us` by the copy's display delay and one
+    // trip, so a running attacker is not where it was at `seen_us` (at 7 m/s and 200 ms: 1.4 m).
+    std::optional<Vec3> NearestSince(std::uint64_t from_us, const Vec3& point) const {
+        std::optional<Vec3> best;
+        float best_d2 = 0.0f;
+        const auto take = [&](const Vec3& c) {
+            const float dx = c[0] - point[0], dy = c[1] - point[1], dz = c[2] - point[2];
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (!best || d2 < best_d2) {
+                best = c;
+                best_d2 = d2;
+            }
+        };
+        for (std::size_t i = 0; i < places_.size(); ++i) {
+            const Place& p = places_[i];
+            if (p.t_us < from_us) continue;
+            take(p.at);
+            if (i + 1 >= places_.size() || places_[i + 1].t_us - p.t_us > kJoinUs) continue;
+            const Vec3& q = places_[i + 1].at;
+            const float ex = q[0] - p.at[0], ey = q[1] - p.at[1], ez = q[2] - p.at[2];
+            const float len2 = ex * ex + ey * ey + ez * ez;
+            if (!(len2 > 1e-8f)) continue;
+            const float far = kJoinMps * static_cast<float>(places_[i + 1].t_us - p.t_us) * 1e-6f + kJoinSlackM;
+            if (!(len2 <= far * far)) continue;  // a warp: two places, no path between them
+            const float u = std::clamp(
+                ((point[0] - p.at[0]) * ex + (point[1] - p.at[1]) * ey + (point[2] - p.at[2]) * ez) / len2, 0.0f,
+                1.0f);
+            take(Vec3{p.at[0] + u * ex, p.at[1] + u * ey, p.at[2] + u * ez});
+        }
+        return best;
+    }
+    static constexpr std::uint64_t kJoinUs = 250'000;
+    // The fastest move followed as a path. A bound we chose, not a value read from the game (Link's top speed
+    // on foot, on a horse or falling is UNKNOWN here): a faster honest move is only checked at its samples, so
+    // the cost of a bound too low is a refused strike (`out of reach`), never a hit from a place nobody was.
+    static constexpr float kJoinMps = 30.0f;
+    static constexpr float kJoinSlackM = 0.5f;  // the jitter of two samples (kJitterM)
 
 private:
     struct Place {
@@ -176,7 +219,13 @@ private:
 
 // --- The victim's checks (5.6) ---
 
-inline constexpr std::uint64_t kStrikeLateUs = 350'000;  // the copy's ~100 ms delay + 250 ms
+// How old a strike's `seen_us` may be when it reaches the victim. What passes between the two is: the victim's
+// sample going to the attacker (one trip: both games' way to the server), the attacker's display delay for that
+// copy (presence's show delay, 100 ms or more), and the strike coming back (one trip). With both games at a
+// 200 ms ping (100 ms each way to the server) a trip is 200 ms: 200 + 100 + 200 = 500 ms, plus 50 ms for jitter
+// and a frame on each side. (350 ms, the first value, answered `late` to every strike from two games at 150 ms
+// pings or more: not fair at 200 ms.) Past it the strike is `late`: nobody is hit from more than 0.55 s ago.
+inline constexpr std::uint64_t kStrikeLateUs = 550'000;
 inline constexpr std::uint64_t kOwnRingSlackUs = 50'000;  // our own ring has a place each frame
 inline constexpr std::uint64_t kCopyRingSlackUs = 100'000;
 inline constexpr float kJitterM = 0.5f;      // sample interpolation and jitter
@@ -198,7 +247,64 @@ struct StrikeView {
     // A shot or blast: the last place our game has for the strike's object;
     // nothing when our game does not have that object.
     std::optional<Vec3> object_at;
+    // The server time at which we saw the attacker FALL (FallWatch::Since: its status went from here to dead);
+    // 0: it did not fall, or since when is not known.
+    std::uint64_t attacker_fell_us = 0;
 };
+
+// Both hit at once (5.6): two players swing in the same moment and one of the two strikes downs its victim. The
+// downed game's own strike was swung before it fell and is on its way; it counts (a trade, as two of the game's
+// enemies trade), also when the news of the fall (channel 0) overtakes the strike (channel 2, sent again after a
+// lost packet). So an attacker that FELL no longer than this ago is not kept off for it. Only a fall has the
+// grace: a pause, a load, a cutscene or a menu keeps a strike off at once, as before.
+inline constexpr std::uint64_t kTradeGraceUs = 200'000;
+// A fall no sooner than this after the last one is a new fall. A status flapping dead / not dead faster does not
+// open the grace again and again: it stays measured from the first fall.
+inline constexpr std::uint64_t kFallAgainUs = 1'000'000;
+
+// Since when one player is fallen, from its status as we see it each frame. A fall is the status going from
+// "here" (no away bit) to dead: a player that was already away (in a menu, paused, loading, in a cutscene) and
+// then says dead swung nothing just before, so that is no fall with a grace.
+class FallWatch {
+public:
+    void See(std::uint8_t status, std::uint64_t now_us) {
+        const bool dead = (status & proto::status::dead) != 0;
+        if (dead && !dead_ && !was_away_ &&
+            (fell_us_ == 0 || now_us < fell_us_ || now_us - fell_us_ > kFallAgainUs)) {
+            fell_us_ = now_us == 0 ? 1 : now_us;
+            graced_ = true;
+        } else if (dead && !dead_) {
+            graced_ = false;  // dead again too soon, or from away: no grace for this one
+        }
+        dead_ = dead;
+        was_away_ = CoopPvp::Guarded(status);
+    }
+    // The time of the fall while the player is dead and that fall has the grace, else 0.
+    std::uint64_t Since() const { return dead_ && graced_ ? fell_us_ : 0; }
+
+private:
+    std::uint64_t fell_us_ = 0;
+    bool dead_ = false;
+    bool was_away_ = false;
+    bool graced_ = false;
+};
+
+inline bool AttackerAway(const StrikeView& v, std::uint64_t now_us) {
+    if (!CoopPvp::Guarded(v.attacker.status)) return false;
+    // Away. Without the dead bit it is no fall: kept off at once. With it: the fall's grace.
+    if ((v.attacker.status & proto::status::dead) == 0) return true;
+    return !(v.attacker_fell_us != 0 && now_us >= v.attacker_fell_us &&
+             now_us - v.attacker_fell_us <= kTradeGraceUs);
+}
+
+// The attacker's ring takes only samples of the scene it is the ring of (5.6, "rings are one scene's"). A sample
+// carries no scene of its own; presence keeps the sequence of the sample that last set the player's scene. When
+// we see the scene change we keep that sequence, and a sample before it (the old scene's samples that came in
+// the same tick, still in presence's queue) is not taken. `from_seq` nothing: no scene seen yet, every sample.
+// Sequences wrap (as presence's sequence_after).
+inline bool SampleOfScene(std::uint32_t sequence, const std::optional<std::uint32_t>& from_seq) {
+    return !from_seq || static_cast<std::int32_t>(sequence - *from_seq) >= 0;
+}
 
 inline float Distance(const Vec3& a, const Vec3& b) {
     const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
@@ -226,11 +332,11 @@ inline float SwordReach(std::optional<float> weapon_range) {
 
 // The kept-off cases of today's PvP (coop_pvp.cpp Victim::Hit) plus a
 // downed or dead Link, and a copy of the attacker we do not know.
-inline bool KeptOff(const StrikeView& v) {
+inline bool KeptOff(const StrikeView& v, std::uint64_t now_us) {
     const auto& l = v.local;
     const auto& a = v.attacker;
     return v.downed || !l.life || *l.life <= 0 || l.event || CoopPvp::Guarded(l.status) || !l.scene ||
-           !a.known || CoopPvp::Guarded(a.status) || !a.scene || !coop::protocol::same_place(*a.scene, *l.scene);
+           !a.known || AttackerAway(v, now_us) || !a.scene || !coop::protocol::same_place(*a.scene, *l.scene);
 }
 
 // The checks after the seq: nothing when the strike passes (the game's hit
@@ -238,15 +344,18 @@ inline bool KeptOff(const StrikeView& v) {
 // outcome to answer with.
 inline std::optional<proto::PvpOutcome> Refusal(const proto::PvpStrike& s, const StrikeView& v,
                                                 std::uint64_t now_us) {
-    if (KeptOff(v) || v.own == nullptr || v.attacker_ring == nullptr) return proto::PvpOutcome::kept_off;
+    if (KeptOff(v, now_us) || v.own == nullptr || v.attacker_ring == nullptr) return proto::PvpOutcome::kept_off;
     // Never wrapped: a seen_us after now is as late as one too old.
     if (s.seen_us > now_us || now_us - s.seen_us > kStrikeLateUs) return proto::PvpOutcome::late;
     if (!Finite(s.at) || !Finite(s.from)) return proto::PvpOutcome::out_of_reach;
     // Where we were when the attacker saw us.
     const auto we = v.own->At(s.seen_us, kOwnRingSlackUs);
     if (!we || !OnBody(s.at, *we)) return proto::PvpOutcome::out_of_reach;
-    // Where we saw the attacker then.
-    const auto they = v.attacker_ring->At(s.seen_us, kCopyRingSlackUs);
+    // Where we saw the attacker between then and now: the strike's `from` is its place when it hit, later than
+    // `seen_us` by its display delay of us and a trip (a running or jumping attacker moved meanwhile). `they` is
+    // the point of our own samples' path nearest to what it says; it must be within the jitter of it.
+    const auto they = v.attacker_ring->NearestSince(
+        s.seen_us > kCopyRingSlackUs ? s.seen_us - kCopyRingSlackUs : 0, s.from);
     if (!they || Distance(s.from, *they) > kJitterM) return proto::PvpOutcome::out_of_reach;
     switch (s.source) {
         case proto::PvpSource::shot:
@@ -462,6 +571,49 @@ inline bool FacesToward(const proto::Quat& rotation, const Vec3& self, const Vec
 inline bool Guarding(const std::optional<std::string_view>& main_anim, const std::optional<proto::Quat>& rotation,
                      const Vec3& self, const Vec3& attacker) {
     return main_anim && rotation && GuardAnim(*main_anim) && FacesToward(*rotation, self, attacker);
+}
+
+// Whether our Link guarded toward a place, each frame over the last second (5.6, "a shield raised just before"):
+// the attacker hit what its copy of us showed at `seen_us`, and our Link may have raised or lowered the shield
+// since. Path B's rule, the same on both screens: the strike is guarded when our Link guards toward the attacker
+// NOW (a blade never goes through a shield our own screen shows raised) or DID at `seen_us` (the attacker's
+// game saw its blade meet the copy's raised shield, U6). So a shield raised up to kStrikeLateUs after the swing
+// still guards: lag is paid by the attacker, never by a hit through a shield.
+class GuardRing {
+public:
+    void Push(std::uint64_t t_us, bool guard_anim, const std::optional<proto::Quat>& rotation, const Vec3& at) {
+        if (!states_.empty() && t_us < states_.back().t_us) states_.clear();  // a clock step: start again
+        states_.push_back({t_us, guard_anim && rotation.has_value(), rotation.value_or(proto::Quat{}), at});
+        while (!states_.empty() && t_us - states_.front().t_us > kRingUs) states_.pop_front();
+    }
+    void Clear() { states_.clear(); }
+    // Our Link guarded toward `attacker` at the frame nearest `t_us` (within `slack_us`).
+    bool Toward(std::uint64_t t_us, std::uint64_t slack_us, const Vec3& attacker) const {
+        const State* best = nullptr;
+        std::uint64_t best_gap = 0;
+        for (const auto& st : states_) {
+            const std::uint64_t gap = st.t_us > t_us ? st.t_us - t_us : t_us - st.t_us;
+            if (gap <= slack_us && (best == nullptr || gap < best_gap)) {
+                best = &st;
+                best_gap = gap;
+            }
+        }
+        return best != nullptr && best->guard && FacesToward(best->rotation, best->at, attacker);
+    }
+
+private:
+    struct State {
+        std::uint64_t t_us;
+        bool guard;
+        proto::Quat rotation;
+        Vec3 at;
+    };
+    std::deque<State> states_;
+};
+
+// Path B's `guarding` for one strike: now, or when the attacker saw us.
+inline bool GuardsStrike(bool guarding_now, const GuardRing& ring, const proto::PvpStrike& s) {
+    return guarding_now || (Finite(s.from) && ring.Toward(s.seen_us, kOwnRingSlackUs, s.from));
 }
 
 // The attacker's side: a _Pvp copy's Life component took a new hit (its last hit id, +0x1b18, moved to one that

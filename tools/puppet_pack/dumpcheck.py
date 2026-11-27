@@ -83,6 +83,14 @@ OPTIONAL = (
     "Tex/Mt_Hairs_Player_Adult_Alb.bntx.zs",   # (and Link's hair, hair-link)
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
+    # The native puppets' sources (build.py): perception (PERCEPTION_SOURCE, on by default), Ruto's LiftableRef
+    # and the carried pose's AS (--puppet-liftable: LIFTABLE_SOURCE, asb_carry's AS/Player_Child), the lock-on
+    # clients (--puppet-pvp: ATTENTION_SOURCE). Missing here, a .nup build had none of them: 'missing
+    # Pack/Actor/Npc_Zora_Ruto_Child_001.pack.zs' / 'Enemy_Amos.pack.zs' (proof-0116 lift and pvp PACK FAILs).
+    "Pack/Actor/InterestSpotActor.pack.zs",
+    "Pack/Actor/Npc_Zora_Ruto_Child_001.pack.zs",
+    "AS/Player_Child.root.asb.zs",
+    "Pack/Actor/Enemy_Amos.pack.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

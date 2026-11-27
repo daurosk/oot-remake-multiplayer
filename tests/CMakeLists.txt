@@ -79,6 +79,7 @@ add_executable(coop_tests
   lichii/boundary_test.cpp
   lichii/event_member_test.cpp
   lichii/snap_test.cpp
+  lichii/puppet_body_test.cpp
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/scrub_sale_test.cpp
@@ -130,6 +131,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pivot.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
+  lichii/pvp_rewind_test.cpp
   lichii/dbno_test.cpp
   lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp

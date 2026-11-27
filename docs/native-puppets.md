@@ -4,6 +4,43 @@ Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `
 `LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below, and phase 4, PvP on real bodies, `--puppet-pvp` + `LICHII_COOP_PVP_NATIVE` (section 5: the pack, the server and the glue are built; its path B, the victim's own game working out the damage, is not live yet, so today's PvP stays). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
 ([native-player.md](native-player.md)) stay as they are until each phase below is proven in two games.
 
+## STATUS (native-puppets-f, 2026-11-27)
+
+Owner 2026-11-27: "native puppets with perfect PvP and interactions like lifting another child Link player and
+throwing them like child Ruto; hit effects when hitting other players; blocking hits with the shield that shows on the
+other person's screen perfectly synced; puppet physics sync and Navi physics sync". Standing rule: only a young Link
+can be lifted (any Link may lift him), with Ruto's lift and carry animations.
+
+"Proven in 2 games" means a two-game run judged PASS by state and a screenshot of each game. No item has that yet.
+Every switch is off by default; solo and co-op idle have no copy, so none of this runs there.
+
+| Owner item / phase | Built (where) | Proven in 2 games (run) | Missing |
+|---|---|---|---|
+| Bodies (phase 1, `--puppet-body`) | Pack: Link's own shapes, a Free character body, his cloth (build.py). Hook: one rule moves the body (rest, setter, warp; `coop_puppet_body.h`), it gives way to our Link (Yield); host test 11/11 (fable-puppet-body 1effc9493, merged on this branch) | Partly: proof-0116-5 on a487cd77 (COORD-LOG 17:59 UTC 2026-11-19): copies made with bodies, child and adult, 0 CRASH, shots of both games. Walk-into and stand-on NOT judged (the scenario's walk missed). The body rule itself never ran in a game | B1 (A stops at B's copy, A stands on it, no jitter); B2 (the speed field: a walking copy does not carry a rider yet); `Carry` not wired |
+| Lift and throw a young Link like Ruto (phase 3) | Pack `--puppet-liftable`: Ruto's `LiftableRef` on the child copies only, her carried pose `Act_LiftRest_Wait` (asb_carry). Glue `LICHII_COOP_LIFT_PLAYER=1`: `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` (535-539), young-only gates on the lifter, the server (`not_young`) and the lifted game; the throw is `LIFT_PLACE flying` (native-puppets-c, -d; in integrate) | No, never ran: proof-0116-3 (COORD-LOG 14:55 UTC 2026-11-19) PACK FAIL `missing Pack/Actor/Npc_Zora_Ruto_Child_001.pack.zs` | That PACK FAIL's root cause, fixed here: a .nup build extracts only `dumpcheck.REQUIRED + OPTIONAL`, and OPTIONAL lacked Ruto's pack and `AS/Player_Child.root.asb` (both are in the .nup: read 2026-11-27). Then the first lift in a game (UNKNOWNs 1, 7, 8) and the throw's landing on both screens |
+| Bomb hand-over (phase 2) | Protocol 530-532, server rules, glue `LICHII_COOP_BOMB_SHARE=1` (native-puppets-b, -b-2) | No: proof-0116 bomb-handover FAIL, no `BOMB_TAKE` (COORD-LOG 15:10 UTC 2026-11-19) | The director replays the owner's animation on the bomb copy before our walk sees `Lifted` (fable-puppet-body's reading). Not an owner item of 2026-11-27: after the others |
+| Hit effects (the game's own spark, sound, flash on a hit player) | The victim's own hit replay with the strike's kind words (`HurtOurLinkNative`); every other game replays a result on its `_Pvp` copy (`CoopObjects::ReplayOnCopy`: flash, sparks, sound on its invincible Life) (native-puppets-e-3) | No: the PvP pack never built: proof-0116-5 `missing Pack/Actor/Enemy_Amos.pack.zs` (COORD-LOG 17:59 UTC 2026-11-19) | The same PACK FAIL cause, fixed here (`Enemy_Amos` added). Then path B live (next row), so a hit lands; the attacker's own spark comes from its own collision with the `_Pvp` copy (U6, unproven) |
+| PvP damage and knockback | Protocol 540-544, server `on_pvp_strike`, `coop_pvp_native.h` (rings; the rewind check fair at 200 ms: fable-puppet-pvp 15c1f45e1, merged on this branch); path B's amount from the victim's own tables | No | The kinds' multipliers (U2/U7) are not filled, so `PathBLive` is false and every native strike is "kept off"; today's `PVP_HIT` (242) still does the damage. Needs the one probe run (U1, U2, U4, U6, U7) |
+| Shield block, synced on both screens | Path B's guard check (today a guess: "guard" in our Link's AS name and 60 degrees); U5 read from main: the game's own guard bits (EquipmentUser +0x13a0 bit 5, player part +0x32 bit 4; fable-puppet-pvp-2) | No | `Guarding` from the game's two bits (measured once by the probe); the guard result replayed on the attacker's and every other game's copy (the guard reaction and the clang) |
+| Puppet physics sync | The body rule (above); Yield wired; `Carry` pure code only | No | B2's speed field (a walking copy carries a rider); a thrown or knocked-back copy follows its owner's path |
+| Navi physics sync | Each copy has a Navi (`CoopFairy`, `Dm_Npc_Navi`) placed from the copy's place plus a fixed shoulder offset and bob (docs/puppet.md "Fairy": "The remote player's real Navi position is not sent") | No | The owner's real Navi place and state (idle, flying to a target, Z-target) sent and shown, so another player's Navi moves as she does in her own game |
+
+### Plan for the missing items (native-puppets-f: smallest first, each phase its own two-game bridge test)
+
+Every proof is a pytest bridge test in `tools/autotest/ingame` (docs/ingame-tests.md), judged by state, log lines and a
+screenshot of each game. The pack for it is a test pack (`--pack native`, `ingame/packs/native.py`: the tested sha's
+build.py with the lane pack's own options plus the phase's switch); the glue switch goes by `--env`.
+
+| # | Phase | Built in it | Two-game proof (bridge test) |
+|---|---|---|---|
+| N0 | Base | integrate-0121 + fable-puppet-body + fable-puppet-pvp; the .nup list fix (Ruto, the carry AS, Amos, InterestSpotActor) | Host: `test_nup_files_has_the_stand_in_sources`; one full CI |
+| N1 | Bodies in a game | Test pack `native` (`--puppet-body`) | `test_native_body.py`: B stands; A walks into B's copy and stops short of it (state); A placed over the copy stays on its top (y); B walks away with no jump in the copy's `body:` line; shots of both games; 0 CRASH, 0 `unguarded null read` |
+| N2 | Lift, carry and throw a young Link | `--puppet-liftable` in the test pack, `LICHII_COOP_LIFT_PLAYER=1` | `test_native_lift.py`: young A lifts young B's copy: A plays Ruto's lift and carry, B's game puts its Link in A's hands (log, B's place), B's screen shows A's copy in Ruto's carry, A's screen shows B in `Act_LiftRest_Wait` (shots both); A walks, B follows; A throws: B lands where A's screen showed (under 1 m, both states); adult B: no lift, no message |
+| N3 | Hits: damage, knockback, hit effects | `--puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`; the one probe run fills U2/U7, then `PathBLive` | `test_native_pvp.py`: PvP on, A's sword hits B: B's life drops by the game's own amount and B is knocked back (state), `PVP_RESULT taken`; A's screen shows the spark and flash on B's copy (shot at the hit frame) and the sound line; PvP off: the sword passes through |
+| N4 | Shield block on both screens | Guard from the game's own bits (U5); the guard result replayed on every copy | `test_native_guard.py`: B holds the shield facing A, A swings: B's life unchanged, B plays the game's guard reaction, both games' shots show the guard and the spark; from behind: the hit is taken |
+| N5 | Puppet physics sync | B2's speed field, `Carry` wired; thrown and knocked-back copies follow the owner's path | `test_native_body.py`, more cases: A rides walking B's copy; a thrown B's copy on A's screen within 0.3 m of B's own place at each sample |
+| N6 | Navi physics sync | The owner's Navi place and state sent (a new message, claimed in COORD-LOG) and shown on the copy's Navi | `test_native_navi.py`: B Z-targets a sign and B's Navi flies to it; on A's screen B's Navi is there within 0.5 m (state and shot); B idles: the same places |
+
 ## The goal
 
 The other players stop being picture-only puppets and become things the game itself handles:
@@ -546,15 +583,25 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
 - The victim decides. A strike names `seen_us`: the server-clock time of the victim's own sample the copy showed
   when it was hit (the director knows which sample it drew; samples carry server-clock times, protocol.md). No
   clock of the attacker's is trusted.
-- **Time.** Taken only if `0 <= now - seen_us <= 350 ms` (the copy's ~100 ms display delay + 250 ms, as
-  `kHitLateMs` 200 for enemy hits plus the delay). A `seen_us` after now is `late` too (never wrapped as u64).
+- **Time.** Taken only if `0 <= now - seen_us <= 550 ms` (`kStrikeLateUs`). Between the two lie one trip of the
+  victim's sample to the attacker (both games' way to the server), the attacker's display delay of that copy
+  (100 ms or more) and one trip of the strike back: with both games at a 200 ms ping that is 200 + 100 + 200,
+  plus 50 ms of jitter. (The first value, 350 ms, answered `late` to every strike between two games at 150 ms
+  pings: fable-puppet-pvp, 2026-11-25.) A `seen_us` after now is `late` too (never wrapped as u64). So the
+  victim is hit where the attacker saw it up to 0.55 s ago, also when it has moved on since: the known price of
+  judging what the attacker saw.
 - **The victim's place.** The victim keeps a 1 s ring of its own places (each frame). The hit's place must be
   within 0.5 m (sample interpolation and jitter) plus the body (1.0 m level, -0.4 to 2.2 m high: today's body
   numbers) of the ring's place at `seen_us` (review L1: no `speed x elapsed` term, which would widen it for a
   rolling victim, just when lag hurts the victim). Else `out of reach`.
 - **The attacker's place (review M1).** The victim also keeps a 1 s ring of its own copy of each player (the
-  samples it received). The strike's `from` must be within 0.5 m of that ring's place of the attacker at
-  `seen_us` (+-100 ms), and by source:
+  samples it received, also those its copy does not draw yet). The strike's `from` is the attacker's place when
+  it HIT, which is later than `seen_us` by its display delay and a trip (a running attacker is 1.4 m on after
+  200 ms), so it must be within 0.5 m of the **path** of that ring from `seen_us` - 100 ms on (its places and
+  the lines between neighbours at most 250 ms apart and no farther apart than 30 m/s covers in that time plus
+  0.5 m: a gap is no path and a warp is none, however close in time its two samples are;
+  `PlaceRing::NearestSince`. The 30 m/s is a bound we chose, Link's top speed is not read: a faster honest move
+  is checked at its samples only), and by source:
   - sword or body: the victim's ring place of the attacker within the weapon's reach of the hit place, the reach
     from the game's data (`WeaponParam.Range` of the weapon the attacker has equipped as `PLAYER_EQUIP` says: the
     Deku Stick's 1.8 m, ...; a weapon without one: today's 1.3 m) + 0.5 m; never less than 1.3 m;
@@ -566,7 +613,18 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
   repeated one is dropped (no result). The server lets through at most 10 strikes a second per attacker (the
   game's quickest: a spin's several hits in one swing) and drops the rest (`stats.pvp_strikes_flood`).
 - Kept off as today: an event, a menu, a load, pause, another scene, life not read, downed or dead, the attacker in
-  one of those, or the victim's copy of the attacker not known.
+  one of those, or the victim's copy of the attacker not known. Each still gets its answer (`kept off`) and
+  spends its seq. The rings are one scene's: a load clears them (a room change mid-swing), and a copy's ring
+  takes only samples from the one that set its new scene on (`SampleOfScene`: the last scene's samples that came
+  in the same tick are still queued). A player number that left starts again with no scene and no fall.
+- **Both hit at once.** Each game judges the strike on its own Link, so two swings in one moment are a trade. An
+  attacker that FELL (its status went from here to dead) at most 200 ms ago (`kTradeGraceUs`) is not kept off for
+  it: its strike was swung before, and only the news overtook it. Only a fall has that grace: a pause, a load, a
+  cutscene or a menu keeps a strike off at once, and so does dead from one of those. One grace per fall
+  (`FallWatch`): a status flapping dead / not dead inside a second does not open it again.
+- **A shield raised just before (path B).** Guarded when our Link guards toward the attacker now, or did at
+  `seen_us` (`GuardRing`, a second of frames): never a hit through a shield either screen shows raised. Lag is
+  paid by the attacker.
 - So what the attacker saw is what it hit (within the ring), a laggy attacker cannot hit someone who got away, and
   a game that makes strikes up can neither hit from across the room nor choose the damage.
 
@@ -610,8 +668,9 @@ Both kits: pack `--puppet-body --puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`, `/pvp 
    and result logged per kind.
 6. Guard break and burn: the Master Sword on a guarding Deku Shield; a fire arrow on a guarding Deku Shield
    [shot A+B], as the game does it.
-7. Lag: the lane's added delay (or a relay hop) on; B rolls away right after A's swing: `out of reach`, no hit
-   [shot B]; with more than 250 ms one way: `late` [shot B].
+7. Lag: the lane's added delay (or a relay hop) on, 100 ms each way per game (200 ms pings): A's slash on its
+   copy of B is `taken` though B rolled away right after the swing [shot A+B]; a strike A makes up from a place
+   it never stood is `out of reach` [shot B]; with 150 ms each way per game: `late`, no hit [shot B].
 8. PvP turned off mid-fight while A holds Z on B: the lock lets go, the copy is re-made plain, the next slash
    passes through [shot A+B]; nothing clangs on B's shield.
 9. No double damage: B swings at A's real Link; A loses exactly what A's own result says, once [shot A].
@@ -734,6 +793,149 @@ Sizes: S = under a day of one worker, M = 1 to 3 days, L = more. Every proof is 
 Each phase is behind a switch, default off, and does not change the solo or idle game (no session: no copy
 exists, so the pack switches change nothing without a co-op player).
 
+## Who moves the copy's body (fable-puppet-body, 2026-11-25)
+
+Each fact: **read** (from the code or the game's files, place given), **measured** (a run), or **UNKNOWN** (with its probe).
+
+### Where phases 0 to 3 stand
+
+| Phase | In the code | Switch (all off by default) | What a run proved | Never ran |
+|---|---|---|---|---|
+| 0 Facts | no probe job exists | none | nothing | lift grades, that a Free body blocks and carries, stash path, a speed setter |
+| 1 Body | pack: body files, size entries (crash-0116-a), default preset (crash-0116-b); hook: this section | pack `--puppet-body` (each actor's `"body"` files in the manifest, which the hook now reads) | 2026-11-19, proof-0116-5: child x2 and adult x1, no crash, both games show the other's copy (shots). The two crashes before it were ours and are fixed | walk into, stand on, push, jitter: "not judged" (the scenario's walk missed). Nothing with this section's hook rule |
+| 2 Bomb hand-over | protocol 530-532, server rules, `coop_bomb_share.h`, wired in the spawn sync | `LICHII_COOP_BOMB_SHARE=1` | one run, FAIL: B never lifted A's lit bomb, no `BOMB_TAKE` (proof-0116, 2026-11-19); cause not found | everything after the lift: hand-over, one explosion, stash |
+| 3 Lift a young player | pack `LiftableRef` (Ruto's) and carry AS; protocol 535-538; `coop_lift_player*`; young-only gates | pack `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER=1` (needs `--puppet-body`) | none: the three tries were PACK FAIL (`Npc_Zora_Ruto_Child_001.pack.zs` not in the .nup the kit reads) | all of it, UNKNOWNs 1-8 of section 4 |
+
+### The facts the rule stands on
+
+- **When our place is set against the physics step (read, docs/puppet.md "The frame hook", docs/hookshot.md).** The
+  Director runs on the calc thread at the frame hook in `moduleCalc_` (main+0x6e6dd8 / 0x6e70f8), after the frame's
+  job graph has been waited on: the actors of frame N have run, the draw of N has not read them. So a place set in
+  hook N is drawn in N and reaches the physics in frame N+1's step. UNKNOWN: that the physics step itself is inside
+  that job graph (probe B1).
+- **What the game's setter does (read, main+0x4c6580 and main+0x4c6630, disassembled).** `0x4c6580(actor, w1)`:
+  nothing for actor state 1; sets bit 23 of actor+0x4a8; takes the physics component `[[actor+0x270]+0x50]` (none:
+  returns) and calls `0x4c6630(physics, &place(+0x31c), &rows(+0x328), 1 & ~w1)`. `0x4c6630`: the controller set is
+  `[physics+0x20]`; with the last argument 1 (our w1 = 0) and no request already waiting (`[set+0x228] & 3 == 0`) it
+  stores the 3x4 at set+0x1d0, sets `[set+0x228] |= 3` and, when the set has a character controller
+  (`[set+0x1c8]`), sets bit 7 of its byte +0x1f2; then `0x4c6870(set, the 3x4)`. So the setter is a **queued
+  teleport** of the whole controller set and its character controller, taken at the next step. With w1 = 1 the
+  queue and the bit are skipped and only `0x4c6870` runs (a move that is no teleport: UNKNOWN what it does to a
+  character controller, probe B2).
+- **A teleport keeps the body's speed (measured, reports/held-bomb.md).** The held bomb fell between places.
+- **The Director never called the setter for a player's copy (read, coop_puppet.cpp).** `matrix_call_` is set only
+  by the fairies' director (coop_fairy.cpp); a copy's place was two bare writes (+0x31c, +0x358). For an actor with
+  a body a bare write is undone within a frame (measured on enemies, docs/objects.md; on a copy: likely, not measured until B1). So in every `--puppet-body`
+  run so far the picture was written each frame and the body was never told: it stood where the copy was made, or
+  dragged the picture back. That alone explains a copy you walk through, and a wall where nobody stands.
+- **The copy's character controller (read, build.py `body_character_controller`).** The player's, on the default
+  preset, components FrameSetup, MoveStateUpdate, Rotate, JumpExtension, FloatWater, AccumulateImpulse,
+  FollowSurfaceExtension, FollowRagdoll, ApplyVelocity; states InAir, OnGround, Free; default Free.
+- **UNKNOWN: which field takes a speed** for a Free character controller (ApplyVelocity's input). Probe B2.
+
+### The rule (lichii/hook/coop_puppet_body.h, tests/lichii/puppet_body_test.cpp)
+
+The owner game's samples are the only word on where a Link is. This game's body of it never decides anything: it
+has no gravity, no ground logic and no input (Free), and is moved once a frame, at the frame hook, by one of three
+commands (`Drive::Step`), worked out from where the game left the body (read back), where the samples put it this
+frame (the follower's drawn place) and how fast that place moves:
+
+1. **rest**: the body is within 2 mm and 0.004 rad of its place and the place is not moving. Nothing is written
+   and no game function is called. A standing copy is a still body: our Link leans on it and stands on it with no
+   tremble, and the body is not re-teleported under his feet.
+2. **drive**: speed for the next step = the samples' own speed + 0.6 x gap / frame time, capped at 40 m/s. The
+   solver moves the body, so its contacts have a real speed (it pushes a pot, carries our Link on its head). The
+   gain is under 1 so a body stopped by a contact is not pressed harder each frame. Used only once B2 names the
+   speed field (`speed_channel`); until then every move is command 3.
+3. **warp**: the place is written and the game's setter called (a teleport), for: a place that jumped (scene
+   change, a warp, a new copy, back from parked), a gap over 1.5 m, a stalled frame, a body not read, and a driven
+   body more than 0.5 m behind for 6 frames (held by something only this game has: their real Link is where the
+   samples say, so the way is free in their game).
+
+The same rule in every state of their Link, because the body never runs a state of its own:
+
+| Their Link | What the samples carry | What the body does here |
+|---|---|---|
+| ground, slope, stairs | place + speed along the slope | follows; no ground snapping of ours, so no sinking and no step pops |
+| moving platform | place and speed in the world (the platform's included) | `Carry`: the offset from the platform when the sample was made (our own platform's pose then, `PoseHistory`; platforms run in step, coop_platforms.h) is put on our platform now; the look-ahead uses `RiderSpeed` (their walk on it), so the platform is not counted twice. Pure code and tests; the glue (which platform, from coop_lift_ride's "stands on" test) is open |
+| ladder, climb, crawl | place | follows. The shape stays the standing one (`Player_cct`): UNKNOWN whether it should swap to `_climb`/`_crouch` (probe B4) |
+| water | place (swimming or sunk in iron boots) | follows; `FloatWater` does nothing in Free (UNKNOWN, probe B3: no bobbing against the samples) |
+| fall, jump, knock-back, thrown | place + their real speed | follows at their speed; no gravity of ours is added, so it neither falls ahead nor lags |
+| warp, room or scene change | a jump | warp, speed zero; hidden copies park their body through the setter too (a bare write left the body behind as a wall) |
+| samples lost | nothing new | the follower's look-ahead ends (coop_follow.h `kAheadMaxMs`), the place stands, and the rule rests: the body stays (it still blocks). No flag of its own: the rule never sees "lost", only a place that stopped; the Director's hold and hide rules go on as before |
+
+### What two games do, and why no real Link is stuck or thrown
+
+Every case rests on one more rule, `Yield`: a body is never put inside the one Link this game simulates. If the
+samples (late by the lag) put the copy's capsule into ours, the copy is moved the shortest way out: sideways, or
+down under his feet, or up over his head. The other game does the same for its own Link.
+
+- **Two players push each other.** In A's game B's copy is a wall for A (probe B1 proves a Free body blocks); in
+  B's game A's copy is a wall for B. Neither real Link is ever moved by a copy: a copy is teleported or driven
+  only to where its owner really is, and gives way if that is inside us. So nobody can be pushed off a ledge or
+  through a wall by another player; each sees the other stop. The overlap left by lag (both walk in at once)
+  shows as each copy standing aside by the overlap, a few centimetres.
+- **A copy on a moving platform.** Carried by our own platform (table above); without the glue it follows the
+  world place, late by the lag x the platform's speed.
+- **Standing on a copy.** At rest it is a still body. When it moves by warp, our Link is not carried (a teleport
+  has no speed): he slides off as off a thing pulled away. Carried rides need command 2 (B2). When it rises into
+  our feet it is kept under them (`Yield`), so our Link is not thrown.
+- **A copy crushed by a door or a block.** The copy is never held by this game's movers: a warp goes through, and
+  a driven body held back 6 frames is warped. Our door is not stopped by it either (UNKNOWN whether a Free
+  character controller blocks a moving rigid body, probe B1). The crush itself is the owner game's: its real Link
+  and its own door decide.
+- **Copies against enemies.** The body blocks an enemy's walk as the real Link does in his own game. It has no
+  sensors (phase 1), so nothing hits it or is hit; phase 4 filters hits by attacker (section 5).
+
+### In the hook now (only for an actor whose manifest entry has `"body"` files; no such actor: nothing changes)
+
+Decided **per actor, never per pack**: `CoopPuppetBody::PackBodyActors` (each `"actors"` entry with files in its
+`"body"`) -> `PlannerSettings::body_actors` -> `Director::SetBodyActors`; `Create` sets `slot.body` for a player's
+copy made from one of them and starts the rule's state again (`ResetBody`: a new actor is warped, never "at rest"
+by the old one's rotation or place). A `--puppet-body` pack gives every copy a body; a `--puppet-pvp` pack alone
+(its own `"body": false`) gives one only to its `_Pvp` copies, which the same slot places: same cause, same rule.
+
+For such a copy:
+- `DrawAt` first gives way to our own Link (`Yield`): his place is his actor's (`CoopPose::FindPlayer`, +0x31c),
+  his age his actor's name; the sizes are the game's own (read from the romfs, `GameParameter/
+  CctComponentPlayerClimbParam`: `CharacterRadius` / `CharacterHeight` = 0.35 / 1.68 m adult (`Player`), 0.23 /
+  1.17 m child (`Player_Child`)). UNKNOWN: that the standing shape `Player_cct` is exactly that size, and that
+  the actor's place is the capsule's foot (probe B1: the height our Link stands at on a copy). Bodies that only
+  touch (overlap up to 0.03 m: our Link standing or leaning on a copy) are left to the solver, or the copy would
+  sink from under him a little each frame.
+- Then `Drive::Step` (no speed channel yet): rest writes nothing; a move writes the place and owes one setter call.
+- The owed call (`Director::Move`) is the slot's FIRST call of the frame, before sounds, pieces and animations.
+  The frame's budget is 8 calls for all copies (`kMaxCallsPerFrame`; one is our own state): with more than 7
+  copies moving at once some wait a frame, in turn (the round starts one slot further each frame). A copy that
+  waits has its picture right and its body one frame behind; the log counts them.
+- `Park` (hidden) owes one call per place parked at, not one a frame. While our Link holds the copy (phase 3)
+  nothing is owed and the rule starts again when he lets go.
+- A copy whose class is not the one the setter is known for (`kActorVtable`) is said once in the log (`body: ...
+  is NOT moved`), and no call is counted for it.
+
+Log, once per copy: `P<n> body: <actor> has a body; it is moved through the game's setter`. Every 300 frames:
+`P<n> body: <r> frames at rest, <w> moved (<s> setter calls made, <q> waited a frame for one), <y> gave way to
+our Link; the game had it up to <x> m from our place`. `<x>` compares our place with the actor's +0x31c, a field we
+write ourselves: UNKNOWN whether the game writes it back from a Free character body (if it does not, `<x>` is
+always 0 and "rest" only means "we did not move it"). With `LICHII_COOP_DEBUG_BODY=1` each such line is followed by
+`body probe` lines (read only): the actor's place, the controller set's request flags (+0x228) and 3x4 (+0x1d0),
+and the first 0x400 bytes of the character controller (`[set+0x1c8]`), for the copy and for our own Link.
+Open in the glue: `Carry` (which platform: coop_lift_ride's stands-on test).
+
+### Probes (one module-only two-game run, pack `--puppet-body`, shots on both games)
+
+- **B1** (run with `LICHII_COOP_DEBUG_BODY=1`) first the copy's `body: ... is moved through the game's setter` line
+  (its class). The `body probe` lines while B walks and A pushes the standing copy: does the actor's +0x31c follow
+  the body (is `<x>` real), and where in the set or the controller the body's own place is. A walks into standing B:
+  A stops (shot both). A jumps onto B's copy: A's height = the copy's top (shot).
+  B walks: A's log `body:` line, x under 0.02 m. B hidden (cutscene) then back: no wall left behind (A walks through
+  the old spot, shot). A door closes on B's copy in A's game: the door closes (shot).
+- **B2** the speed field, from the same `body probe` dumps (the copy's character controller at rest and while B
+  walks, our own Link's while he stands and while he walks): the three floats that are his speed are the field. Then `speed_channel` on, and B1 again plus: A stands on walking B and is
+  carried (shot).
+- **B3** B swims and dives: the copy's `body:` x stays under 0.02 m. **B4** B climbs a ladder beside A: A is not
+  pushed (shot); if he is, the body swaps to `Player_cct_climb`.
+
 ## The phase 1 switch (built)
 
 `tools/puppet_pack/build.py --puppet-body` (off by default). Every puppet (colours, skins and quiet copies
@@ -752,8 +954,9 @@ looking. Its character controller is the player's (merged) with `DefaultMoveStat
 the sum of the entries of every player file merged into it (`build.chain_entry`: the game parses a param in a
 heap of its entry; with Player_Child's entry alone the child's character controller, merged with Player's,
 ran out at its `InteractWithRagdoll` object and crashed `GeneralFormatAsync_` as the copy loaded,
-crash-0116-a). The manifest (`coop_puppet.json`) records `"body": true`. No hook
-change: the Director already places the puppet through the physics-aware setter.
+crash-0116-a). The manifest (`coop_puppet.json`) records `"body": true`. The hook's side is
+"Who moves the copy's body" above (the first version of this switch said the Director already placed the
+puppet through the physics-aware setter: it did not, only the fairies' director called it).
 
 Build for a proof (lane pair, offline job): `python -I -B tools\puppet_pack\build.py --romfs <the .nup>
 --mod-dir <kit>\mods\contents\0400486024DEC000\coop-puppet --puppet-body` on both games, then phase 1's

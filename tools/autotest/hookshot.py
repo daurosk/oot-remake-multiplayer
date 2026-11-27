@@ -723,13 +723,19 @@ class Player:
 
     def __init__(self, bridge, log, shot=None, connect=None, clock=time.monotonic, sleep=time.sleep,
                  main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0, read_log=None,
-                 await_every=0.25, burst_path=None):
+                 await_every=0.25, burst_path=None, late_for=60.0):
         self.b = bridge
         self.burst_path = burst_path  # burst_path(name) -> a PNG path for one of this game's burst shots, or None
         self.read_log = read_log      # () -> this game's log text so far ('' if none yet), or None: await skipped
         self.await_every = await_every
         self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
         self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
+        # A mark not taken in take_for is waited for up to late_for more before it counts as NOT taken (gate-mark-0121:
+        # gate-hud-309d7180's A, just after a 460 s shader start-up, took its first mark later than 5 s: its log has
+        # "coop: test mark start" (game-out-A.txt:415) and its start shot, yet the boot FAILED as 'NOT taken'). Each
+        # late one is logged with its time ("taken late after N s") and kept in self.late.
+        self.late_for = late_for
+        self.late = []                # "mark NAME N.N s": marks taken after take_for (logged; not a failure)
         self.sent = 0
         self.send_lock = threading.Lock()   # the commands file: the script's batches and a warp's hand-over
         self.log = log
@@ -793,9 +799,22 @@ class Player:
         # The same mark in the game's own log (the module writes "coop: test mark NAME (Link at x y z)"), so a
         # grading line like "test mark near.*voice: ..." finds it in order with the game's lines: groups.py reads
         # hookshot_log-X.txt, as it reads the emulator's log.
-        if self.commands and not self._send(["mark " + name]):
-            self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
-            self.not_taken.append("mark " + name)
+        if self.commands:
+            t0 = self.clock()
+            taken = self._send(["mark " + name])
+            if not taken and self.late_for > 0:
+                deadline = self.clock() + self.late_for
+                while self._waiting() and self.clock() < deadline:
+                    self.sleep(0.05)
+                taken = not self._waiting()
+                if taken:
+                    took = self.clock() - t0
+                    self.log("coop: test mark %s taken late after %.1f s (the module was slow to read its commands)"
+                             % (name, took))
+                    self.late.append("mark %s %.1f s" % (name, took))
+            if not taken:
+                self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
+                self.not_taken.append("mark " + name)
         if self.shot:
             try:
                 self.shot(name)
@@ -1821,6 +1840,14 @@ def run(a):
                                    a.renderer_limit)
             if a.renderer_wait > 0:
                 say("%s: renderer ready (%.0f s waited)" % (x, waited))
+                # (gate-mark-0121: the game's own shader start-up time, so a slow boot (a cold cache, a disk busy with
+                # another job's scan) shows here: gate-hud-309d7180 A 460.4 s, B 106.7 s)
+                try:
+                    took = re.search(r"vk: start-up: the shaders took ([0-9.]+) s", log() or "")
+                except OSError:
+                    took = None
+                if took:
+                    say("%s: shader start-up %s s (the game's own line)" % (x, took.group(1)))
         # (the game can move or resize its window when its renderer comes up: placed again, both)
         place_games({x: procs[x].pid for x in tags}, a.display, say)
 
@@ -1869,6 +1896,7 @@ def run(a):
                     p = Player(pb, Log(os.path.join(out, "player-%s.txt" % x)), shot=shooter(x, a.name),
                                connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x],
                                read_log=game_log(x),
+                               late_for=a.mark_late,
                                burst_path=lambda m, x=x: os.path.join(out, "%s-%s-%s-%s.png" % (a.name, x, m, x)))
                     players[x] = p
                     p.play(parsed[x])
@@ -1905,6 +1933,9 @@ def run(a):
             raise RuntimeError("warp landed on another map than asked: " + "; ".join(wrong))
         # (a boot whose marks or test commands the module never read did not set the game up: party-hud-bridge-85e3b255's B
         # had no module at all, yet this run said 'scenario played' and exited 0, so live.py start answered ok: B #137)
+        for x, p in sorted(players.items()):   # (gate-mark-0121: a slow start shows here, never as a FAIL of its own)
+            if p.late:
+                say("%s: taken late: %s" % (x, ", ".join(p.late)))
         lost = ["%s %s" % (x, ", ".join(p.not_taken)) for x, p in sorted(players.items()) if p.not_taken]
         if lost:
             raise RuntimeError("NOT taken by the module (not started?): " + "; ".join(lost))
@@ -2033,6 +2064,8 @@ def main(argv=None):
     r.add_argument("--every", type=float, default=3.0)
     r.add_argument("--timeout", type=int, default=900, help="seconds for the boot and the load")
     r.add_argument("--scenario-timeout", type=int, default=600)
+    r.add_argument("--mark-late", type=float, default=60.0,
+                   help="seconds more a mark not taken in 5 s is waited for before it counts as NOT taken (gate-mark-0121)")
     add_renderer_options(r)
     r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
     r.add_argument("--playtest-ports", type=int, default=0, metavar="BASE",

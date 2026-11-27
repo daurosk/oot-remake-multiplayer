@@ -15,6 +15,17 @@ import pair as P
 from test_rows import need_child_in_play
 
 BLUE = "A:LICHII_COOP_COLOR=blue"                  # wave1:37 switches (LICHII_COOP_PUPPET=1 is in every boot: BASE_ENV)
+# The lane's own look kept out (gate-tunic-309d7180, 0.12.0: the first run of this test FAILED on the lanes' files, not
+# on the module). The pause menu saves a look to the game's coop-options.ini (CoopTitle::SaveLook) and a boot reads it
+# back; the save baseline does not put that file back, so lane1-A started with look_cap_trim = blue (and 10 parts more),
+# said 'tunic-3070FF-cap-3070FF', and lane1-B with color = pink + look_cap_trim = orange: no green Link for the colour
+# check. LICHII_COOP_LOOK (hookshot/src/coop_look.h EnvParts) gives the parts instead of the file's; one key with no
+# value is no part at all (ReadParts passes an empty value over), so both games wear their tunic and nothing else.
+# B: green, the game's own (preset 30D040 = slot_color(3): TunicPainting's own green, the pack's green puppet), as
+# hookshot-B wore for wave1:37; without it a lane's color line (or none: B's slot red FF3030) decides.
+NO_PARTS = "LICHII_COOP_LOOK=cap_trim:"
+B_GREEN = "B:LICHII_COOP_COLOR=green"
+PARTS = r"coop: look: the parts are LICHII_COOP_LOOK's \(cap_trim:\), not the settings': 0 part\(s\) set"  # coop_look_live.cpp
 # wave1:37 expects, A's log. The 'wears' line names LICHII_COOP_SELF_TUNIC when set, else green
 # (lichii/hook/coop_puppet_config.cpp:55-59): run.ps1 put green's own files in, a live.py boot may not, so \S+.
 STARTS = r"coop: your Link wears \S+ at the start; green players get CoopPuppet_<Age>_Green"
@@ -120,13 +131,17 @@ def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour):
 
 @pytest.mark.budget(180)
 @pytest.mark.look
-@pytest.mark.needs_env(BLUE)
+@pytest.mark.needs_env(BLUE, B_GREEN, NO_PARTS)
 @pytest.mark.row("#202 own colour + 198 no cross guard (hs-tunic, row-198-gear F1)")
 def test_own_colour_no_cross_guard(pair):
     with pair.setup():
         need_child_in_play(pair)
         stand_apart(pair)             # hs-tunic.A.txt: A steps off and stands by B; B.txt: faces A, camera behind
     # the colour is set at the module's start: these lines are from the boot (pos=0), as the old row read them
+    for x in ("A", "B"):              # (else the lane file's parts are worn: the lines below would judge them)
+        bad = pair.log[x].find(r"LICHII_COOP_LOOK: '", pos=0)
+        assert bad is None, "%s: %s" % (x, bad)
+        assert pair.log[x].find(PARTS, pos=0), "%s: no /%s/: the module did not take LICHII_COOP_LOOK" % (x, PARTS)
     assert pair.log["A"].find(STARTS, pos=0), "A: no /%s/ (wave1:37)" % STARTS
     pair.until("A log /%s/" % OWN_BLUE, lambda: pair.log["A"].find(OWN_BLUE, pos=0), max_frames=300)
     assert pair.log["A"].find(PACK_WARN, pos=0) is None, "A: %s" % pair.log["A"].find(PACK_WARN, pos=0)

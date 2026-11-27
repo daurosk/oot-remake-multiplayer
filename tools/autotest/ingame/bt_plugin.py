@@ -34,6 +34,7 @@ import pair as P   # noqa: E402
 import testpack    # noqa: E402
 import testsave    # noqa: E402
 import solo        # noqa: E402
+import stale_paths  # noqa: E402
 import windowshot  # noqa: E402
 
 RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "SKIP", "NOT-RUN")
@@ -193,8 +194,31 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=lambda it: (_rep_of(it), 1 if it.get_closest_marker("leaves_play") else 0,
                                0 if it.get_closest_marker("smoke") else 1, order[id(it)]))
     _deselect_needs_env(config, items)
+    _mark_stale(config, items)
     if config.getoption("lane_check_only"):
         _lane_check_only(config, items)
+
+
+def _mark_stale(config, items):
+    """stale_paths.py (B #156): each collected test file is scanned once; a hit is kept on each of its items, whose
+    set-up is then SETUP-FAIL by name (pytest_runtest_setup below), and --lane-check-only prints it as SETUP-FAIL."""
+    seen, config._bt_stale = {}, []
+    for it in items:
+        path = str(getattr(it, "path", None) or it.fspath)
+        if path not in seen:
+            try:
+                seen[path] = stale_paths.scan_file(path)
+            except OSError:
+                seen[path] = []
+            config._bt_stale.extend(seen[path])
+        it._bt_stale = seen[path]
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    hits = getattr(item, "_bt_stale", None)
+    if hits:          # (before any fixture: no lane boot, no game input for a test that reads a path the module lacks)
+        raise P.SetupFail("; ".join(stale_paths.line_of(h) for h in hits))
 
 
 def _deselect_line(d):
@@ -421,7 +445,8 @@ def _lane_check_only(config, items):
             res["lanes"][str(lane)] = dict(info, ok=True)
         except P.SetupFail as e:
             res["lanes"][str(lane)] = {"ok": False, "why": str(e)}
-    res["ok"] = bool(lanes) and bool(items) and all(v["ok"] for v in res["lanes"].values())
+    res["stale"] = [stale_paths.line_of(h) for h in getattr(config, "_bt_stale", [])]
+    res["ok"] = bool(lanes) and bool(items) and all(v["ok"] for v in res["lanes"].values()) and not res["stale"]
     out = config.getoption("out") or os.path.join(os.getcwd(), "ingame-out")
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "setup.json"), "w", encoding="utf-8") as f:
@@ -434,6 +459,8 @@ def _lane_check_only(config, items):
         say("lane%s %s %s" % (lane, "SETUP-OK" if v["ok"] else "SETUP-FAIL",
                               ("commit %s dll %s" % (v.get("commit"), (v.get("dll_sha256") or "")[:16])) if v["ok"]
                               and not v.get("fake") else v.get("why", "fake")))
+    for why in res["stale"]:
+        say("SETUP-FAIL %s" % why)
     say("tests collected %d (smoke %d, look %d); RESULT: %s" % (res["collected"], res["smoke"], res["look"],
                                                                "SETUP-ONLY OK" if res["ok"] else "SETUP-FAIL"))
     config._bt_setup = res

@@ -251,6 +251,9 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     if (!after_call) {
         NewFrame(guest, now_ms);
         PoseFrame(guest, now_ms);
+        if (as_vars_probe_on_) {
+            AsVarsProbeFrame(guest, now_ms);
+        }
     } else if (pending_ != Pending::none) {
         Finish(guest, result, now_ms);
     }
@@ -321,6 +324,28 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
         }
     }
     CoopPose::OnCalcFrame(guest, input_.main_base, puppets, now_ms);
+}
+
+// Row 307: once a frame while LICHII_COOP_AS_VARS_PROBE=1, our Link's AS controller and the live puppets' to
+// the probe (coop_as_vars.h); it only reads.
+void Director::AsVarsProbeFrame(Guest& guest, std::uint64_t now_ms) {
+    const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base);
+    std::array<float, 3> place{};
+    if (player == 0 || !guest.Read(player + addr::kActorPosition, place.data(), sizeof(place))) {
+        return;
+    }
+    std::vector<std::pair<std::string, std::uint64_t>> puppets;
+    for (const auto& slot : slots_) {
+        if (slot.phase == Phase::live && slot.actor != 0) {
+            puppets.emplace_back("P" + std::to_string(slot.number) + " " + slot.actor_name,
+                                 Controller(guest, slot.actor));
+        }
+    }
+    const auto read = [&guest](std::uint64_t at, void* out, std::size_t size) { return guest.Read(at, out, size); };
+    for (const std::string& line :
+         as_vars_probe_.Look(read, Controller(guest, player), place, now_ms, puppets)) {
+        Say("as-vars probe: " + line);
+    }
 }
 
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
@@ -3197,6 +3222,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        g_director->SetAsVarsProbe(settings.as_vars_probe);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);

@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_as_vars.h"
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_follow.h"
@@ -437,6 +438,8 @@ public:
     // The Link puppets' director runs the pose copy (coop_pose.h); others, such
     // as the fairies', do not.
     void SetPoseCopy(bool on) { pose_copy_ = on; }
+    // Row 307: the AS variables probe (coop_as_vars.h, LICHII_COOP_AS_VARS_PROBE=1, reads only).
+    void SetAsVarsProbe(bool on) { as_vars_probe_on_ = on; }
     // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
     // offset 0: none, no colours on a character's puppet.
     // The sound list each puppet's row names (PackSoundLists): added to its "spawned" line.
@@ -728,6 +731,7 @@ private:
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
+    void AsVarsProbeFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
     std::optional<Call> Next(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
@@ -787,6 +791,8 @@ private:
     bool verbose_;
     bool anim_;
     bool pose_copy_ = false;
+    bool as_vars_probe_on_ = false;
+    CoopAsVars::Probe as_vars_probe_;
     std::uint64_t character_apply_ = 0;
     std::map<std::string, std::string, std::less<>> sound_lists_;
     std::array<std::uint8_t, 16> character_apply_head_{};
@@ -879,6 +885,7 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
+    bool as_vars_probe = false;   // LICHII_COOP_AS_VARS_PROBE (row 307, reads only)
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;

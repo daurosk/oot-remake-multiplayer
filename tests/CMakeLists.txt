@@ -102,6 +102,7 @@ add_executable(coop_tests
   lichii/session_end_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
+  lichii/as_vars_test.cpp
   lichii/ocarina_sound_test.cpp
   lichii/look_share_test.cpp
   lichii/link_sound_test.cpp

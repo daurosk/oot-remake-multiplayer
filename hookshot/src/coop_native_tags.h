@@ -44,6 +44,18 @@ inline constexpr std::uint64_t kTextColour1 = 0x8152c810 - 0x80020000;
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;                     // (bytes) -> guest memory
 inline constexpr std::uint64_t kPaneXY = 0x6c;     // pane+: f32 x, y (the translation f_8022a3e0 sets)
 inline constexpr std::uint64_t kPaneFlags = 0xa8;  // pane+: u32; bit 8 a pane placed elsewhere, bit 20 tell the layout
+// A balloon part is a layout with its own open state (part+0x3a: 0 closed, 2 open, 3 closing; its in and out
+// animations at part+0x8 / +0x10). The balloon step f_8022b900 opens a closed part with f_80020d00(part, 0, 0, 1,
+// part+0x30 != 0) and closes one with f_80220320(part, 0, 0, 1), and shows or hides the part's root pane itself only
+// when the part has neither animation. A part only shown, never opened, stays closed and is not seen (nametags-300,
+// 0.12.0: "1 shown" in the log, no tag in the shots). The same step shows the screen's own root pane
+// (f_80229650(layout+0x40), layout at screen+0x28) only while one of its NPC balloons is in front of the camera, and
+// leaves it as it was when it has none.
+inline constexpr std::uint64_t kLayoutOpen = 0x80020d00 - 0x80020000;    // (part, 0, 0, 1, part+0x30 != 0)
+inline constexpr std::uint64_t kLayoutClose = 0x80220320 - 0x80020000;   // (part, 0, 0, 1)
+inline constexpr std::uint64_t kLayoutState = 0x3a;   // part+: u8, 0 closed, 2 open, 3 closing
+inline constexpr std::uint64_t kLayoutAnims = 0x8;    // part+: two pointers, its in and out animations
+inline constexpr std::uint64_t kLayoutOpenArg = 0x30; // part+: a pointer; set: the open's last argument is 1
 inline constexpr std::uint64_t kUiManagerGot = 0x84c9e098 - 0x80020000;  // **this: the UI manager
 inline constexpr std::uint64_t kUiCount = 0x8;     // manager+: u32
 inline constexpr std::uint64_t kUiScreens = 0x10;  // manager+: the screen pointers
@@ -117,6 +129,13 @@ public:
     bool Step(Game& game, const std::vector<Spot>& far_to_near, float width, float height);
     void HideAll(Game& game);
     std::size_t shown() const { return used_.size(); }
+    // Read back after the last Step (nametags-300): how many of our parts the game holds open (state 2, or 1 while
+    // opening) and whether the balloon screen's root pane is shown. Tags are seen only when both hold.
+    struct Seen {
+        std::size_t shown = 0, open = 0;
+        bool screen_root = false;
+    };
+    Seen seen() const { return seen_; }
     std::uint64_t screen() const { return screen_; }
     bool no_memory() const { return block_failed_; }
 
@@ -133,7 +152,9 @@ private:
     std::uint64_t screen_ = 0;
     std::uint64_t block_ = 0;
     bool block_failed_ = false;
-    std::vector<std::uint64_t> used_;                       // the root panes shown last frame
+    std::vector<std::uint64_t> used_;                       // the part objects opened last frame
+    bool root_forced_ = false;                              // we showed the screen's root pane (it was hidden)
+    Seen seen_;
     std::array<std::string, addr::kParts> named_{};         // the name each part was given
     std::array<std::uint64_t, addr::kParts> named_on_{};    // ... on which part object
     std::array<std::uint32_t, addr::kParts> rgb_{};         // the colour each part's text was given

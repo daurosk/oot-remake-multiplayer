@@ -133,6 +133,15 @@ struct SlowStep {
 SlowStep PartySlow();
 SlowStep TagsSlow();
 
+// nametags-300: the name tags as the game holds them after the last step (CoopNativeTags::Balloons::Seen): our tags
+// on its balloons, how many of those parts it holds open, whether the balloon screen's root pane is shown. A tag is
+// seen only when its part is open and the screen root is shown. The bridge's state carries it ("name_tags"). Any thread.
+struct TagsNow {
+    int shown = 0, open = 0;
+    bool screen_root = false;
+};
+TagsNow TagsSeen();
+
 // The players on the map (Multiplayer > Settings: "Show players on map",
 // "Names on map"; LICHII_COOP_MAP, LICHII_COOP_MAP_NAMES at start): count
 // from the next present. Any thread.

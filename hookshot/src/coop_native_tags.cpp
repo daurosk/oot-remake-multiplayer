@@ -62,6 +62,45 @@ bool ShowPane(Game& game, std::uint64_t pane, bool shown) {
     return pane != 0 && game.Call(game.MainBase() + addr::kPaneShow, {pane, shown ? 1u : 0u, 0, 0, 0}).has_value();
 }
 
+bool PaneShown(Game& game, std::uint64_t pane) {
+    std::uint32_t flags = 0;
+    return pane != 0 && ReadValue(game, pane + addr::kPaneFlags, flags) && (flags & 1u) != 0;
+}
+
+bool HasAnims(Game& game, std::uint64_t part) {
+    std::uint64_t anims[2] = {};
+    return game.Read(part + addr::kLayoutAnims, anims, sizeof anims) && (anims[0] | anims[1]) != 0;
+}
+
+// As the balloon step shows one of its own: a closed part opened (its in animation, when it has one, brings it in),
+// the root pane shown when the part has no animations.
+void OpenPart(Game& game, std::uint64_t part, std::uint64_t root) {
+    std::uint8_t state = 0;
+    std::uint64_t open_arg = 0;
+    if (ReadValue(game, part + addr::kLayoutState, state) && state == 0) {
+        ReadValue(game, part + addr::kLayoutOpenArg, open_arg);
+        game.Call(game.MainBase() + addr::kLayoutOpen, {part, 0, 0, 1, open_arg != 0 ? 1u : 0u});
+    }
+    if (!HasAnims(game, part)) ShowPane(game, root, true);
+}
+
+// As the balloon step lets one of its own go: an open part closed (not one already closing), the root pane hidden
+// when the part has no animations.
+void ClosePart(Game& game, std::uint64_t part) {
+    std::uint8_t state = 0;
+    if (ReadValue(game, part + addr::kLayoutState, state) && state != 0 && state != 3) {
+        game.Call(game.MainBase() + addr::kLayoutClose, {part, 0, 0, 1, 0});
+    }
+    if (!HasAnims(game, part)) ShowPane(game, PartRoot(game, part), false);
+}
+
+std::uint64_t ScreenRoot(Game& game, std::uint64_t screen) {
+    std::uint64_t layout = 0;
+    return screen != 0 && ReadValue(game, screen + addr::kScreenLayout, layout) && layout != 0
+               ? PartRoot(game, layout)
+               : 0;
+}
+
 }  // namespace
 
 std::string Clean(std::string_view utf8, std::size_t max_bytes) {
@@ -241,10 +280,12 @@ bool Balloons::Step(Game& game, const std::vector<Spot>& far_to_near, float widt
     const std::uint64_t screen = ScreenByVtable(game, addr::kBalloonVtable);
     if (screen != screen_) {
         screen_ = screen;
-        used_.clear();  // a new screen (a load): the old panes went with the old one
+        used_.clear();  // a new screen (a load): the old parts went with the old one
         named_on_ = {};
         rgb_on_ = {};
+        root_forced_ = false;
     }
+    seen_ = {};
     if (screen == 0) return false;
     const auto plan = PlanParts(far_to_near, width, height);
     std::vector<std::uint64_t> now;
@@ -257,19 +298,39 @@ bool Balloons::Step(Game& game, const std::vector<Spot>& far_to_near, float widt
             }
             Colour(game, tag.part, part, tag.rgb);
             const std::uint64_t root = PartRoot(game, part);
-            if (root != 0 && MovePane(game, root, tag.at) && ShowPane(game, root, true)) now.push_back(root);
+            if (root == 0 || !MovePane(game, root, tag.at)) continue;
+            OpenPart(game, part, root);
+            now.push_back(part);
         }
     }
     for (const std::uint64_t old : used_) {
-        if (std::find(now.begin(), now.end(), old) == now.end()) ShowPane(game, old, false);
+        if (std::find(now.begin(), now.end(), old) == now.end()) ClosePart(game, old);
     }
     used_ = std::move(now);
+    // The screen's root pane: shown while we have tags (the game hides it when its own NPC balloon is behind the
+    // camera or none ran yet), given back hidden once ours are gone and we were the ones who showed it.
+    const std::uint64_t screen_root = ScreenRoot(game, screen);
+    if (!used_.empty() && screen_root != 0 && !PaneShown(game, screen_root)) {
+        root_forced_ = ShowPane(game, screen_root, true) || root_forced_;
+    } else if (used_.empty() && root_forced_) {
+        ShowPane(game, screen_root, false);
+        root_forced_ = false;
+    }
+    seen_.shown = used_.size();
+    seen_.screen_root = PaneShown(game, screen_root);
+    for (const std::uint64_t part : used_) {
+        std::uint8_t state = 0;
+        seen_.open += ReadValue(game, part + addr::kLayoutState, state) && (state == 1 || state == 2);
+    }
     return block_ != 0 || plan.empty();
 }
 
 void Balloons::HideAll(Game& game) {
-    for (const std::uint64_t pane : used_) ShowPane(game, pane, false);
+    for (const std::uint64_t part : used_) ClosePart(game, part);
     used_.clear();
+    if (root_forced_) ShowPane(game, ScreenRoot(game, screen_), false);
+    root_forced_ = false;
+    seen_ = {};
 }
 
 }  // namespace CoopNativeTags

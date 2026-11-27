@@ -726,6 +726,12 @@ keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1
   `f_807906c0`, each with `T_Text_00` and `N_Position_00`. Its step `f_8022b900` places each over its actor with
   `f_80235ec0(out xy, &world xyz, &depth)` (true when on screen), the game's camera being `*(*0x84ea1cf0+0x28)`.
   (notes)
+- Each part is a layout with its own open state (`part+0x3a`: 0 closed, 2 open, 3 closing; its in and out
+  animations at `part+0x8` / `+0x10`). The step opens a closed part with `f_80020d00(part, 0, 0, 1, part+0x30 != 0)`
+  and closes one with `f_80220320(part, 0, 0, 1)`; it shows or hides the part's root pane itself only when the part
+  has no animations. A part whose root pane is only shown stays closed and is not seen (row 300, 0.12.0). The step
+  also shows the screen's own root pane (`f_80229650(layout+0x40)`, layout at `screen+0x28`) only while one of its
+  NPC balloons is in front of the camera, and leaves it as it was with none. (checked: disassembly of `f_8022b900`)
 - Still to find: the part's own fields (entries `0x88` apart from `+0xc60` / `+0xe60`, an actor handle at `+0x10` /
   `+0x18`), or the request path of the AI node `OneShotRequestBalloonMessage` (`0x84a45f98`, checked). (notes)
 

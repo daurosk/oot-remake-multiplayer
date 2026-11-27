@@ -1584,6 +1584,81 @@ class WarpPlayUi(unittest.TestCase):
         self.assertEqual(pair.c["A"].last_frame, before)
 
 
+
+class BootPlayUi(unittest.TestCase):
+    """'In play' for a set-up also needs each game's play UI not down (Pair.ready; pause-press-0121): gate-pause-309d7180,
+    S 309d7180c, A's boot left its play UI down (game-out-A.txt :4323 down, :5052 up) after the bridge said in play;
+    test_pause's + came in between, A never paused. BT_FAKE_BOOT_UI_DOWN=A: the fake's A the same, + refused until up."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def lane(self, **env):
+        import fakegame
+        from unittest import mock
+        with mock.patch.dict(os.environ, env):
+            lane = fakegame.FakeLane(self.tmp)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=self.tmp)
+        self.addCleanup(pair.close)
+        pair.begin(120)
+        return pair
+
+    def test_until_in_play_waits_for_the_play_ui_and_says_so(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="150")
+        self.assertEqual(pair.play_ui("A"), "down")
+        self.assertTrue(pair.in_play(pair.state("A")))      # (the bridge's state alone: in play, the gate's A)
+        self.assertFalse(pair.ready("A"))
+        pair.until_in_play("both", max_frames=P.READY_FRAMES)
+        self.assertEqual(pair.play_ui("A"), "up")
+        self.assertIsNone(pair.play_ui("B"))                # (no line: nothing waited for)
+        said = [n for n in pair.notes if n.startswith("A: in play with its play UI down: waited ")]
+        self.assertEqual(len(said), 1, pair.notes)
+        self.assertFalse(any(n.startswith("B: in play with its play UI down") for n in pair.notes), pair.notes)
+
+    def test_boot_ready_waits_for_the_play_ui(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="150")
+        pair.boot_ready()
+        self.assertEqual(pair.play_ui("A"), "up")
+        pair.press("A", ["PLUS"], frames=4)
+        pair.step_both(10)
+        self.assertIsNotNone(pair.state("A").get("not_ready"))     # (paused: + taken once the UI was up)
+
+    def test_play_ui_never_up_names_it_in_the_fail(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="100000")
+        with self.assertRaisesRegex(AssertionError, r"A: scene=\S+ loading=\S+ event=\S+ not_ready=None play_ui=down"):
+            pair.until_in_play("both", max_frames=60)
+
+    def test_play_ui_reads_on_and_starts_again_on_a_new_log(self):
+        pair = self.lane()
+        self.assertIsNone(pair.play_ui("A"))
+        game_log = pair.log["A"].path
+        with open(game_log, "a", encoding="utf-8") as f:
+            f.write("[hos x] coop: native ui: the game's play UI is down (a scene load or the title): no screen\n")
+            f.write("[hos x] coop: native ui: the game's play UI is u")      # (half a line: not read yet)
+        self.assertEqual(pair.play_ui("A"), "down")
+        with open(game_log, "a", encoding="utf-8") as f:
+            f.write("p (patch 0018's HUD screen ran since the load)\n")
+        self.assertEqual(pair.play_ui("A"), "up")
+        pair.log["A"] = P.Log(game_log)                     # (Pair.rejoin's new Log: read again from 0)
+        self.assertEqual(pair.play_ui("A"), "up")
+
+    def test_suite_test_pause_passes_with_a_s_play_ui_down_after_the_boot(self):
+        """The fake suite's test_pause with A's boot play UI down (refusing +): PASS or NO-REF, and the boot proof's
+        or the set-up's note says the wait. Before the fix: FAIL 'both games paused (no fresh Link sample)', the gate's."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        out = os.path.join(tmp, "o")
+        p = pytest_run([".", "--fake", "--out", out, "-q", "-k", "test_pause", "--no-smoke-gate", "--no-rerun"],
+                       env={"BT_FAKE_BOOT_UI_DOWN": "A", "BT_FAKE_BOOT_UI_FRAMES": "1200"})
+        rows = [r for r in summary(out)["tests"] if r["test"].split("::")[-1] == "test_pause"]
+        self.assertEqual(len(rows), 1, p.stdout[-3000:])
+        self.assertIn(rows[0]["result"], ("PASS", "NO-REF"), (rows[0], p.stdout[-3000:]))
+        proof = (summary(out).get("boot_proof") or {}).get("lane1") or ""
+        self.assertIn("A: in play with its play UI down: waited ", proof)    # (the boot proof's wait, said)
+        self.assertNotIn("B: in play with its play UI down", proof)
+
 class SetupLimit(unittest.TestCase):
     """Pair.setup's 30 s limit holds for the calls inside it (review-c123-6 point 2): a hung bridge in a set-up is a
     SETUP-FAIL at the limit, not a FAIL at the test's budget. A fake clock: no real waiting."""

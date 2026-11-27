@@ -72,6 +72,11 @@ SCENE_LOADED = r"coop: native ui: scene load ended"     # (seen: songs-frogs-733
 # once the game that warped shows its play UI up again (Pair._until_play_ui).
 PLAY_UI = r"coop: native ui: the game's play UI is (up|down)"
 PLAY_UI_FRAMES = 600  # frames: 2 x the 300-frame wait that let B's + through after its arrival (pause-warp-826f66cb)
+# The BOOT path too (pause-press-0121): gate-pause-309d7180 (S 309d7180c) test_pause FAIL, the first test after the boot:
+# A's boot load took its play UI down (game-out-A.txt :4323), a soldier event ran :4841-:4915, free play :4917, the
+# bridge said in play, and A's 'play UI is up' came only at :5052, after the test's +: A never paused, B (up since
+# :4596) did. So 'in play' for a set-up (Pair.ready: until_in_play, so boot_ready, need_boot_place, recover and every
+# test's set-up) also needs each game's last PLAY_UI line not 'down' (no line at all: nothing is waited for).
 OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's end (the frogs' boot event: 0.7 s)
 # D-pad Left's two module lines (probe-ocarina-2f14b333, 11-26, both games, cited by its game-out-X.txt line): the press
 # ALWAYS starts the game's free-Ocarina event (OCARINA_FREE: B :4810, A :5814; also both frogs SETUP-FAIL runs, 733c4d8f
@@ -370,6 +375,7 @@ class Pair:
         self.shots = []        # [{"game", "name", "path", "ref", "score", "ok"}] of the running test
         self.boot_scene = None # the boot's scene (bt_plugin._boot_proof): where every default-boot test starts
         self.notes = []
+        self._ui = {}          # {x: [log path, bytes read, last PLAY_UI word or None]} (Pair.play_ui)
         self.window_shooter = None   # (x, path) -> path: window shots (windowshot.Shooter; the fake lane's own)
         # 'NAME=V' / 'A:NAME=V' -> bool: does the boot give that switch (its '#! switches' + --env; bt_plugin lane_pair
         # sets it). None: not known (a Pair made outside the plugin), nothing is checked.
@@ -562,11 +568,44 @@ class Pair:
     def in_play(self, st):
         return bool(st.get("scene")) and not st.get("loading") and not st.get("event") and st.get("not_ready") is None
 
+    def play_ui(self, x):
+        """Game x's play UI from its module log: the last PLAY_UI line's word, 'up' or 'down'; None while the log has
+        none (a build without the line, a fake that does not say it). Read on from where the last call stopped (whole
+        lines only), from the log's start: a boot's 'down' came before the bridge connected (gate-pause-309d7180 A
+        :4323). A new log (Pair.rejoin) or a shorter file starts again from 0."""
+        log = self.log.get(x) if isinstance(getattr(self, "log", None), dict) else None
+        if log is None:
+            return None
+        ui = getattr(self, "_ui", None)
+        if ui is None:
+            ui = self._ui = {}
+        have = ui.get(x)
+        if have is None or have[0] is not log or log.size() < have[1]:
+            have = ui[x] = [log, 0, None]
+        try:
+            with open(log.path, "rb") as f:
+                f.seek(have[1])
+                data = f.read()
+        except OSError:
+            return have[2]
+        end = data.rfind(b"\n") + 1
+        if end:
+            for m in re.finditer(PLAY_UI, data[:end].decode("utf-8", "replace")):
+                have[2] = m.group(1)
+            have[1] += end
+        return have[2]
+
+    def ready(self, x, st=None):
+        """Game x ready for a test's presses: in play (in_play) AND its play UI not down (play_ui): until it is up the
+        game refuses + (crawl-337-12 after a warp, gate-pause-309d7180 after the boot)."""
+        st = self.state(x) if st is None else st
+        return self.in_play(st) and self.play_ui(x) != "down"
+
     def why_not(self, x, st=None):
         """Game x's state in one line: what in_play looks at (for a FAIL / SETUP-FAIL that names each game)."""
         st = self.state(x) if st is None else st
-        return "%s: scene=%s loading=%s event=%s not_ready=%s" % (x, st.get("scene"), st.get("loading"), st.get("event"),
-                                                               st.get("not_ready"))
+        return "%s: scene=%s loading=%s event=%s not_ready=%s play_ui=%s" % (
+            x, st.get("scene"), st.get("loading"), st.get("event"), st.get("not_ready"), self.play_ui(x))
 
     def why_now(self, x, seconds=AWAY_CHECK_S):
         """why_not(x) for a failure's text, read on its OWN short deadline (as away_from_boot): the test's is often
@@ -597,6 +636,8 @@ class Pair:
         """Steps both games until every one of `games` is in play (a fresh Link sample, a scene, no load, no event).
         `games` defaults to the pair's OWN games (self.c): a --solo pair has game A only, and a fixed ('A', 'B')
         read state('B') -> KeyError instead of a SETUP-FAIL (review-rows-c130-3 16:38, need_boot_place).
+        In play = Pair.ready: also the game's play UI not down (play_ui; the game refuses + until it is up, gate-pause-
+        309d7180 A after the boot); such a wait is noted ('in play with its play UI down: waited N frames ...').
         A stale sample ('Link sample older than the frame'), a load or an event is a game not ready YET: it is stepped,
         never judged from one read (pilot test-bridge-pilot-fa63e90f: test_boot / test_pause read once, failed on a
         stale sample). After max_frames: AssertionError naming each game's state. On the deadline (TestTimeout, an
@@ -604,10 +645,27 @@ class Pair:
         (why_now), so the timeout keeps its text and gains the games' states (was why_not on the spent deadline: its
         'state not sent' replaced both, crawl-337-11)."""
         games = tuple(self.c) if games is None else tuple(games)
+        held = {}     # {x: frames game x was in play with its play UI still down} (said in the notes once it is up)
+        ran = [0]
+
+        def all_ready():
+            ok = True
+            for x in games:
+                st = self.state(x)
+                if not self.ready(x, st):
+                    ok = False
+                    if self.in_play(st):
+                        held.setdefault(x, ran[0])
+            ran[0] += CHUNK
+            return ok
         try:
-            return self.until(what, lambda: all(self.in_play(self.state(x)) for x in games), max_frames)
+            v = self.until(what, all_ready, max_frames)
         except AssertionError as e:
             raise type(e)("%s; %s" % (e, "; ".join(self.why_now(x) for x in games))) from None
+        for x, since in sorted(held.items()):
+            self.notes.append("%s: in play with its play UI down: waited %d frames for '%s'"
+                              % (x, ran[0] - CHUNK - since, "the game's play UI is up"))
+        return v
 
     def boot_ready(self, scene=None, max_frames=BOOT_FRAMES):
         """The lane's boot proof (bt_plugin.lane_pair, NO REPEAT VOIDS after test-bridge-pilot-fa63e90f r1: B was left

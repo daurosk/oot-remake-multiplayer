@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -695,13 +696,37 @@ TEST_CASE("host menu: the process memory line reads this process's numbers (row 
 #ifdef _WIN32
   CHECK(line.find(" private ") != std::string::npos);
   CHECK(line.find(", handles ") != std::string::npos);
-  // Row 271: every heap summed, and private outside them (Longshot's and the driver's own blocks)
-  CHECK(line.find(" heaps: allocated ") != std::string::npos);
-  CHECK(line.find("; outside the heaps ") != std::string::npos);
+  // fps-spike-0121: the periodic line walks no heap (each walk froze the game 80-100 ms)
+  CHECK(line.find("heaps") == std::string::npos);
+  // Row 271: the heap split, on demand only (OOT_COOP_MEMORY_HEAPS=1): every heap summed, and private outside them
+  const std::string heaps = CoopHostMenu::ProcessHeapsText();
+  CHECK(heaps.rfind("all ", 0) == 0);
+  CHECK(heaps.find(" heaps: allocated ") != std::string::npos);
+  CHECK(heaps.find("; outside the heaps ") != std::string::npos);
 #else
   CHECK(line.find("VmRSS") != std::string::npos);
 #endif
   CHECK(CoopHostMenu::kMemoryLineMs == 30'000);
+}
+
+TEST_CASE("host menu: the memory line stays cheap with a big heap, the heap split is opt-in (fps-spike-0121)") {
+  // ~64 MB in 1M small blocks: HeapSummary walks them (tens of ms, ~170 ms at the game's 1.1 GB); the counters do not
+  std::vector<std::unique_ptr<char[]>> blocks;
+  blocks.reserve(1'000'000);
+  for (int i = 0; i < 1'000'000; ++i) {
+    blocks.emplace_back(new char[48 + (i % 5) * 8]);
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  for (int i = 0; i < 10; ++i) {
+    CHECK_FALSE(CoopHostMenu::ProcessMemoryText().empty());
+  }
+  const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  CHECK(ms < 50.0);   // 10 reads; ~0.01 ms each here, a heap walk alone is more than 5 ms
+  CHECK(std::string(CoopHostMenu::kMemoryHeapsEnv) == "OOT_COOP_MEMORY_HEAPS");
+#ifdef _WIN32
+  CHECK(CoopHostMenu::MemoryHeapsOn() == (std::getenv("OOT_COOP_MEMORY_HEAPS") != nullptr &&
+                                          std::string(std::getenv("OOT_COOP_MEMORY_HEAPS")) == "1"));
+#endif
 }
 
 TEST_CASE("host menu: every game's memory line is due once a minute, the first at once (row 271)") {

@@ -94,6 +94,8 @@ constexpr const char* kClipboardUnread =
     "The clipboard could not be read: no clipboard tool. Press Ctrl+V while typing, install wl-clipboard (Wayland) "
     "or xclip (X11), or type the code.";
 #endif
+// Copy LAN / Copy VPN before this PC's networks were first read (CoopFiles::KeptLocalCards, off the frame).
+constexpr const char* kNetworksReading = "Reading this PC's networks: press this again in a moment.";
 using CoopPauseMenu::Input;
 using CoopPauseMenu::Request;
 using State = CoopPauseMenu::Session::State;
@@ -526,6 +528,10 @@ void SayOnPage(const char* otherwise);   // (below)
 
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
+    if (st.state == HOS_COOP_HOSTING) {
+        // fps-spike-0121: this PC's network cards read once, off the frame, for the Copy LAN / Copy VPN rows
+        (void)CoopFiles::KeptLocalCards(NowMs(), true);
+    }
     const std::uint64_t session = g_session;
     // (the relay's room or code first, which needs no router: it is asked at once with the built-in relay, and the
     // invite code is only taken alone when the relay has not answered in kRelayWaitMs or said why not)
@@ -1019,7 +1025,12 @@ void CopyLan(bool vpn) {
         g_menu.SetNote({"The server is not running yet."});
         return;
     }
-    const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
+    const auto cards = CoopFiles::KeptLocalCards(NowMs());   // (fps-spike-0121: read off the frame)
+    if (!cards) {
+        g_menu.SetNote({kNetworksReading});
+        return;
+    }
+    const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(*cards);
     const auto& addresses = vpn ? split.vpn : split.home;
     const std::uint64_t session = g_session;
     const bool open = st.same_network_open != 0;   // (this network's players need no password: none on the line)
@@ -2510,7 +2521,12 @@ void PageCopyNow(PageCopy what) {
             return;
         }
         // (as the menu's Same network / VPN rows: the first address of that kind, the port and the password)
-        const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
+        const auto cards = CoopFiles::KeptLocalCards(NowMs());   // (fps-spike-0121: read off the frame)
+        if (!cards) {
+            SetPageNote(kNetworksReading);
+            return;
+        }
+        const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(*cards);
         const auto& addresses = vpn ? split.vpn : split.home;
         if (addresses.empty()) {
             SetPageNote(vpn ? "No VPN address found" : "No network address found");

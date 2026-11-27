@@ -61,10 +61,13 @@ START_ENDED = r"coop: multiplayer tab: co-op that came with the game's start end
 ANNOUNCED = r"coop: lan: this game is announced on the local network"             # coop_lan_net.cpp:115
 WELCOMED = r"coop: welcomed as player \d+ on "                                    # lichii/hook/coop_hook.cpp:2779
 NO_CRASH = r"CRASH: exception|unhandled exception|fault at"                      # test_lan251 NO_CRASH
-VCORES = re.compile(r"vcores: .*waited (\d+) ms for a core")                     # the player's stall line (playerbug-292.md)
+VCORES = re.compile(r"vcores: .*waited (\d+(?:\.\d+)?) ms for a core")          # the player's stall line (playerbug-292.md)
 
 WINDOWS = 13          # full 5 s windows of A judged: 65 s, two of the 30 s network reads (kNetworksEveryMs)
 MAX_SPIKY = 1         # windows of A with an over-40 present allowed (the player's signature: >= 2 of 13)
+SETTLE = 2            # windows dropped after `resume`: the partial one, and the first full one, which carries the
+                      # bridge hold's end (an 8-9 s held frame: its GPU catch-up presents over 40 ms in every run,
+                      # gate-hostmenu-309d7180 and tb-gate-hostmenu-f9f3b9c2-2; a player's game is never held)
 
 
 def session_runner(pair):
@@ -76,9 +79,9 @@ def judge_spikes(win, vcore_lines=()):
     """(bad, note) for A's full windows `win` ([(fps, s, buckets)], buckets[5] = presents over 40 ms)."""
     spiky = [i for i, (_, _, b) in enumerate(win) if b[5] > 0]
     mean = sum(f for f, _, _ in win) / max(1, len(win))
-    waits = [int(m.group(1)) for m in map(VCORES.search, vcore_lines) if m]
+    waits = [float(m.group(1)) for m in map(VCORES.search, vcore_lines) if m]   # ("waited 96.4 ms": tenths)
     note = "A hosting: %d windows, fps mean %.1f, windows with an over-40 present %s, vcores waits max %s ms" % (
-        len(win), mean, spiky or "none", max(waits) if waits else "none")
+        len(win), mean, spiky or "none", "%.1f" % max(waits) if waits else "none")
     bad = []
     if len(spiky) > MAX_SPIKY:
         bad.append("%s: more than %d spiky windows (the player's 30 s signature)" % (note, MAX_SPIKY))
@@ -106,7 +109,7 @@ def test_host_menu_no_spikes(pair):
     got = []
     try:
         while True:
-            got = windows(pair.log["A"].since(mark))[1:]       # [1:]: the partial first one
+            got = windows(pair.log["A"].since(mark))[SETTLE:]  # (the partial first one and the hold's end)
             if len(got) >= WINDOWS:
                 break
             pair.deadline.check("%d full vi windows of A (have %d)" % (WINDOWS, len(got)))

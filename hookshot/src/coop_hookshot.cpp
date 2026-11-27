@@ -2201,11 +2201,18 @@ void Frame(void* ctx, int site) {
     }
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (site == HOS_COOP_SITE_FRAME) {  // row 271: this game's memory once a minute, solo too (coop_host_menu.h)
-        // Row 292: read on a thread of its own (it sums every heap of the process: slow), never in the frame.
+        // Row 292: read on a thread of its own, never in the frame. fps-spike-0121: counters only; the heap walk froze
+        // the whole game even off the frame, so it runs only for a memory hunt (OOT_COOP_MEMORY_HEAPS=1).
         static std::uint64_t next_memory_ms = 0;
         static CoopOffFrame::Slot memory_read;
         if (CoopHostMenu::MemoryLineDue(SteadyMs(), next_memory_ms)) {
-            memory_read.Start([] { LOG_INFO(Core, "coop: memory: {}", CoopHostMenu::ProcessMemoryText()); });
+            memory_read.Start([] {
+                std::string text = CoopHostMenu::ProcessMemoryText();
+                if (CoopHostMenu::MemoryHeapsOn()) {
+                    text += "; " + CoopHostMenu::ProcessHeapsText();
+                }
+                LOG_INFO(Core, "coop: memory: {}", text);
+            });
         }
     }
     if (!g_on) {

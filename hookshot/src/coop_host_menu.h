@@ -158,14 +158,23 @@ RejoinId RejoinIds(const std::string& client_id, const std::string& password, co
 
 // Copies `text` into a fixed C string, cut to fit, always ended.
 void CopyText(char* out, std::size_t size, const std::string& text);
-// Row 260: this process's memory as one log line: private (commit) bytes, the working set, the process heap's
-// allocated and committed bytes, the handle count (Windows); resident and virtual bytes (Linux). Read-only, cheap
-// (no heap walk). The host's game logs it every kMemoryLineMs with the server's sizes (HostService::memory_line).
-// Row 271: on Windows also every heap of the process summed (HeapSummary each: the driver's and other DLLs' heaps
-// too) and the private bytes outside them (taken straight from Windows: Longshot's and the driver's own blocks).
+// Row 260: this process's memory as one log line: private (commit) bytes, the working set and the handle count
+// (Windows); resident and virtual bytes (Linux). Counters only, no heap walk: cheap. The host's game logs it every
+// kMemoryLineMs with the server's sizes (HostService::memory_line).
+// fps-spike-0121: it read the heaps (HeapSummary) until 0.12.0; each read froze the whole game for 80-100 ms, so the
+// host (3 reads a minute) dropped a frame in about every 4th 5 s window. That split is ProcessHeapsText now.
 std::string ProcessMemoryText();
+// Row 271: every heap of the process summed (HeapSummary each: the driver's and other DLLs' heaps too) and the private
+// bytes outside them (taken straight from Windows: Longshot's and the driver's own blocks), as
+// "all N heaps: allocated X MB, committed Y MB; outside the heaps Z MB". SLOW: it walks every heap and the game
+// hitches while it runs, so only with OOT_COOP_MEMORY_HEAPS=1 (MemoryHeapsOn), for a memory hunt. Windows only.
+std::string ProcessHeapsText();
+inline constexpr const char* kMemoryHeapsEnv = "OOT_COOP_MEMORY_HEAPS";
+// True when the environment has OOT_COOP_MEMORY_HEAPS=1 (read once).
+bool MemoryHeapsOn();
 // Row 271: every game (solo, guest, host) logs `coop: memory: <ProcessMemoryText>` once per kGameMemoryLineMs from its
-// frame hook, so a player's log shows whether private grows in the heaps (allocations, ours among them) or outside.
+// frame hook (read off the frame), so a player's log shows how private grows; with MemoryHeapsOn the line also has
+// "; <ProcessHeapsText>": whether it grows in the heaps (allocations, ours among them) or outside.
 // True when the line is due at now_ms (then next_ms moves on by kGameMemoryLineMs; the first call is due at once).
 bool MemoryLineDue(std::uint64_t now_ms, std::uint64_t& next_ms);
 // The autotest's in-game host (tools/autotest hookshot.py --host-in-game, scenario step `menu host`): the game hosts

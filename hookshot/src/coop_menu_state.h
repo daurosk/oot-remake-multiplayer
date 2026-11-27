@@ -55,10 +55,21 @@ struct Minus {
     std::vector<Line> key_items;   // the key items page's lines under its heading (only while details_page is 1)
 };
 
+// Row 295: the game's Map page (the - menu's first tab) as its screen's last update left it: its content panes found
+// and how many of them show (the backdrop BG_00 not counted). `up`: that screen updated within the last 300 ms or 2
+// presents (CoopFresh: a held, stepped game keeps it).
+struct MapPage {
+    bool up = false;
+    int panes = 0;
+    int shown = 0;
+};
+
 // The `menu` member's value: {"coop":{...},"customize_screen":{...}} (docs/playtest.md); with the - menu's tabs,
-// {"coop":...,"customize_screen":...,"minus":{...}}.
+// {"coop":...,"customize_screen":...,"minus":{...}}; with the Map page too, ...,"map_page":{...}.
 std::string Json(const Tab& tab, const Screen& screen);
 std::string Json(const Tab& tab, const Screen& screen, const Minus& minus);
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus, const MapPage& map);
 std::string MinusJson(const Minus& minus);
+std::string MapPageJson(const MapPage& map);
 
 }  // namespace CoopMenuState

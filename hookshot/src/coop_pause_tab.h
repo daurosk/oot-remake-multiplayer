@@ -1045,6 +1045,16 @@ bool FreePlayFresh(bool free_play, std::uint64_t made_ms, std::uint64_t now_ms, 
 inline constexpr std::uint64_t kMapUnderAfterMs = 450;
 bool MapUnderHidden(bool hide, bool up, bool sliding, bool native, std::uint64_t open_ms, std::uint64_t seen_ms,
                     std::uint64_t now_ms);
+// Row 295: what the Map page's content pane i gets back when its panes are looked up again (FollowMapUnder: the Map
+// screen opening again at the same addresses). L from co-op's page with the tabs native closes CoopMenu_00 and the
+// Map sequence opens the SAME Map screen again (state 1): its panes, hidden or moved by us, are the same ones. Found at
+// the address it had (`was_pane` == `pane`): shown again if we hid it and it was shown before (`hidden`, `was_shown`),
+// put back at its own x if a slide had moved it (`sliding`). Another address: a new pane, never ours to touch.
+struct MapPaneBack {
+    bool show = false;
+    bool place = false;
+};
+MapPaneBack MapPaneOnLookAgain(std::uint64_t was_pane, std::uint64_t pane, bool hidden, bool was_shown, bool sliding);
 
 // The - strip's game tabs shown (3, or 4 with slot 3). The game's own code fills three - tabs; a fourth (Character
 // Select's Characters, in slot 0, his others after it) is filled only by his code patch, built into the game
@@ -1299,6 +1309,8 @@ CoopMenuState::Screen CustomizeScreen();
 // Co-op's - menu tabs as MinusWords last drew them (row 223: the details list's page and its key items), for the same
 // state; closed while none of ours shows. Any thread.
 CoopMenuState::Minus MinusNow();
+// The game's Map page's content as FollowMapUnder last saw it (row 295), for the same state. Any thread.
+CoopMenuState::MapPage MapPageNow();
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).
 bool ClientCursor(float* fx, float* fy, bool* left) noexcept;

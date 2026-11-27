@@ -107,4 +107,15 @@ std::string Json(const Tab& tab, const Screen& screen, const Minus& minus) {
            MinusJson(minus) + "}";
 }
 
+std::string MapPageJson(const MapPage& map) {
+    return std::string("{\"up\":") + Bool(map.up) + ",\"panes\":" + std::to_string(map.panes) +
+           ",\"shown\":" + std::to_string(map.shown) + "}";
+}
+
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus, const MapPage& map) {
+    std::string out = Json(tab, screen, minus);
+    out.pop_back();   // (the closing brace: map_page goes in last)
+    return out + ",\"map_page\":" + MapPageJson(map) + "}";
+}
+
 }  // namespace CoopMenuState

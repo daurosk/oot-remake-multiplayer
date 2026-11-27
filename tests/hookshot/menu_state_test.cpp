@@ -127,6 +127,15 @@ TEST_CASE("menu state: the key items page gives each line's name and value") {
                           "{\"name\":\"Medallions\",\"value\":\"0 of 6\"}]}");
 }
 
+TEST_CASE("menu state (row 295): the Map page's content goes last, as its screen's last update left it") {
+    MapPage map;
+    CHECK(MapPageJson(map) == "{\"up\":false,\"panes\":0,\"shown\":0}");
+    map.up = true, map.panes = 6, map.shown = 6;
+    const auto j = Json(Tab{}, Screen{}, Minus{}, map);
+    CHECK(Has(j, ",\"minus\":{\"open\":false},\"map_page\":{\"up\":true,\"panes\":6,\"shown\":6}}"));
+    CHECK(j.rfind("{\"coop\":", 0) == 0);
+}
+
 TEST_CASE("menu state (chartab-0121): the Customize screen says whether its keys are the game's guide keys and which show") {
     Driver d;
     OpenFor(d, 0);

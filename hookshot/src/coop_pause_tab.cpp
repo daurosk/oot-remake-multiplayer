@@ -767,6 +767,14 @@ bool MapUnderHidden(bool hide, bool up, bool sliding, bool native, std::uint64_t
            now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
 }
 
+MapPaneBack MapPaneOnLookAgain(std::uint64_t was_pane, std::uint64_t pane, bool hidden, bool was_shown, bool sliding) {
+    MapPaneBack b;
+    if (pane == 0 || pane != was_pane) return b;
+    b.show = hidden && was_shown;
+    b.place = sliding;
+    return b;
+}
+
 namespace {
 // Whether a code line's mod name (exefs_patches.txt, see ModCodeBuiltIn) is one `take` wants.
 template <class F>

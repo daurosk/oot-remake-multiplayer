@@ -255,6 +255,10 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   is `2` while the game's key items can be read, `1` when not, `0` on a view without that list) and `key_items`: on
   page `1` its lines (each `{"name", "value"}`, e.g. `{"name":"Songs","value":"3 of 12"}`), else `null`. The
   session's page is never given: it can hold a join code or an address.
+- `map_page` (row 295): the game's own Map page (the - menu's first tab) as its screen's last update left it: `up`
+  (that screen updated in the last 300 ms or 2 presents: a held, stepped game keeps it), `panes` (its content panes co-op found, 6 in the game) and `shown` (how many
+  of them show now; the backdrop BG_00 not counted). On the Map, menu up, `shown` is `panes`: fewer is the blank Map
+  page of row 295 (co-op's page hid them and never gave them back).
 
 The labels and values are co-op's own words in the game's language, never text read from the game. Example, a
 Character Select character with irises:

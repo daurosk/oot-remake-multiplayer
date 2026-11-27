@@ -114,3 +114,41 @@ What it does not settle (phase 1 must prove each in a game):
 Next (phase 1, the host option): option A in the module behind the host's option, Link's input off while the menu
 shows, `in_menu` without `paused` sent; tests: the menu works (shots), Link stands, enemies move under the menu, solo
 and co-op idle unchanged (nothing released).
+
+## Phase 1: the host option (design, B #158 GO 2026-11-27)
+
+Branch `pause-world-299-p1` off integrate-0121. Default **off**: no session, or the option off, nothing is released and
+nothing changes (solo, co-op idle and today's co-op pause stay exactly as they are).
+
+1. **The setting** (`lichii/hook/coop_pause_world_mode.{h,cpp}`, made as `coop_switch_stand_mode.h`): the host's choice
+   in coop-options.ini (`pause_world = on`; no line: off), sent in the host's `MOD_SETTINGS` (491) as mod id `coop`, key
+   `pause_world`, value `on`/`off` (docs/protocol.md "co-op's own host settings": no new type, no version, so no clash
+   with row 298's protocol 19); an older host sends none: off. In force from the next Host, as Shared floor switches.
+   Wired where CoopSwitchStandMode is: `coop_mod_share.cpp` (OnWelcomed, OnHosting, OnHostSettings, the host's list
+   and its key filter), `coop_pause.cpp` (SessionNow, Host), `coop_pause_files.cpp`, `coop_title_menu.{h,cpp}`
+   Read/Write.
+2. **The row** on the Host settings page (`coop_pause_menu.cpp` HostRuleLines, after Shared floor switches, the same
+   `Toggle` + `ruled_help`; `Act::kPauseWorld`, Change as kFloorSwitches): "World runs in menus", help: "On: in a game you
+   host, the world keeps going while a player is in the pause menu (enemies can still hit them). Used at your next
+   Host." The game's own panes and font (the existing Toggle row), no new pane.
+3. **The release** (`coop_pause_world_module.cpp` OnScreen, the game's thread): while the setting is in force, in a
+   session, and a game menu is up (`CoopMapPage::MenuState()->menu_open || CoopPauseTab::GameMenuUp()`, as row 199),
+   release each held hold whose key is in **one table** of menu holds (`coop_pause_world.h kMenuHolds`; +: 0xba597383
+   from the phase 0 run; the - menu's and the quick-switch menu's keys are read first by the phase 1 test's probe
+   step, never guessed) with the game's own release (the probe's Release). Only those keys: an event's or Game Over's
+   hold is never touched. The menu's own release at shut finds 0 and stays there (cas, never below 0).
+4. **Root cause of "the UI words go to 0"**: the words at manager +0x30 are what the notify sub keeps for the holds in
+   force, and screens test them (main+0x2cf094..0x2cf0c4) before acting. Before building 3, read that test in main: if it
+   only asks "is a pause in force" for screens that are not the menu's own, nothing to do; if the menu's own screens
+   need it, the release keeps the menu's bits (set them back after the notify, from the reading before) instead of
+   leaving 0. The phase 1 test proves the menu still acts: with the option on, L/R moves the - menu's pages
+   (`menu.map_page` / `menu.minus.tab`), the cursor moves, B/+ shuts it.
+5. **Link's input** off while a menu is up and its hold was let go (patch 0017's input-off wrap, docs/native-player.md
+   "Its own input"): the phase 0 run showed the stick walks Link under the menu.
+6. **Status**: with the setting in force a menu player sends `in_menu` but not `paused`/away, so enemies, counters,
+   switches and boss ownership keep following them (no hand-over: the desync row 299 is about).
+7. **The test** (`tools/autotest/ingame/test_pause_world.py`, a second test): a scene with moving enemies (not
+   Kakariko's free play, where 0 of 19 actors moved: weak) for "the world runs"; option off: the menu holds as today;
+   option on: the menu's holds let go, enemies moved, Link stands under the stick, the menu still pages and shuts;
+   framebuffer shots on each game of the Host settings page with the new row and of the open menu with the world
+   running (user-facing), compared to stored refs (NO-REF until the owner approves).

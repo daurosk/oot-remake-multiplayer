@@ -1928,3 +1928,23 @@ TEST_CASE("hookshot: party-hud-crash-c126: the map page and the pause tab call i
     REQUIRE(live != std::string::npos);
     CHECK(live < body.find("LiveRows(ctx, g_pages_layout, g_pages_gen, ViewNow(ViewShown()));"));
 }
+
+TEST_CASE("hookshot: chartab-0121: Character Select's Customize keys get their texts from the module before they count as shown") {
+    // Owner, v0.12.0: the Characters tab's Customize screen showed neither the page key nor the exact-hue key. The
+    // kit's copies of PaGuideKey_00 are not given their "<part>-<pane>" labels by the game (as the - tabs' copies,
+    // which ApplyMinus sets), so SnailKeysLookUp sets each pane's text and shows the keys only when all took it.
+    const std::string tab = ReadFile(kRepo / "hookshot" / "src" / "coop_pause_tab_module.cpp");
+    const std::size_t at = tab.find("void SnailKeysLookUp(void* ctx, std::uint64_t layout) {");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = tab.find("\n}\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = tab.substr(at, end - at);
+    CHECK(body.find("for (const char* key : CoopSnailCustom::kKeyParts)") != std::string::npos);
+    CHECK(body.find("for (const char* pane : CoopSnailCustom::kKeyPanes)") != std::string::npos);
+    CHECK(body.find("SetTextCount(ctx, layout, path, \"LayoutMsg/CharacterCustomize_00\", label)") != std::string::npos);
+    CHECK(body.find("texts = n.value_or(0) != 0;") != std::string::npos);
+    CHECK(body.find("g_snail.SetKeysShown(CoopSnailCustom::KeysShownFrom(") != std::string::npos);
+    // (the 0.12.0 line, which took the parts alone for shown keys, is gone)
+    CHECK(body.find("g_snail.SetKeysShown(g_snail_key_page != 0 && g_snail_key_mix != 0);") == std::string::npos);
+    CHECK(body.find("if (!texts) g_snail_key_page = g_snail_key_mix = 0;") != std::string::npos);
+}

@@ -32,6 +32,9 @@ struct Screen {
     int focus = -1;          // the option focused (0..5: the left column top to bottom, then the right)
     bool mixer = false;      // the any-colour mixer is open
     int page_no = 0, pages = 0;
+    // chartab-0121: the keys as the game's guide keys (true; the title then has no worded hints) and the ones shown
+    CoopSnailCustom::Driver::Keys keys;
+    bool guide_keys = false;
 };
 // The snapshot of a driver (open and driven as the module knows them).
 Screen FromDriver(const CoopSnailCustom::Driver& d, bool open, bool driven);

@@ -270,6 +270,13 @@ solo too): `probe` true, nothing up or shown, `game_arrow_words` and `run_arrow_
 game's run-time icon copies under the map screen), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
 Test-only: nothing here changes what is shown.
 
+**`slow_steps`** (the bridge adds it to `state`): `party_hud` and `name_tags`, each the last step of that part that ran
+a second or more after the one before (a frame stepped after the game was held that long, a slow PC, a hitch):
+`count` such steps so far (0 none), `gap_ms` its gap, `shown` the other players' blocks on the game's HUD or the name
+tags on the game's balloons at that step (hookshot/src/coop_hookshot.h `SlowStep`). Before hud-fresh-0121 such a step
+showed 0 of both (its readings counted stale by the wall clock alone). Test-only: nothing here changes what is shown
+(tools/autotest/ingame/test_stepped_hud.py).
+
 **`world`** (the bridge adds it to `state` and to a `dump`): the actors the object walk sees, nearest to our Link first,
 the kinds that matter (player, enemy, npc, chest, door, switch, item) before `other` (grass, pots, ...). The walk
 reads the place of every actor it sees and keeps up to 200, `other` last, because the sync checks need grass, bushes and

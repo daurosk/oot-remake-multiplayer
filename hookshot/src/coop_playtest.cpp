@@ -402,7 +402,15 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
         out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
     }
-    out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
+    out += ",\"map_native\":" + CoopMapIcons::StateJson();
+    {   // hud-stepped-0121: the last party HUD and name-tag steps a second or more after the one before (coop_hookshot.h)
+        const auto slow = [](const CoopHookshot::SlowStep& x) {
+            return "{\"count\":" + std::to_string(x.count) + ",\"gap_ms\":" + std::to_string(x.gap_ms) +
+                   ",\"shown\":" + std::to_string(x.shown) + "}";
+        };
+        out += ",\"slow_steps\":{\"party_hud\":" + slow(CoopHookshot::PartySlow()) +
+               ",\"name_tags\":" + slow(CoopHookshot::TagsSlow()) + "}";
+    }   // (coop_map_icons.h State: the others on the game's map icons)
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
     return out;

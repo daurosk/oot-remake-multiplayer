@@ -373,7 +373,10 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     for (const char* slot : {"weapon", "shield", "head", "armor", "boots"}) {
         const auto flag = CoopTestInput::WearFlag(slot);
         const auto v = flag ? CoopTestInput::FlagText(sys, "PlayerStatus." + *flag) : std::nullopt;
-        out += std::string(first ? "" : ",") + "\"" + slot + "\":" + (v ? Quote(*v) : "null");
+        // An empty slot (no mask: 'wear head none' empties the flag) is null, as docs/playtest.md "State" has it
+        // ("head":null) and the fake games answer: GameFlags::get_string64 reads an empty String64 as "", and a
+        // test waiting for null never saw the mask come off (B #148 gate-look 309d7180c hair_under_mask).
+        out += std::string(first ? "" : ",") + "\"" + slot + "\":" + (v && !v->empty() ? Quote(*v) : "null");
         first = false;
     }
     out += "},\"inventory\":{";

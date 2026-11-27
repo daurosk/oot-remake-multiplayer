@@ -30,6 +30,7 @@
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_follow.h"
+#include "coop_puppet_body.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
 #include "coop_puppet_flame.h"
@@ -530,6 +531,10 @@ public:
     }
     // The pack's puppets carry a PerceptionEmitter (PlannerSettings::perceived).
     void SetPerceived(bool on) { perceived_.store(on); }
+    // The pack's actors that have a body of their own (PlannerSettings::body_actors; build.py --puppet-body,
+    // and the `_Pvp` copies of --puppet-pvp): a player's copy made from one of them is moved by
+    // CoopPuppetBody::Drive. None (the default): every copy is placed as before.
+    void SetBodyActors(std::vector<std::string> actors) { body_actors_ = std::move(actors); }
     static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
@@ -674,6 +679,20 @@ private:
         bool head_shown = false;        // the show call was made for the head piece worn
         bool head_hair_back = false;
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        // An actor with a body (SetBodyActors; coop_puppet_body.h): the rule that moves this copy's body.
+        // All of it starts again with each new actor (ResetBody).
+        bool body = false;                  // this slot's actor has a body and is a player's copy
+        CoopPuppetBody::Drive body_drive;
+        bool body_move = false;             // the game's setter is owed for the place last written
+        bool body_said = false;             // the copy's first 'body:' line (its class) was written
+        std::optional<Mat3> body_rotation;  // the rotation last handed to the physics
+        std::uint32_t body_rest = 0;        // frames of each kind since the last 'body:' line
+        std::uint32_t body_warp = 0;        // frames a place was written and the setter owed
+        std::uint32_t body_set = 0;         // setter calls really made
+        std::uint32_t body_yield = 0;       // frames the place gave way to our own Link
+        float body_moved_max = 0.0f;        // the furthest the game had the body from our last place
+        std::optional<Vec3> body_last;      // the place last written
+        std::optional<Vec3> body_parked;    // where the body was last parked (hidden); unset: shown
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
@@ -753,6 +772,10 @@ private:
     };
     std::vector<PieceActor> Pieces(Slot& slot, Guest& guest) const;
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
+    // Native puppets phase 1 (coop_puppet_body.h).
+    static void ResetBody(Slot& slot);
+    std::optional<CoopPuppetBody::Capsule> OwnBody(Guest& guest);
+    void BodyProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     bool Drawn(const Slot& slot, std::uint64_t now_ms) const;
@@ -773,6 +796,10 @@ private:
     int dress_not_made_ = 0;
     static constexpr int kDressNotMade = 2;
     bool matrix_call_ = false;
+    std::vector<std::string> body_actors_;  // SetBodyActors
+    // Our own Link this frame, for CoopPuppetBody::Yield: read once a frame, when a copy with a body is drawn.
+    std::uint64_t own_body_frame_ = 0;
+    std::optional<CoopPuppetBody::Capsule> own_body_;
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};
     mutable std::mutex tunic_mutex_;
@@ -914,6 +941,8 @@ struct PlannerSettings {
     std::array<std::uint8_t, 16> character_apply_head{};
     // The pack was built with perception (PackPerception): its plain (not quiet) puppets are seen by enemies.
     bool perceived = false;
+    // The pack's actors with a body (CoopPuppetBody::PackBodyActors): native puppets phase 1.
+    std::vector<std::string> body_actors;
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there

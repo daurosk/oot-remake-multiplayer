@@ -2271,6 +2271,13 @@ class ImageCompare(unittest.TestCase):
         self.assertIn("(box [0.0, 0.0, 0.56, 1.0])", r["why"])
         self.assertEqual(r["box"], list(box))
         self.assertFalse(imagecheck.compare(page, ref, 0.90, box=box)["ok"])
+        # (several boxes: the lowest one counts; a change in the second box fails though the first matches)
+        bar = pic("bar", (40, 40, 120, 100), (420, 0, 600, 30))
+        two = [box, (0.0, 0.0, 1.0, 0.10)]
+        self.assertTrue(imagecheck.compare(world, ref, 0.90, box=two)["ok"])
+        r = imagecheck.compare(bar, ref, 0.90, box=two)
+        self.assertFalse(r["ok"], r)
+        self.assertEqual(r["box"], [list(box), [0.0, 0.0, 1.0, 0.10]])
 
     def test_no_reference_is_never_ok(self):
         keep = os.path.join(self.tmp, "keep")

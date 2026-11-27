@@ -11,8 +11,13 @@ BT_FAKE_BANNER_BUG (selftests, tests/test_ingame_revive_banner.py):
   blink   0.12.0: B's line is gone in every other shot while A holds A (the owner's "blinks rapidly")
   replay  B's banner state counts a Type reset per text change while A holds A (1d8a1b11e not in the build)
 
-state['banner'] (typing-blink-0121's CoopNativeUi::Stats): opens/type_resets 1 once a line is held; with 'replay',
-type_resets grows with each `text` set while B is being revived.
+state['banner'] (typing-blink-0121's CoopNativeUi::Stats): the module has ONE banner, so this file counts on
+fakes/chat_typing.py's stats (game.ct_b, the one writer of state['banner']; chat_typing loads first): a held line
+coming up opens it once (opens/type_resets + 1, held, request 1, no page), the line going away puts it back
+('shut', not held); with 'replay', type_resets grows with each `text` set while B is being revived. (banner-steady-0121:
+its own copy of the stats, kept once a line had been held, overwrote the typed banner's in a whole-suite run.)
+`text` is answered only for layout SimpleInfo_00 (the banner's; test_revive_banner asks only that), so every other
+layout's text (regress_ui's SystemWindow_00) reaches its own fake.
 """
 import math
 import os
@@ -56,26 +61,31 @@ def act(game, words):
 
 
 def state(game, st):
-    if line(game) is None and not getattr(game, "banner_stats", None):
+    b = getattr(game, "ct_b", None)          # (fakes/chat_typing.py setup: the module's one banner)
+    if b is None:
         return
-    b = getattr(game, "banner_stats", None) or {"opens": 1, "reopens": 0, "shut_by_game": 0, "taken_by_game": 0,
-                                                "sets": 0, "type_resets": 1, "state": 2, "request": 1,
-                                                "holds": "ours", "page": False, "held": True}
-    game.banner_stats = b
-    st["banner"] = dict(b)
+    held = line(game) is not None
+    if held and not b["held"]:
+        b["opens"] += 1
+        b["type_resets"] += 1
+        b.update(state=2, request=1, holds="ours", page=False, held=True)
+    elif not held and b["held"]:
+        b.update(state=0, request=0, holds="shut", page=False, held=False)
+    if "banner" in st:                        # (chat_typing's copy, before this step's change; not with =nostate):
+        st["banner"].update(b)                # changed in place, never replaced (fakegame.py guard 1)
 
 
 def command(game, m):
-    if m.get("cmd") != "text":
+    if m.get("cmd") != "text" or m.get("layout") != "SimpleInfo_00":
         return None
     seq = getattr(game, "banner_seq", 0)
     texts = []
     shown = line(game)
-    if shown is not None and m.get("layout") in (None, "SimpleInfo_00"):
+    if shown is not None:
         seq += 1
         game.banner_seq = seq
-        b = getattr(game, "banner_stats", None)
-        if b is not None:
+        b = getattr(game, "ct_b", None)
+        if b is not None and b["held"]:
             b["sets"] += 1
             if bug("replay") and game.tag == "B" and game.dbno["held"] > 0:
                 b["type_resets"] += 1

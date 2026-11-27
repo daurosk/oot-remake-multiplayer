@@ -10,7 +10,8 @@ and counts them as shown only when all four panes took their text (CoopSnailCust
 
 | Test | What it proves | Kind |
 |---|---|---|
-| test_customize_keys_show | on A and on B: his screen opens driven, its keys are the game's guide keys (state keys.guide, page, mix; the module's 'shown as the game's guide keys' line with 4 texts set), the footer differs from the mixer's (where neither key shows), Y turns the page | state + log + LOOK (shots on each game) |
+| test_customize_baseline_01112 | v0.11.12 (the last release) on a lane of its own: the same screen, its hints in the title's words; shots to approve as refs/chartab-01112-keys-<x>.png | LOOK; needs_env (that job only) |
+| test_customize_keys_show | on A and on B: his screen opens driven, its keys are the game's guide keys (state keys.guide, page, mix; the module's 'shown as the game's guide keys' line with 4 texts set), the footer differs from the mixer's (where neither key shows), Y turns the page; against v0.11.12's approved shot the footer has keys it had none of (NO-REF until that baseline is in refs/) | state + log + LOOK (shots on each game) |
 
 Set-up and judging, each cited where used:
 - The way there: MINUS (the - menu opens on Map), L (Threads of Time), L (Key Items), L (the Characters page):
@@ -30,8 +31,14 @@ Set-up and judging, each cited where used:
 - A shot of each game's screen with the keys, compared to refs/chartab-keys-<x>.png (NO-REF until the owner approves
   one: never PASS by itself), and the mixer's shot kept beside it.
 """
+import os
+
 import pytest
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASELINE = "chartab-01112-keys"       # (v0.11.12's screen: refs/chartab-01112-keys-<x>.png once approved)
+BASELINE_ENV = "COOP_TEST_CHARTAB_BASELINE=1"   # (only marks the baseline job: no module reads it)
+OPENED_01112 = r"coop: characters: Character Select's Customize screen opened \(screen .*\): co-op's customization in it"
 WAIT = 150                     # (test_charpage.py WAIT: scenarios/charpage-288-hold.A.txt 'wait 150' after every key)
 KEYS_LINE = (r"coop: characters: Character Select's Customize screen keys: Y part 0x[0-9a-f]+, A part 0x[0-9a-f]+, "
              r"texts set \[Pa_CoopKeyY_00/T_Icon_00 [1-9]\d*, Pa_CoopKeyY_00/T_Guide_00 [1-9]\d*, "
@@ -55,16 +62,23 @@ def footer_change(a_path, b_path):
     return float(abs(a[y0:y1, x0:x1] - b[y0:y1, x0:x1]).mean())
 
 
-def open_customize(pair, x):
-    """The - menu's Characters page, then X: his Customize screen, driven by co-op."""
+def to_customize(pair, x):
+    """The - menu's Characters page, then X (his Customize screen). Returns the log mark taken before X."""
     pair.press(x, ["MINUS"])
     pair.step_both(WAIT)
     for _ in range(3):
         pair.press(x, ["L"])
         pair.step_both(WAIT)
+    mark = pair.log[x].mark()
     pair.press(x, ["X"])
     pair.step_both(WAIT)
-    return pair.until("%s: Character Select's Customize screen open and driven" % x,
+    return mark
+
+
+def open_customize(pair, x):
+    """His Customize screen, driven by co-op: (its state, the log mark taken before X)."""
+    mark = to_customize(pair, x)
+    return mark, pair.until("%s: Character Select's Customize screen open and driven" % x,
                       lambda: screen(pair, x).get("driven") and screen(pair, x), max_frames=300)
 
 
@@ -86,11 +100,12 @@ def test_customize_keys_show(pair):
         pair.until_in_play("both games in play")
         for x in ("A", "B"):
             assert not screen(pair, x).get("open"), "%s: his Customize screen reads open before the test" % x
+    no_base = []
     for x in ("A", "B"):
-        s = open_customize(pair, x)
-        assert pair.log[x].find(KEYS_LINE, pos=0), (
+        mark, s = open_customize(pair, x)
+        assert pair.log[x].find(KEYS_LINE, pos=mark), (
             "%s: no 'shown as the game's guide keys' line with all four texts set (%s)" % (
-                x, "the title kept its words" if pair.log[x].find(WORDS_LINE, pos=0) else "no keys line"))
+                x, "the title kept its words" if pair.log[x].find(WORDS_LINE, pos=mark) else "no keys line"))
         assert s.get("keys") == {"guide": True, "page": True, "mix": True}, "%s: keys %r (Link: five pages)" % (
             x, s.get("keys"))
         assert "Y:" not in s.get("title", "") and "A:" not in s.get("title", ""), "%s: title %r" % (x, s.get("title"))
@@ -107,6 +122,17 @@ def test_customize_keys_show(pair):
         moved = footer_change(keys_shot["path"], mixer_shot["path"])
         assert moved >= FOOTER_MOVED, "%s: the footer changed %.4f (< %.2f) when the keys went: nothing drawn" % (
             x, moved, FOOTER_MOVED)
+        # (against v0.11.12's same screen, the last release: its keys were words in the title and its footer had
+        # none; ours must draw them there. The owner judges "at least as good" from both shots side by side)
+        base = os.path.join(pair.refs_dir or os.path.join(HERE, "refs"), "%s-%s.png" % (BASELINE, x))
+        if os.path.exists(base):
+            vs = footer_change(keys_shot["path"], base)
+            assert vs >= FOOTER_MOVED, "%s: the footer differs %.4f (< %.2f) from v0.11.12's (no keys): none drawn" % (
+                x, vs, FOOTER_MOVED)
+            pair.shots.append(dict(game=x, name=BASELINE, path=base, ref=base, score=None, ok=True, tolerance=None,
+                                   why="v0.11.12 baseline beside chartab-keys (footer differs %.4f)" % vs))
+        else:
+            no_base.append(x)
         pair.press(x, ["B"])        # (out of the mixer: both keys again)
         pair.step_both(WAIT)
         assert screen(pair, x).get("keys") == {"guide": True, "page": True, "mix": True}, "%s: after B: %r" % (
@@ -116,4 +142,30 @@ def test_customize_keys_show(pair):
         assert screen(pair, x).get("page_no") == 2, "%s: Y left the page at %r" % (x, screen(pair, x).get("page_no"))
         pair.check_shot(x, "chartab-keys-page2", tolerance=0.85)
         leave_menu(pair, x)
+        pair.never_log(x, FATAL)
+    if no_base:
+        pair.unproven("no v0.11.12 baseline %s for %s (run test_customize_baseline_01112 on a v0.11.12 lane, approve "
+                      "its shots into refs/): the look is not compared with the last release yet" % (BASELINE, no_base))
+
+
+@pytest.mark.budget(300)
+@pytest.mark.needs_env(BASELINE_ENV)
+@pytest.mark.look
+@pytest.mark.row("chartab-0121 baseline: v0.11.12's Customize screen (the hints as words in the title), shot on each game")
+def test_customize_baseline_01112(pair):
+    """Run on a lane prepared from v0.11.12 (its bridge has input, state and shot; not menu.customize_screen): the same
+    way to his screen, judged by v0.11.12's own 'Customize screen opened ... co-op's customization in it' line
+    (v0.11.12 coop_pause_tab_module.cpp SnailScreen); its shots become refs/chartab-01112-keys-<x>.png once approved."""
+    with pair.setup():
+        pair.until_in_play("both games in play")
+    for x in ("A", "B"):
+        mark = to_customize(pair, x)
+        pair.until("%s: v0.11.12's Customize screen driven" % x, lambda: pair.log[x].find(OPENED_01112, pos=mark),
+                   max_frames=300)
+        pair.check_shot(x, BASELINE, tolerance=0.85)
+        pair.press(x, ["B"])
+        pair.step_both(WAIT)
+        pair.press(x, ["MINUS"])
+        pair.step_both(180)
+        pair.until("%s back in play after the - menu" % x, lambda: pair.in_play(pair.state(x)), max_frames=600)
         pair.never_log(x, FATAL)

@@ -559,6 +559,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 }
                 if (t->show == Show::show || t->show == Show::hold) {
                     DrawAt(slot, guest, *t, now_ms);
+                    if (++slot.cloth_frames >= kClothProbeFrames) {
+                        slot.cloth_frames = 0;
+                        const std::string who = "P" + std::to_string(slot.number);
+                        ClothProbe(guest, slot.actor, who);
+                        if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+                            ClothProbe(guest, player, who + " our own Link's");  // the game's own cloth, beside it
+                        }
+                    }
                 } else if (t->show == Show::hide) {
                     slot.smooth.Set(t->position);  // out of sight: comes back where they are
                     slot.follow.Reset();
@@ -2094,6 +2102,75 @@ void Director::BodyProbe(Guest& guest, std::uint64_t actor, const std::string& w
         }
         Say(line);
     }
+}
+
+// Row 313 probe, LICHII_COOP_DEBUG_CLOTH=1 only, read and never written: the cloth the game simulates for an
+// actor, read the way its hair code reads it (main+0x4b8438..0x4b84b4, disassembled from dump/main.plain):
+// holder C = [[[[actor+0x270]+0x50]+0x20]+0x1c8]; if C != 0 and the s32 at C+0xd0 >= 1, the list
+// O = [[[C+0xd8]]] holds an s32 count at O+0x10 and entries at [O+0x18], 0x78 bytes each; the game sets bit 0
+// of each entry's u64 at +0x18 (and clears it where bit 3 is set). A puppet built without its cloth
+// (pack --no-cloth) has C == 0 while our own Link's is set; with the cloth the first entry's floats change
+// while the copy moves and settle while it stands.
+void Director::ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_DEBUG_CLOTH");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!on || actor == 0) {
+        return;
+    }
+    constexpr std::uint64_t kComponents = 0x270;  // actor -> component table
+    constexpr std::uint64_t kPhysics = 0x50;      // table -> the physics component
+    constexpr std::uint64_t kSet = 0x20;          // physics -> the controller set
+    constexpr std::uint64_t kHolder = 0x1c8;      // set -> the cloth holder (the hair code's C)
+    constexpr std::uint64_t kHolderCount = 0xd0;  // C: s32
+    constexpr std::uint64_t kHolderList = 0xd8;   // C -> -> -> O
+    constexpr std::uint64_t kListCount = 0x10;    // O: s32 entries
+    constexpr std::uint64_t kListEntries = 0x18;  // O -> entries
+    constexpr std::uint64_t kEntrySize = 0x78;
+    constexpr std::uint64_t kEntryFlags = 0x18;   // entry: u64, bit 0 set by the hair code
+    std::uint64_t parts = 0;
+    std::uint64_t physics = 0;
+    std::uint64_t set = 0;
+    std::uint64_t holder = 0;
+    ReadValue(guest, actor + kComponents, parts);
+    if (parts != 0) {
+        ReadValue(guest, parts + kPhysics, physics);
+    }
+    if (physics != 0) {
+        ReadValue(guest, physics + kSet, set);
+    }
+    if (set != 0) {
+        ReadValue(guest, set + kHolder, holder);
+    }
+    std::int32_t count = 0;
+    std::uint64_t list = 0;
+    std::int32_t entries = 0;
+    std::uint64_t first = 0;
+    if (holder != 0 && ReadValue(guest, holder + kHolderCount, count) && count >= 1) {
+        std::uint64_t p = 0;
+        if (ReadValue(guest, holder + kHolderList, p) && p != 0 && ReadValue(guest, p, p) && p != 0 &&
+            ReadValue(guest, p, list) && list != 0) {
+            ReadValue(guest, list + kListCount, entries);
+            ReadValue(guest, list + kListEntries, first);
+        }
+    }
+    std::string line = "cloth: " + who + " physics " + Hex(physics) + " set " + Hex(set) + " holder " +
+                       Hex(holder) + " n " + std::to_string(count) + " list " + Hex(list) + " entries " +
+                       std::to_string(entries);
+    std::array<float, kEntrySize / 4> words{};
+    std::uint64_t flags = 0;
+    if (entries >= 1 && first != 0 && guest.Read(first, words.data(), sizeof(words)) &&
+        ReadValue(guest, first + kEntryFlags, flags)) {
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), " e0 flags %016llx:", static_cast<unsigned long long>(flags));
+        line += buf;
+        for (const float w : words) {
+            std::snprintf(buf, sizeof(buf), " %.4g", w);
+            line += buf;
+        }
+    }
+    Say(line);
 }
 
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {

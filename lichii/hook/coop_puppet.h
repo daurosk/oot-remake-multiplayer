@@ -569,6 +569,7 @@ public:
     static constexpr int kBackstopMisses = 2;
     // A hidden puppet is moved this far down, under the floor.
     static constexpr float kHideDrop = 500.0f;
+    static constexpr std::uint32_t kClothProbeFrames = 60;  // LICHII_COOP_DEBUG_CLOTH: one cloth line a second per copy
     // A worn piece this far from its shown puppet was left behind (made while
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
@@ -689,6 +690,7 @@ private:
         bool body_move = false;             // the game's setter is owed for the place last written
         bool body_said = false;             // the copy's first 'body:' line (its class) was written
         std::optional<Mat3> body_rotation;  // the rotation last handed to the physics
+        std::uint32_t cloth_frames = 0;     // frames since the last 'cloth:' line (LICHII_COOP_DEBUG_CLOTH)
         std::uint32_t body_rest = 0;        // frames of each kind since the last 'body:' line
         std::uint32_t body_warp = 0;        // frames a place was written and the setter owed
         std::uint32_t body_set = 0;         // setter calls really made
@@ -780,6 +782,7 @@ private:
     static void ResetBody(Slot& slot);
     std::optional<CoopPuppetBody::Capsule> OwnBody(Guest& guest);
     void BodyProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
+    void ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     bool Drawn(const Slot& slot, std::uint64_t now_ms) const;

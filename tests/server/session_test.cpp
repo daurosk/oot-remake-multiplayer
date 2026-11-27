@@ -8205,6 +8205,66 @@ TEST_CASE("row 189: a boss waiting for its fight never stalls: asleep, or owned 
   CHECK(h.session.stats().boss_stalled == 1);
 }
 
+TEST_CASE("row 303: a boss in its pre-battle wait goes to the player whose copy claims it, in a fight or not") {
+  SessionConfig config = quiet_config();
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 8);
+  h.stand(2, 13);
+  const auto owner_samples = [&](std::uint64_t us, const std::string& animation, std::int32_t life) {
+    for (std::uint64_t t = 0; t < us; t += 250'000) {
+      h.receive(1, ObjectSample{0, placed(7), 0, held_move(animation, life)}, kChannelObjectSamples);
+      h.run(250'000);
+    }
+  };
+  // Gohma on the ceiling in player 1's game (in a fight: its samples say so), nobody claims her: she stays.
+  h.clear();
+  owner_samples(2 * kSecond, "Pre_Battle_Ceiling_Wait", 21);
+  CHECK(h.asks() == 0);
+  // Player 2 stands under her and its copy claims her (targeting): asked over once the claim is held, well before
+  // the stall rule's boss_stall_us.
+  h.receive(2, boss_presence(object_presence::awake | object_presence::targeting), kChannelOwnership);
+  owner_samples(config.handover_chased_us + kSecond, "Pre_Battle_Ceiling_Wait", 21);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_finder == 1);
+  CHECK(h.session.stats().boss_stalled == 0);
+}
+
+TEST_CASE("row 303: no finder hand-over out of the pre-battle wait, nor to a game whose intro has not played") {
+  SessionConfig config = quiet_config();
+  struct Case {
+    const char* animation;
+    std::int32_t life;
+    bool finder_unready;
+  };
+  // Her fight moves (a claim in a fight is no hand-over), her pre-battle wait at life 0 (her finish), and a finder
+  // still in its own intro (boss-copy-b: its copy's ceiling wait is the intro's).
+  for (const Case c : {Case{"CeilingMove", 21, false}, Case{"Walk", 21, false}, Case{"Pre_Battle_Ceiling_Wait", 0, false},
+                       Case{"Pre_Battle_Ceiling_Wait", 21, true}}) {
+    CAPTURE(std::string(c.animation));
+    CAPTURE(c.life);
+    CAPTURE(c.finder_unready);
+    OwnerHarness h(config);
+    h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.stand(1, 8);
+    h.stand(2, 13);
+    const std::uint8_t unready = c.finder_unready ? object_presence::unready : std::uint8_t{0};
+    h.receive(2, boss_presence(static_cast<std::uint8_t>(object_presence::awake | object_presence::targeting | unready)),
+              kChannelOwnership);
+    h.clear();
+    for (std::uint64_t t = 0; t < config.handover_chased_us + 2 * kSecond; t += 250'000) {
+      h.receive(1, ObjectSample{0, placed(7), 0, held_move(c.animation, c.life)}, kChannelObjectSamples);
+      h.run(250'000);
+    }
+    CHECK(h.session.stats().boss_to_finder == 0);
+    CHECK(messages_to<HandoverAsk>(h, 1).empty());
+  }
+}
+
 TEST_CASE("boss-die-0116: a boss dying or in a cutscene never stalls: its fight lock stays (no hand-over mid-death)") {
   SessionConfig config = quiet_config();
   config.boss_near_hold_us = 0;

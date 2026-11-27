@@ -550,6 +550,7 @@ struct Stats {
   std::uint64_t kept_by_logic = 0;      // row 212: a hand-over to a game whose logic did not make it, refused
   std::uint64_t back_to_logic = 0;      // row 212: asked back to a game whose logic made it
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
+  std::uint64_t boss_to_finder = 0;      // row 303: a boss in its pre-battle wait asked to the player whose copy claims it
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
@@ -1095,6 +1096,9 @@ class Session {
                     std::uint64_t now_us, std::string why);
   // Row 215: a boss root whose owner's last state says it is at life 0 or plays its death (anim::IsDeath).
   static bool boss_finishing(const Object& o);
+  // Row 303: a boss whose owner's last state plays its wait before the fight (anim::IsPreBattle: Gohma's
+  // 'Pre_Battle_*' on the ceiling, her 'Sleep'), at a life above 0.
+  static bool pre_battle(const Object& o);
   // Row 215: no boss changes owner in its finish (at life 0 or in its death): the game that runs the finish keeps
   // it to the end, whatever rule asks (hitter, turns, near, chase, unfit owner, unready). True: `o` (a boss or a
   // boss's part) stays. A part may still go to its boss's own owner (the group together). Only an owner that

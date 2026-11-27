@@ -988,6 +988,16 @@ bool IsCeilingWait(std::string_view name) {
     return AnimationBase(name).starts_with("CeilingWait");
 }
 
+bool WaitsOnCeilingForLink(std::string_view actor, std::string_view animation) {
+    // Row 303: a boss in its pre-battle wait on the ceiling (Gohma's 'Pre_Battle_Ceiling_Wait', '_Turn', '_Find': her
+    // brain root's PreBattle start event, Enemy_DungeonBoss_Gohma.brain.root.ainb, turns her to the Link its own game
+    // perceives and drops her for it). Its owner's AI fights only the owner's Link, so a copy's player under her waited
+    // for good (lane1 hs-gohma-downed 20261120-085401 A: 'ours held Pre_Battle_Ceiling_Wait' 3 x 25 s, B under her).
+    // Not her 'Sleep' (also a pre-battle word, coop::protocol::anim::IsPreBattle): she sleeps on no ceiling.
+    const std::string_view base = AnimationBase(animation);
+    return IsCeilingWait(base) || (IsBoss(actor) && base.starts_with("Pre_Battle_Ceiling"));
+}
+
 bool UnderCeilingEnemy(const proto::Vec3& enemy, const proto::Vec3& link) {
     const float dx = enemy[0] - link[0];
     const float dz = enemy[2] - link[2];
@@ -3651,7 +3661,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (wake_ && o.reacts && owner != owners_.end() && owner->second.player != 0 &&
                 owner->second.player != self && now_seen.contains(address) && !o.received.empty() &&
                 now_us >= o.received.back().time && now_us - o.received.back().time <= kPoseStaleUs &&
-                o.received.back().animation && IsCeilingWait(o.received.back().animation->name) &&
+                o.received.back().animation && WaitsOnCeilingForLink(o.name, o.received.back().animation->name) &&
                 UnderCeilingEnemy(o.position, *player_)) {
                 ChaseStep(o, now_us);
             }

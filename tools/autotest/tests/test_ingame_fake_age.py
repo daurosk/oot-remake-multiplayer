@@ -1,7 +1,9 @@
 """Selftests of the fake game's age (ingame/fakegame.py FakeGame.age): one source, the game's own Sequence_IsChildhood
 flag, with every fake hook loaded. Cause (integrate-0120-4 18:59): fakes/dbno_crawl.py set st['age'] for every fake
 boot from that flag (unset = child) and ran after fakes/boss_awake.py, so row 286's adult boot (live-twinrova-room)
-read child and its 4 wake selftests SETUP-FAILed 'A is child, this test needs adult Link'."""
+read child and its 4 wake selftests SETUP-FAILed 'A is child, this test needs adult Link'. That boot is in fact the
+lane's child save (row215-309d7180: 'childhood - NOT set', 'TwinrovaStage (child)'; its header said adult): the fakes
+now keep it child, as the game does."""
 import os
 import shutil
 import sys
@@ -26,14 +28,13 @@ class FakeAge(unittest.TestCase):
     def test_a_plain_boot_is_child(self):
         self.assertEqual(self.ages(self.lane()), {"A": "child", "B": "child"})
 
-    def test_the_adult_twinrova_boot_stays_adult_with_every_fake_loaded(self):
-        """boss_awake's boot sets the flag; no other hook (dbno_crawl sorts after it) turns it back to child."""
+    def test_the_twinrova_boot_is_child_as_in_the_game(self):
+        """No fake hook makes live-twinrova-room adult: the real boot is the child baseline (row215-309d7180)."""
         self.assertEqual(self.ages(self.lane(env=["LICHII_COOP_DEBUG_BOSS=1"], boot="live-twinrova-room")),
-                         {"A": "adult", "B": "adult"})
+                         {"A": "child", "B": "child"})
 
     def test_the_boss_switch_alone_keeps_a_child_boot_child(self):
-        """The switch is on for other boss boots too (live-deku-gohma-reset, a child save: test_boss_reset); only
-        live-twinrova-room's save is adult (boss_awake.ADULT_BOOT)."""
+        """The switch is on for other boss boots too (live-deku-gohma-reset, a child save: test_boss_reset)."""
         self.assertEqual(self.ages(self.lane(env=["LICHII_COOP_DEBUG_BOSS=1"], boot="live-deku-gohma-reset")),
                          {"A": "child", "B": "child"})
 

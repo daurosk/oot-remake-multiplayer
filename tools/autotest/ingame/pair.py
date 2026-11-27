@@ -40,6 +40,23 @@ WARP_PAIR_MEASURED_S = 31.0
 RECOVER_WARP_S = WARP_PAIR_MEASURED_S   # one game's warp in a recovery: the worst TWO-game warp = 2x one game's (margin)
 RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load, an event's end, in play (stepped)
 BOOT_READY_S = 240.0  # the boot proof's own deadline (out of a load, a warp of a game left elsewhere, an event's end)
+# A boot whose scene starts a long event on arrival (a boss stage's intro): the boot proof's in-play wait goes on past
+# BOOT_FRAMES while a game is IN AN EVENT, up to BOOT_EVENT_FRAMES (a load or a stale sample keeps BOOT_FRAMES).
+# row215-309d7180 SETUP-FAIL (live-twinrova-room, boss rush TwinrovaStage, child save): both games still in Twinrova's
+# intro at the 2400-frame ceiling. Longshot's present counter in game-out-A.txt ('texture frame N'): the same boot
+# free-running ended the intro by itself between +3994 and +5048 after the arrival (proof01112-hs-twinrova-orders2
+# 20261123-001227 :5041 began at +0 (play at 8229), :7127 12223, :7431 'ended after 76.1 s', :8046 13277); stepped,
+# Kotake's last cut came at the same frame (AS-C07: +3960 vs +3993), the proof stopped at about +4210. So the stepped
+# intro was cut off, not stuck. 6000 = +5048 and ~20%; test_probe_boss_intro.py measures the stepped end itself.
+BOOT_EVENT_FRAMES = 6000
+# The boot proof's stepping rate (both games, CHUNK at a time, a state read each per chunk): row215-309d7180 lane 1 ran
+# its 2400 frames in ~201.6 s (game-out-A.txt digest t= 286.0 s at the bridge's connect :9353, 487.7 s at the quit).
+# A boot that waits an event past BOOT_FRAMES gets the rest of BOOT_EVENT_FRAMES at this rate on its deadline, once.
+BOOT_STEP_FPS = 11.9
+EVENT_BEGAN = r"coop: event: our Link's event began: .*"      # coop event lines (game-out-X.txt, both runs above)
+EVENT_ENDED = r"coop: event: our Link's event ended"
+EVENT_STILL = r"coop: event: our Link is still in its event after ([0-9]+) s"
+EVENT_CUT = r"coop: objects: anim \S+ \S+ '([^']+)'"         # a boss cut's animation ('AS-C07-...', the intro's cuts)
 # A recovery whose stepped part failed relaunches each game not in play at the boot's place ONCE (Pair.recover,
 # crawl-337-11): a game left waiting for input (a pause page, tb-gate-ui-f9f3b9c2 test_pause; the ocarina UI,
 # tb-pilot-f9f3b9c2 test_ocarina_notes) never comes back by stepping. Its bound: each game's live.py quit + relaunch
@@ -627,7 +644,7 @@ class Pair:
                     # (arrive_in_event=None: a boss stage boot, live-twinrova-room / live-phantom-ganon, starts its intro
                     # on arrival, so the bridge answers 'timeout' with Link there; the event's end is stepped below)
                     self.warp_one(x, scene, arrive_in_event=None)
-            self.until_in_play("both games in play after the boot", tuple(self.c), max_frames)
+            self._until_boot_play(max_frames)
         except SetupFail:
             raise
         except (AssertionError, pc.BridgeError, OSError, TimeoutError) as e:
@@ -637,6 +654,58 @@ class Pair:
         if wrong:
             raise SetupFail("boot: not in the boot's scene %s: %s" % (scene, "; ".join(wrong)))
         return {x: self.state(x) for x in self.c}
+
+    def _until_boot_play(self, max_frames, event_frames=None):
+        """The boot proof's in-play wait: until_in_play (its rule of 'in play', stepping and messages) up to
+        max_frames; if a game is then IN AN EVENT, the wait goes on to event_frames in all (BOOT_EVENT_FRAMES: a boss
+        stage's intro, row215-309d7180), the deadline grown once by those frames at BOOT_STEP_FPS (one deadline, one
+        wait rule). A load or a stale sample at max_frames fails as before. A miss names, for each game in its event,
+        which event and for how long (event_note), so its first line says why."""
+        event_frames = max(max_frames, BOOT_EVENT_FRAMES if event_frames is None else event_frames)
+        games = tuple(self.c)
+        what = "both games in play after the boot"
+        try:
+            return self.until_in_play(what, games, max_frames)
+        except TestTimeout as e:
+            raise TestTimeout("%s%s" % (e, self._event_notes(games, max_frames))) from None
+        except AssertionError as e:
+            first = e
+        in_event = [x for x in games if self.state(x).get("event")]
+        if not in_event or event_frames <= max_frames:
+            raise AssertionError("%s%s" % (first, self._event_notes(games, max_frames))) from None
+        extra = (event_frames - max_frames) / BOOT_STEP_FPS
+        self.deadline.end += extra
+        self.deadline.seconds += extra
+        self.notes.append("boot: %s in an event after %d frames: waited on up to %d (deadline +%.0f s)"
+                          % ("+".join(in_event), max_frames, event_frames, extra))
+        try:
+            return self.until_in_play(what + " (a game in an event at %d frames: the event ceiling)" % max_frames,
+                                      games, event_frames - max_frames)
+        except AssertionError as e:            # (TestTimeout too: its own type kept)
+            raise type(e)("%s%s" % (e, self._event_notes(games, event_frames))) from None
+
+    def _event_notes(self, games, ran):
+        """'; X (in its event ...)' for each game whose log shows an event that has not ended (event_note), or ''."""
+        return "".join("; %s%s" % (x, n) for x, n in ((x, self.event_note(x, ran)) for x in games) if n)
+
+    def event_note(self, x, ran=None):
+        """'' unless game x's module log has an 'our Link's event began' line with no 'ended' after it; then
+        ' (in its event since <that line>, last "still in its event after N s", last cut <anim>, N frames stepped
+        here)': which event a miss waited on and how far it got (row215-309d7180: its SETUP-FAIL said only
+        event=True; the cause took the log's 11000 lines to find)."""
+        lines = self.log[x].since(0) if x in getattr(self, "log", {}) else []
+        began = [i for i, ln in enumerate(lines) if re.search(EVENT_BEGAN, ln)]
+        if not began:
+            return ""
+        tail = lines[began[-1]:]
+        if any(re.search(EVENT_ENDED, ln) for ln in tail[1:]):
+            return ""
+        what = re.search(EVENT_BEGAN, tail[0]).group(0)[len("coop: event: "):]
+        still = [m.group(1) for m in (re.search(EVENT_STILL, ln) for ln in tail) if m]
+        cuts = [m.group(1) for m in (re.search(EVENT_CUT, ln) for ln in tail) if m]
+        return " (in its event since '%s'%s%s%s)" % (
+            what[:120], ", 'still in its event after %s s'" % still[-1] if still else "",
+            ", last cut '%s'" % cuts[-1] if cuts else "", ", %d frames stepped here" % ran if ran is not None else "")
 
     def module_started(self, seconds=MODULE_WAIT_S, clock=time.monotonic, sleep=time.sleep):
         """Each game's log has the module's 'coop: playtest: listening on 127.0.0.1:<its port>' line

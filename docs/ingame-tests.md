@@ -210,6 +210,12 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
 - A warp with `arrive_in_event` (a boss intro) is stepped until the game is in the scene, not loading, in the event
   once the bridge's own 12 s wait is over; a warp takes longer than that under load. A boot whose scene starts an
   event on arrival (a boss stage boot) is taken the same way by the boot proof, then stepped until the event ends.
+  A load or a stale sample has `BOOT_FRAMES` (2400); a game still in an event then gets up to `BOOT_EVENT_FRAMES`
+  (6000) in all, and the deadline grows once for those frames (`BOOT_STEP_FPS`). Twinrova's intro on
+  `live-twinrova-room` runs past 2400 frames (row215-309d7180 SETUP-FAIL; the free-running boot ended it between
+  +3994 and +5048). A miss names each game's running event, its last 'still in its event after N s' and last cut.
+  `test_probe_boss_intro.py` (`--env BT_PROBE_BOSS_INTRO=1`, default boot, NO-REF) measures that intro under stepping.
+  `live-twinrova-room` is the lane's child save (as every boot), not an adult one.
 - No game runs free (boss-respawn-bridge-e3e6e253): a call is never sent with less reply wait than it needs
   (`REPLY_MIN_S` 2 s, plus its frames at 20 a second); when the deadline cannot give that, the test FAILs
   `timeout ... not sent` with the connection and the hold kept. A reply that is lost anyway (a dropped connection,

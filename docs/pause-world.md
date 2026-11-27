@@ -4,7 +4,8 @@ Player report 299 (a suggestion, 0.12.0): in co-op, opening the pause menu shoul
 the reporter also thinks pausing causes desync. The owner wants it (2026-11-27). Design first, a probe before any
 build; then a **host option**, solo never changed.
 
-Status: **phase 0 (probe) built, not yet run in a game.** No option exists yet. The verdict below waits for the probe.
+Status: **phase 0 (probe) run in a game: PASS (2026-11-27).** No option exists yet. Verdict below: option A, with two
+things phase 1 must add and prove.
 
 ## How the pause works today
 
@@ -78,4 +79,38 @@ run while the menu draws; does the pad reach Link through the menu.
 
 ## Verdict
 
-Waits for the probe's run (reports/pause-world-299.md in coord-multiplayer).
+The probe ran once on lane 2 (`pause-world-a01fc8e2-2`, 2026-11-27 23:21 UTC, run tree a01fc8e21 = integrate-0121
+53d40ab3e + this branch c4dd61e1f; summary.json `test_pause_world_probe` PASS, 166 s; game A, child Link in Kakariko
+Village, the boot's free play). Its readings:
+
+| Step | Holds (slot: key, count) | The four UI words | Link's snapshot | `world` actors moved / seen |
+|---|---|---|---|---|
+| Free play | none | 0, 0, 0, 0 | fresh | 0 / 19 |
+| + menu open | 16: 0xba597383, 1 | 2134548244, 747643567, 75423, 0 | stale (Link's update stopped) | 1 / 23 |
+| Menu open, hold 16 let go | none | 0, 0, 0, 0 | fresh (Link's update runs) | 3 / 26 |
+| Stick 30 frames under the open menu | none | - | Link walked (-118.9, 96.68, 58.7) -> (-117.39, 96.82, 58.34) | - |
+| + menu shut | none (equal to free play's) | 0, 0, 0, 0 | fresh | 2 / 26 |
+
+The release line: `coop: pause world: test release 16 key 0xba597383: count 1 -> 0, notify 0x80b1ba60 called`; the
+menu's own release at shut found 0 and stayed there.
+
+What this settles:
+
+- **The + menu takes one hold**, key 0xba597383, and only that one. Letting it go with the game's own release restarts
+  Link's update while the menu stays open, and shutting the menu leaves the holds as in free play. **Option A works
+  with no game patch**: release only that key, only while the menu is open, only in a session with the host's option on.
+- **The pad reaches Link through the menu** (risk "Input": confirmed). Option A must hold Link's input off while the menu
+  shows (patch 0017's input-off wrap), and a test must show Link stands still under the menu.
+
+What it does not settle (phase 1 must prove each in a game):
+
+- **The UI words go back to 0 when the hold is let go** (they read the manager's +0x30..+0x3c, which screens test before
+  they act). The menu may then stop taking input or act as if shut. Phase 1 must show the menu still opens pages, moves
+  its cursor and shuts, with screenshots on each game (user-facing).
+- **Other actors**: Kakariko's free play moved 0 of 19 actors, so "3 moved" with the hold let go is weak proof that NPCs
+  and enemies run. Phase 1 measures in a scene with moving enemies.
+- The - menu (and the quick-switch menu) were not read: the probe only opened +.
+
+Next (phase 1, the host option): option A in the module behind the host's option, Link's input off while the menu
+shows, `in_menu` without `paused` sent; tests: the menu works (shots), Link stands, enemies move under the menu, solo
+and co-op idle unchanged (nothing released).

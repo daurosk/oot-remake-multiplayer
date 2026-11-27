@@ -40,7 +40,7 @@ class StarvedNote(unittest.TestCase):
 
     def test_one_game_slow_alone_is_that_game(self):
         note = P.starved_note({"A": A_DIP, "B": FAST})
-        self.assertEqual(note, "A alone slow (A 1.8/1.3 fps in its last 90 s): that game stalled, not the host")
+        self.assertEqual(note, "A alone slow (A 1.8/1.3 fps in its last 90 s): most likely that game stalled, not the host")
 
     def test_fast_games_one_dip_or_no_vi_lines_say_nothing(self):
         self.assertIsNone(P.starved_note({"A": FAST, "B": FAST}))

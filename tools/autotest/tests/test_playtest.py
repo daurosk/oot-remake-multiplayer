@@ -475,13 +475,18 @@ class LiveLifecycle(unittest.TestCase):
 
     def test_relaunch_answers_a_held_old_log_as_its_error(self):
         # downed-move-53d40ab3-2: os.replace WinError 32 on game-out-B.txt was a traceback ('no JSON answer'); now the
-        # rotate's reason is relaunch's JSON error, nothing is started and the plan is cleared
+        # rotate's reason is relaunch's JSON error, nothing is started and B stays planned down (review-tests-153-3: a
+        # cleared plan let the watchdog read B's dead pid as 'game B ended' and close A = the same lost lane)
         live.quit_one(self.args(player="B", kill=True), alive=self.alive, killer=self.live.discard,
                       sleep=lambda s: None)
         out = live.relaunch(self.args(player="B", boot=None, no_load=False, restore=False), alive=self.alive,
                             runner=lambda argv: 1 / 0, rotate=lambda log: "game-out-B.txt still held")
-        self.assertEqual(out, {"error": "game-out-B.txt still held"})
-        self.assertEqual(live.load(self.d)["planned"], {})
+        self.assertEqual(out, {"error": "game-out-B.txt still held", "player": "B", "boot": "FAILED: the game stays down"})
+        self.assertEqual(live.load(self.d)["planned"], {"B": "relaunch"})
+        self.live.discard(11)   # (A gone too: only B is planned, so the watchdog names A and never B)
+        live.touch(self.d)
+        c = FakeClock(1000.0)
+        self.assertEqual(live.watch(self.d, clock=c, sleep=c.sleep, alive=self.alive), "game A ended")
 
     def test_rotate_log_waits_for_a_held_file_then_moves_it(self):
         log = os.path.join(self.d, "game-out-B.txt")

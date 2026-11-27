@@ -742,9 +742,8 @@ def relaunch(a, alive=None, runner=None, rotate=rotate_log):
     plan(d, x, "relaunch")
     log = s["games"][x]["log"]
     held = rotate(log)   # the runner writes game-out-X.txt from the start: the old one is kept beside it
-    if held:
-        plan(d, x, None)
-        return {"error": held}
+    if held:   # (x stays planned down, as after a failed runner: the watchdog must not read its dead pid as 'game x ended'
+        return {"error": held, "player": x, "boot": "FAILED: the game stays down"}   # and close the other game)
     import contextlib
     with contextlib.redirect_stdout(sys.stderr):      # (the runner's boot lines: stdout is the ONE JSON answer, as start)
         code = (runner or hookshot.main)(relaunch_argv(r, d, x, a.boot, a.no_load, a.restore,

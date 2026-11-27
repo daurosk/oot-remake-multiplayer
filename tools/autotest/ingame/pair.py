@@ -155,8 +155,9 @@ def starved_note(logs):
     fps = ", ".join("%s %s fps" % (x, "/".join("%g" % f for f in slow[x])) for x in sorted(slow))
     if len(slow) == len(logs) and len(logs) > 1:
         return ("host starved: every game's frame rate fell under %g fps in its last %.0f s at once (%s): a load "
-                "outside the test (another job, a CI VM), not the test" % (STARVED_FPS, STARVED_WINDOW_S, fps))
-    return ("%s alone slow (%s in its last %.0f s): that game stalled, not the host"
+                "outside the test (another job, a CI VM) most likely, not the test (fps evidence only: a held game "
+                "dips too)" % (STARVED_FPS, STARVED_WINDOW_S, fps))
+    return ("%s alone slow (%s in its last %.0f s): most likely that game stalled, not the host"
             % (" and ".join(sorted(slow)), fps, STARVED_WINDOW_S))
 
 

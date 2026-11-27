@@ -19,6 +19,10 @@ file) with any of these hooks, each called for every fake game (A and B), in fil
     move_step(game, pos) -> pos|None each frame of a `move`, Link's next [x, y, z]: return a changed one (a wall)
     state(game, st)                  change the state dict in place
 A hook reacts only where its row is (its scene, its switch, its BT_FAKE_* selftest variable), so ports never collide.
+B #149 (banner-steady-0121, chartab-0121): a hook never answers every call nor writes a shared state key for other
+rows. Two guards: (1) a state key (st['menu'], st['banner'], ...) set by one module's hook and then replaced by another
+module's in the same state is a 'fake-guard:' line (module log + <fake>/fake-guard.txt, tests/test_ingame.py fails on
+it); (2) tests/test_ingame.py FakeIsolation: each test file's result alone == its result in the whole fake suite.
 """
 import importlib.util
 import json
@@ -66,6 +70,7 @@ class FakeGame:
         os.makedirs(os.path.join(folder, "playtest", "dumps"), exist_ok=True)
         os.makedirs(os.path.join(folder, "playtest", "shots"), exist_ok=True)
         self.log_path = os.path.join(folder, "game-out-%s.txt" % tag)
+        self.folder_path, self.guarded = os.path.abspath(folder), set()
         self.lock = threading.RLock()
         self.frame, self.paused, self.scene = 100, False, "KokiriForest_Child"
         self.pos, self.facing = [0.0 if tag == "A" else 4.0, 0.0, 0.0], 0.0
@@ -165,9 +170,27 @@ class FakeGame:
         st = self.base_state()
         for h in hooks(self.fakes, "actors"):
             st["world"]["actors"].extend(h(self) or [])
+        owner = {}
         for h in hooks(self.fakes, "state"):
+            before = {k: id(v) for k, v in st.items()}
             h(self, st)
+            for k, v in st.items():
+                if before.get(k) == id(v):
+                    continue
+                if owner.get(k, h.__module__) != h.__module__:
+                    self.guard("state key %r set by %s, then replaced by %s" % (k, owner[k], h.__module__))
+                owner[k] = h.__module__
         return st
+
+    def guard(self, what):
+        """B #149: a fake module stepped on another's state (see the docstring's guards)."""
+        line = "fake-guard: %s: %s" % (self.tag, what)
+        if line in self.guarded:
+            return
+        self.guarded.add(line)
+        self.say(line)
+        with open(os.path.join(os.path.dirname(self.folder_path), "fake-guard.txt"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     def age(self):
         """Link's age, from the game's own flag as the real game keeps it (Sequence_IsChildhood: 1 child, 0 adult;

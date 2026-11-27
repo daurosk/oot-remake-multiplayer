@@ -1643,6 +1643,11 @@ void NativeStep(void* ctx) {
     g_native.feed.Update(in, now);
     // The held line (down but not out) keeps the banner; a page of ours whose time is over closes. Pages wait
     // meanwhile.
+    struct LogBanner {   // typing-blink-0121: the banner's changes (CoopNativeUi::TakeBannerLines), however we leave
+        ~LogBanner() {
+            for (const std::string& l : CoopNativeUi::TakeBannerLines()) LOG_INFO(Core, "{}", l);
+        }
+    } log_banner;
     if (g_native.banner.Step(game, g_native.ring, CoopNativeUi::HeldBanner(), now)) return;
     if (NativeTyping(game, now, colours)) return;
     if (g_native.feed.Busy(now) || now < g_native.failed_ms + 1000) return;
@@ -3796,5 +3801,14 @@ namespace CoopHookshot {
 bool BridgeKey(std::uint32_t vk) {
     static CoopBoundary::Site site{"bridge_key"};
     return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int { return KeyPress(vk, false); }) != 0;
+}
+std::size_t BridgeChars(std::string_view text) {
+    static CoopBoundary::Site site{"bridge_chars"};
+    std::size_t taken = 0;
+    for (const char ch : text) {
+        const auto byte = static_cast<std::uint32_t>(static_cast<unsigned char>(ch));
+        taken += CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int { return TypeChar(byte) ? 1 : 0; });
+    }
+    return taken;
 }
 }  // namespace CoopHookshot

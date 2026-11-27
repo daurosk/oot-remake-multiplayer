@@ -433,6 +433,12 @@ TEST_CASE("playtest: every command parses, ids come back as given") {
     CHECK(Parse(R"({"cmd":"key","key":"F12"})")->vk == 0x7Bu);
     CHECK(Parse(R"({"cmd":"key","key":"T"})")->vk == static_cast<std::uint32_t>('T'));
     CHECK(Parse(R"({"cmd":"key","key":"7"})")->vk == static_cast<std::uint32_t>('7'));
+    // typing-blink-0121: the chat box's own keys, and typed characters
+    CHECK(Parse(R"({"cmd":"key","key":"Esc"})")->vk == 0x1Bu);
+    CHECK(Parse(R"({"cmd":"key","key":"Enter"})")->vk == 0x0Du);
+    CHECK(Parse(R"({"cmd":"key","key":"Backspace"})")->vk == 0x08u);
+    CHECK(Parse(R"({"cmd":"key","text":"hello there"})")->chars == "hello there");
+    CHECK(Parse(R"({"cmd":"key","text":"hello there"})")->vk == 0u);
 }
 
 TEST_CASE("playtest: bad requests are refused with a reason, never acted on") {
@@ -478,6 +484,11 @@ TEST_CASE("playtest: bad requests are refused with a reason, never acted on") {
     for (const char* bad : {"f1", "F0", "F01", "F13", "TAB", "t", "", "F1 "}) {
         CHECK(ParseError(std::string(R"({"cmd":"key","key":")") + bad + "\"}").find("F1 to F12") != std::string::npos);
     }
+    CHECK(ParseError(R"({"cmd":"key","text":""})").find("printable") != std::string::npos);
+    CHECK(ParseError(R"({"cmd":"key","text":"tab\there"})").find("printable") != std::string::npos);
+    CHECK(ParseError(std::string(R"({"cmd":"key","text":")") + std::string(65, 'a') + "\"}").find("64") !=
+          std::string::npos);
+    CHECK(ParseError(R"({"cmd":"key","key":"T","text":"x"})").find("not both") != std::string::npos);
     CHECK_FALSE(ValidTag(std::string(65, 'a')));
     CHECK(ParseError(std::string(kMaxLine + 1, ' ')).find("64 KB") != std::string::npos);
 }

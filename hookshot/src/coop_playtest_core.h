@@ -143,6 +143,7 @@ struct Request {
     std::string layout;       // text: only the layouts whose name has this in it ("": every layout)
     std::string key;          // key: the host key's name (F1, T, ...) and its virtual key (KeyVk)
     std::uint32_t vk = 0;
+    std::string chars;        // key: typed characters in place of a key (hos_coop_char's steps, one per byte)
     double timeout_s = 60;
 };
 // The request on one line, or `error` (bad_request's message).

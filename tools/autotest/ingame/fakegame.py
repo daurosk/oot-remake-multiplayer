@@ -85,6 +85,12 @@ class FakeGame:
         # (the play UI up again BT_FAKE_UI_LATE frames after a warp, default 20; a tag in BT_FAKE_UI_NEVER: never)
         self.ui_late = int(os.environ.get("BT_FAKE_UI_LATE", "20") or 20)
         self.ui_never = tag in os.environ.get("BT_FAKE_UI_NEVER", "")
+        # (the play UI down: + is refused, as the real game does, crawl-337-12 / gate-pause-309d7180. BT_FAKE_BOOT_UI_DOWN=A:
+        # A's boot leaves its play UI down for BT_FAKE_BOOT_UI_FRAMES frames (default 120) after the bridge is up,
+        # gate-pause-309d7180's A: its boot load's 'down' :4323, a soldier event, 'up' only at :5052 after the test's +.
+        # That A was already in the default boot's scene (its script's own teleport), so the boot proof warped nothing:
+        # the fake's A starts there too, else boot_ready's warp (and its own play UI wait) would hide the case)
+        self.ui_down = False
         # (the game's first-use "Ocarina Audio Input" box on the boot's first D-pad Left, Pair.ocarina_out: the free-Ocarina
         # event line at once, 'plays the ocarina' only after B closes it; probe-ocarina-2f14b333)
         self.box, self.box_seen = False, False
@@ -97,6 +103,10 @@ class FakeGame:
             self.scene, self.event = "Graveyard_Child", True
         self.stale_until = self.frame + int(os.environ.get("BT_FAKE_STALE_FRAMES", "0") or 0)
         open(self.log_path, "w").close()
+        if tag in os.environ.get("BT_FAKE_BOOT_UI_DOWN", ""):
+            self.scene, self.ui_down = "KakarikoVillage_Child", True
+            self.say("coop: native ui: the game's play UI is down (a scene load or the title): no screen is live")
+            self.later(int(os.environ.get("BT_FAKE_BOOT_UI_FRAMES", "120") or 120), self.ui_up)
         me, them = (1, 2) if tag == "A" else (2, 1)
         self.say("coop: multiplayer tab: test: to-title.now in %s starts the way back to the title" % folder)
         if solo_log:     # (bt_plugin --solo: game A alone, what the module logs with no server: solo.IDLE)
@@ -130,6 +140,11 @@ class FakeGame:
             self.later(self.ocarina_late, done)
         else:
             done()
+
+    def ui_up(self):
+        self.ui_down = False
+        self.say("coop: native ui: the game's play UI is up (patch 0018's HUD screen ran since the load): its screens are "
+                 "live")
 
     def say(self, line):
         with open(self.log_path, "a", encoding="utf-8") as f:
@@ -269,13 +284,12 @@ class FakeGame:
             # (the real module's lines, hookshot/src/coop_hookshot.cpp Frame: the load takes the play UI down, the HUD
             # screen's run after the arrival puts it up; BT_FAKE_UI_LATE=N frames later, default 20; a tag in
             # BT_FAKE_UI_NEVER: never up again, Pair._until_play_ui's SETUP-FAIL)
+            self.ui_down = True
             self.say("coop: native ui: the game's play UI is down (a scene load or the title): no screen is live")
             self.say("coop: native ui: scene load ended (Sequence_IsLoadingBanc): screens handed out once the game's "
                      "HUD screen has run")
             if not self.ui_never:
-                self.later(self.ui_late,
-                           lambda: self.say("coop: native ui: the game's play UI is up (patch 0018's HUD screen ran "
-                                            "since the load): its screens are live"))
+                self.later(self.ui_late, self.ui_up)
             self.equip_later()
             r.update(arrived=True, via="teleport", map=m["scene"], state=self.state())
         elif cmd == "move":
@@ -349,7 +363,9 @@ class FakeGame:
         if any(taken):
             return
         o, me = self.other, 1 if self.tag == "A" else 2
-        if "PLUS" in buttons:
+        if "PLUS" in buttons and self.ui_down:
+            self.say("fake: + refused: the play UI is down")    # (the real game's refusal, crawl-337-12)
+        elif "PLUS" in buttons:
             # (BT_FAKE_PAUSE_STUCK=B: B's pause page opens and never closes again, the game a test left on a pause page,
             # tb-gate-ui-f9f3b9c2 test_pause FAIL; only a relaunch brings it back: Pair.recover, crawl-337-11)
             if not (self.menu_pause and self.tag in os.environ.get("BT_FAKE_PAUSE_STUCK", "")):

@@ -783,6 +783,10 @@ def _boot_proof(config, pair, lane):
     except P.SetupFail as e:
         raise P.SetupFail("lane%d %s" % (lane, e)) from e
     pair.info = dict(pair.info, boot_proof="; ".join(pair.notes) or "both in play, no event, in the boot scene")
+    # (in summary.json 'boot_proof' too: its waits, e.g. 'A: in play with its play UI down: waited N frames', were
+    # nowhere a run's reader could see them; pause-press-0121, gate-pause-309d7180)
+    config._bt_boot_proof = dict(getattr(config, "_bt_boot_proof", None) or {},
+                                 **{"lane%d" % lane: pair.info["boot_proof"]})
 
 
 BASE_ENV = ["LICHII_COOP_PUPPET=1", "LICHII_COOP_TEST_TO_TITLE=1"]   # every boot (lane_pair's live.py start)
@@ -1014,6 +1018,8 @@ def pytest_testnodedown(node, error):
     config = node.config
     config._bt_commit = dict(getattr(config, "_bt_commit", None) or {},
                              **((getattr(node, "workeroutput", None) or {}).get("bt_commit") or {}))
+    config._bt_boot_proof = dict(getattr(config, "_bt_boot_proof", None) or {},
+                                 **((getattr(node, "workeroutput", None) or {}).get("bt_boot_proof") or {}))
     seen = {d["test"] for d in config._bt_deselected}
     tr = config.pluginmanager.get_plugin("terminalreporter")
     wo = getattr(node, "workeroutput", None) or {}
@@ -1050,6 +1056,7 @@ def pytest_sessionfinish(session, exitstatus):
         config.workeroutput["bt_game_b"] = dict(config._bt_game_b)
         config.workeroutput["bt_pack_out"] = list(getattr(config, "_bt_pack_out", None) or [])   # (merged by the controller, below)
         config.workeroutput["bt_commit"] = getattr(config, "_bt_commit", None) or {}
+        config.workeroutput["bt_boot_proof"] = getattr(config, "_bt_boot_proof", None) or {}
         return     # (xdist: the controller writes the one summary)
     rows = config._bt_rows
     counts = {k: sum(1 for r in rows if r["result"] == k) for k in RESULTS}
@@ -1067,6 +1074,7 @@ def pytest_sessionfinish(session, exitstatus):
                "stopped": getattr(config, "_bt_stopped", None),
                "lane_closed": getattr(config, "_bt_lane_closed", None),
                "commit": getattr(config, "_bt_commit", None),
+               "boot_proof": getattr(config, "_bt_boot_proof", None),
                "verdict": "PASS" if rows and counts["PASS"] == len(rows) else "NOT PASS"}
     with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)

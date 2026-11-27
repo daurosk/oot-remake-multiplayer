@@ -274,7 +274,7 @@ def test_boss_final_blow_frames(pair):
             cap = frame_rate_cap(pair.games[x]["folder"])
             assert cap == "0", "%s: frame_rate_cap=%s (this row is the 60 cap: 0)" % (x, cap)
         pair.warp_both(TR_STAGE, TR_STAGE, arrive_in_event=True)
-    pair.until("both games past the intro", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), 3600)
+    pair.until("both games past the intro", lambda: all(pair.ready(x) for x in ("A", "B")), 3600)
     parts = [a for n in TR_PARTS for a in actors(pair, "A", n) if a.get("alive", True)]
     if not parts:
         pair.unproven("no Twinrova part alive in A's world list after the intro")

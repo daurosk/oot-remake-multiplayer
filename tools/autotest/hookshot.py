@@ -1414,6 +1414,15 @@ def restore_save(game):
     return True
 
 
+def restore_lane_files(game, out, x):
+    """The game folder's co-op files put back to the known set (lane_files.py: coop-options.ini = the kit's, coop.ini
+    name + client_id, a kept difficulty / pick / bans / NG+ / saves choice moved aside), with the save and under the
+    same switch (--no-restore keeps both: a rejoin's point). What is moved aside goes to <out>/lane-kept-<x>. One line
+    for steps.txt, 'X: lane files: ...' (bt_plugin's boot proof looks for it)."""
+    import lane_files
+    return "%s: %s" % (x, lane_files.restore(game, os.path.join(out, "lane-kept-%s" % x)))
+
+
 def exe_dir(game):
     return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
 
@@ -1758,6 +1767,8 @@ def run(a):
                 raise FileNotFoundError("no Hookshot game in %s" % g)
             if not a.no_restore:
                 say("%s: save baseline %s" % (x, "restored" if restore_save(g) else "none (autotest-save missing)"))
+                say(restore_lane_files(g, out, x) if not getattr(a, "keep_lane_files", False)
+                    else "%s: lane files: KEPT as they are (--keep-lane-files)" % x)
             sock = "%s-%s" % (a.pipe, x) if WINDOWS else os.path.join(out, "control-%s.sock" % x)
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
@@ -2021,6 +2032,7 @@ def main(argv=None):
     r.add_argument("--no-load", action="store_true")
     r.add_argument("--no-load-games", default="", help="A or B or A,B: those games skip the load (their script loads the save itself); the other plays --load")
     r.add_argument("--no-restore", action="store_true")
+    r.add_argument("--keep-lane-files", action="store_true", help="keep the games' co-op files as they are (coop-options.ini, coop.ini, a kept difficulty...: lane_files.py); only for an old row whose run script writes them first. Every other run puts them back with the save")
     r.add_argument("--keep-open", action="store_true")
     r.add_argument("--only", choices=["A", "B"],
                    help="start only this game, into a live session's folder (--out; live.py relaunch): its pids are "

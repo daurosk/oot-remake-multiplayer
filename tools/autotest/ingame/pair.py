@@ -216,9 +216,11 @@ def lane_check(kit_ls, lane, nocs=False):
         if have_p != want_p:
             raise SetupFail("lane%d-%s game patches line %s is not lane-server.txt's %s (the game was rebuilt after the "
                             "lane's install)" % (lane, x, have_p[:8] or "(none)", want_p[:8]))
-        kept_difficulty(d)
+        # (a kept difficulty and the other co-op files a run leaves are put back by the boot itself, with the save:
+        # lane_files.py, hookshot.py restore_lane_files; here only named. kept_difficulty checks it again after the boot)
+        import lane_files
         got[x] = {"server": srv, "commit": commit, "dll_sha256": want, "patches": want_p, "folder": d,
-                  "nocs_of": field("nocs_of")}
+                  "nocs_of": field("nocs_of"), "lane_files": lane_files.leftovers(d)}
     if nocs:
         nocs_check(got["B"], got["B" + NOCS], lane)
         got["B"] = got["B" + NOCS]
@@ -231,7 +233,8 @@ def lane_check(kit_ls, lane, nocs=False):
         raise SetupFail("lane%d A and B name different servers (%s / %s)" % (lane, a["server"], b["server"]))
     if not os.path.exists(a["server"]):
         raise SetupFail("no server %s (lane%d lane-server.txt)" % (a["server"], lane))
-    return dict({k: v for k, v in a.items() if k not in ("folder", "nocs_of")}, game_b=b["folder"],
+    return dict({k: v for k, v in a.items() if k not in ("folder", "nocs_of", "lane_files")}, game_b=b["folder"],
+                lane_files={"A": a["lane_files"], "B": b["lane_files"]},
                 game_b_exefs=_exefs_line(os.path.join(b["folder"], "coop-built-from.txt")))
 
 

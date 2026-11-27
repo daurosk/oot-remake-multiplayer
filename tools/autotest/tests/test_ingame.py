@@ -1995,15 +1995,20 @@ class LaneCheck(unittest.TestCase):
 
     def test_kept_difficulty_left_by_an_earlier_run(self):
         """A game folder with a coop-difficulty.ini (a kept difficulty, read once at game start, offered to every
-        automatic session): SETUP-FAIL naming the file (lane1-A/lane2-A 2026-11-26 kept Custom hp=300, B #148)."""
+        automatic session; lane1-A/lane2-A 2026-11-26 kept Custom hp=300, B #148): lane_check names it (the boot puts
+        it aside: lane_files.py, B #149 tunic-look-0121), and kept_difficulty, the check after the boot
+        (bt_plugin._lane_files_proof), still SETUP-FAILs on it."""
         for x in "AB":
             self.make(self.tmp, x, server=self.server)
         f = os.path.join(self.tmp, "lane1-A", "coop-difficulty.ini")
         with open(f, "w", encoding="utf-8") as fh:
             fh.write("# kept\nauto = 0\npreset = custom\nhp = 300\n")
+        info = P.lane_check(self.tmp, 1)
+        self.assertIn("coop-difficulty.ini present", info["lane_files"]["A"])
+        self.assertNotIn("coop-difficulty.ini present", info["lane_files"]["B"])
         with self.assertRaisesRegex(P.SetupFail, r"lane1-A.coop-difficulty\.ini holds a kept difficulty from an "
                                                  r"earlier run \(auto = 0 preset = custom hp = 300\)"):
-            P.lane_check(self.tmp, 1)
+            P.kept_difficulty(os.path.dirname(f))
         os.remove(f)
         self.assertEqual(P.lane_check(self.tmp, 1)["commit"], "ae97cc772")
 
@@ -2311,6 +2316,57 @@ class CommitSampler(unittest.TestCase):
             self.assertGreater(b, 1 << 20)
         else:
             self.assertIsNone(b)
+
+
+class LaneFilesProof(unittest.TestCase):
+    """bt_plugin._lane_files_proof (B #149, tunic-look-0121): the boot's steps.txt says each game's co-op files were put
+    back (hookshot.py restore_lane_files) and no kept difficulty is left after it (pair.kept_difficulty, 9aef275d7)."""
+
+    def setUp(self):
+        import bt_plugin as B
+        self.B = B
+        self.tmp = tempfile.mkdtemp()
+        self.folders = [os.path.join(self.tmp, "lane1-%s" % x) for x in "AB"]
+        for d in self.folders:
+            os.makedirs(d)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def steps(self, *lines):
+        with open(os.path.join(self.tmp, "steps.txt"), "w", encoding="utf-8") as f:
+            f.write("".join("18:00:20 %s\n" % ln for ln in lines))
+
+    def test_both_said(self):
+        self.steps("A: save baseline restored", "A: lane files: put back: coop-options.ini = the kit's (x)",
+                   "B: save baseline restored", "B: lane files: the known set (nothing changed)")
+        got = self.B._lane_files_proof(self.tmp, self.folders, 1)
+        self.assertEqual(got["B"], "B: lane files: the known set (nothing changed)")
+        self.assertTrue(got["A"].startswith("A: lane files: put back"))
+
+    def test_a_game_not_said_is_setup_fail(self):
+        """An older harness, or a boot with --no-restore: no line, SETUP-FAIL (never a run on the lane's leftovers)."""
+        self.steps("A: save baseline restored", "A: lane files: the known set (nothing changed)",
+                   "B: save baseline restored")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: B's co-op files were not put back"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
+
+    def test_kept_by_switch_is_setup_fail(self):
+        """--keep-lane-files (an old row's run script) is never a bridge run's boot."""
+        self.steps("A: lane files: KEPT as they are (--keep-lane-files)", "B: lane files: the known set (nothing changed)")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: A's co-op files were not put back"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
+
+    def test_solo_needs_a_only(self):
+        self.steps("A: lane files: the known set (nothing changed)")
+        self.assertEqual(list(self.B._lane_files_proof(self.tmp, self.folders[:1], 1)), ["A"])
+
+    def test_kept_difficulty_after_the_boot_is_setup_fail(self):
+        self.steps("A: lane files: the known set (nothing changed)", "B: lane files: the known set (nothing changed)")
+        with open(os.path.join(self.folders[1], "coop-difficulty.ini"), "w", encoding="utf-8") as f:
+            f.write("preset = hard\n")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: .*lane1-B.coop-difficulty\.ini holds a kept difficulty"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
 
 
 if __name__ == "__main__":

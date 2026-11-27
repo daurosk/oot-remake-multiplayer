@@ -591,6 +591,8 @@ class HookshotGamesTest(unittest.TestCase):
         hk = type("hk", (), {})()
         hk.exe_dir = lambda g: g
         hk.restore_save = lambda g: restored.append(g) or True
+        self.lane_files = []   # (B #149 tunic-look-0121: the co-op files with the save, same switch)
+        hk.restore_lane_files = lambda g, out, x: self.lane_files.append((g, out, x)) or "%s: lane files: put back" % x
         hk.Bridge = Bridge
         self.packed = []   # (row 265: the kit's start of the pack, before each game start)
         hk.pack_start = lambda g, env, say: self.packed.append((g, env.get("X"))) or []
@@ -640,6 +642,7 @@ class HookshotGamesTest(unittest.TestCase):
         self.g.start("B", "pw", wait=False)
         self.assertFalse(os.path.exists(log))            # the first start: the old file goes, nothing kept
         self.assertEqual(self.restored, [self.games["B"]])
+        self.assertEqual(self.lane_files, [(self.games["B"], self.out, "B")])   # (with the save: lane_files.py)
         with open(log, "w") as f:
             f.write("coop: welcomed as player 2\n")
         self.assertEqual(self.g.log("B"), "coop: welcomed as player 2\n")

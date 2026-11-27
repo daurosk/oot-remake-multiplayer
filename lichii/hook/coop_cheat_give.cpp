@@ -54,7 +54,9 @@ bool Put(coop::host::FlagStore& game, std::string_view name, std::uint32_t hash,
 std::int32_t Wanted(const coop::host::ItemFlag& item, std::int32_t was) {
     if (item.kind == FlagKind::int32) {
         if (item.rule == coop::host::ItemRule::count) return was + 1;
-        if (item.name == "PlayerStatus.MaxLife") return was + 4;
+        // A heart container at the game's most hearts gives none (coop::host::kMostMaxLife): never past it, which the
+        // game would put back (volvagia-rocks-309d7180: 80 -> 84 read back 80).
+        if (item.name == "PlayerStatus.MaxLife") return std::min(was + 4, std::max(was, coop::host::kMostMaxLife));
         return std::max(was, 1);
     }
     if (item.kind == FlagKind::uint32) return static_cast<std::int32_t>(static_cast<std::uint32_t>(was) | 1u);

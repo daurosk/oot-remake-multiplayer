@@ -974,9 +974,11 @@ class Pair:
             self.warp_one(x, scene, entrance, arrive_in_event)
         return {x: self.state(x) for x in self.c}
 
-    def warp_one(self, x, scene, entrance=None, arrive_in_event=False):
+    def warp_one(self, x, scene, entrance=None, arrive_in_event=False, ui_wait=True):
         """Game x alone to `scene`, by warp_both's rules (entrance, arrive_in_event, waits inside the deadline); the
         other game is stepped to the same frame count after it (row-286-wake-3). Returns x's state.
+        ui_wait=False: no wait for the play UI after the arrival (_until_play_ui); ONLY for a test that forces the
+        'in play with its play UI down' case on purpose (test_pause_ui_down.py), every other caller keeps the wait.
         arrive_in_event=None (boot_ready: a boot's scene may or may not start an event on arrival): the bridge's own
         60 s wait, and a 'timeout' is judged on state like arrive_in_event=True (in the scene, not loading, the event
         running), anything else raises."""
@@ -1027,7 +1029,7 @@ class Pair:
         for y in self.c:
             if y != x and ran:
                 self.step_other(y, ran)
-        if r.get("ok"):
+        if r.get("ok") and ui_wait:
             # (arrived in free play: the warp ends only when x's play UI is up again; an arrival answered 'timeout' in
             # its event (arrive_in_event) is left in the event, as the test asked)
             self._until_play_ui(x, scene, log_at)
@@ -1197,15 +1199,17 @@ class Pair:
         return lg
 
     # -- looks ------------------------------------------------------------------------------------------------
-    def check_shot(self, x, name, tolerance=0.90):
+    def check_shot(self, x, name, tolerance=0.90, box=None):
         """A bridge shot of game x (the game's framebuffer, no overlay), compared to refs/<name>-<x>.png by SSIM.
         No reference yet: the shot is kept as <out>/new/<name>-<x>.png, the test goes on, and its result is NO-REF (an
-        owner-approved reference is copied into refs/ by hand; never made a pass by the test itself)."""
+        owner-approved reference is copied into refs/ by hand; never made a pass by the test itself).
+        box (left, top, right, bottom fractions): only that part is compared (imagecheck.ssim); the whole shot and
+        reference are still kept."""
         import imagecheck   # (Pillow + scikit-image: only tests with a look check need them)
         r = self.call(x, "shot", name="%s-%s" % (name, x))
         path = r.get("path")
         ref = os.path.join(self.refs_dir or os.path.join(HERE, "refs"), "%s-%s.png" % (name, x))
-        res = imagecheck.compare(path, ref, tolerance, keep_dir=self.out_dir)
+        res = imagecheck.compare(path, ref, tolerance, keep_dir=self.out_dir, box=box)
         self.shots.append(dict(res, game=x, name=name))
         if res["why"].startswith("NO-REF"):
             return res        # (the test goes on; bt_plugin labels it NO-REF at its end, never PASS)

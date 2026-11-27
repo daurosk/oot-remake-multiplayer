@@ -37,15 +37,27 @@ def load_rgb(path, width=WIDTH):
         return np.asarray(im, dtype=np.float64) / 255.0
 
 
-def ssim(a_path, b_path, grid=GRID, colour=True):
+def _crop(a, box):
+    """a cut to `box` = (left, top, right, bottom) as fractions of its width / height (None: all of it)."""
+    if not box:
+        return a
+    h, w = a.shape[:2]
+    l, t, r, b = box
+    return a[int(round(t * h)):int(round(b * h)), int(round(l * w)):int(round(r * w))]
+
+
+def ssim(a_path, b_path, grid=GRID, colour=True, box=None):
     """The LOWEST mean SSIM of a grid x grid split of the SSIM map: a small thing missing (a mask, a HUD block) drops
     its own tile even when the rest of the picture is the same (the whole picture's mean SSIM would hide it). With
     colour (the default), SSIM per channel and each tile's worst channel: a recoloured thing drops its tile too.
-    colour=False: the grey picture only (kept for the selftest that shows why grey is blind to colour)."""
+    colour=False: the grey picture only (kept for the selftest that shows why grey is blind to colour).
+    box: only that part of both pictures is compared (_crop): a page drawn over the live world (the pause page's right
+    half shows the dimmed world behind it, which moves) is judged on its own still part (pause-press-0121-3)."""
     from skimage.metrics import structural_similarity
     a, b = (load_rgb(a_path), load_rgb(b_path)) if colour else (load_grey(a_path), load_grey(b_path))
     if a.shape != b.shape:
         return 0.0, "sizes differ %s vs %s (aspect ratio changed)" % (a.shape, b.shape)
+    a, b = _crop(a, box), _crop(b, box)
     if colour:
         _, m = structural_similarity(a, b, data_range=1.0, full=True, channel_axis=2)
         m = m.min(axis=2)                  # (each pixel's worst channel)
@@ -57,8 +69,10 @@ def ssim(a_path, b_path, grid=GRID, colour=True):
     return float(min(tiles)), None
 
 
-def compare(shot, ref, tolerance, keep_dir=None):
+def compare(shot, ref, tolerance, keep_dir=None, box=None):
     out = {"path": shot, "ref": ref, "score": None, "ok": False, "tolerance": tolerance}
+    if box:
+        out["box"] = list(box)
     if not shot or not os.path.exists(shot):
         out["why"] = "no shot file (%s)" % shot
         return out
@@ -73,11 +87,12 @@ def compare(shot, ref, tolerance, keep_dir=None):
             shutil.copyfile(shot, os.path.join(keep_dir, "new", os.path.basename(ref)))
         out["why"] = "NO-REF: no reference %s yet (candidate kept under new/)" % os.path.basename(ref)
         return out
-    score, err = ssim(shot, ref)
+    score, err = ssim(shot, ref, box=box)
     out["score"] = round(score, 4)
     if err:
         out["why"] = err
         return out
     out["ok"] = score >= tolerance
-    out["why"] = "colour SSIM %.4f %s %.2f" % (score, ">=" if out["ok"] else "<", tolerance)
+    out["why"] = "colour SSIM %.4f %s %.2f%s" % (score, ">=" if out["ok"] else "<", tolerance,
+                                                 " (box %s)" % (list(box),) if box else "")
     return out

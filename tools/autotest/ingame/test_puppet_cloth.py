@@ -6,11 +6,13 @@ keys; docs/puppet.md "Cloth (row 313)"). The lane's pack is the tested sha's own
 |---|---|---|
 | test_cloth_child | the game holds a cloth for the other player's child puppet (on each game), the cloth words move while it runs and settle while it stands, shots of the puppet running | log + LOOK |
 | test_cloth_adult | the same for an adult puppet, then again after both warp to another scene (a puppet's jump to a new place) | log + LOOK |
+| test_cloth_absent_control | MEASURED control on the pack before the fix (--pack no_cloth, packs/no_cloth.py): the copy's holder is 0 on each game while our own Link's is not, the value the two tests above FAIL on | log |
 
 Judged by the module's read-only probe (LICHII_COOP_DEBUG_CLOTH=1, lichii/hook/coop_puppet.cpp Director::ClothProbe):
 once a second per shown copy the chain the game's own hair code reads (main+0x4b8438..0x4b84b4), then the same for
 our own Link. Before the fix a puppet's holder is 0 (its Physics was InterestSpotActor's, whose set is empty) while our
-own Link's is not. Every pattern below is that function's own line.
+own Link's is not: ESTIMATED from the pack (cloth-puppet-313.md) until test_cloth_absent_control has run on a lane and
+its lines are cited here. Every pattern below is that function's own line.
 """
 import math
 import os
@@ -39,11 +41,19 @@ SCENE_CHILD, AT_CHILD = "KokiriForest_Child", "FrontDekuTree"                   
 SCENE_ADULT, AT_ADULT = "HyruleField_Adult", "HyruleField_FrontOfKakarikoVillage"   # hs-dbno-adult (test_downed_move)
 
 
+def word(w):
+    """One '%.4g' word of game memory; a NaN or inf prints as '-nan(ind)', 'inf' ... on the Windows CRT: NaN then."""
+    try:
+        return float(w)
+    except ValueError:
+        return float("nan")
+
+
 def parse(line):
     m = CLOTH.search(line)
     if not m:
         return None
-    words = [float(w) for w in m.group(10).split()] if m.group(10) else []
+    words = [word(w) for w in m.group(10).split()] if m.group(10) else []
     return {"who": m.group(1), "own": bool(m.group(2)), "physics": m.group(3), "set": m.group(4),
             "holder": m.group(5), "n": int(m.group(6)), "list": m.group(7), "entries": int(m.group(8)),
             "flags": m.group(9), "words": words}
@@ -91,23 +101,31 @@ def holds_cloth(pair, x, pos, what):
     return copies, own
 
 
-def swings(pair, what):
-    """B stands, then runs, then stands: A's probe of B's copy (the first cloth entry's words) and shots of it running.
-    The words moving more while it runs than while it stands is the finding; an equal change is NO-REF (the first
-    entry may not be a moving piece), never PASS on the log alone: the shots show the swing."""
+def swings(pair, what, mover, watcher, twice):
+    """`mover` stands, then runs, then stands: `watcher`'s probe of its copy (the first cloth entry's words) and shots
+    of it running. The words moving more while it runs than while it stands is the finding; an equal change is NO-REF
+    (the first entry may not be a moving piece), never PASS on the log alone: the shots show the swing."""
     pair.step_both(PROBE_FRAMES)                     # the move's cloth settles before the still sample
-    at = pair.log["A"].mark()
+    at = pair.log[watcher].mark()
     pair.step_both(STILL_FRAMES)
-    still = change(lines(pair, "A", at))
-    at = pair.log["A"].mark()
-    ran = dc.stick_move(pair, "B", 90, RUN_FRAMES // 2)       # across A's view (B faces A: stick right = A's left)
-    dc.shots(pair, "cloth-%s-running" % what)                 # (2 shots per game, 6 frames apart, while it swings)
-    ran += dc.stick_move(pair, "B", 270, RUN_FRAMES // 2)
-    moving = change(lines(pair, "A", at))
-    pair.notes.append("%s: B ran %.2f m; A's copy's first cloth entry changed up to %.4g a second running, %.4g "
-                      "standing" % (what, ran, moving, still))
-    assert ran >= 1.0, "%s: B did not run (%.2f m)" % (what, ran)
-    return moving, still
+    still = change(lines(pair, watcher, at))
+    at = pair.log[watcher].mark()
+    ran = dc.stick_move(pair, mover, 90, RUN_FRAMES // 2)     # across the watcher's view (they face each other)
+    dc.shots(pair, "cloth-%s-%s-running" % (what, mover), twice=twice)   # while it swings
+    ran += dc.stick_move(pair, mover, 270, RUN_FRAMES // 2)
+    moving = change(lines(pair, watcher, at))
+    pair.notes.append("%s: %s ran %.2f m; %s's copy of it: first cloth entry changed up to %.4g a second running, "
+                      "%.4g standing" % (what, mover, ran, watcher, moving, still))
+    assert ran >= 1.0, "%s: %s did not run (%.2f m)" % (what, mover, ran)
+    return moving > still
+
+
+def both_swing(pair, what):
+    """Each game's copy judged: B runs in A's view, then A in B's (shots: 4 for B's copy, 2 for A's)."""
+    seen = [swings(pair, what, "B", "A", True)]
+    face_other(pair)
+    seen.append(swings(pair, what, "A", "B", False))
+    return all(seen)
 
 
 @pytest.mark.budget(300)
@@ -125,10 +143,9 @@ def test_cloth_child(pair):
                 pair.expect_log(x, ANY_COPY, max_frames=PROBE_FRAMES * 3)
         for x in ("A", "B"):
             holds_cloth(pair, x, start[x], "child")
-        moving, still = swings(pair, "child")
-        if moving <= still:
-            pair.unproven("the probe's first cloth entry did not move more running (%.4g) than standing (%.4g): the "
-                          "shots decide the swing" % (moving, still))
+        if not both_swing(pair, "child"):
+            pair.unproven("a copy's first cloth entry did not move more running than standing (notes): the shots "
+                          "decide the swing")
 
 
 @pytest.mark.budget(420)
@@ -146,7 +163,7 @@ def test_cloth_adult(pair):
                 pair.expect_log(x, ANY_COPY, max_frames=PROBE_FRAMES * 3)
         for x in ("A", "B"):
             holds_cloth(pair, x, start[x], "adult")
-        moving, still = swings(pair, "adult")
+        swung = both_swing(pair, "adult")
         # A puppet's jump to a new place: both warp, the copy comes back in the new scene with its cloth.
         pair.warp_both(en.MARKET, entrance=en.MARKET_ENTRANCE)
         pair.step_both(30)
@@ -157,6 +174,30 @@ def test_cloth_adult(pair):
             holds_cloth(pair, x, after[x], "adult after the warp")
         pair.step_both(PROBE_FRAMES)
         dc.shots(pair, "cloth-adult-after-warp", twice=False)   # a stretched cloth after the jump would show here
-        if moving <= still:
-            pair.unproven("the probe's first cloth entry did not move more running (%.4g) than standing (%.4g): the "
-                          "shots decide the swing" % (moving, still))
+        if not swung:
+            pair.unproven("a copy's first cloth entry did not move more running than standing (notes): the shots "
+                          "decide the swing")
+
+
+@pytest.mark.budget(180)
+@pytest.mark.needs_env(ENV)
+@pytest.mark.needs_pack("no_cloth")
+@pytest.mark.row("#313 control: the puppets' cloth holder on the pack before the fix (MEASURED for the two tests above)")
+def test_cloth_absent_control(pair):
+    """The bug's value measured, not guessed: on the --no-cloth pack each game's copy reads holder 0 while our own
+    Link's is set. PASS = the FAIL value of test_cloth_child/adult is real; its lines go in the notes to be cited."""
+    with dc.restored(pair, {}):
+        with pair.setup():
+            pair.need_boot_place("child")
+            dc.to_place(pair, "child", SCENE_CHILD, AT_CHILD)
+            face_other(pair)
+            start = {x: pair.log[x].mark() for x in ("A", "B")}
+            for x in ("A", "B"):
+                pair.expect_log(x, ANY_COPY, max_frames=PROBE_FRAMES * 3)
+        for x in ("A", "B"):
+            copies, own = lines(pair, x, start[x]), lines(pair, x, start[x], own=True)
+            pair.notes.append("%s control: copy %s holder %s n %d; our Link holder %s n %d entries %d" % (
+                x, copies[-1]["who"], copies[-1]["holder"], copies[-1]["n"], own[-1]["holder"] if own else "-",
+                own[-1]["n"] if own else 0, own[-1]["entries"] if own else 0))
+            assert own and own[-1]["holder"] != "0", "%s control: our own Link has no cloth holder either: the "                 "probe's chain does not find the game's cloth (%s)" % (x, own[-1:])
+            assert copies[-1]["holder"] == "0", "%s control: the copy has a cloth holder %s on the --no-cloth pack: "                 "holder 0 is not the bug's value" % (x, copies[-1]["holder"])

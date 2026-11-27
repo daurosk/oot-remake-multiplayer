@@ -213,6 +213,22 @@ class NativePack(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "romfs files this build does not make .*romfs/stale.bin"):
             self.make()
 
+    def test_start_tunic_files_are_not_stale(self):
+        """The kit's start puts own-tunic files into the pack's romfs (self_tunic.put: FIXED + self_files); those
+        lane-only files are not a stale pack (dry make on lane1-A: 9 of them), any other lane-only romfs file is."""
+        from puppet_pack import self_tunic
+        _write(os.path.join(self.pack, "romfs", *self_tunic.FIXED[-1].split("/")), "start")
+        self.lane_doc["self_files"] = {"blue": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/blue/x"}}
+        _write(os.path.join(self.pack, "coop_puppet.json"), json.dumps(self.lane_doc))
+        _write(os.path.join(self.pack, "romfs", "Tex", "Angin_Tile_S_Alb.bntx.zs"), "start")
+        files = self.make()
+        self.assertNotIn("romfs/Tex/Angin_Tile_S_Alb.bntx.zs", files)
+        _write(os.path.join(self.pack, "romfs", "Tex", "Other.bntx.zs"), "x")
+        shutil.rmtree(self.out)
+        os.makedirs(self.out)                      # (a fresh out, as testpack.make gives each maker)
+        with self.assertRaisesRegex(RuntimeError, r"1 romfs files this build does not make \(romfs/Tex/Other.bntx.zs\)"):
+            self.make()
+
     def test_build_failure(self):
         def bad(cmd, **kw):
             if cmd[:1] == ["cmd"]:

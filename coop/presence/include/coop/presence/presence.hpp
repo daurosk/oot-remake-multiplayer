@@ -107,6 +107,8 @@ class Player {
   // sample does not overwrite them. Sequence, not server time, so a jump in
   // the sender's clock estimate cannot freeze them.
   const std::optional<std::string>& scene() const { return scene_; }
+  // The sequence of the sample that last set scene(): buffered samples before it may be of the scene before.
+  std::optional<std::uint32_t> scene_sequence() const { return scene_sequence_; }
   std::optional<Age> age() const { return age_; }
   // False while the player's scene is not known.
   bool same_scene(std::string_view local_scene) const;

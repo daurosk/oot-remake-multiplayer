@@ -131,6 +131,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pivot.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
+  lichii/pvp_rewind_test.cpp
   lichii/dbno_test.cpp
   lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp

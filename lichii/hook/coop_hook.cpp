@@ -88,6 +88,7 @@
 #ifdef COOP_HOOKSHOT
 #include "coop_flag_native.h"
 #include "coop_map_page.h"  // patch 0018's menu state: PLAYER_STATUS in_menu/paused (Read)
+#include "coop_pause_world.h"  // row 299: the world runs under the menu (CoopPauseWorld::WorldRuns)
 #include "coop_pause_files.h"   // CoopFiles::CoopIni: the game folder (StuckLoadFrame's record)
 #include "coop_problem_ask.h"   // the stuck load's record, asked about on the next title
 #include "coop_stuck_load.h"    // black-01112: a load that never ends
@@ -2609,6 +2610,9 @@ private:
                 if (quick) {
                     reading->in_menu = true;
                 }
+                // Row 299: the world runs under the menu (the host's "World runs in menus", CoopPauseWorld): not away.
+                reading->menu_world_runs = reading->in_menu.value_or(false) && CoopPauseWorld::WorldRuns();
+                menu_world_runs_ = reading->menu_world_runs;
                 if (quick != quick_switch_) {
                     LOG_INFO(Core, "coop: status: the quick-switch item menu {}",
                              quick ? "is open: in a menu, paused for the others" : "closed");
@@ -3008,6 +3012,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     coop::host::WorldStill world_still_;  // row 164 follow-up: our world standing still with no menu named
     bool quick_switch_ = false;           // the quick-switch item menu was open at the last reading (its log line)
+    bool menu_world_runs_ = false;        // row 299: a menu in front with the world running at the last reading
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
     bool boss_alive_due_ = false;          // row 159: BOSS_ALIVE to send after our own save load (host)
@@ -3301,7 +3306,8 @@ private:
         here.scene = view.scene.value_or(std::string());
         here.link = view.position;
         here.can_start = reading && !running &&
-                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
+                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0 &&
+                         !reading->in_menu.value_or(false);   // (row 299: a menu with the world running sends none)
         here.now_us = now_us;
         // Row 176: who is in our scene now, so a held start whose starter is still here outlasts kHoldUs.
         // Read from presence directly (CoopPuppet::Collect would take the puppets' sounds).
@@ -3552,8 +3558,9 @@ private:
             });
         }
         const bool busy =
-            in_event || (status & (coop::protocol::status::paused | coop::protocol::status::in_menu |
-                                coop::protocol::status::loading)) != 0;
+            in_event || menu_world_runs_ ||   // (row 299: a menu with the world running sends no in_menu)
+            (status & (coop::protocol::status::paused | coop::protocol::status::in_menu |
+                       coop::protocol::status::loading)) != 0;
         ocarina_equip_.arm(*current, CoopObjects::OurLinkActor().has_value(), busy);
         const auto want = coop::host::ocarina_equip_mend(flags.get_int(oc::kFairy).value_or(0),
                                                          flags.get_int(oc::kTime).value_or(0), *current);

@@ -456,6 +456,19 @@ void Menu::HostRuleLines(std::vector<Line>& out, bool guest) const {
                                     "Applies at your next Host."
                                   : "Off: a floor switch is held only by your own Link or a block. Applies at your "
                                     "next Host.")});
+    // World runs in menus (row 299, coop_pause_world_mode.h), the same way: off by default; race mode does not
+    // change it (each world goes on alone either way).
+    const std::string pause_world_now =
+        !live ? std::string() : std::string(session_.pause_world ? "This game: On." : "This game: Off.");
+    out.push_back({Toggle("World runs in menus", options_.pause_world), Act::kPauseWorld,
+                   guest ? std::string(kYourNextHost) + " " + pause_world_now
+                   : live && options_.pause_world != session_.pause_world
+                       ? "Applies at your next Host: stop hosting, then start again. " + pause_world_now
+                       : std::string(options_.pause_world
+                                         ? "On: in a game you host, the world keeps going while a player is in the "
+                                           "pause menu (enemies can still hit them). Applies at your next Host."
+                                         : "Off: the pause menu stops your world, as in the original game. Applies "
+                                           "at your next Host.")});
     Row pvp = Toggle("PvP", live ? session_.pvp : options_.pvp);
     pvp.fixed = guest;
     out.push_back({pvp, Act::kPvp,
@@ -2025,6 +2038,7 @@ void Menu::Decide(Act act) {
     case Act::kGoldSkulltulas:
     case Act::kRace:
     case Act::kFloorSwitches:
+    case Act::kPauseWorld:
     case Act::kPvp:
     case Act::kDbno:
         Change(act, 0);   // (a toggle: A flips it)
@@ -2172,6 +2186,10 @@ void Menu::Change(Act act, int step) {
         break;
     case Act::kFloorSwitches:
         options_.floor_switches = step > 0 ? true : step < 0 ? false : !options_.floor_switches;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kPauseWorld:
+        options_.pause_world = step > 0 ? true : step < 0 ? false : !options_.pause_world;
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kPvp: {

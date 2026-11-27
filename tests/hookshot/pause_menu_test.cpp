@@ -944,11 +944,11 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(17);
+    m.Select(18);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(17, 1);   // the On half
+    m.Click(18, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(17, -1);
+    m.Click(18, -1);
     CHECK_FALSE(m.options().voice);
     m.Click(14, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
@@ -1067,7 +1067,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 24);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 25);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 
@@ -2544,6 +2544,47 @@ TEST_CASE("pause tab: Settings: Shared floor switches, on unless turned off, kep
     m.options().Write(coop, options);
     CHECK(options.find("floor_switches") == std::string::npos);  // on: no line
     CHECK(CoopTitleMenu::Options::Read(coop, options).floor_switches);
+}
+
+TEST_CASE("pause tab: Settings: World runs in menus, off unless turned on, kept in coop-options.ini") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    CHECK_FALSE(m.options().pause_world);
+    m.Open(Page::kSettings);
+    SelectRow(m, "World runs in menus");
+    CHECK(m.view().help.rfind("Off: the pause menu stops your world", 0) == 0);
+    m.Press(Input::kRight);
+    CHECK(m.options().pause_world);
+    CHECK(m.view().help.rfind("On: in a game you host, the world keeps going", 0) == 0);
+    CHECK(m.view().help.size() <= 160);   // (the caption's room)
+    std::string coop, options;
+    m.options().Write(coop, options);
+    CHECK(options.find("pause_world = on") != std::string::npos);
+    CHECK(CoopTitleMenu::Options::Read(coop, options).pause_world);
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().pause_world);
+    coop.clear();
+    options.clear();
+    m.options().Write(coop, options);
+    CHECK(options.find("pause_world") == std::string::npos);  // off: no line
+    CHECK_FALSE(CoopTitleMenu::Options::Read(coop, options).pause_world);
+    // A host live in a session whose next Host differs: the session keeps its setting until the next Host.
+    Session s = Hosting(2);
+    s.rules = true;
+    s.pause_world = false;
+    m.SetSession(s);
+    SelectRow(m, "World runs in menus");
+    m.Press(Input::kRight);
+    REQUIRE(m.options().pause_world);
+    CHECK(m.view().help.rfind("Applies at your next Host: stop hosting", 0) == 0);
+    CHECK(m.view().help.find("This game: Off.") != std::string::npos);
+    // A guest reads the session's state.
+    Session g = Joined();
+    g.rules = true;
+    g.pause_world = true;
+    m.SetSession(g);
+    SelectRow(m, "World runs in menus");
+    CHECK(m.view().help.find("This game: On.") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Settings: Shared floor switches says race mode shares none, chosen or in the session") {

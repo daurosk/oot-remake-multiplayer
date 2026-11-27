@@ -6,6 +6,7 @@
 
 #include "coop_gold_mode.h"
 #include "coop_race_mode.h"
+#include "coop_pause_world_mode.h"
 #include "coop_switch_stand_mode.h"
 
 #include <array>
@@ -243,6 +244,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         if (event.kind == EventKind::disconnected) {
             g.held = {};
             client.set_world_held(false);  // (a game alone holds nothing back)
+            CoopPauseWorldMode::OnLeft();  // (a game alone pauses as in solo)
         }
         g.Reset();  // each connection starts with nothing; the server gives the rest
         g.connected = event.kind != EventKind::disconnected;
@@ -254,6 +256,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
             CoopGoldMode::OnWelcomed(g.hosting);  // (coop_hook.cpp logs the mode)
             CoopRaceMode::OnWelcomed(g.hosting);
             CoopSwitchStandMode::OnWelcomed(g.hosting);
+            CoopPauseWorldMode::OnWelcomed(g.hosting);
         }
         g.host_number = client.host_number();
         for (const auto& p : client.players()) {
@@ -271,6 +274,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
             CoopGoldMode::OnHosting();  // our choice, unless a host before us told the session's mode
             CoopRaceMode::OnHosting();
             CoopSwitchStandMode::OnHosting();
+            CoopPauseWorldMode::OnHosting();
         }
         g.differences.clear();
         g.guests_told.clear();
@@ -299,6 +303,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
             CoopGoldMode::OnHostSettings(settings->settings);
             CoopRaceMode::OnHostSettings(settings->settings);
             CoopSwitchStandMode::OnHostSettings(settings->settings);
+            CoopPauseWorldMode::OnHostSettings(settings->settings);
         }
     }
 }
@@ -329,7 +334,8 @@ void Frame(coop::host::Session* session) {
                 // Co-op's own host settings first (CoopGoldMode: the mode in force and, Not shared, the race id;
                 // never cut off below), then the mods'. A mod that calls itself "coop" cannot give the same keys.
                 std::vector<proto::ModSetting> shared{CoopGoldMode::AsSetting(CoopGoldMode::InForce()),
-                                                      CoopRaceMode::AsSetting(), CoopSwitchStandMode::AsSetting()};
+                                                      CoopRaceMode::AsSetting(), CoopSwitchStandMode::AsSetting(),
+                                                      CoopPauseWorldMode::AsSetting()};
                 if (auto race = CoopGoldMode::RaceSetting()) {
                     race_in_settings = race->value;
                     shared.push_back(std::move(*race));
@@ -338,7 +344,8 @@ void Frame(coop::host::Session* session) {
                     for (proto::ModSetting& s : g.provider.shared()) {
                         if (s.mod_id != CoopGoldMode::kModId ||
                             (s.key != CoopGoldMode::kKey && s.key != CoopGoldMode::kRaceKey &&
-                             s.key != proto::kRaceKey && s.key != CoopSwitchStandMode::kKey)) {
+                             s.key != proto::kRaceKey && s.key != CoopSwitchStandMode::kKey &&
+                             s.key != CoopPauseWorldMode::kKey)) {
                             shared.push_back(std::move(s));
                         }
                     }

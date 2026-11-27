@@ -152,3 +152,19 @@ nothing changes (solo, co-op idle and today's co-op pause stay exactly as they a
    option on: the menu's holds let go, enemies moved, Link stands under the stick, the menu still pages and shuts;
    framebuffer shots on each game of the Host settings page with the new row and of the open menu with the world
    running (user-facing), compared to stored refs (NO-REF until the owner approves).
+
+### Phase 1 reading: the UI words and the menu's holds (main 1.1.1, build `e0f3ccfaf50065ae`)
+
+- **The four words are a 128-bit set**, one bit per hold in force. A screen tests a hold this way: if any word is not 0,
+  it looks the key up in the manager's +0x40 hash table (key -> bit number), then tests that bit. The test at
+  main+0x2cf094..0x2cf0c4 (in main+0x2cf010) tests only keys 0x7bf055fc and 0x0778e566, not the menu's.
+- **The menu's holds**: one screen object keeps one of three holds by its state (+0x384), from the table at
+  main+0x3f16804 {1: 0xb584333e, 2: 0xba597383, 3: 0x90ddf88b}. Each change releases the old state's key and asks the
+  new one (Request main+0xafb980, `ldadd` +1; Release main+0xafba70, `cas` -1 never below 0): state 1 at main+0x33eb440,
+  1 -> 2 at main+0x2d6880 (0xba597383, the key phase 0 saw while the menu was open), -> 3 at main+0x33ec974, 3 -> 0 at
+  main+0x2d6840.
+- **Nothing tests those three bits**: each key appears in code only at those Request/Release calls (an immediate
+  scan of main's text for `mov`/`movk` pairs), never in a bit test. So the release may leave the menu's bits at 0;
+  item 4 needs no code. The test still proves the menu acts with the hold let go (pages, cursor, shut).
+- So `kMenuHolds` is that table's three keys, all from code (none guessed). The test's probe step logs which of them
+  the - menu and the quick-switch menu take; a menu that takes a key not in the table stays paused as today.

@@ -35,6 +35,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_gold_mode.cpp"
     "${_coop_hook}/coop_race_mode.cpp"
     "${_coop_hook}/coop_switch_stand_mode.cpp"
+    "${_coop_hook}/coop_pause_world_mode.cpp"
     "${_coop_hook}/coop_name_privacy.cpp"
     "${_coop_hook}/coop_scene_probe.cpp"
     "${_coop_hook}/coop_callers.cpp"

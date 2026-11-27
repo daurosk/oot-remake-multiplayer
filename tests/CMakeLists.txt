@@ -208,6 +208,7 @@ add_executable(coop_tests
   lichii/gold_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_gold_mode.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_race_mode.cpp
   lichii/switch_stand_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_stand_mode.cpp
+  lichii/pause_world_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pause_world_mode.cpp
   lichii/pack_notice_test.cpp
   lichii/chat_log_test.cpp
   lichii/name_privacy_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_name_privacy.cpp

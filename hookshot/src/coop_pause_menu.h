@@ -151,6 +151,7 @@ struct Session {
     bool gold_own = false;   // Gold Skulltulas not shared in this session (CoopGoldMode::InForce)
     bool race = false;       // race mode in this session (CoopRaceMode::InForce)
     bool floor_switches = true;   // shared floor switches in this session (CoopSwitchStandMode::InForce)
+    bool pause_world = false;     // the world runs in menus in this session (CoopPauseWorldMode::InForce)
     bool dbno = true;
     int dbno_bleed_s = 45, dbno_revive_tenths = 50, dbno_revive_life = 12;
 
@@ -350,7 +351,7 @@ private:
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh, kFindPage,
         kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal,
-        kApproveJoins, kGoldSkulltulas, kRace, kFloorSwitches, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts,
+        kApproveJoins, kGoldSkulltulas, kRace, kFloorSwitches, kPauseWorld, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts,
         kDifficulty, kDifficultyLife, kDifficultyDamage, kDifficultyCount,
         kCharAges, kCharChild, kCharAdult,
         kLocalGames, kLocalStart

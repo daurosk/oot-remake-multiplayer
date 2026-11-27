@@ -1,7 +1,7 @@
 """Row 303's selftest (ingame/test_boss_stuck.py + ingame/fakes/boss_stuck.py; owner boss-stuck-303), run by
 test_ingame.py's load_tests: NO-REF on the fake (look shots, no references) on its own fake boot, deselected on another
-boot or without the row's switches, FAIL when she stops in both games, when B's copy stays apart from A's, and when the
-kill never lands."""
+boot or without the row's switches, FAIL when only her owner's look-up drops her from the ceiling, when she stops in
+both games, when B's copy stays apart from A's, and when the kill never lands."""
 import os
 import shutil
 import sys
@@ -55,7 +55,8 @@ class BossStuck(unittest.TestCase):
         self.assertEqual(self.result(s), [], s)
 
     def test_bugs_fail(self):
-        for bug, why in (("still", "still @"), ("apart", "apart @"), ("nodeath", "her death did not play")):
+        for bug, why in (("ceiling", "ceiling @"), ("still", "still @"), ("apart", "apart @"),
+                         ("nodeath", "her death did not play")):
             with self.subTest(bug=bug):
                 p, s = self.run_fake(bug, bug=bug)
                 r = self.result(s)

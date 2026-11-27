@@ -3,9 +3,13 @@ two-player Queen Gohma fight, watched for her getting stuck, on 0.12.x (boss tur
 
 | Test | Proves |
 |---|---|
-| test_gohma_fight_not_stuck | A walks in first and owns her, B walks in after; both shoot her eye with the slingshot in turn (each game's own shot, a real player's aim: kit_move.shoot) and slash her while she is down; she is sampled in BOTH world lists every second the whole fight. Then she is killed and the death, Gohma_DefeatBoss and the warp must come in both games |
+| test_gohma_fight_not_stuck | A walks in first and owns her and stands aside; B walks in after, under her ceiling spot, looks up and targets her (she must leave the ceiling as for a solo player: 'ceiling'; if not, A finds her so the fight goes on); both shoot her eye with the slingshot in turn (each game's own shot, a real player's aim: kit_move.shoot) and slash her while she is down; she is sampled in BOTH world lists every second the whole fight. Then she is killed and the death, Gohma_DefeatBoss and the warp must come in both games |
 
 "Stuck" is judged from game state only (both world lists, each game's module log), as each kind a player can see:
+- CEILING: B (not her owner) looked up and targeted her from under her ceiling spot and she did not leave the ceiling
+  (her y in both lists stays >= CEILING_Y) within FIND_FRAMES: her pre-battle wait ('Pre_Battle_Ceiling_Wait') ends
+  only for a Link her own game's AI perceives (lane1 hs-gohma-downed 20261120-085401 A: 'ours held
+  'Pre_Battle_Ceiling_Wait' ... stuck' 3 of 3, then the same at life 1, with B under her).
 - STILL: her place in neither game moved STILL_M in STILL_S of game while her life is above 0 (outside her intro and
   death): a frozen AI, a body held on the ceiling or in one move.
 - APART: the two games show her more than APART_M apart for APART_S of game: a copy stuck while its owner fights on
@@ -48,7 +52,7 @@ import pair as P                                    # noqa: E402
 import kit_move                                     # noqa: E402  (shoot: the player's aim)
 import test_boss_respawn as BR                      # noqa: E402  (give_hearts)
 from test_enemies import actors, alive, face, place, walk_to   # noqa: E402
-from test_boss_away import (BOOT, CENTRE, CORRIDOR, DEATH, DEFEAT, DOOR, ENV, GOHMA, KILLS, QUEST,   # noqa: E402
+from test_boss_away import (BOOT, CORRIDOR, DEATH, DEFEAT, DOOR, ENV, GOHMA, KILLS, QUEST,   # noqa: E402
                             ALIVE_STEP)
 from test_intro_seen import (A_MOVED, B_MOVED, CORRIDOR_WAIT, INTRO, LOOK_UP, SYNC, TRIGGER, UNDER)  # noqa: E402
 
@@ -62,6 +66,12 @@ STILL_M, STILL_S = 0.3, 20.0
 APART_M, APART_S = 5.0, 10.0
 GONE_S = 10.0
 STALL_LINES_MAX = 3
+# Her ceiling spot: 'objects: + Enemy_DungeonBoss_Gohma ... at 18.49 59.97 67.79' (lane1 hs-gohma-downed 20261120-085401
+# A :6917, also fakes/boss_away.py); the room's floor y 47.0 (coop_boss.cpp kRooms Gohma start 6.7 47.0 67.6). Left the
+# ceiling = her y in a world list below CEILING_Y (5 m under the spot).
+CEILING_Y = 55.0
+FIND_EXTRA = 900                     # frames watched after the trigger's own wait (TRIGGER 900: a solo find drops her in it)
+FIND_FRAMES = TRIGGER                # a find that drops her later than the solo trigger's wait is 'ceiling' too
 DEATH_WAIT = 120 + 2400              # test_boss_away (B 'wait 120; mark b-kill; wait 2400')
 WARP_WAIT = 600                      # test_boss_away ROOM_WAIT
 
@@ -168,7 +178,8 @@ class Watch:
         a, b = row["A"], row["B"]
         live = [g for g in (a, b) if g and isinstance(g.get("life"), int) and g["life"] > 0]
         # still: no game's place moved STILL_M from the anchor (the stretch's first sample) in STILL_S
-        judged = live and not row["what"].startswith(("kill", "after the death"))
+        judged = live and not row["what"].startswith(("kill", "after the death", "B under her", "B looked up",
+                                                      "A looked up"))
         anchor = self.anchor if judged else None
         moved = anchor is None or any(
             row[x] and anchor.get(x) and dist(row[x]["pos"], anchor[x]["pos"]) > STILL_M for x in ("A", "B"))
@@ -196,6 +207,16 @@ class Watch:
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "gohma-fight.json"), "w") as f:
             json.dump({"rows": self.rows, "found": self.found}, f, indent=0)
+
+
+def dropped(watch, since):
+    """Frames from `since` to the first sample (at or after it) where a game's world list has her below CEILING_Y."""
+    for r in watch.rows:
+        if r["f"] < since:
+            continue
+        if any(r[x] and r[x]["pos"] and r[x]["pos"][1] < CEILING_Y for x in ("A", "B")):
+            return r["f"] - since
+    return None
 
 
 def arm(pair):
@@ -258,31 +279,53 @@ def test_gohma_fight_not_stuck(pair):
         place(pair, "A", CORRIDOR)
     arm(pair)
     start = {x: pair.log[x].mark() for x in ("A", "B")}
-    # A walks in first, her intro, A's trigger (test_intro_seen's steps)
+    # A walks in first (her owner: the first in her room) and stays 6.5 m west of her ceiling spot, never looking up
     pair.step_both(CORRIDOR_WAIT)
     for g in DOOR:
         walk_to(pair, "A", g[0], g[1], tol=g[2], max_frames=g[3])
     pair.step_both(INTRO)
-    walk_to(pair, "A", UNDER[0], UNDER[1], tol=UNDER[2], max_frames=UNDER[3])
-    pair.press("A", rstick=LOOK_UP[0], frames=LOOK_UP[1])
-    pair.press("A", buttons=["ZL"], frames=LOOK_UP[2])
-    pair.step_both(TRIGGER)
-    if not pair.log["A"].find(SYNC % "ours", pos=0):
-        pair.unproven("A does not own Gohma after its trigger (no 'native boss sync on (..., ours)')")
     walk_to(pair, "A", A_MOVED[0], A_MOVED[1], tol=A_MOVED[2], max_frames=A_MOVED[3])
-    # B walks in
+    if not pair.log["A"].find(SYNC % "ours", pos=0):
+        pair.unproven("A does not own Gohma after its walk-in (no 'native boss sync on (..., ours)')")
+    # B walks in, under her ceiling spot, looks up and targets her (test_intro_seen's trigger, by B now)
     place(pair, "B", CORRIDOR)
     pair.step_both(CORRIDOR_WAIT)
     for g in DOOR:
         walk_to(pair, "B", g[0], g[1], tol=g[2], max_frames=g[3])
     pair.step_both(INTRO)
-    walk_to(pair, "B", B_MOVED[0], B_MOVED[1], tol=B_MOVED[2], max_frames=B_MOVED[3])
+    walk_to(pair, "B", UNDER[0], UNDER[1], tol=UNDER[2], max_frames=UNDER[3])
     if not her(pair, "A") or not her(pair, "B"):
         pair.unproven("no live Gohma in both lists after both walked in (A %s, B %s)" % (her(pair, "A"), her(pair, "B")))
     for x in ("A", "B"):
-        pair.check_shot(x, "gohma-stuck-start", tolerance=0.80)
-
+        pair.check_shot(x, "gohma-stuck-ceiling", tolerance=0.80)
     watch = Watch(pair)
+    watch.sample("B under her")
+    pair.press("B", rstick=LOOK_UP[0], frames=LOOK_UP[1])
+    pair.press("B", buttons=["ZL"], frames=LOOK_UP[2])
+    t0 = watch.frame
+    watch.frame += LOOK_UP[1] + LOOK_UP[2]
+    watch.run(TRIGGER + FIND_EXTRA, "B looked up")      # (not judged 'still': she waits for a finder there)
+    found = dropped(watch, t0)
+    pair.notes.append("B (her copy's player) looked up under her: %s" % (
+        "she left the ceiling %.1f s after the look-up" % (found / P.FPS) if found is not None else
+        "she stayed on the ceiling %.0f s (both lists y >= %.0f)" % ((TRIGGER + FIND_EXTRA) / P.FPS, CEILING_Y)))
+    for x in ("A", "B"):
+        pair.check_shot(x, "gohma-stuck-found", tolerance=0.80)
+    if found is None or found > FIND_FRAMES:
+        watch.found.append(("ceiling", 0, "B looked up and targeted her from under her ceiling spot (A, her owner, "
+                                          "6.5 m away, not looking): she %s" % (
+                                              "stayed on the ceiling" if found is None else
+                                              "left it only %.0f s later" % (found / P.FPS))))
+        if found is None:                      # the fight goes on as the old trigger: A finds her
+            walk_to(pair, "A", UNDER[0] - 2.0, UNDER[1], tol=UNDER[2], max_frames=UNDER[3])
+            pair.press("A", rstick=LOOK_UP[0], frames=LOOK_UP[1])
+            pair.press("A", buttons=["ZL"], frames=LOOK_UP[2])
+            t1 = watch.frame
+            watch.frame += LOOK_UP[1] + LOOK_UP[2]
+            watch.run(TRIGGER, "A looked up")
+            pair.notes.append("A looked up after: %s" % ("she left the ceiling" if dropped(watch, t1) is not None else
+                                                       "she stayed on the ceiling"))
+    walk_to(pair, "B", B_MOVED[0], B_MOVED[1], tol=B_MOVED[2], max_frames=B_MOVED[3])
     watch.sample("start")
     for i in range(ROUNDS):
         x = "A" if i % 2 == 0 else "B"

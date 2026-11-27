@@ -16,10 +16,10 @@ Steps (B is the copy, P<n> in A's game):
   within FIND_M of FLOOR and the copy; the lift moves in A's game within MOVE_FRAMES (else SETUP-FAIL "did not move").
 - ride: every SAMPLE frames, from ONE world dump of A (the lift and the copy from the same walk): offset = copy y - lift
   y. Still samples (lift moved <= STILL_DY over SAMPLE) give the copy's rest offset (median); moving samples (lift
-  speed >= V_MIN) are compared to it. Without the carry a moving sample is off by speed x delay (>= 100 ms: docs
+  moved > STILL_DY) are compared to it (V_MIN: shot moment, NO-REF miss only). Without the carry a moving sample is off by speed x delay (>= 100 ms: docs
   "Lift carry"), so a deviation >= half of that at the measured speed is a clear FAIL (the copy sank/floated), as is no
   `P<n> lift carry: on our lift` line in A's log (coop_puppet.cpp DrawAt). Shots of both games mid-ride.
-The ESTIMATED values (MOVE_FRAMES, RIDE_FRAMES, V_MIN, CARRY_TOL) are starting values (worker-rules: no guessed values;
+The ESTIMATED values (RIDE_FRAMES, V_MIN, CARRY_TOL) are starting values (worker-rules: no guessed values;
 as test_native_body.py): until MEASURED cites a lane run's notes, a run whose clear checks hold ends NO-REF
 (pair.unproven) with the measured values, never PASS; a CARRY_TOL miss is listed there, not failed.
 """
@@ -43,10 +43,10 @@ MIN_DELAY_S = 0.1                                   # docs/native-puppets.md "Li
 BACK_TO = "KakarikoVillage_Child"                   # test_smoke.WARP_TO: the lane's boot map (when the boot names none)
 SAMPLE = 5                                          # frames between world dumps
 STILL_DY = 0.005                                    # m per SAMPLE: the lift stands
-MOVE_FRAMES = 90                                    # ESTIMATED: the lift starts within 3 s of B stepping on
+MOVE_FRAMES = 600                                   # wide bound (20 s): until() ends at the first move, no guess decides
 RIDE_FRAMES = 450                                   # ESTIMATED: 16 m down (FLOOR y 91 -> Lift anchor y 75) at ~2 m/s = 8 s
 STOP_SAMPLES = 6                                    # still this many samples after it moved: the ride is over
-V_MIN = 0.5                                         # ESTIMATED m/s: a moving sample (the carry error >= 0.05 m)
+V_MIN = 0.5                                         # ESTIMATED m/s: shot moment + a NO-REF miss only (moving = dy > STILL_DY)
 CARRY_TOL = 0.05                                    # ESTIMATED m: the copy's offset to the lift while moving vs at rest
 MEASURED = None   # e.g. "run lift-carry-<sha8>: speed 2.0 m/s, deviation 0.01 m (rest offset 0.0 m)"
 
@@ -140,9 +140,9 @@ def test_puppet_lift_carry(pair, back_after):
     got = [r for r in rows if r is not None]
     lost = len(rows) - len(got)
     still = [off for (_, off, dy) in got if dy is not None and abs(dy) <= STILL_DY]   # (the 1st has no dy: moving already)
-    moving = [(off, abs(dy) * FPS / SAMPLE) for (_, off, dy) in got if dy is not None and abs(dy) * FPS / SAMPLE >= V_MIN]
-    assert moving, "no moving sample (speed >= %.1f m/s) in %d samples: lift ys %s" % (
-        V_MIN, len(got), ["%.2f" % r[0] for r in got[:20]])
+    moving = [(off, abs(dy) * FPS / SAMPLE) for (_, off, dy) in got if dy is not None and abs(dy) > STILL_DY]
+    assert moving, "no moving sample (lift moved > %.3f m per %d frames) in %d samples: lift ys %s" % (
+        STILL_DY, SAMPLE, len(got), ["%.2f" % r[0] for r in got[:20]])
     rest = statistics.median(still) if still else got[0][1]
     speed = statistics.median(v for _, v in moving)
     dev = max(abs(off - rest) for off, _ in moving)
@@ -166,6 +166,8 @@ def test_puppet_lift_carry(pair, back_after):
         misses.append("no still sample: the rest offset is the first sample's")
     if still_after < STOP_SAMPLES:
         misses.append("the lift did not stop within %d frames" % RIDE_FRAMES)
+    if max(v for _, v in moving) < V_MIN:
+        misses.append("the lift never reached %.1f m/s (fastest %.2f m/s)" % (V_MIN, max(v for _, v in moving)))
     if dev > CARRY_TOL:
         misses.append("max deviation %.3f m > %.2f" % (dev, CARRY_TOL))
     if not MEASURED:

@@ -21,28 +21,11 @@ cameras at its ratio, the HUD and menus fitted to its width). The options
 file, the Insert menu's lists and the monitor's own shape keep 5:4 to 48:9:
 nothing changes for a game started alone.
 ---
- docs/dev/reference/switches.md  |  2 +-
- host/hos_main.c                 |  9 ++--
- host/hos_wide_size.h            | 36 ++++++++++++++
- host/nn_applet.c                | 14 ++++--
- tests/test_split_shapes.py      | 88 +++++++++++++++++++++++++++++++++
- tests/test_widescreen_shapes.py | 18 ++++++-
- 6 files changed, 157 insertions(+), 10 deletions(-)
- create mode 100644 tests/test_split_shapes.py
+ host/hos_main.c      |  9 ++++++---
+ host/hos_wide_size.h | 36 ++++++++++++++++++++++++++++++++++++
+ host/nn_applet.c     | 14 ++++++++++----
+ 3 files changed, 52 insertions(+), 7 deletions(-)
 
-diff --git a/docs/dev/reference/switches.md b/docs/dev/reference/switches.md
-index 0000000..0000000 100644
---- a/docs/dev/reference/switches.md
-+++ b/docs/dev/reference/switches.md
-@@ -158,7 +158,7 @@ These override a menu row for the run only (kind `player`).
- | Switch | Menu row |
- |---|---|
- | `HOS_FULLSCREEN=0/1` | Fullscreen |
--| `HOS_OUTPUT_RES=<w>x<h>`, `HOS_ASPECT=<ratio>`, `HOS_HANDHELD=1` | Output resolution, Aspect ratio, handheld profile |
-+| `HOS_OUTPUT_RES=<w>x<h>`, `HOS_ASPECT=<ratio>`, `HOS_HANDHELD=1` | Output resolution, Aspect ratio, handheld profile. `HOS_ASPECT` takes a number (`2.3889`) or a shape (`8:9`, `1920x2100`). These two switches also take the narrow shapes of a split screen window, down to 1:2 (a half of a 16:9 screen is about 8:9); the menu rows stay at 5:4 to 48:9 |
- | `HOS_DYNRES=0/1`, `HOS_REALTIME_STEP=0/1`, `HOS_TEXT_SPEED=0..3` | Resolution (Auto), Game speed, Text speed |
- | `HOS_FPS_MAX=<30 or 61..1000>` | Game frame rate cap |
- | `HOS_WIDE_UI=0/1` | HUD layout on a screen that is not 16:9 |
 diff --git a/host/hos_main.c b/host/hos_main.c
 index 0000000..0000000 100644
 --- a/host/hos_main.c
@@ -145,8 +128,8 @@ index 0000000..0000000 100644
 -        if (!hos_output_size_valid(a, b)) {
 -            hos_log("oe: output_res=%s is not a size the game can use (640x360 to 5120x2880's pixels, 5:4 to 48:9): the game's own", text);
 +        if (!(narrow ? hos_output_size_valid_split(a, b) : hos_output_size_valid(a, b))) {
-+            hos_log("oe: output_res=%s is not a size the game can use (640x360 to 5120x2880's pixels, %s to 48:9): the game's own", text,
-+                    narrow ? "1:2" : "5:4");
++            hos_log("oe: output_res=%s is not a size the game can use (%s to 5120x2880's pixels, %s to 48:9): the game's own", text,
++                    narrow ? "320x360" : "640x360", narrow ? "1:2" : "5:4");
              return 0;
          }
          if (a == 2048 && b == 1152) return 0;   /* (the game's own) */
@@ -169,138 +152,6 @@ index 0000000..0000000 100644
          /* (none chosen, a new install: the game's 2560 x 1440, or the screen's size where that has fewer pixels,
             hos_output_default; the menu's first start saves the same. A 2048 x 1152 screen: the game's own reduced size, as
             hos_output_parse reads what the menu saves for it. The window's thread made the window before the game's thread
-diff --git a/tests/test_split_shapes.py b/tests/test_split_shapes.py
-new file mode 100644
-index 0000000..0000000
---- /dev/null
-+++ b/tests/test_split_shapes.py
-@@ -0,0 +1,88 @@
-+"""Co-op split screen shapes, game-free (host/hos_wide_size.h, host/nn_applet.c): HOS_ASPECT read as a shape ("8:9",
-+"1920x2100", "8/9") or a number, never "8:9" as 8; a split screen window's narrow HOS_OUTPUT_RES (1:2 to 5:4) taken
-+from the switch only, while output_res= and the Insert menu keep 5:4 to 48:9.
-+
-+    python -I -B tests/test_split_shapes.py [--cc gcc]
-+"""
-+import argparse
-+import re
-+import subprocess
-+import tempfile
-+from pathlib import Path
-+
-+RUN_ALL_ARGS = ["--cc", "gcc"]
-+
-+ROOT = Path(__file__).resolve().parents[1]
-+
-+FIXTURE = r'''
-+#include <assert.h>
-+#include <math.h>
-+#include <stdio.h>
-+#include "host/hos_wide_size.h"
-+
-+static int near(double a, double b) { return fabs(a - b) < 0.0001; }
-+
-+int main(void) {
-+    /* (HOS_ASPECT: shapes and numbers) */
-+    assert(near(hos_aspect_parse("8:9"), 8.0 / 9.0));
-+    assert(near(hos_aspect_parse("5:4"), 1.25));
-+    assert(near(hos_aspect_parse("1920x2100"), 1920.0 / 2100.0));
-+    assert(near(hos_aspect_parse("1920X2100"), 1920.0 / 2100.0));
-+    assert(near(hos_aspect_parse("8/9"), 8.0 / 9.0));
-+    assert(near(hos_aspect_parse("2.3889"), 2.3889));
-+    assert(near(hos_aspect_parse("0.9143"), 0.9143));
-+    assert(hos_aspect_parse("") == 0.0 && hos_aspect_parse(NULL) == 0.0 && hos_aspect_parse("x") == 0.0);
-+    assert(hos_aspect_parse("8:0") == 0.0 && hos_aspect_parse("-1") == 0.0);
-+    /* (the split clamp: 1:2 to 48:9; the screens' clamp unchanged at 5:4) */
-+    assert(near(hos_wide_clamp_split(0.3), 0.5) && near(hos_wide_clamp_split(0.8889), 0.8889));
-+    assert(near(hos_wide_clamp_split(1.6), 1.6) && near(hos_wide_clamp_split(9.0), 48.0 / 9.0));
-+    assert(near(hos_wide_clamp(0.8889), 1.25));
-+    /* (output sizes: a half of a 4K screen at 150 %% with its title bar, of a 1080p one, a quarter; the menu's unchanged) */
-+    assert(hos_output_size_valid_split(1920, 2048) && hos_output_size_valid_split(960, 1016));
-+    assert(hos_output_size_valid_split(1920, 1016) && hos_output_size_valid_split(1280, 2560));
-+    assert(!hos_output_size_valid_split(1000, 2008) && !hos_output_size_valid_split(312, 600));
-+    assert(!hos_output_size_valid_split(5120, 5760));
-+    assert(!hos_output_size_valid(1920, 2048) && hos_output_size_valid(1920, 1440) && !hos_output_size_valid(1080, 1920));
-+    puts("ok");
-+    return 0;
-+}
-+'''
-+
-+
-+def main():
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--cc", default="gcc")
-+    args = parser.parse_args()
-+    with tempfile.TemporaryDirectory(prefix="split-shapes-") as tmp:
-+        work = Path(tmp)
-+        source, exe = work / "fixture.c", work / "fixture.exe"
-+        source.write_text(FIXTURE, encoding="utf-8")
-+        subprocess.run([args.cc, "-std=c11", "-I", str(ROOT), str(source), "-o", str(exe), "-lm"], check=True)
-+        out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout.strip()
-+        if out != "ok":
-+            raise SystemExit("FAIL: fixture said %r" % out)
-+
-+    # (the switch only: output_mode takes HOS_OUTPUT_RES's text with the narrow sizes, output_res= without; the menu's
-+    # hos_output_parse stays the 5:4 one; HOS_ASPECT goes through hos_aspect_parse)
-+    applet = (ROOT / "host/nn_applet.c").read_text(encoding="utf-8")
-+    mode = applet[applet.index("static int output_mode(void)"):]
-+    mode = mode[:mode.index("\n}\n")]
-+    need = (
-+        (mode, r"output_parse\(e \? e : text, &output_w, &output_h, e != NULL\)", "output_mode: narrow sizes from HOS_OUTPUT_RES only"),
-+        (applet, r"int hos_output_parse\(const char \*text, uint32_t \*w, uint32_t \*h\) \{[^}]*return output_parse\(text, w, h, 0\);",
-+         "hos_output_parse: output_res= and the menu at 5:4 to 48:9"),
-+        (applet, r"narrow \? hos_output_size_valid_split\(a, b\) : hos_output_size_valid\(a, b\)", "output_parse: the size check"),
-+    )
-+    main_c = (ROOT / "host/hos_main.c").read_text(encoding="utf-8")
-+    need += (
-+        (main_c, r"float want = e \? \(float\)hos_aspect_parse\(e\) : 0\.0f;", "hos_main.c: HOS_ASPECT through hos_aspect_parse"),
-+        (main_c, r"const double r = split \? hos_wide_clamp_split\(want\) : hos_wide_clamp\(want\);", "hos_main.c: the split clamp"),
-+    )
-+    for text, pattern, what in need:
-+        if not re.search(pattern, text):
-+            raise SystemExit("FAIL: " + what)
-+    print("PASS: split screen shapes: HOS_ASPECT shapes, narrow HOS_OUTPUT_RES from the switch only, menu sizes unchanged")
-+
-+
-+if __name__ == "__main__":
-+    main()
-diff --git a/tests/test_widescreen_shapes.py b/tests/test_widescreen_shapes.py
-index 0000000..0000000 100644
---- a/tests/test_widescreen_shapes.py
-+++ b/tests/test_widescreen_shapes.py
-@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
-         source, exe = work / "fixture.c", work / "fixture.exe"
-         source.write_text(fixture, encoding="utf-8")
-         subprocess.run([args.cc, "-std=c11", "-I", str(ROOT), str(source), "-o", str(exe), "-lm"], check=True)
--        env = {k: v for k, v in os.environ.items() if k != "HOS_WIDE_MAX_PX"}
-+        env = {k: v for k, v in os.environ.items() if k not in ("HOS_WIDE_MAX_PX", "HOS_ASPECT", "HOS_OUTPUT_RES")}
-         bad = []
-         for want, height, expect in cases:
-             got = subprocess.run([str(exe), want, str(height)], capture_output=True, text=True, check=True, env=env).stdout.strip()
-@@ -108,9 +108,23 @@ int main(int argc, char **argv) {
-             got = subprocess.check_output([str(exe), *args_], text=True, env=old_cap).strip()
-             if got != expect:
-                 bad.append("HOS_WIDE_MAX_PX=8294400, %s: %s, expected %s" % (" ".join(args_), got, expect))
-+        # (co-op split screen: HOS_ASPECT or HOS_OUTPUT_RES set, shapes down to 1:2; a half of a 16:9 screen is about 8:9.
-+        # Without them the same ratios are the game's own picture, as above)
-+        for want, switch, expect in (
-+            ("0.8889", {"HOS_ASPECT": "8:9"}, "1280x1440 960x1080 0.8889 1.0000 0.0000"),
-+            ("0.9143", {"HOS_OUTPUT_RES": "1920x2100"}, "1320x1440 992x1080 0.9167 1.0000 0.0000"),
-+            ("1.1", {"HOS_ASPECT": "1.1"}, "1584x1440 1192x1080 1.1000 1.0000 0.0000"),
-+            ("0.3", {"HOS_ASPECT": "0.3"}, "720x1440 544x1080 0.5000 1.0000 0.0000"),
-+            ("0.8889", {}, "0x0 0x0 0.0000 0.0000 0.0000"),
-+            ("1.1", {}, "1800x1440 1352x1080 1.2500 1.0000 0.0000"),
-+        ):
-+            got = subprocess.run([str(exe), want, "1440"], capture_output=True, text=True, check=True,
-+                                 env=dict(env, **switch)).stdout.strip()
-+            if got != expect:
-+                bad.append("split %s %s: %s, expected %s" % (want, switch, got, expect))
-         if bad:
-             raise SystemExit("FAIL:\n  " + "\n  ".join(bad))
--    print("PASS: widescreen sizes for 4:3, 16:10, 5:4, 16:9, 21:9, 32:9 and 48:9 screens")
-+    print("PASS: widescreen sizes for 4:3, 16:10, 5:4, 16:9, 21:9, 32:9 and 48:9 screens, and split screen halves down to 1:2")
- 
- 
- if __name__ == "__main__":
 -- 
 2.56.0.windows.4
 

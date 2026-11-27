@@ -3684,6 +3684,11 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
             [](uint64_t b) {
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
+                // Break free (row 312, coop_lift_player.h Victim::Struggle): lifted by another player, mashing the face
+                // buttons or pushing the stick about frees our Link. (Its input check is off then, so the game reads none.)
+                namespace pt = CoopPauseTab;
+                CoopLiftPlayerGame::NotePad(b & (pt::kPadA | pt::kPadB | pt::kPadX | pt::kPadY | pt::kPadStickUp |
+                                                 pt::kPadStickDown | pt::kPadStickLeft | pt::kPadStickRight));
             },
             [] {
                 const uint64_t h = CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}

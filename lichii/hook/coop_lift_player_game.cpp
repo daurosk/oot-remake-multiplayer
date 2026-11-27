@@ -78,6 +78,9 @@ struct Glue {
     std::atomic<std::uint64_t> input_off_us{0};
     // Our Link is lifted (Victim::Carried): Read() gives its samples the carried pose (CarriedPose).
     std::atomic<bool> carried{false};
+    // Break free: the pad reads' struggle bits (NotePad, the pad thread) and the new presses not yet taken.
+    std::atomic<std::uint64_t> pad_bits{0};
+    std::atomic<int> presses{0};
     Lifter lifter;                          // present thread
     Victim victim;                          // present thread
     std::uint64_t share_at_us = 0;          // present thread
@@ -292,6 +295,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.victim.Place(p, now_us);
     }
     const std::uint8_t by = g.victim.By();
+    g.victim.Struggle(g.presses.exchange(0), now_us);
     const auto step = g.victim.Frame(local, now_us);
     if (step.put) {
         CoopObjects::PlaceOurLink(*step.put);
@@ -303,7 +307,9 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     g.carried.store(g.victim.Carried());
     if (step.freed) {
         LOG_INFO(Core, "coop: lift: our Link freed itself from P{}{}", step.freed->lifter,
-                 step.freed->refusal == proto::LiftRefusal::not_young ? " (not a young Link now)" : "");
+                 step.freed->refusal == proto::LiftRefusal::not_young ? " (not a young Link now)"
+                 : step.struggled                                     ? " (struggled free)"
+                                                                      : "");
         send.emplace_back(*step.freed);
     }
 
@@ -315,6 +321,14 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             client.send(m);
         }
     });
+}
+
+void NotePad(std::uint64_t struggle_bits) {
+    Glue& g = TheGlue();
+    const std::uint64_t before = g.pad_bits.exchange(struggle_bits, std::memory_order_relaxed);
+    if (g.carried.load(std::memory_order_relaxed)) {
+        g.presses.fetch_add(NewPresses(before, struggle_bits), std::memory_order_relaxed);
+    }
 }
 
 } // namespace CoopLiftPlayerGame

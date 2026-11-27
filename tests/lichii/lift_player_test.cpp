@@ -466,3 +466,81 @@ TEST_CASE("lift player: carried as Ruto: Link's own Ruto carry counts as a lift,
     CHECK(pose.frame == 0.0f);
     CHECK(pose.rate == 1.0f);  // the copy loops Ruto's Act_LiftRest_Wait, not frame 0 held
 }
+
+TEST_CASE("lift player: row 312, a lifted player mashing breaks free, a held button or slow presses do not") {
+    const auto lifted = [](Victim& v, std::uint64_t now) {
+        REQUIRE(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now).refusal == proto::LiftRefusal::none);
+        v.Place(proto::LiftPlace{1, 2, proto::LiftPhase::held, {1, 2, 3}}, now);
+    };
+    CHECK(NewPresses(0, 0b11) == 2);
+    CHECK(NewPresses(0b01, 0b11) == 1);
+    CHECK(NewPresses(0b11, 0b11) == 0);  // held: no new press
+    CHECK(NewPresses(0b11, 0) == 0);     // let go: no press
+    {
+        // Mashing: one press every 100 ms (10 a second against the drain of 2) frees in about 1.3 s, not before
+        // kStruggleFull presses.
+        Victim v;
+        lifted(v, 0);
+        std::uint64_t now = 0;
+        int presses = 0;
+        Victim::Step s;
+        while (!s.freed && now < 10'000'000) {
+            now += 100'000;
+            v.Place(proto::LiftPlace{1, 2, proto::LiftPhase::held, {1, 2, 3}}, now);
+            v.Struggle(1, now);
+            ++presses;
+            s = v.Frame(Here(), now);
+        }
+        REQUIRE(s.freed);
+        CHECK(s.struggled);
+        CHECK(*s.freed == proto::LiftAnswer{proto::kPlayerSelf, 1, proto::LiftRefusal::freed});
+        CHECK_FALSE(s.input_off);
+        CHECK(presses >= static_cast<int>(kStruggleFull));
+        CHECK(now < kMaxHeldUs);
+        CHECK(v.By() == 0);
+        // Freed by a struggle: no new lift (from anyone) for kFreeGraceUs, then yes again.
+        CHECK(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now + 1).refusal ==
+              proto::LiftRefusal::busy);
+        CHECK(v.Ask(proto::LiftAsk{3, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now + kFreeGraceUs - 1).refusal ==
+              proto::LiftRefusal::busy);
+        CHECK(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now + kFreeGraceUs).refusal ==
+              proto::LiftRefusal::none);
+        CHECK(v.Meter() == 0.0f);  // a new lift starts with an empty meter
+    }
+    {
+        // One press every 600 ms: the drain (2 a second) empties it each time; never free by struggling.
+        Victim v;
+        lifted(v, 0);
+        bool struggled = false;
+        for (std::uint64_t now = 600'000; now < 10'000'000; now += 600'000) {
+            v.Place(proto::LiftPlace{1, 2, proto::LiftPhase::held, {1, 2, 3}}, now);
+            v.Struggle(1, now);
+            const auto s = v.Frame(Here(), now);
+            struggled = struggled || s.struggled;
+        }
+        CHECK_FALSE(struggled);
+        CHECK(v.By() == 1);  // still held by P1
+    }
+    {
+        // Presses before the lift, or after it ended, count for nothing.
+        Victim v;
+        v.Struggle(50, 0);
+        lifted(v, 0);
+        CHECK(v.Meter() == 0.0f);
+        const auto s = v.Frame(Here(), kFrame);
+        CHECK_FALSE(s.freed);
+        CHECK(s.input_off);
+    }
+    {
+        // Other frees (an event) are not "struggled" and leave no grace.
+        Victim v;
+        lifted(v, 0);
+        Local l = Here();
+        l.event = true;
+        const auto s = v.Frame(l, kFrame);
+        REQUIRE(s.freed);
+        CHECK_FALSE(s.struggled);
+        CHECK(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, 2 * kFrame).refusal ==
+              proto::LiftRefusal::none);
+    }
+}

@@ -339,6 +339,14 @@ returns before anything when not connected).
     the lift's frame stops being called. The lifted game frees itself
     (`LIFT_ANSWER freed`) on an event or death, when the places stop for 1 s (the lifter left), or after 15 s
     (it wriggles free; the game's own escape timer is UNKNOWN). The camera stays on our Link (nothing changes it).
+    **Break free (row 312, puppet-body-4):** lifted, the player struggles as when an enemy holds Link: every new
+    press of A, B, X or Y and every new push of the stick in a direction (`hos_coop_pad` -> `NotePad`, counted only
+    while lifted) fills a meter that drains 2 a second; at 10 the lifted game frees itself (`LIFT_ANSWER freed`,
+    log `our Link freed itself from P<n> (struggled free)`), its Link falls by its own character controller, and
+    for 2 s every new ask is refused `busy` so the freed player is not caught again at once. About 1.3 s of
+    mashing frees; a held button or a press every 0.6 s never does. Our numbers (the game's grab escape count is
+    not read). The lifter's game gets `freed` as for every other free and lets the copy go (`Lifter::Drop`).
+    Host test: `tests/lichii/lift_player_test.cpp` "row 312". Not proven in a game yet.
 - **The game's functions used:** the lifter's own lift, carry and throw (`PlayerLifterParam` `LiftThrowParams` on
   the copy's `LiftableRef`); the physics-aware setter `ExecuteActorForceSetMtx` (vtable slot 0x218,
   main+0x4c6580) on our Link; the player's input-off check main+0x3025850 (wrap 18). No memory poke of the

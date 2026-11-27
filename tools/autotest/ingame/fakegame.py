@@ -24,6 +24,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import socket
 import threading
 
@@ -55,6 +56,21 @@ GATE = "Npc_Hylia_Soldier_003_GateOpen"
 # frame puts Link's value back, and the bridge answers did_not_stick.
 LINK_LIFE = ("PlayerStatus.Life", "PlayerStatus.MaxLife")
 STICK_FRAMES = 2
+
+
+def most_max_life():
+    """The game's most hearts in quarters, read from the module's one value (coop/host/include/coop/host/
+    game_items.hpp kMostMaxLife; never a copy): our Link's component keeps no more (volvagia-rocks-309d7180)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "coop", "host", "include",
+                        "coop", "host", "game_items.hpp")
+    with open(path, encoding="utf-8") as f:
+        m = re.search(r"kMostMaxLife\s*=\s*(\d+)\s*\*\s*(\d+)\s*;", f.read())
+    if not m:
+        raise RuntimeError("fakegame: no 'kMostMaxLife = A * B;' in %s" % path)
+    return int(m.group(1)) * int(m.group(2))
+
+
+MOST_MAX_LIFE = most_max_life()
 
 
 class FakeGame:
@@ -203,8 +219,14 @@ class FakeGame:
     def write_link_life(self, name, value):
         """A give or flag of a Life flag: into Link's component (the fixed module), or, with BT_FAKE_LIFE_FLAG_ONLY=1,
         the flag alone, which the next frame puts back: then the bridge's did_not_stick reply (else None)."""
+        was = self.link_life[name]
+        if name == "PlayerStatus.MaxLife" and value > MOST_MAX_LIFE and value > was:
+            # (the game keeps no more than its most: the frames put it back, the bridge's read-back says so)
+            self.run(STICK_FRAMES)
+            return {"ok": False, "error": "did_not_stick",
+                    "message": "did not stick: %s written %d, the game put back %d within %d frames"
+                               % (name, value, was, STICK_FRAMES)}
         if os.environ.get("BT_FAKE_LIFE_FLAG_ONLY") == "1":
-            was = self.link_life[name]
             self.run(STICK_FRAMES)
             return {"ok": False, "error": "did_not_stick",
                     "message": "did not stick: %s written %d, the game put back %d within %d frames"
@@ -275,10 +297,15 @@ class FakeGame:
             if m.get("item") in LINK_LIFE:
                 name = m["item"]
                 was = self.link_life[name]
-                lost = self.write_link_life(name, was + 4 if name == "PlayerStatus.MaxLife" else max(was, 1))
-                if lost:
-                    return dict(lost, frame=self.frame, paused=self.paused)
-                r["result"] = "%s %d -> %d" % (name, was, self.link_life[name])
+                # (the module's give: max life +4 up to the game's most, coop_cheat_give.cpp Wanted)
+                want = min(was + 4, max(was, MOST_MAX_LIFE)) if name == "PlayerStatus.MaxLife" else max(was, 1)
+                if want == was:
+                    r["result"] = "no change: %s already %d" % (name, was)
+                else:
+                    lost = self.write_link_life(name, want)
+                    if lost:
+                        return dict(lost, frame=self.frame, paused=self.paused)
+                    r["result"] = "%s %d -> %d" % (name, was, self.link_life[name])
             else:
                 r["result"] = "given"
             self.run(STICK_FRAMES)     # (the bridge's read-back)

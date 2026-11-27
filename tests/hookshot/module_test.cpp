@@ -33,6 +33,7 @@
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
+#include "hos_coop_crawl.h"
 #include "coop_boss_orders.h"
 #include "coop_shooter_probe.h"
 #include "coop_svc.h"
@@ -1148,6 +1149,27 @@ TEST_CASE("hookshot: the boss orders wrap (patch 0036) is one row in 0005's tabl
     CHECK(module.find("t.OnReceive(x[0], actor, type, payload, t_own_call)") != std::string::npos);
     CHECK(module.find("WrapIn(HOS_COOP_WRAP_BOSS_ORDER) && Env(\"LICHII_COOP_BOSS_ORDERS\") != \"0\"") !=
           std::string::npos);
+}
+
+TEST_CASE("hookshot: the crawl's room check (patch 0046, 0.12.1 downed-move) is one row after 0045's, answered only for our downed Link") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0046-coop-crawl-room.patch");
+    CHECK(NewFile(patch, "host/hos_coop_crawl.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_crawl.h"));
+    // The row, with the function's first words (read from the game's main: pacibsp; stp x29, x30, [sp, #-0x30]!;
+    // str x28; stp x20, x19; mov x29, sp; sub sp, sp, #0xec0), right after 0045's last row.
+    CHECK(patch.find("+    (31, 0x301ac50, (0xd503237f, 0xa9bd7bfd, 0xf9000bfc, 0xa9024ff4, 0x910003fd, 0xd13b03ff)),") !=
+          std::string::npos);
+    CHECK(patch.find("     (30, 0x2eb26b0,") != std::string::npos);
+    CHECK(HOS_COOP_WRAP_CRAWL_ROOM == 31);  // free in the one wrap space (0045: 28-30) and in the hello's 64 bits
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    // Phase 0 only; "no room" (x0 = 0, the game's function skipped) only when the dbno body says so; else the game's.
+    const std::size_t from = module.find("if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {");
+    REQUIRE(from != std::string::npos);
+    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {", from);
+    REQUIRE(to != std::string::npos);
+    const std::string branch = module.substr(from, to - from);
+    CHECK(branch.find("if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {") != std::string::npos);
+    CHECK(branch.find("x[0] = 0;") != std::string::npos);
+    CHECK(branch.find("Write(") == std::string::npos);  // no guest memory written
 }
 
 TEST_CASE("hookshot: the shooter wraps (patch 0045, row 286's probe) are three rows at the table's end, the probe reads only, rows 222/286's table answers a copy's own call") {

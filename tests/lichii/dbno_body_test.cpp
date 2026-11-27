@@ -1249,7 +1249,10 @@ TEST_CASE("dbno body: issue 337, a child's Crawl is asked only when the game its
     std::uint64_t t = 4000;
     SetDoAction(g, addr::kDoActionCrawl);  // (an offer changes nothing now)
     for (int i = 0; i < 3 * Crawl::kCrawlStartReads; ++i) {
-        CHECK(c.Skip(kBsa, Req(verb::kWait), false));  // the game's own verbs stay skipped
+        // 0.12.1 downed-move: the game's ground move runs (he slides lying, the pad's slow stick); v0.12.0
+        // skipped it too and he lay still. Its other verbs stay skipped.
+        CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait), false));
+        CHECK(c.Skip(kBsa, Req(134), false));
         CHECK(RunFrame(c, g, t += 16).empty());        // held: nothing played, nothing asked
     }
     CHECK_FALSE(c.GameCrawl());  // the lying wait is ours: the pad's slow stick
@@ -1367,8 +1370,90 @@ TEST_CASE("dbno body: issue 337 part 2, a taken Crawl that never crawls kMaxFals
     CHECK(c.Totals().crawl_ended == 0);
     CHECK(c.Totals().lie_downs == 1);
     CHECK(ReadSlot0(g, kActor)->name == "Crouch");
-    CHECK(c.Skip(kBsa, Req(verb::kWait), false));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWalk), false));  // 0.12.1 downed-move: he moves lying
+    CHECK(c.Skip(kBsa, Req(134), false));
     SetAnchor(std::nullopt);
+}
+
+TEST_CASE("dbno body (0.12.1 downed-move): the game's crawl asks for room to stand up: no room for our downed child only") {
+    // v0.12.0: in open ground the crawl's state 4 found room to stand at once (main+0x301ac50), got him up, and he
+    // was laid down still. NoRoom answers that check (patch 0046's wrap) so the game's crawl lasts the down.
+    Guest g;
+    Crawl c;
+    ChildDown(c, g, true, addr::kDoActionCrawl);
+    CHECK_FALSE(c.NoRoom(kActor));  // no Crawl taken yet: the game's own check
+    std::uint64_t t = 1000;
+    c.Skip(kBsa, Req(verb::kWait), false);
+    RunFrame(c, g, t += 16);
+    c.Skip(kBsa, Req(verb::kWait), false);
+    REQUIRE(Verbs(RunFrame(c, g, t += 16)) == std::vector<std::int32_t>{verb::kCrawl});
+    SetAs(g, "CrouchLockOnMove", 1.0f);
+    CHECK(RunFrame(c, g, t += 16).empty());
+    REQUIRE(c.GameCrawl());
+    c.TakeNotes();
+    CHECK(c.NoRoom(kActor));
+    CHECK(c.NoRoom(kActor));
+    CHECK_FALSE(c.NoRoom(kActor2));  // another Link (a puppet, a reload's new actor)
+    CHECK_FALSE(c.NoRoom(0));
+    CHECK(c.Totals().kept_crawling == 2);
+    int lines = 0;
+    for (const auto& n : c.TakeNotes()) {
+        lines += n.find("answered no room") != std::string::npos ? 1 : 0;
+    }
+    CHECK(lines == 1);  // once a down
+    // The crawl goes on: never laid down, still the game's crawl, the full stick.
+    for (int i = 0; i < 3 * Crawl::kCrawlStartReads; ++i) {
+        CHECK(c.Skip(kBsa, Req(verb::kWait), false));  // the game's own ground move would end the crawl
+        CHECK(RunFrame(c, g, t += 16).empty());
+    }
+    CHECK(c.GameCrawl());
+    CHECK_FALSE(c.LaidDown());
+    // In an event the event drives him: the game's own check.
+    c.Want(Want(true, true, false, kActor));
+    CHECK_FALSE(c.NoRoom(kActor));
+    c.Want(Want(true, false, false, kActor));
+    // Up again (revived, bled out, rules off): the game's own check, so its crawl gets him up.
+    c.Want(Want(false, false, false, kActor));
+    CHECK_FALSE(c.NoRoom(kActor));
+    CHECK(c.Totals().kept_crawling == 2);
+    SetAnchor(std::nullopt);
+}
+
+TEST_CASE("dbno body (0.12.1 downed-move): a downed adult held lying moves with the game's ground move, and is never kept crawling") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));  // a crawl round: cleared so our Crawl gets the slot
+    REQUIRE(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
+    SetAs(g, "Crouch", 1.0f);
+    REQUIRE(Plays(RunFrame(c, g, 1100)).size() == 1);  // DamageLStand held
+    c.TakeNotes();
+    // v0.12.0 skipped these too: nothing read the stick and he lay still.
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWalk, 2), false));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    CHECK(c.Totals().ground_moves == 2);
+    int lines = 0;
+    for (const auto& n : c.TakeNotes()) {
+        lines += n.find("he moves lying") != std::string::npos ? 1 : 0;
+    }
+    CHECK(lines == 1);
+    // Everything else stays skipped: a hit's reaction, the game's own stand-up.
+    CHECK(c.Skip(kBsa, Req(134, 2), false));
+    CHECK(c.Skip(kBsa, Req(verb::kLDamageStandUp, 2), false));
+    CHECK_FALSE(c.Skip(kBsa, Req(134, 1), false));  // another slot's: the game's, as before
+    // The walk's own command on slot 0: the pose is played again, held.
+    SetAs(g, "Walk", 1.0f);
+    const auto f = RunFrame(c, g, 1200);
+    REQUIRE(Plays(f).size() == 1);
+    CHECK(Plays(f)[0].as == "DamageLStand");
+    CHECK(Plays(f)[0].rate == 0.0f);
+    CHECK(Verbs(f).empty());  // no Crawl asked again
+    CHECK_FALSE(c.NoRoom(kActor));  // the adult has no game crawl to keep
+    CHECK_FALSE(c.GameCrawl());     // the pad's slow stick
 }
 
 TEST_CASE("dbno body: issue 337 part 2, no offer (or no live anchor) in kOfferWaitReads frames: the child is laid down") {

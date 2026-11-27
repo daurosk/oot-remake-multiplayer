@@ -348,6 +348,19 @@ bool Crawl::Skip(std::uint64_t bsa, const CoopBossNative::Request& request, bool
         Note("our downed Link: the game's action verb " + std::to_string(a->verb) + " let through; crawl again after");
         return false;
     }
+    if (ground && our_slot && (want_.adult || lie_)) {
+        // 0.12.1 downed-move: a Link held in a lying pose (an adult's kLyingPose, a child's kChildLyingPose once the
+        // game's crawl could not go on) has no crawl to move him: with the game's Walk / Wait skipped too, nothing
+        // read the stick and he lay still. The game's own ground move runs (the pad's slow stick); StepPose plays
+        // the pose again whenever the game plays another command on slot 0, so he slides while lying.
+        slot_taken_ = true;
+        ++counts_.ground_moves;
+        if (!std::exchange(ground_noted_, true)) {
+            Note("our downed Link: the game's action verb " + std::to_string(a->verb) +
+                 " let through: he moves lying, in the held pose");
+        }
+        return false;
+    }
     ++counts_.skipped;
     if (counts_.skipped_verbs.size() < 16 &&
         std::find(counts_.skipped_verbs.begin(), counts_.skipped_verbs.end(), a->verb) ==
@@ -355,6 +368,18 @@ bool Crawl::Skip(std::uint64_t bsa, const CoopBossNative::Request& request, bool
         counts_.skipped_verbs.push_back(a->verb);
         Note("our downed Link: the game's action verb " + std::to_string(a->verb) + " (slot " +
              std::to_string(a->slot) + ") skipped");
+    }
+    return true;
+}
+
+bool Crawl::NoRoom(std::uint64_t actor) {
+    std::lock_guard lock(mutex_);
+    if (actor == 0 || actor != want_.actor || !want_.lying || want_.event || want_.adult || !crawling_) {
+        return false;
+    }
+    ++counts_.kept_crawling;
+    if (!std::exchange(kept_noted_, true)) {  // (once a down)
+        Note("our downed Link: the game's crawl asks for room to stand up: answered no room, the crawl goes on");
     }
     return true;
 }
@@ -782,6 +807,8 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
         stand_due_ = !want_.lying && crawling_ && !standing_;
         crawling_ = false;
         anchor_wait_noted_ = false;
+        kept_noted_ = false;
+        ground_noted_ = false;
     }
     if (want_.event) {
         crawling_ = false;  // the event moves our Link; asked again after it

@@ -70,8 +70,10 @@ function Step-KitLineKey([string]$Text, [ConsoleKey]$Key, [char]$Char, [ConsoleM
     return @(($Text + $add), $add, $false)
 }
 
-# Keys waiting in the window (typed ahead, an Enter left by a one-key question) taken out. Never fails.
+# Keys waiting in the window (typed ahead, an Enter left by a one-key question) taken out. Never fails. With
+# kit-paths.ps1 loaded its Clear-KitKeysAhead does it (a local co-op digit is kept, row 302).
 function Clear-KitTypedAhead {
+    if (Get-Command Clear-KitKeysAhead -ErrorAction SilentlyContinue) { return (Clear-KitKeysAhead) }
     try {
         if ([Console]::IsInputRedirected) { return 0 }
         $n = 0

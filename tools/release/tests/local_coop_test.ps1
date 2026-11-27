@@ -89,6 +89,71 @@ try {
     $st = Read-File (Join-Path $scripts 'start.ps1')
     Check ($st.Contains('Show-KitLocalPlayersHint')) 'Start Squadala says at its start how to ask for local co-op'
 
+    # --- Row 302: the 2 pressed while Squadala starts reaches the question, whatever reads keys in between ---
+    # (the Character Select line at every start read it as "go on" and threw it away; so did the update and
+    # problem-report questions and every "keys typed ahead" drain. They now hand each key to Save-KitLocalDigit.)
+    . (Join-Path $scripts 'kit-paths.ps1')
+    $pressedFile = Join-Path $kit 'hookshot\local-players-pressed.txt'
+    $keys = { param([string[]]$Chars) $q = [System.Collections.Queue]::new(); foreach ($c in $Chars) { $q.Enqueue([pscustomobject]@{ KeyChar = $c; Key = $(if ($c -match "^[0-9]$") { "D$c" } else { $c.ToUpperInvariant() }) }) }; { if ($q.Count) { $q.Dequeue() } else { $null } }.GetNewClosure() }
+    $startKept = { $env:OOT_COOP_LOCAL_PRESSED = $pressedFile; Remove-Item -LiteralPath $pressedFile -Force -ErrorAction SilentlyContinue }   # (as Show-KitLocalPlayersHint on a console)
+    Remove-Item env:OOT_COOP_LOCAL_HINT_AT -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $lpFile -Force -ErrorAction SilentlyContinue
+    # The cause, step by step: 2 pressed while the Character Select line waits (every start after its first answer).
+    & $startKept
+    Check (-not (Read-KitCharacterSelectToggle 'no' 1 $two)) 'row 302: a 2 at the Character Select line goes on (no change)'
+    Check ((Read-File $pressedFile).Trim() -eq '2') 'row 302: ... and the 2 is kept for local co-op'
+    Check ((Read-KitLocalPlayers $kit 5 $three @()) -eq 3) 'row 302: the kept 2 makes the question come (answered 3 -> 3 games)'
+    Check (-not (Test-Path -LiteralPath $pressedFile) -and -not $env:OOT_COOP_LOCAL_PRESSED) 'row 302: the kept digit is taken once, and keeping ends at the question'
+    Write-File $lpFile "1`r`n"
+    & $startKept
+    Check ((Clear-KitKeysAhead (& $keys @('x', '4', 'y'))) -eq 3) 'row 302: a drain of typed-ahead keys empties them all'
+    Check ((Read-File $pressedFile).Trim() -eq '4') 'row 302: ... and keeps the local co-op digit among them'
+    Check ((Read-KitLocalPlayers $kit 5 $nKey @()) -eq 1) 'row 302: a kept digit only asks; N answers 1 game (C2-2)'
+    & $startKept
+    Check (-not (Read-KitCharacterSelectAnswer 1 (& $keys @('3', 'N')))) 'row 302: the Character Select question takes its own N'
+    Check ((Read-File $pressedFile).Trim() -eq '3') 'row 302: ... and keeps the 3 pressed before it'
+    [void](Receive-KitLocalDigit)
+    & $startKept
+    [void](Clear-KitKeysAhead (& $keys @('1', 'x', '5')))
+    Check (-not (Test-Path -LiteralPath $pressedFile)) 'row 302: 1, 5 and other keys are not kept'
+    $env:OOT_COOP_LOCAL_PRESSED = ''
+    Check (Save-KitLocalDigit ([pscustomobject]@{ KeyChar = '2'; Key = 'D2' })) 'row 302: a digit with no hint said is still a digit'
+    Check (-not (Test-Path -LiteralPath $pressedFile)) 'row 302: ... but nothing is kept (no hint: solo only, no console or past the question)'
+    Check ((Read-KitLocalPlayers $kit 5 $two @()) -eq 1) 'row 302: no digit kept, none waiting -> no question (solo waits for nothing)'
+    # The short window on a quick start (the hint stays up Window s; a digit there asks too).
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    Check ((Read-KitLocalPlayers $kit 5 $three @() 2) -eq 3) 'row 302: a 3 pressed in the quick-start window asks; answered 3 -> 3 games'
+    Check ($t.ElapsedMilliseconds -lt 1500) "row 302: a digit ends the window at once ($($t.ElapsedMilliseconds) ms)"
+    Write-File $lpFile "1`r`n"
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    Check ((Read-KitLocalPlayers $kit 5 $none @() 1) -eq 1) 'row 302: no key in the window -> 1 game'
+    Check ($t.ElapsedMilliseconds -ge 900 -and $t.ElapsedMilliseconds -lt 3000) "row 302: the window lasts its seconds ($($t.ElapsedMilliseconds) ms)"
+    $env:OOT_COOP_LOCAL_HINT_AT = "$([DateTime]::UtcNow.Ticks)"
+    $wl = Get-KitLocalWindowLeft
+    Check ($wl -gt 2 -and $wl -le 3) "row 302: right after the hint the window has its 3 s ($wl)"
+    $env:OOT_COOP_LOCAL_HINT_AT = "$([DateTime]::UtcNow.AddSeconds(-20).Ticks)"
+    Check ((Get-KitLocalWindowLeft) -eq 0) 'row 302: a start with an update or a build is past the window (no wait)'
+    Remove-Item env:OOT_COOP_LOCAL_HINT_AT
+    Check ((Get-KitLocalWindowLeft) -eq 0) 'row 302: no hint said -> no window'
+    if (Test-KitLocalConsole) {
+        Write-File $pressedFile "2`r`n"
+        $said = @(& { Show-KitLocalPlayersHint $kit } 6>&1 | ForEach-Object { "$_" }) -join ' '
+        Check (-not (Test-Path -LiteralPath $pressedFile) -and $env:OOT_COOP_LOCAL_PRESSED -eq $pressedFile) 'row 302: the hint drops a start before''s digit and keeps from now'
+        Check ($said.Contains('Multiplayer, Local co-op')) "row 302: the hint names the in-game way ($said)"
+        $env:OOT_COOP_LOCAL_PRESSED = ''; Remove-Item env:OOT_COOP_LOCAL_HINT_AT -ErrorAction SilentlyContinue
+    }
+    Check ($lc.Contains('$($script:KitLocalInGame)') -and $script:KitLocalInGame -match 'the - menu, Multiplayer, Local co-op, Start the games') 'row 302: the hint and the window line name the in-game way'
+    # Every key read of the start goes through the one helper: no other script throws typed-ahead keys away by itself.
+    foreach ($f in @('kit-paths.ps1', 'play.ps1', 'problem-send.ps1', 'hookshot-build.ps1', 'start.ps1')) {
+        $txt = Read-File (Join-Path $scripts $f)
+        Check (-not $txt.Contains('[void][Console]::ReadKey($true) }') -and -not $txt.Contains('[Console]::ReadKey($true) | Out-Null')) "row 302: $f throws no key away by itself (Clear-KitKeysAhead / Save-KitLocalDigit)"
+    }
+    $cm = Read-File (Join-Path $scripts 'console-mode.ps1')
+    Check ($cm.Contains('return (Clear-KitKeysAhead)')) 'row 302: console-mode.ps1 Clear-KitTypedAhead keeps the digit too (with kit-paths.ps1)'
+    $kp = Read-File (Join-Path $scripts 'kit-paths.ps1')
+    Check ($kp.Contains('$env:OOT_COOP_LOCAL_PRESSED') -and $lc.Contains('$env:OOT_COOP_LOCAL_PRESSED = $file')) 'row 302: the keeper and the hint use the same file variable'
+    Remove-Item -LiteralPath $lpFile -Force -ErrorAction SilentlyContinue
+
     # --- The instance folder ---
     $inst = Join-Path $game 'local-players\player2'
     $said = @(Sync-KitLocalInstance $game $inst)

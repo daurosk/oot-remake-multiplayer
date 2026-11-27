@@ -7,7 +7,8 @@ vest block per Link in that Link's vest colour (unset: its tunic's slot colour).
 - The other game: `coop: look: the puppets' tunics are <name> now` (coop_look_live.cpp FollowTunics), the name as
   CoopLookParts::PuppetTunicsName (`ptunics|<colour>=RRGGBB[+vestRRGGBB]`).
 - Slot colours: A is P1 0x3070FF (blue), B P2 0xFF3030 (red) (coop/protocol messages.hpp slot_color).
-Selftest variable: BT_FAKE_VEST=norepaint (the lines are said but no vest is drawn: the texture not repainted).
+Selftest variable: BT_FAKE_VEST=norepaint (the lines are said but no vest is drawn: the texture not repainted);
+BT_FAKE_VEST=nounset (the unset line is said but the last colour stays drawn: the row's bug).
 """
 import os
 
@@ -16,7 +17,7 @@ BOX = {"A": 100, "B": 220}   # (x of each Link's vest block in the 320x180 fake 
 
 
 def setup(game):
-    game.vest_link, game.vest_link_seen = None, False
+    game.vest_link, game.vest_link_seen, game.vest_link_drawn = None, False, None
 
 
 def act(game, w):
@@ -28,6 +29,8 @@ def act(game, w):
     if vest == game.vest_link:
         return True
     game.vest_link = vest
+    if vest is not None or os.environ.get("BT_FAKE_VEST") != "nounset":
+        game.vest_link_drawn = vest
     tunic, colour = SLOT[game.tag]
     own = "tunic-%06X" % tunic + ("" if vest is None else "-vest-%06X" % vest)
     plus = "" if vest is None else "+vest%06X" % vest
@@ -46,7 +49,7 @@ def after(game, m, r):
     im = Image.open(r["path"]).convert("RGB")
     d = ImageDraw.Draw(im)
     for g in (game, game.other):
-        c = g.vest_link if g.vest_link is not None and not norepaint else SLOT[g.tag][0]
+        c = g.vest_link_drawn if g.vest_link_drawn is not None and not norepaint else SLOT[g.tag][0]
         x0 = BOX[g.tag]
         d.rectangle([x0, 120, x0 + 30, 160], fill=((c >> 16) & 255, (c >> 8) & 255, c & 255))
     im.save(r["path"])

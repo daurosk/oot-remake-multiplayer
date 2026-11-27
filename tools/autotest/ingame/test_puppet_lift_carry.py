@@ -16,8 +16,10 @@ Steps (B is the copy, P<n> in A's game):
   within FIND_M of FLOOR and the copy; the lift moves in A's game within MOVE_FRAMES (else SETUP-FAIL "did not move").
 - ride: every SAMPLE frames, from ONE world dump of A (the lift and the copy from the same walk): offset = copy y - lift
   y. Still samples (lift moved <= STILL_DY over SAMPLE) give the copy's rest offset (median); moving samples (lift
-  moved > STILL_DY) are compared to it (V_MIN: shot moment, NO-REF miss only). Without the carry a moving sample is off by speed x delay (>= 100 ms: docs
-  "Lift carry"), so a deviation >= half of that at the measured speed is a clear FAIL (the copy sank/floated), as is no
+  moved > STILL_DY) are compared to it (V_MIN: shot moment, NO-REF miss only). Without the carry a moving sample is
+  off by its own speed x delay (>= 100 ms: docs "Lift carry"), so a sample off by >= half of that is a clear FAIL (the
+  copy sank/floated), judged only on samples whose bound is above the rest noise (max |still - rest|) of the same run
+  (none such, or no still sample: a NO-REF miss), as is no
   `P<n> lift carry: on our lift` line in A's log (coop_puppet.cpp DrawAt). Shots of both games mid-ride.
 The ESTIMATED values (RIDE_FRAMES, V_MIN, CARRY_TOL) are starting values (worker-rules: no guessed values;
 as test_native_body.py): until MEASURED cites a lane run's notes, a run whose clear checks hold ends NO-REF
@@ -144,26 +146,34 @@ def test_puppet_lift_carry(pair, back_after):
     assert moving, "no moving sample (lift moved > %.3f m per %d frames) in %d samples: lift ys %s" % (
         STILL_DY, SAMPLE, len(got), ["%.2f" % r[0] for r in got[:20]])
     rest = statistics.median(still) if still else got[0][1]
+    noise = max(abs(off - rest) for off in still) if still else None   # the copy's own jitter, measured at rest
     speed = statistics.median(v for _, v in moving)
     dev = max(abs(off - rest) for off, _ in moving)
+    line = pair.log["A"].find(ON_LIFT % n, pos=mark)
+    delay_s = max(MIN_DELAY_S, int(re.search(ON_LIFT % n, line).group(1)) / 1000.0) if line else MIN_DELAY_S
+    # Each moving sample against its OWN bound: uncarried it is off by v_i x delay, so half of that is a clear miss.
+    # Only samples whose bound is above the rest noise of this same run can tell carry from jitter (none: NO-REF miss).
+    judged = [(off, v, 0.5 * v * delay_s) for off, v in moving if noise is not None and 0.5 * v * delay_s > noise]
+    bad = sorted(((off, v, b) for off, v, b in judged if abs(off - rest) >= b), key=lambda r: -abs(r[0] - rest) / r[2])
     ride = ("ride: %d samples (%d lost), %d still, %d moving, speed %.2f m/s, rest offset %.3f m, "
-                      "max deviation %.3f m, lift %.2f -> %.2f m" % (len(rows), lost, len(still), len(moving), speed,
-                                                                     rest, dev, got[0][0], got[-1][0]))
+                      "max deviation %.3f m, lift %.2f -> %.2f m, rest noise %s, %d judged (delay %.0f ms)" % (
+                          len(rows), lost, len(still), len(moving), speed, rest, dev, got[0][0], got[-1][0],
+                          "n/a" if noise is None else "%.3f m" % noise, len(judged), delay_s * 1000))
     pair.notes.append(ride)
     if lost:
         pair.notes.append("%d samples had no lift or copy in A's world list" % lost)
-    line = pair.log["A"].find(ON_LIFT % n, pos=mark)
     assert line, "A's log has no 'P%d lift carry: on our lift' line (/%s/): the carry never took the copy" % (n, ON_LIFT % n)
-    delay_s = max(MIN_DELAY_S, int(re.search(ON_LIFT % n, line).group(1)) / 1000.0)   # (the delay the line logged)
-    bug_m = 0.5 * speed * delay_s
-    assert dev < bug_m, (
-        "the copy was %.3f m off the lift while it moved (rest offset %.3f m, speed %.2f m/s; uncarried it would be "
-        ">= %.3f m off): it sank into or floated over the lift" % (dev, rest, speed, 2 * bug_m))
+    assert not bad, (
+        "the copy was off the lift while it moved in %d of %d judged samples (worst %.3f m at %.2f m/s, bound %.3f m; "
+        "rest offset %.3f m, rest noise %.3f m): it sank into or floated over the lift" % (
+            len(bad), len(judged), abs(bad[0][0] - rest), bad[0][1], bad[0][2], rest, noise))
     if not shot_taken:
         shots(pair, "lift-carry-ride")
     misses = []
     if not still:
-        misses.append("no still sample: the rest offset is the first sample's")
+        misses.append("no still sample: the rest offset is the first sample's, no rest noise measured")
+    if not judged:
+        misses.append("no moving sample's bound (0.5 x speed x delay) is above the rest noise: carry not judged")
     if still_after < STOP_SAMPLES:
         misses.append("the lift did not stop within %d frames" % RIDE_FRAMES)
     if max(v for _, v in moving) < V_MIN:

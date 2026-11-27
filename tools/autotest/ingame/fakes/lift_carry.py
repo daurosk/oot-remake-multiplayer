@@ -8,7 +8,9 @@ Scoped (B #149): acts ONLY in the scene InsideJabuJabuBelly (no other row's test
   100 ms)` once.
 Selftest switch BT_FAKE_LIFT_BUG (tests/test_ingame_puppet_lift_carry.py): nocarry -> no carry line and the copy is where
 the lift was 100 ms ago (sunk/floating: FAIL); noline -> the copy rides but no line (FAIL); stuck -> the lift never moves
-(SETUP-FAIL); wobble -> the line, but the copy 0.08 m off while moving (a CARRY_TOL miss: NO-REF listing it).
+(SETUP-FAIL); lag -> the line, but the copy is where the lift was 100 ms ago (the deviation FAIL); wobble -> the line, but the copy 0.08 m off while moving (a CARRY_TOL miss: NO-REF listing it); slow ->
+the lift goes only 2 m at 0.3 m/s and the copy jitters +-0.02 m every frame (also at rest): each sample's bound
+(0.015 m) is under the rest noise, so the carry is not judged (NO-REF miss), never a FAIL.
 """
 import math
 import os
@@ -18,6 +20,9 @@ NAME = "Obj_InsideJabu_Jabu_MoveFloor_A_01"
 FLOOR = (0.32, 91.0, -42.63)          # test_puppet_lift_carry.py FLOOR
 BOTTOM = 75.0
 SPEED = 2.0 / 30                      # m per frame (2 m/s at pair.FPS 30)
+SLOW_SPEED = 0.3 / 30                 # slow: m per frame (0.3 m/s)
+SLOW_DROP = 2.0                       # slow: m down
+JITTER = 0.02                         # slow: the copy's +- jitter (m)
 DELAY_FRAMES = 3                      # 100 ms at 30 fps
 LINE = "coop: puppet: P2 lift carry: on our lift, carried 0.200 m (show delay 100 ms)"
 
@@ -40,6 +45,8 @@ def lift_y(game, back=0):
     start = _lc(game)["start"]
     if start is None or _bug() == "stuck":
         return FLOOR[1]
+    if _bug() == "slow":
+        return max(FLOOR[1] - SLOW_DROP, FLOOR[1] - SLOW_SPEED * max(0, game.frame - back - start))
     return max(BOTTOM, FLOOR[1] - SPEED * max(0, game.frame - back - start))
 
 
@@ -74,10 +81,11 @@ def state(game, st):
         lc["said"] = True
         if _bug() not in ("nocarry", "noline"):
             game.say(LINE)
-    moving = BOTTOM < lift_y(game) < FLOOR[1]
+    moving = (FLOOR[1] - SLOW_DROP if _bug() == "slow" else BOTTOM) < lift_y(game) < FLOOR[1]
     for a in (st.get("world") or {}).get("actors") or []:
         if a.get("kind") == "player" and (a.get("name") or "").startswith("CoopPuppet_"):
-            if _bug() == "nocarry":
+            if _bug() in ("nocarry", "lag"):
                 a["pos"][1] = lift_y(game, back=DELAY_FRAMES)
             else:
-                a["pos"][1] = lift_y(game) + (0.08 if _bug() == "wobble" and moving else 0.0)
+                a["pos"][1] = lift_y(game) + (0.08 if _bug() == "wobble" and moving else 0.0) + (
+                    (JITTER if game.frame % 2 else -JITTER) if _bug() == "slow" else 0.0)

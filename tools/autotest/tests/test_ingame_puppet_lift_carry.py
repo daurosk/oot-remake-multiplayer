@@ -66,5 +66,18 @@ class PuppetLiftCarryFake(unittest.TestCase):
         self.assertIn("max deviation 0.080 m > 0.05", why)
 
 
+    def test_lagging_copy_with_line_fails(self):
+        res, why, _ = self.run_fake("lag")
+        self.assertEqual(res, "FAIL", why)
+        self.assertIn("sank into or floated over the lift", why)
+
+    def test_slow_lift_is_not_failed(self):
+        res, why, s = self.run_fake("slow")
+        self.assertEqual(res, "NO-REF", why)
+        self.assertIn("carry not judged", why)
+        self.assertIn("the lift never reached 0.5 m/s", why)
+        self.assertRegex(s, r"rest noise 0\.0[2-4]\d m, 0 judged")
+
+
 if __name__ == "__main__":
     unittest.main()

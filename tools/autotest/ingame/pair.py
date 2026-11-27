@@ -160,6 +160,25 @@ class Log:
 
 
 NOCS = "-nocs"                       # lane<N>-B-nocs: lane B's game without Character Select (lanes.py nocs)
+KEPT_DIFFICULTY = "coop-difficulty.ini"  # a player's kept next-lobby difficulty, in the game folder (ConfigDir)
+
+
+def kept_difficulty(folder):
+    """SetupFail when the game folder holds a coop-difficulty.ini: a difficulty KEPT by an earlier run (the Host page's
+    Keep(), lichii/hook/coop_difficulty_game.cpp). The module reads it ONCE at game start (Kept(), g.kept_read), shows
+    it on the idle Host page (coop_pause_menu.cpp DifficultyShown -> NextLobby) and offers it to every automatic
+    session (OffersKept, :271), so every later run on the lane plays at that difficulty. A lane's default is no file
+    (lane-game-for.ps1 installs none). 2026-11-26: lane1-A (11-22) and lane2-A (11-16) held 'preset = custom,
+    hp = 300' from an old host-difficulty run; lane logs said 'Custom: life 300%' (port-g6-rest 14:58, B #148)."""
+    f = os.path.join(folder, KEPT_DIFFICULTY)
+    if os.path.isfile(f):
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                what = " ".join(ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith(("#", ";")))
+        except OSError as e:
+            what = "unreadable: %s" % e
+        raise SetupFail("%s holds a kept difficulty from an earlier run (%s): move it aside, the game reads it once at "
+                        "start" % (f, what[:80]))
 CS_MOD = "OoT Character Select"
 
 
@@ -197,6 +216,7 @@ def lane_check(kit_ls, lane, nocs=False):
         if have_p != want_p:
             raise SetupFail("lane%d-%s game patches line %s is not lane-server.txt's %s (the game was rebuilt after the "
                             "lane's install)" % (lane, x, have_p[:8] or "(none)", want_p[:8]))
+        kept_difficulty(d)
         got[x] = {"server": srv, "commit": commit, "dll_sha256": want, "patches": want_p, "folder": d,
                   "nocs_of": field("nocs_of")}
     if nocs:

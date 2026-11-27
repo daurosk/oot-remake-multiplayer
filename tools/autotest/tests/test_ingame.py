@@ -1993,6 +1993,20 @@ class LaneCheck(unittest.TestCase):
         with self.assertRaisesRegex(P.SetupFail, "no server"):
             P.lane_check(self.tmp, 1)
 
+    def test_kept_difficulty_left_by_an_earlier_run(self):
+        """A game folder with a coop-difficulty.ini (a kept difficulty, read once at game start, offered to every
+        automatic session): SETUP-FAIL naming the file (lane1-A/lane2-A 2026-11-26 kept Custom hp=300, B #148)."""
+        for x in "AB":
+            self.make(self.tmp, x, server=self.server)
+        f = os.path.join(self.tmp, "lane1-A", "coop-difficulty.ini")
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write("# kept\nauto = 0\npreset = custom\nhp = 300\n")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1-A.coop-difficulty\.ini holds a kept difficulty from an "
+                                                 r"earlier run \(auto = 0 preset = custom hp = 300\)"):
+            P.lane_check(self.tmp, 1)
+        os.remove(f)
+        self.assertEqual(P.lane_check(self.tmp, 1)["commit"], "ae97cc772")
+
     def test_not_installed(self):
         with self.assertRaisesRegex(P.SetupFail, "not installed by lane-game-for"):
             P.lane_check(self.tmp, 1)

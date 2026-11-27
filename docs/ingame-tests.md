@@ -197,6 +197,9 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
   log's last line). `hookshot.py run` counts a game ready only at Longshot's `rx: renderer: Vulkan (` line, not the
   precompile summary that comes before the start-up ends; a mark or test command the module never read fails the
   run, so `live.py start` cannot answer ok for a game with no module (party-hud-bridge-85e3b255).
+- Kept difficulty: a lane game folder with a `coop-difficulty.ini` (a player's kept next-lobby difficulty, left by an
+  earlier run) is SETUP-FAIL in `lane_check`, naming the file. The game reads it once at start and plays every
+  automatic session at it (2026-11-26: lane1-A and lane2-A kept a Custom life 300%). Move it aside; a lane has none.
 - A test that PASSES but leaves a game away from the boot's place (not in play, or not in the boot's scene: a
   forgotten put-back) is caught after it: one state read per game (`Pair.away_from_boot`). The test's notes name it
   ("left the boot's place"), and the next test starts with the recovery, so it never runs in the wrong map (row 285).

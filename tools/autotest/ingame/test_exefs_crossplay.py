@@ -249,6 +249,7 @@ def test_exefs_emulator_joins_longshot_session(pair, request):
     import bt_plugin
     out = pair.out_dir
     with pair.setup():
+        pair.need_boot_place()       # (a fresh stepped in-play sample of both games in the boot's scene; any age)
         emu, game, src = paths()
         check_paths(emu, game, src)
         if not (pair.session and getattr(pair, "info", None)):

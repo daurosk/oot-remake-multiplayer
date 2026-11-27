@@ -38,7 +38,7 @@ namespace coop::protocol {
 // for the whole sync plan. A protocol 17 server drops them from an object's last state, so a new owner or a late
 // player would get none of them; mixed versions are refused at HELLO. Nobody else bumps the version in 0.12.0: new
 // keyed data goes in 25-28 under new keys (docs/protocol.md "Keyed values").
-inline constexpr std::uint16_t kProtocolVersion = 18;
+inline constexpr std::uint16_t kProtocolVersion = 19;
 // A public game (anyone joins without typing a password) lists itself on the relay's room list with this bit
 // on top of kProtocolVersion; the relay repeats the version as given. A listing without it is a private game
 // (or an older kit's): the joiner asks for the host's password and never tries the public one on it.
@@ -216,6 +216,7 @@ enum class MessageType : std::uint16_t {
   pvp_strike = 540,  // 540 to 544: PvP on real bodies (docs/protocol.md, "PvP on real bodies")
   pvp_result = 541,
   pvp_native = 542,
+  party_wait_mode = 560,  // 560 to 564: wait for the party (docs/party-wait.md, protocol 19)
   emote = 615,  // 615 to 619: emotes and pings (docs/protocol.md, "Emotes")
 };
 
@@ -1655,6 +1656,16 @@ struct PvpMode {
   bool operator==(const PvpMode&) const = default;
 };
 
+// PARTY_WAIT_MODE (protocol 19; docs/party-wait.md): whether a player is told to wait for the party before a boss
+// door, a locked combat room or a big chest. Off unless the host turns it on. The same rules as PVP_MODE: from the
+// server to each player when it joins (only while on) and to everyone on a change, `set_by` 0 when the server's start
+// decided it, else the host who changed it; from a player, the host asks for a change (others are ignored).
+struct PartyWaitMode {
+  std::uint8_t set_by = 0;  // 0 the server, else a player
+  bool on = false;
+  bool operator==(const PartyWaitMode&) const = default;
+};
+
 // DIFFICULTY (protocol 11): how hard the enemies are in this session
 // (difficulty.hpp). From the server to each player when it joins and to
 // everyone whenever the values in force change: `values` are in force, and
@@ -2343,7 +2354,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote, PartyWaitMode>;
 
 MessageType type_of(const Message& message);
 

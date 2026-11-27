@@ -97,6 +97,7 @@ struct Options {
     std::string chat_key = "T";    // LICHII_COOP_CHAT_KEY
     bool show_players = false;     // LICHII_COOP_SHOW_PLAYERS (the list always shown)
     bool pvp = false;              // pvp (the host's)
+    bool party_wait = false;       // party_wait (the host's: wait for the party, docs/party-wait.md; no line: off)
     bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
     bool gold_own = false;         // gold_skulltulas = own (the host's: Gold Skulltulas not shared; no line: shared)
     bool race = false;             // race = on (the host's race mode, coop_race_mode.h; no line: off)

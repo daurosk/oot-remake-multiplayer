@@ -116,6 +116,8 @@ inline std::vector<Message> object_messages() {
   all.push_back(BossRoom{4, "SpiritTemple", 7, BossState::defeated});
   all.push_back(PvpMode{0, true});
   all.push_back(PvpMode{2, false});
+  all.push_back(PartyWaitMode{0, true});
+  all.push_back(PartyWaitMode{1, false});
   all.push_back(Difficulty{});
   all.push_back(Difficulty{3, false, DifficultyPreset::custom, {500, 25, 300}});
   all.push_back(PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 3.5f}});

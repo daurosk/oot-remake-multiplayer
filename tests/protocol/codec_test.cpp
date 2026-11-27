@@ -2168,6 +2168,25 @@ TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
   CHECK(decode(short_one, back) != Error::none);
 }
 
+TEST_CASE("party wait mode: type 560, protocol 19, the session channel, both sides, two bytes") {
+  CHECK(kProtocolVersion == 19);  // party-wait-298's bump (PARTY_WAIT_MODE); the next bump changes this pin
+  CHECK(static_cast<int>(MessageType::party_wait_mode) == 560);
+  CHECK(channel_of(MessageType::party_wait_mode) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::party_wait_mode, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::party_wait_mode));
+  CHECK(may_send(Sender::server, MessageType::party_wait_mode));
+  Message mode = PartyWaitMode{2, true};
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+  Bytes bad = b;
+  bad.back() = 2;  // a mode other than 0 or 1
+  CHECK(decode(bad, back) != Error::none);
+  CHECK(encode(PartyWaitMode{kMaxPlayers + 1, true}, b) == Error::bad_value);
+}
+
 TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and hurts on ownership") {
   CHECK(static_cast<int>(MessageType::pvp_mode) == 241);
   CHECK(static_cast<int>(MessageType::pvp_hit) == 242);
@@ -3260,7 +3279,7 @@ TEST_CASE("pvp on real bodies: types 540 to 542, round-trip and refuse bad value
 }
 
 TEST_CASE("object components 25-28 carry keyed values (protocol 18, sync plan S1)") {
-  CHECK(kProtocolVersion == 18);  // one bump for the whole sync plan: 25-28 kept by the server
+  CHECK(kProtocolVersion >= 18);  // one bump for the whole sync plan: 25-28 kept by the server
   CHECK(static_cast<int>(ObjectComponent::brain) == 25);
   CHECK(static_cast<int>(ObjectComponent::plugs) == 26);
   CHECK(static_cast<int>(ObjectComponent::clocks) == 27);

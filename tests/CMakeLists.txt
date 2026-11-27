@@ -130,6 +130,7 @@ add_executable(coop_tests
   lichii/pivot_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_hallway.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pivot.cpp
+  lichii/party_wait_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_party_wait.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
   lichii/pvp_rewind_test.cpp

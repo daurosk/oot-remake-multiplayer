@@ -47,6 +47,7 @@
 #include "coop_pause_tab.h"
 #include "coop_pause_world.h"
 #include "coop_pvp_game.h"
+#include "coop_party_wait_game.h"
 #include "coop_room_list.h"
 #include "coop_runtime.h"
 #include "coop_char_ages.h"
@@ -395,6 +396,7 @@ CoopPauseMenu::Session SessionNow() {
         const CoopDbno::Rules rules = CoopDbno::Current();
         s.rules = true;
         s.pvp = CoopPvp::On();
+        s.party_wait = CoopPartyWait::On();
         s.gold_own = CoopGoldMode::NotShared();
         s.race = CoopRaceMode::InForce();
         s.floor_switches = CoopSwitchStandMode::InForce();
@@ -772,6 +774,7 @@ bool Host(const CoopTitleMenu::Options& o, bool test) {
     h.upnp = test ? 0 : 1;             // the router forward (nothing to set up)
     h.invite = test ? 0 : 1;
     h.pvp = o.pvp ? 1 : 0;
+    h.party_wait = o.party_wait ? 1 : 0;
     // The lobby's difficulty, picked on the Host page (or Host settings) as it is made: the server starts with it, and
     // the game lists show it (CoopDifficulty::NextLobby: automatic when none was picked).
     const CoopDifficulty::Choice lobby = CoopDifficulty::NextLobby();

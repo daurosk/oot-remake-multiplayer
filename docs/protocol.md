@@ -625,6 +625,10 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
+### Wait for the party (protocol 19, `PARTY_WAIT_MODE`)
+
+The host's setting of [party-wait.md](party-wait.md): whether a player is told on the banner to wait for the others before a boss door, a locked room or a big chest. Types 560 to 564 are kept for it. `PARTY_WAIT_MODE` (560): `u8` set by (0 the server's start, else the host who changed it; above `kMaxPlayers` refused), `u8` mode (0 off, 1 on; other values refused). Reliable, on the session channel, from both sides, the same rules as `PVP_MODE`: the server tells each player at join only while it is on (each connection starts off) and everyone on a change; a player's own is the host's ask (from a guest it changes nothing, the session's value goes back to that guest alone, `party_wait_mode_refused`). Back to the server's start value (`SessionConfig::party_wait`, the host's Host option) when the session empties. Not world state: race mode leaves it alone. A protocol 18 game cannot join a protocol 19 server.
+
 ### Down but not out (protocol 11, `DBNO_MODE`, `DBNO_STATE`, `DBNO_REVIVE`, `DBNO_THREAT`)
 
 A player at no hearts is downed instead of dead and a teammate can revive them ([play-online.md](play-online.md), "Down but not out"; `lichii/hook/coop_dbno.h` has the rules, `coop_dbno_game.h` the games' side). On unless the server or the host turns it off. Types 470 to 479 are kept for it.

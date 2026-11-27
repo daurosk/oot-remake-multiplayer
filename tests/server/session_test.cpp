@@ -5463,6 +5463,30 @@ TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
   CHECK(h.difficulty_to(6) == std::vector<Difficulty>{Difficulty{}});
 }
 
+TEST_CASE("party wait: off unless chosen, only the host changes it, a newcomer learns it, an empty session goes back") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  CHECK(messages_of<PartyWaitMode>(h, 2).empty());   // off: not told (every game starts with it off)
+  h.clear();
+  h.receive(2, PartyWaitMode{0, true}, kChannelSession);  // a guest cannot
+  CHECK_FALSE(h.session.party_wait());
+  CHECK(only_message_to<PartyWaitMode>(h, 2) == PartyWaitMode{0, false});
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().party_wait_mode_refused == 1);
+  h.clear();
+  h.receive(1, PartyWaitMode{0, true}, kChannelSession);
+  CHECK(h.session.party_wait());
+  CHECK(only_message_to<PartyWaitMode>(h, 1) == PartyWaitMode{1, true});
+  CHECK(only_message_to<PartyWaitMode>(h, 2) == PartyWaitMode{1, true});
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_of<PartyWaitMode>(h, 3) == std::vector<PartyWaitMode>{PartyWaitMode{1, true}});
+  for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK_FALSE(h.session.party_wait());
+}
+
 TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goes back") {
   Harness h;
   h.join(1, "Link");

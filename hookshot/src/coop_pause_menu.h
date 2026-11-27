@@ -148,6 +148,7 @@ struct Session {
     // of Co-op settings; `rules` false: not heard yet (not in a session), the rows show what the next Host uses.
     bool rules = false;
     bool pvp = false;
+    bool party_wait = false;   // wait for the party in this session (CoopPartyWait::On)
     bool gold_own = false;   // Gold Skulltulas not shared in this session (CoopGoldMode::InForce)
     bool race = false;       // race mode in this session (CoopRaceMode::InForce)
     bool floor_switches = true;   // shared floor switches in this session (CoopSwitchStandMode::InForce)
@@ -350,7 +351,7 @@ private:
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh, kFindPage,
         kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal,
-        kApproveJoins, kGoldSkulltulas, kRace, kFloorSwitches, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts,
+        kApproveJoins, kGoldSkulltulas, kRace, kFloorSwitches, kPvp, kPartyWait, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts,
         kDifficulty, kDifficultyLife, kDifficultyDamage, kDifficultyCount,
         kCharAges, kCharChild, kCharAdult,
         kLocalGames, kLocalStart

@@ -774,7 +774,7 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
                                                "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "PvP",
-                                               "Down but not out", "Difficulty",
+                                               "Wait for the party", "Down but not out", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Show players on map", "Names on map", "New Game+",
                                                "Saves", "Original game"});   // (no patch 0015: no input rows)
     View v = m.view();
@@ -792,9 +792,10 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK_FALSE(v.rows[12].on);   // (Race mode: off unless chosen)
     CHECK(v.rows[13].on);         // (Shared floor switches: on unless turned off)
     CHECK_FALSE(v.rows[14].on);   // (PvP too)
-    CHECK(v.rows[15].fixed);      // (Down but not out: the session's, so not in one it waits, dimmed)
-    CHECK(v.rows[17].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[17].on);   // the default
+    CHECK_FALSE(v.rows[15].on);   // (Wait for the party too)
+    CHECK(v.rows[16].fixed);      // (Down but not out: the session's, so not in one it waits, dimmed)
+    CHECK(v.rows[18].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[18].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -866,10 +867,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 24);   // (the port, relay, room, network password, host rows and chat key rows before them, New Game+, Saves and Original game after)
-    CHECK(v.rows[19].kind == RowKind::kToggle);
-    CHECK(v.rows[19].on);
+    REQUIRE(v.rows.size() == 25);   // (the port, relay, room, network password, host rows and chat key rows before them, New Game+, Saves and Original game after)
+    CHECK(v.rows[20].kind == RowKind::kToggle);
     CHECK(v.rows[20].on);
+    CHECK(v.rows[21].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -1039,7 +1040,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
                                                "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "PvP",
-                                               "Down but not out", "Difficulty",
+                                               "Wait for the party", "Down but not out", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Controller",
                                                "Keyboard and mouse", "Show players on map", "Names on map",
                                                "New Game+", "Saves", "Original game"});

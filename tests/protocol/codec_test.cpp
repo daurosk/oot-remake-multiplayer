@@ -3260,7 +3260,7 @@ TEST_CASE("pvp on real bodies: types 540 to 542, round-trip and refuse bad value
 }
 
 TEST_CASE("object components 25-28 carry keyed values (protocol 18, sync plan S1)") {
-  CHECK(kProtocolVersion == 18);  // one bump for the whole sync plan: 25-28 kept by the server
+  CHECK(kProtocolVersion >= 18);  // one bump for the whole sync plan: 25-28 kept by the server
   CHECK(static_cast<int>(ObjectComponent::brain) == 25);
   CHECK(static_cast<int>(ObjectComponent::plugs) == 26);
   CHECK(static_cast<int>(ObjectComponent::clocks) == 27);

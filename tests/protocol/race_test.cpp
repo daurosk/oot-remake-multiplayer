@@ -59,7 +59,7 @@ using Public = List<Hello, Welcome, Refused, PlayerJoined, PlayerLeft, Ping, Pon
                     PvpHurt, RejoinToken, RejoinClaim, PlayerRide, OcarinaNote, DbnoMode, DbnoStatus, DbnoRevive,
                     DbnoThreat, Difficulty, VoiceFrame, ModList, ModSettings, ModData, LobbyAction, LobbyMutes, LobbyResult,
                     LocalJoin, LocalJoined, LocalLeave, LinkSound, PlayerLook, JoinKnock, JoinAllow, PvpStrike,
-                    PvpResult, PvpNative, Emote>;
+                    PvpResult, PvpNative, Emote, PartyWaitMode>;
 using Envelope = List<LocalSample, LocalMessage>;   // judged by what they carry
 
 template <std::size_t I>

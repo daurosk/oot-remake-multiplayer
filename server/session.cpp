@@ -92,7 +92,8 @@ std::uint64_t Stats::dropped() const {
   return total;
 }
 
-Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
+Session::Session(SessionConfig config)
+    : config_(std::move(config)), pvp_(config_.pvp), party_wait_(config_.party_wait), dbno_(config_.dbno) {
   dbno_.set_by = 0;
   difficulty_ = lobby_difficulty();
   for (const std::string& id : config_.kept_bans) {
@@ -511,6 +512,8 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // Wait for the party on: the same (docs/party-wait.md); off is every game's start.
+  if (party_wait_) send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
   // Down but not out: told at join, on or off (a game starts with it off).
   send(id, kChannelSession, dbno_);
   // The difficulty in force, always: with this player in, and the others
@@ -794,6 +797,10 @@ void Session::dispatch_player_message(ConnectionId id, Connection& c, std::uint8
     on_pvp_mode(id, c, *mode);
     return;
   }
+  if (const auto* mode = std::get_if<PartyWaitMode>(&message)) {
+    on_party_wait_mode(id, c, *mode);
+    return;
+  }
   if (const auto* wish = std::get_if<Difficulty>(&message)) {
     on_difficulty(id, c, *wish);
     return;
@@ -1000,6 +1007,27 @@ void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
   send(id, kChannelSession, now);
   send_to_others(id, kChannelSession, now);
   log(std::string("PvP turned ") + (pvp_ ? "on" : "off") + " by player " +
+      std::to_string(c.number));
+}
+
+// The host turns wait for the party on or off for everyone (docs/party-wait.md), as PvP above: anyone else's ask
+// is answered with the session's value and changes nothing.
+void Session::on_party_wait_mode(ConnectionId id, Connection& c, const PartyWaitMode& m) {
+  if (!hosts_rules(id)) {
+    ++stats_.party_wait_mode_refused;
+    send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
+    return;
+  }
+  if (m.on == party_wait_) {
+    send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
+    return;
+  }
+  party_wait_ = m.on;
+  party_wait_set_by_ = c.number;
+  const PartyWaitMode now{party_wait_set_by_, party_wait_};
+  send(id, kChannelSession, now);
+  send_to_others(id, kChannelSession, now);
+  log(std::string("Wait for the party turned ") + (party_wait_ ? "on" : "off") + " by player " +
       std::to_string(c.number));
 }
 
@@ -3837,6 +3865,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    party_wait_ = config_.party_wait;
+    party_wait_set_by_ = 0;
     dbno_ = config_.dbno;
     dbno_.set_by = 0;
     difficulty_ = lobby_difficulty();

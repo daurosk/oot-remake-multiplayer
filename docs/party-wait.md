@@ -4,8 +4,8 @@ Player suggestion (row 298, 0.12.0), wanted by the owner on 2026-11-27: an optio
 moments where players drift apart most, tells a player on the game's banner to wait for the others. It never stops
 anyone: it is a notice, nothing more.
 
-Status: design (this page) and the first build (the setting, the rules, the boss door moment). The chest and
-locked-room moments need the probe in "Not proven" first.
+Status: built: the setting, the message, the rules and the boss door moment. The locked-room and big-chest moments are
+designed below but not built: they need the probe in "Not proven" (2) first.
 
 ## The setting
 
@@ -13,7 +13,7 @@ locked-room moments need the probe in "Not proven" first.
   `coop_pause_menu.cpp`), **off by default**. Saved with the other host options in `coop-options.ini`
   (`party_wait = on|off`, as `pvp`), sent at Host in `HosCoopHostOptions` (the byte that was `reserved2`; every older
   caller wrote 0 there: off).
-- The session's value is the server's: `PARTY_WAIT_MODE` (message type 520, protocol 19), the same shape and rules
+- The session's value is the server's: `PARTY_WAIT_MODE` (message type 560, protocol 19), the same shape and rules
   as `PVP_MODE` (protocol.md, "PvP"): from the server to each player when it joins and to everyone on a change; the
   host asks for a change (from anyone else it is ignored). Chat: `/wait` says it, `/wait on` and `/wait off` (host only)
   change it. A guest's row shows the host's value, fixed (as PvP's).
@@ -61,7 +61,7 @@ out's), and nothing is drawn.
 4. **Never forever:** 60 s after the first line (`kGiveUpUs`), or when our Link leaves the moment: the wait ends
    (`Not everyone is here: going on.` on the time-out, nothing on leaving).
 5. The others: one chat line from the waiting player when a wait starts, `<name> is waiting for the party: <moment>`
-   (e.g. `the boss door (Forest Temple)`), sent as the Forest Temple hallway's lines are (`SendChat`), so they know to
+   (e.g. `Waiting for the party at the boss door (Phantom Ganon)`), sent as the Forest Temple hallway's lines are (`SendChat`), so they know to
    come.
 
 Each moment waits once a visit: the same moment (kind + dungeon + boss room or placement key) starts no new wait until

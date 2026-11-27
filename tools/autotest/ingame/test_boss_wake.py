@@ -44,7 +44,7 @@ import pair as P               # noqa: E402
 SWITCHES = ("LICHII_COOP_DEBUG_BOSS=1", "LICHII_COOP_DEBUG_OBJECTS=1", "LICHII_COOP_CHEATS=1")
 STAGE = "TwinrovaStage"          # coop_start_points.inc:121 {"TwinrovaStage", "TwinrovaStage", ...}
 AWAY = ("SpiritTemple", "SpiritTemple_Entrance")   # coop_start_points.inc:116: B waits in the dungeon, not the stage
-BOOT = "live-twinrova-room"      # scenarios/live-twinrova-room.A/B.txt: adult save, both games in TwinrovaStage
+BOOT = "live-twinrova-room"      # scenarios/live-twinrova-room.A/B.txt: child save, both games in TwinrovaStage
 SISTERS = ("Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake")   # docs/dungeons-boss.md "One boss": Twinrova's parts
 CRASH = r"exception 0x|FATAL"    # test_boss_shots.py CRASH (no-crash-A/B max=0)
 
@@ -89,8 +89,10 @@ def warp_one(pair, x, scene, entrance=None, in_event=True):
 def need_in_play(pair):
     """The first set-up: the shared pair.need_boot_place (harness-c133-scene 82f9a7a5a): both games in play STEPPED
     (never one read: the gifts-237/row53 'not in play' SETUP-FAIL class, B #139 16:31), in the boot's scene
-    (TwinrovaStage, scenarios/live-twinrova-room.A/B.txt) and adult (the boot's save)."""
-    return pair.need_boot_place("adult")
+    (TwinrovaStage, scenarios/live-twinrova-room.A/B.txt) and child: the boot's save is the lane's child baseline
+    (row215-309d7180 game-out-A/B.txt: 'test warp to TwinrovaStage ... childhood - NOT set', 'simulated turf: TwinrovaStage
+    (child)'); 'adult' here was SETUP-FAIL on every real run of this boot."""
+    return pair.need_boot_place("child")
 
 
 def look_both(pair, name, missed):

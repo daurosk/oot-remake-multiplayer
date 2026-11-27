@@ -1,4 +1,4 @@
-# live-twinrova-room A (boot for live.py start): adult save into the Twinrova room, past the title, the session starts at the intro (same boot as hs-twinrova-orders2).
+# live-twinrova-room A (boot for live.py start): the lane's child save (the baseline restored at start; no adult profile in ingame/saves) into the Twinrova room of the boss rush, past the title, the session starts at the intro (same boot as hs-twinrova-orders2).
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_CHEATS=1

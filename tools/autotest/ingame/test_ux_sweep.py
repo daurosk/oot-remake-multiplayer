@@ -204,8 +204,13 @@ def test_small_key_door_opens_for_both(pair):
     """Row 73 (Revirie, 0.11.0): small keys in adult dungeons were the main blocker; #237 (known issue): a locked door
     another player opened may stay shut. The group has one key; A opens the Forest Temple's first locked door; B
     comes to the same door: it must open for B too (the lent key, docs/dungeon.md "Locked doors"), and the group
-    must end with 0 keys (one key per door). Adult boot (live-twinrova-room: adult save), then the warp in."""
+    must end with 0 keys (one key per door). The live-twinrova-room boot is the lane's CHILD save (row215-309d7180:
+    its header said adult), so both games are made adult first by the warp verb's own age recipe (docs/playtest.md
+    `warp`: Sequence_IsChildhood set, 30 frames, then the warp; the load takes the age), then the warp in."""
     with pair.setup():
+        for x in ("A", "B"):
+            pair.flag(x, "Sequence_IsChildhood", 0)
+        pair.step_both(30)
         pair.warp_both(FT_SCENE, FT_SCENE)
         in_play(pair, "adult")
         # SmallKeyNum is a counted item (game_items.cpp:199, shared as deltas): the two games hold the same count, and

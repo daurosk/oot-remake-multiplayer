@@ -2316,6 +2316,82 @@ class BootProof(unittest.TestCase):
         with self.assertRaisesRegex(P.SetupFail, r"^boot: BridgeError: timeout"):
             pair.boot_ready("BossStage", max_frames=100)
 
+    def test_an_intro_longer_than_the_load_ceiling_is_waited_out(self):
+        """row215-309d7180: Twinrova's intro ran on at the boot proof's 2400 frames, which bound a load, and was
+        SETUP-FAIL boot. A game IN AN EVENT gets BOOT_EVENT_FRAMES (the 300-frame intro here, past max_frames 100),
+        and the deadline grows once for those frames (BOOT_STEP_FPS)."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        before = pair.deadline.seconds
+        st = pair.boot_ready("BossStage", max_frames=100)
+        for x in ("A", "B"):
+            self.assertTrue(pair.in_play(st[x]), st[x])
+        self.assertTrue(any(n.startswith("boot: ") and "in an event after 100 frames: waited on up to %d"
+                            % P.BOOT_EVENT_FRAMES in n for n in pair.notes), pair.notes)
+        self.assertAlmostEqual(pair.deadline.seconds - before, (P.BOOT_EVENT_FRAMES - 100) / P.BOOT_STEP_FPS)
+
+    def test_the_event_growth_never_passes_an_enclosing_deadline(self):
+        """review-rows-c130-8 S2: inside Pair.recover the growth is capped at the recovery's own deadline end."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        cap = pair.deadline.end + 5.0
+        pair._boot_grow_cap = cap
+        pair.boot_ready("BossStage", max_frames=100)
+        self.assertLessEqual(pair.deadline.end, cap + 1e-6)
+        self.assertTrue(any("capped by the enclosing deadline" in n for n in pair.notes), pair.notes)
+
+    def test_recover_sets_the_cap_to_its_outer_deadline_and_resets_it(self):
+        pair = self.intro_pair(self.INTRO_FAKE)
+        seen = {}
+
+        def stepped(scene, max_frames, outer, t0, box):
+            seen["cap"], seen["end"] = pair._boot_grow_cap, outer.end
+            return {}
+        pair._recover_stepped = stepped
+        pair.recover("BossStage")
+        self.assertEqual(seen["cap"], seen["end"])
+        self.assertIsNone(pair._boot_grow_cap)
+
+    def test_a_load_keeps_the_load_ceiling(self):
+        """Only an event gets the longer wait: a stale sample past max_frames is SETUP-FAIL at max_frames."""
+        pair = self.lane(BT_FAKE_STALE_FRAMES=5000)
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: AssertionError: both games in play after the boot: not "
+                                                 r"after 100 frames \(~3 s of game\); A: scene=.*not_ready="):
+            pair.boot_ready("KakarikoVillage_Child", max_frames=100)
+
+    def test_an_event_past_its_ceiling_names_the_event_and_its_last_cut(self):
+        """The catching check: the SETUP-FAIL's first line says which event each game waited on, how long the module
+        saw it run and its last cut (row215-309d7180 said only 'event=True')."""
+        fake = self.INTRO_FAKE.replace("game.frame + 300", "10 ** 9").replace(
+            "    return {'ok': False",
+            "    game.say(\"coop: event: our Link's event began: 0x106d8c0100 kind 0 (2 in the session); names seen: "
+            "none\")\n    game.say(\"coop: event: our Link is still in its event after 211 s (0 actors claimed)\")\n"
+            "    game.say(\"coop: objects: anim Enemy_DungeonBoss_Kotake 0x1 'AS-C07-Enemy_DungeonBoss_Kotake-0' "
+            "(ours)\")\n    return {'ok': False")
+        pair = self.intro_pair(fake)
+        from unittest import mock
+        with mock.patch.object(P, "BOOT_EVENT_FRAMES", 200):
+            with self.assertRaises(P.SetupFail) as cm:
+                pair.boot_ready("BossStage", max_frames=100)
+        msg = str(cm.exception)
+        self.assertRegex(msg, r"^boot: AssertionError: both games in play after the boot \(a game in an event at 100 "
+                              r"frames: the event ceiling\): not after 100 frames \(~3 s of game\); A: scene=BossStage "
+                              r".*event=True")
+        for x in ("A", "B"):
+            self.assertRegex(msg, r"; %s \(in its event since 'our Link's event began: 0x106d8c0100 "
+                                  r"kind 0 \(2 in the session\); names seen: none', 'still in its event after 211 s', last cut "
+                                  r"'AS-C07-Enemy_DungeonBoss_Kotake-0', 200 frames stepped here\)" % x)
+
+    def test_an_event_that_ended_in_the_log_is_not_named(self):
+        pair = self.intro_pair(self.INTRO_FAKE)
+        pair.log["A"].mark()
+        with open(pair.log["A"].path, "a", encoding="utf-8") as f:
+            f.write("coop: event: our Link's event began: 0x1 kind 0 (1 in the session); names seen: none\n"
+                    "coop: event: our Link's event ended after 0.6 s\n")
+        self.assertEqual(pair.event_note("A", 10), "")
+        with open(pair.log["A"].path, "a", encoding="utf-8") as f:
+            f.write("coop: event: our Link's event began: 0x2 kind 0 (2 in the session); names seen: none\n")
+        self.assertEqual(pair.event_note("A"), " (in its event since 'our Link's event began: 0x2 kind 0 (2 in the "
+                                               "session); names seen: none')")
+
     def test_a_stale_sample_is_stepped_not_judged(self):
         pair = self.lane(BT_FAKE_STALE_FRAMES=50)
         self.assertFalse(pair.in_play(pair.state("A")))          # (the one read party-hud-bridge r1 failed on)

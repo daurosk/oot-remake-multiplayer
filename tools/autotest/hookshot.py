@@ -1887,6 +1887,30 @@ def run(a):
                 raise RuntimeError("load: " + ", ".join("%s %s" % kv for kv in errs.items()))
             both("loaded")
             say("save loaded")
+        # gate-mark-0121: the module starts reading its commands file at its first test frame, which it says once
+        # ("coop: test commands file PATH", lichii/hook/coop_testinput.cpp OnFrame). gate-hud-309d7180 (A) and
+        # gate-title-309d7180 (B) wrote their first mark the second the renderer was ready, before that line: not
+        # taken in 5 s, though the module read it right after (game-out-A.txt:413-415, game-out-B.txt:442-444). So
+        # each game's script waits for that line first (at most --mark-late s; a module that never says it still
+        # FAILs on its marks).
+        for x in tags:
+            if x not in parsed or not commands.get(x):
+                continue
+            t0, rx, log_x = time.monotonic(), re.compile(r"coop: test commands file "), game_log(x)
+            seen = False
+            while time.monotonic() - t0 < a.mark_late:
+                try:
+                    if rx.search(log_x() or ""):
+                        seen = True
+                        break
+                except OSError:
+                    pass
+                if procs[x].poll() is not None:
+                    break
+                time.sleep(0.25)
+            say("%s: module reads its commands file (%.1f s after the renderer)" % (x, time.monotonic() - t0) if seen
+                else "%s: no 'coop: test commands file' line in %.0f s (the module may not read its commands)"
+                % (x, a.mark_late))
         errs, players = {}, {}
 
         def play(x):

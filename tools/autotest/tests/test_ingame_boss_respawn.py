@@ -54,6 +54,13 @@ class BossRespawn(unittest.TestCase):
         self.assertEqual(F.BOSS_ROOMS, tuple(lists["BOSS_ROOMS"]))
         self.assertEqual(F.STAGES, tuple(lists["STAGES"] + lists["BOSS_ROOMS"]))
 
+    def test_party_wipe_is_no_ref_never_fail(self):
+        """review-tests-153 MUST 1: A downed in the fight too (a wipe) and B never respawns = a fight result, NO-REF
+        naming A's down; without A down the same miss stays the row's FAIL."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_room and GohmaStage"], env={"BT_FAKE_BROKEN": "wipe"})
+        self.assertEqual(list(r.values()), ["NO-REF"], p.stdout[-2000:])
+        self.assertIn("A was downed in GohmaStage's fight too", p.stdout, p.stdout[-2000:])
+
     def test_long_intro_is_waited_on_to_the_event_ceiling(self):
         """A boss room's intro longer than IN_PLAY_FRAMES (2400) but inside BOOT_EVENT_FRAMES (6000) is waited on and
         noted; one past the ceiling is SETUP-FAIL 'boss arrival in <S>' naming the event wait."""

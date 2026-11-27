@@ -5,6 +5,8 @@ test_bosses.py reads them: 'coop: test verb ... asked of our boss' (coop_objects
 'HANDED OVER (was ...)' (coop_move_probe.cpp), the fix's 'CCT move state N asked of the game: in (...)'
 (coop_brain_state.cpp), the fall guard's 'fell N m below its fight start' (coop_boss_native.cpp Table::Fall).
 BT_FAKE_PG_FALL=1 (selftest): the bug, he drops 60 m at every hand-over and the fall line is logged.
+The copy's game logs the probe's move state lines (coop_move_probe.cpp): the owner's knock-down leaves the copy in
+state 1 (the cause, phantom-ganon-287-3). BT_FAKE_PG_SAME=1 (selftest): the copy stays in the owner's state 2.
 """
 import os
 
@@ -37,8 +39,8 @@ def hand(game, to):
         ours = g.tag == to
         whose = "ours" if ours else "a copy of player %d" % (1 if to == "A" else 2)
         before = "a copy of player %d" % (1 if was == "A" else 2) if ours else "ours"
-        g.say("coop: move probe: %s 0x80000007 %s: HANDED OVER (was %s) move state 2 (type 1, before 1), verbs 139"
-              % (PG, whose, before))
+        g.say("coop: move probe: %s 0x80000007 %s: HANDED OVER (was %s) move state %s, verbs 139"
+              % (PG, whose, before, copy_state(game) if ours else "2 (type 1, before 1)"))
         if ours:
             g.say("coop: bosses: %s: CCT move state 2 asked of the game: in (result 0x80000002)" % PG)
     if os.environ.get("BT_FAKE_PG_FALL"):
@@ -46,6 +48,11 @@ def hand(game, to):
         (game if game.tag == to else game.other).say(
             "coop: bosses: %s: fell 60 m below its fight start (row 178): put back at its fight start, its AI "
             "chooses again" % PG)
+
+
+def copy_state(game):
+    """The copy's move state text as the probe writes it: 1 after the owner's knock-down (the cause), 2 with SAME."""
+    return "2 (type 1, before 1)" if os.environ.get("BT_FAKE_PG_SAME") else "1 (type 2, before 2)"
 
 
 def act(game, words):
@@ -62,6 +69,8 @@ def act(game, words):
         game.say("coop: test verb %s %s: %s" % (PG, w[2], "asked of our boss" if mine else
                                                  "no boss of ours by that name"))
         if mine:
+            o.say("coop: move probe: %s 0x80000007 a copy of player %d: move state 2 (type 1, before 1) -> %s, "
+                  "verbs 139" % (PG, 1 if game.tag == "A" else 2, copy_state(o)))   # the copy's knock-down start
             game.later(900, lambda: hand(game, o.tag))       # (his turn goes to the other player)
     elif w[0] == "hurt":
         if b["owner"] == game.tag:

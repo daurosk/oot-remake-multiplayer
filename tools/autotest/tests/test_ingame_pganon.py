@@ -16,7 +16,8 @@ TEST = "test_phantom_ganon_hand_over_no_fall"
 
 
 class PhantomGanonRow(unittest.TestCase):
-    """PASS as the fixed game logs it; a fall after the hand-over FAILs (and stays FAIL on its rerun: never FLAKY)."""
+    """PASS (with refs) as the fixed game logs it; a fall after the hand-over FAILs (and stays FAIL on its rerun: never
+    FLAKY); a copy in the owner's state (no cause) FAILs."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -29,10 +30,28 @@ class PhantomGanonRow(unittest.TestCase):
         p = T.pytest_run([".", "--fake", "--out", out, "-q", "--boot", BOOT, "-k", TEST], env=env)
         return p, T.summary(out)
 
-    def test_pass(self):
-        p, s = self.run_row()
-        self.assertEqual(T.results(s), {TEST: "PASS"}, p.stdout[-2000:])
+    def test_no_ref_then_pass(self):
+        """First run: the log + state judge and the cause hold, the 8 paired shots (k1..k5, h1, h2, d1) are NO-REF
+        candidates on each game (never PASS); adopted into refs/, the next run PASSes and notes the cause per game."""
+        refs = os.path.join(self.tmp, "refs")
+        p, s = self.run_row({"BT_FAKE_REFS": refs})
+        self.assertEqual(T.results(s), {TEST: "NO-REF"}, p.stdout[-2000:])
         self.assertEqual(s["identity"]["boot"]["name"], BOOT)
+        new = os.path.join(self.tmp, "o0", "lane1", "new")
+        self.assertEqual(sorted(os.listdir(new)), sorted("pg287-%s-%s.png" % (n, x) for x in "AB" for n in
+                                                         ("k1", "k2", "k3", "k4", "k5", "h1", "h2", "d1")))
+        os.makedirs(refs)
+        for f in os.listdir(new):
+            shutil.copyfile(os.path.join(new, f), os.path.join(refs, f))
+        p, s = self.run_row({"BT_FAKE_REFS": refs})
+        self.assertEqual(T.results(s), {TEST: "PASS"}, p.stdout[-2000:])
+        self.assertIn("cause: his copy stood in CCT move state 1 when made ours; the owner's was 2", json.dumps(s["tests"]))
+
+    def test_no_cause_fails(self):
+        """The copy in the owner's state when made ours: the fix's line has no cause, FAIL (the cause assert bites)."""
+        p, s = self.run_row({"BT_FAKE_PG_SAME": "1"})
+        self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-2000:])
+        self.assertIn("no cause seen", json.dumps(s["tests"]))
 
     def test_fall_after_hand_over_fails(self):
         p, s = self.run_row({"BT_FAKE_PG_FALL": "1"})

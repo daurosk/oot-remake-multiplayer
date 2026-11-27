@@ -9,13 +9,14 @@ import re
 
 import pytest
 
+import pair as P   # the ONE CS_MOD (pair.CS_MOD); no_cs sits next to pair.py
+
 SWITCH = "COOP_TEST_NO_CHARACTER_SELECT"
 GAME = "B"
 ENV = "%s:%s=1" % (GAME, SWITCH)
 MARK = pytest.mark.needs_env(ENV)
 PICK_FLAG = "CharacterMenu_SelectedCharacter"   # the pick's saved Int: NOT a sign of the mod (see has_character_select)
-CS_MOD = "OoT Character Select"   # the mod's name in the host's boot lines (pair.CS_MOD, lanes.py nocs)
-MOD_LINE = r"\] mods: %s: " % CS_MOD   # '[hos host] mods: OoT Character Select: 6903 RomFS files ...' (one per boot)
+MOD_LINE = r"\] mods: %s: " % re.escape(P.CS_MOD)   # '[hos host] mods: OoT Character Select: 6903 RomFS files ...' (one per boot)
 MODS_DONE = r"\] mods: \d+ mods from "   # '[hos host] mods: 2 mods from <folder>\mods: ...': the boot's mod list ends
 
 

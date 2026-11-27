@@ -7,6 +7,8 @@ in any other run or scene (B #149).
   steps of the bridge (a big lift is slower), then A's boulder is HANDS_UP over A's Link.
 Selftest switch BT_FAKE_CARRY_305: ok -> B's copy is in A's hands too (the fixed game); rest -> B's copy stays at its
 rest place (row 305 as the owner saw it); nolift -> A never lifts it (SETUP-FAIL).
+- PlayerStatus.LiftGrade is an enum: flag_read gives its value's hash (docs/playtest.md flag_read), starting at
+  GRADE_START; flag takes a value name or a hash read before, so the test's restore after it is seen.
 """
 import math
 import os
@@ -15,6 +17,8 @@ SCENE = "GoronCity_Adult"
 BOULDER_AT = [6.0, 116.0, 30.0]
 REACH_M, HANDS_UP = 1.2, 1.6
 LIFT_DELAY = 3
+LIFT = "PlayerStatus.LiftGrade"
+GRADE_START = "0x0000305a"     # (a fake hash: the real one is whatever the game's flag_read gives)
 
 
 def mode():
@@ -30,7 +34,16 @@ def _here(game):
 
 
 def setup(game):
-    game.c305 = {"press": None, "dumps": 0}
+    game.c305 = {"press": None, "dumps": 0, "grade": GRADE_START}
+
+
+def command(game, m):
+    if not _here(game) or m.get("name") != LIFT or m.get("cmd") not in ("flag", "flag_read"):
+        return None
+    if m["cmd"] == "flag_read":
+        return {"ok": True, "kind": "enum", "value": game.c305["grade"]}
+    was, game.c305["grade"] = game.c305["grade"], str(m["value"])
+    return {"ok": True, "was": was, "value": game.c305["grade"]}
 
 
 def act(game, words):

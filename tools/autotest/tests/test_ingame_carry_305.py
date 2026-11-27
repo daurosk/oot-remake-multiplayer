@@ -1,7 +1,7 @@
 """Row 305's probe selftest (ingame/test_carry_boulder_305.py + ingame/fakes/carry_305.py; owner carry-boulder-305),
 run by test_ingame.py's load_tests: adult set-up + LiftGrade + place/face + a slow lift hold on the fake; B's copy in
 A's hands is NO-REF (hands box not measured, never PASS); a copy left at rest is FAIL; no lift is SETUP-FAIL;
-deselected without the row's switch."""
+deselected without the row's switch; LiftGrade is put back on both games after a pass and after a failure."""
 import os
 import shutil
 import sys
@@ -32,15 +32,23 @@ class Carry305(unittest.TestCase):
     def why(self, s):
         return [t["why"] for t in s["tests"] if t["test"].endswith(TEST)][0]
 
+    def restored(self, s):
+        """Both games' LiftGrade put back to the value read before (preflight review-tests-153-2 SHOULD)."""
+        notes = [t["notes"] for t in s["tests"] if t["test"].endswith(TEST)][0]
+        for x in ("A", "B"):
+            self.assertIn("boulder: %s LiftGrade back to 0x0000305a" % x, notes)
+
     def test_in_hands_is_no_ref(self):
         p, s = self.run_fake("ok", "ok")
         self.assertEqual(T.results(s), {TEST: "NO-REF"}, p.stdout[-2000:])
         self.assertIn("hands box not measured yet: B's copy in A's hands 15 of 15", self.why(s))
+        self.restored(s)
 
     def test_left_at_rest_fails(self):
         p, s = self.run_fake("rest", "rest")
         self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-2000:])
         self.assertIn("still shows it at its rest place", self.why(s))
+        self.restored(s)
 
     def test_no_lift_is_setup_fail(self):
         p, s = self.run_fake("nolift", "nolift")

@@ -96,23 +96,50 @@ def world_lines(pair, x, pos):
     return [ln.strip()[-200:] for ln in pair.log[x].since(pos) if rx.search(ln)]
 
 
+LIFT = "PlayerStatus.LiftGrade"     # docs/items.md "Strength, scale"
+
+
 @pytest.mark.budget(int(2 * P.SETUP_LIMIT_S + 2 * P.SETUP_WARP_S + 360))
 @pytest.mark.look
 @pytest.mark.needs_env(BR.OBJECTS)
 @pytest.mark.row("#305 a big boulder another player carries is lifted with them on our screen")
 def test_carry_boulder(pair, back_after):
-    with pair.setup():
-        BR.start_check(pair)
-        DC.to_place(pair, "adult", SCENE, ENTRANCE)
-        for x in ("A", "B"):
-            pair.flag(x, "PlayerStatus.LiftGrade", "High")
-        pair.step_both(2)
-        pos = {x: pair.log[x].size() for x in ("A", "B")}
-        a_id, b_id, rest = lift_big(pair, "boulder")
+    grade = {}      # each game's LiftGrade before the test (flag_read's enum hash: `flag` takes it back, docs/playtest.md)
     try:
-        rows = C.follow(pair, a_id, b_id, BOULDER, rest, "boulder")
-    finally:
-        for x in ("A", "B"):
-            lines = world_lines(pair, x, pos[x])
-            pair.notes.append("boulder: %s world lines (%d): %s" % (x, len(lines), lines[:12]))
-    C.judge(pair, rows, "boulder")
+        with pair.setup():
+            BR.start_check(pair)
+            DC.to_place(pair, "adult", SCENE, ENTRANCE)
+            for x in ("A", "B"):
+                grade[x] = pair.flag_read(x, LIFT).get("value")
+                pair.flag(x, LIFT, "High")
+            pair.step_both(2)
+            pos = {x: pair.log[x].size() for x in ("A", "B")}
+            a_id, b_id, rest = lift_big(pair, "boulder")
+        try:
+            rows = C.follow(pair, a_id, b_id, BOULDER, rest, "boulder")
+        finally:
+            for x in ("A", "B"):
+                lines = world_lines(pair, x, pos[x])
+                pair.notes.append("boulder: %s world lines (%d): %s" % (x, len(lines), lines[:12]))
+        C.judge(pair, rows, "boulder")
+    except BaseException:
+        _restore_grade(pair, grade, failed=True)
+        raise
+    _restore_grade(pair, grade, failed=False)
+
+
+def _restore_grade(pair, grade, failed):
+    """Puts each game's LiftGrade back (preflight review-tests-153-2: a later test in the boot or a saved game must not
+    inherit High). After a failure a failed restore is only noted (the test's own error stays the result, as
+    test_dbno_crawl.restored); after a pass it is the test's failure."""
+    for x, was in grade.items():
+        if was is None:
+            pair.notes.append("boulder: %s LiftGrade was unreadable before the test: not restored" % x)
+            continue
+        try:
+            r = pair.flag(x, LIFT, was)
+            pair.notes.append("boulder: %s LiftGrade back to %s" % (x, r.get("value")))
+        except Exception as e:
+            if not failed:
+                raise
+            pair.notes.append("boulder: %s LiftGrade restore after the failure failed: %s: %s" % (x, type(e).__name__, e))

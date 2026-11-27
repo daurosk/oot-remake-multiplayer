@@ -649,8 +649,8 @@ void Frame(coop::host::Session* session, std::uint64_t now_ms) {
             if (!e.end && !effect_limiter.Allow(e.name, now_ms)) {
                 continue;
             }
-            // The first ones, then every 200th: enough to see it work, no spam.
-            if (++effects_sent <= 20 || effects_sent % 200 == 0) {
+            // The first ones, then every 200th: enough to see it work, no spam (the probe: every one, for the tests).
+            if (++effects_sent <= 20 || effects_sent % 200 == 0 || g_probe.load(std::memory_order_relaxed)) {
                 LOG_INFO(Core, "coop: link effect '{}'{} sent ({} sent)", e.name, e.end ? " end" : "", effects_sent);
             }
             c.send(coop::protocol::LinkEffect{coop::protocol::kPlayerSelf,

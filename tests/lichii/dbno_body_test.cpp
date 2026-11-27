@@ -1345,7 +1345,10 @@ TEST_CASE("dbno body: issue 337 part 2, the crawl's own get-up plays to its end,
     CHECK(plays[0].rate == 1.0f);
     CHECK(c.LaidDown());
     CHECK(c.Totals().crawl_ended == 1);
-    CHECK(c.Skip(kBsa, Req(verb::kWait), false));
+    // 0.12.1 downed-move: the laid-down child's Wait is the game's ground move now (v0.12.0 skipped it: he lay still).
+    const auto moves = c.Totals().ground_moves;
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait), false));
+    CHECK(c.Totals().ground_moves == moves + 1);
     CHECK(RunFrame(c, g, t += 16).empty());
     CHECK_FALSE(c.GameCrawl());
     // In an event nothing is played (the event drives him).
@@ -1444,7 +1447,7 @@ TEST_CASE("dbno body (0.12.1 downed-move): a downed adult held lying moves with 
     // Everything else stays skipped: a hit's reaction, the game's own stand-up.
     CHECK(c.Skip(kBsa, Req(134, 2), false));
     CHECK(c.Skip(kBsa, Req(verb::kLDamageStandUp, 2), false));
-    CHECK_FALSE(c.Skip(kBsa, Req(134, 1), false));  // another slot's: the game's, as before
+    CHECK(c.Skip(kBsa, Req(134, 1), false));  // another slot's too, as before (the crawl skips every verb of our BSA)
     // The walk's own command on slot 0: the pose is played again, held.
     SetAs(g, "Walk", 1.0f);
     const auto f = RunFrame(c, g, 1200);

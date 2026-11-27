@@ -2780,6 +2780,16 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         x[0] = 1;
         return 1;
     }
+    if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {
+        // 0.12.1 downed-move (patch 0046, hos_coop_crawl.h): the game's crawl asks whether the player (x0) has room
+        // to stand up. For our downed child the answer is "no room" (the game's false), so its crawl goes on with
+        // its own clips, stick movement and camera; everything else runs the game's own check.
+        if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {
+            x[0] = 0;
+            return 1;
+        }
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_SHOOTER_PREPARE || id == HOS_COOP_WRAP_SHOOTER_SHOOT ||
         id == HOS_COOP_WRAP_SHOOTER_SLEEP) {
         // Row 286's probe: read and logged, nothing changed, both phases on the same game thread. A call inside a
@@ -2834,16 +2844,6 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             const CoopBossShooter::Seen s = seen.back().second;
             seen.pop_back();
             table.OnDone(s, x[0], SteadyMs());
-        }
-        return 0;
-    }
-    if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {
-        // 0.12.1 downed-move (patch 0046, hos_coop_crawl.h): the game's crawl asks whether the player (x0) has room
-        // to stand up. For our downed child the answer is "no room" (the game's false), so its crawl goes on with
-        // its own clips, stick movement and camera; everything else runs the game's own check.
-        if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {
-            x[0] = 0;
-            return 1;
         }
         return 0;
     }

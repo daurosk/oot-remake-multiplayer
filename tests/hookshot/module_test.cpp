@@ -1164,7 +1164,8 @@ TEST_CASE("hookshot: the crawl's room check (patch 0046, 0.12.1 downed-move) is 
     // Phase 0 only; "no room" (x0 = 0, the game's function skipped) only when the dbno body says so; else the game's.
     const std::size_t from = module.find("if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {");
     REQUIRE(from != std::string::npos);
-    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {", from);
+    // (it sits before the shooter branch: the shooter test reads that branch up to the action verb's)
+    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_SHOOTER_PREPARE ||", from);
     REQUIRE(to != std::string::npos);
     const std::string branch = module.substr(from, to - from);
     CHECK(branch.find("if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {") != std::string::npos);

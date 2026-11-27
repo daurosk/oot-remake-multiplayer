@@ -26,14 +26,28 @@ Sources (worker-rules "no guessed values"):
 - Inputs: the sword is Y (test_boss_hit_react: the scenario's 'hold ZL+Y 8'); a held sword button charges the spin and
   letting go spins (the game's own; this test is the probe: no start sent fails it, with the probe lines in the notes).
 - Place and camera: test_tunic.stand_apart (imported, never copied); need_child_in_play (test_rows).
+- A's pack: coop_puppet.json beside the pack (hookshot.pack_folders, as test_levitate.pack_anims) has "effects": true
+  (tools/puppet_pack/build.py manifest, row 310: the puppet keeps ELinkRef); the lane prep makes the pack with the tested
+  sha's own pack tool (offline/lane-prep-c143.ps1, lib/lane-pack.ps1). Missing or false: SETUP-FAIL.
+- B's sword: the state's equips.weapon (docs/playtest.md state shape, e.g. "Weapon_Sword_Kokiri" =
+  game_names.KOKIRI_SWORD); any Weapon_Sword_* charges. None or another weapon: SETUP-FAIL (a save fault, not the row).
+- Ends: the sender's end comes kEndAfterMs (300 ms) after a start at the earliest, read every kTrackEveryMs (100 ms)
+  (lichii/hook/coop_link_sound.h); SETTLE's 120 frames (2 s) leave room. Which key is the held loop is the probe's to
+  show, so a run where B sent no end at all is NO-REF ('no end sent'), never PASS.
 """
+import json
+import os
 import re
+import sys
 
 import pytest
 
 import pair as P
 from test_rows import need_child_in_play
 from test_tunic import stand_apart
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hookshot   # noqa: E402  (pack_folders: where a game's co-op pack is, as the kit finds it; as test_levitate)
 
 PROBE = "B:LICHII_COOP_DEBUG_SOUND=1"
 ANIM = "A:LICHII_COOP_DEBUG_ANIM=1"
@@ -48,6 +62,27 @@ CHARGE_FRAMES = 90        # the sword held: the charge (brief: "B holds ~90 fram
 SHOT_EVERY = 6            # frames between two shots of one moment (a few frames apart: the animation shows)
 SHOTS = 3                 # per moment, per game
 SETTLE = 120              # after the spin: the ends come (TrackOurEffects every 100 ms, kEndAfterMs 300) and relay
+
+
+def need_effects_pack(pair, x):
+    """SETUP-FAIL unless game x's co-op pack was built with the puppets' ELink user (manifest "effects": true)."""
+    _, pack, _ = hookshot.pack_folders(pair.games[x]["folder"])
+    f = os.path.join(pack, "coop_puppet.json")
+    try:
+        with open(f, encoding="utf-8") as fh:
+            effects = json.load(fh).get("effects")
+    except (OSError, ValueError) as e:
+        raise P.SetupFail("%s: no readable co-op pack manifest %s (%s)" % (x, f, e))
+    if effects is not True:
+        raise P.SetupFail("%s's pack (%s) has effects %r: built without row 310's ELinkRef (make it from this sha)"
+                          % (x, f, effects))
+
+
+def need_sword(pair, x):
+    """SETUP-FAIL unless game x's Link wears a sword (equips.weapon Weapon_Sword_*)."""
+    weapon = ((pair.state(x).get("equips") or {}).get("weapon")) or ""
+    if not weapon.startswith("Weapon_Sword_"):
+        raise P.SetupFail("%s wears no sword (equips.weapon %r): the spin charge needs one" % (x, weapon or None))
 
 
 def keys(lines, pattern):
@@ -80,6 +115,8 @@ def test_spin_charge_effects_reach_the_puppet(pair):
     with pair.setup():
         need_child_in_play(pair)
         stand_apart(pair)
+        need_sword(pair, "B")
+        need_effects_pack(pair, "A")
     start = {x: pair.log[x].size() for x in ("A", "B")}
     # The charge: Y held (the sword), shots part way in and near its end; then letting go spins.
     pair.press("B", ["Y"], frames=CHARGE_FRAMES - SHOTS * SHOT_EVERY)
@@ -105,3 +142,6 @@ def test_spin_charge_effects_reach_the_puppet(pair):
     assert not not_started, "A never started %s of B's keys on the puppet (B sent %s)" % (not_started, starts)
     not_ended = sorted((set(ends) & set(keys(a, STARTED))) - set(keys(a, ENDED)))
     assert not not_ended, "A did not stop %s on the puppet after B's end" % not_ended
+    if not ends:
+        pair.unproven("no end sent: B's game sent no LINK_EFFECT end in %d frames after the spin (starts %s)"
+                      % (SETTLE, starts))

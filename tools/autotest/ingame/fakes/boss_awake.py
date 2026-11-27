@@ -3,11 +3,12 @@ docstring. Named to sort BEFORE boss_shots.py: its warp hook only notes the warp
 answers boss-stage warps (boss_shots.py) still does, and this one sees every warp.
 
 Reacts only with LICHII_COOP_DEBUG_BOSS=1 and only in TwinrovaStage. On arrival (the first state after a warp there):
-the arrival event for 300 frames (the intro; the state's 'event'), the sync notes (coop_boss_native.cpp:527, A ours,
-B a copy), on the copy after 30 frames "the owner's verbs came" (:1512) and "battle orders: the owner's came"
-(coop_boss_orders.cpp:188), the sisters in the world list (owner 1, alive), and every 300 frames a boss counts line
-(coop_hookshot.cpp:601): A sends, B puts in.
-BT_FAKE_BOSS_WAKE=late: a copy that comes in after the owner's intro ended (300 frames or more after it) never takes
+the arrival event for INTRO frames (the intro; the state's 'event'; BT_FAKE_BOSS_INTRO=N sets it, default 300: a
+stepped real intro is thousands of frames, pair.py BOOT_EVENT_FRAMES), the sync notes (coop_boss_native.cpp:527, A
+ours, B a copy); the FIGHT only from the intro's end: on the copy 30 frames after it "the owner's verbs came" (:1512)
+and "battle orders: the owner's came" (coop_boss_orders.cpp:188), and from 60 frames after it every 300 frames a boss
+counts line (coop_hookshot.cpp:601): A sends, B puts in; the sisters in the world list (owner 1, alive).
+BT_FAKE_BOSS_WAKE=late: a copy that comes in after the owner's intro ended (INTRO frames or more after it) never takes
 the owner's fight (no verbs, no orders, no put-ins) and its sisters are not in its world list (the bug as reported).
 =copy: the copy never takes it, also when both come in together. =server: B's world list names the server (OwnerJson
 "server") as the sisters' owner. The wake tests must FAIL in those modes.
@@ -17,7 +18,11 @@ import os
 SWITCH = "LICHII_COOP_DEBUG_BOSS=1"
 STAGE = "TwinrovaStage"
 SISTERS = ("Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake")
-INTRO = 300
+INTRO = 300   # default; intro(): BT_FAKE_BOSS_INTRO
+
+
+def intro():
+    return int(os.environ.get("BT_FAKE_BOSS_INTRO") or INTRO)
 
 
 def _on(game):
@@ -70,17 +75,19 @@ def _arrive(game):
             boss, 0x300 + i, "ours" if game.tag == "A" else "a copy"))
     mode = os.environ.get("BT_FAKE_BOSS_WAKE")
     o = game.other
-    late = o is not None and o.awake_at is not None and game.awake_at - o.awake_at >= INTRO
+    late = o is not None and o.awake_at is not None and game.awake_at - o.awake_at >= intro()
     game.awake_ok = game.tag == "A" or not (mode == "copy" or (mode == "late" and late))
     if game.tag == "B" and game.awake_ok:
         def came():
+            if gen != game.awake_gen or game.awake_at is None or game.scene != STAGE:
+                return            # (this arrival's fight is gone: the game left the stage or came in again)
             for boss in SISTERS:
                 game.say("coop: bosses: %s: the owner's verbs came (brain 3): the copy's own brain is skipped from "
                          "now" % boss)
                 game.say("coop: bosses: %s: battle orders: the owner's came: our own manager's orders are skipped"
                          % boss)
-        game.later(30, came)
-    game.later(60, lambda: _tick(game, gen))
+        game.later(intro() + 30, came)
+    game.later(intro() + 60, lambda: _tick(game, gen))
 
 
 def state(game, st):
@@ -93,7 +100,7 @@ def state(game, st):
         _arrive(game)
     if game.scene != STAGE or game.awake_at is None:
         return
-    if game.frame - game.awake_at < INTRO:
+    if game.frame - game.awake_at < intro():
         st["event"] = True
     if game.awake_ok:
         server = game.tag == "B" and os.environ.get("BT_FAKE_BOSS_WAKE") == "server"

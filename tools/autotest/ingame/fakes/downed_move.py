@@ -6,6 +6,7 @@ the patch 0046 hello line, the room answer / lying ground-move lines and a camer
 BT_FAKE_DOWNED_BUG (selftests, tests/test_ingame_downed_move.py):
   still   the v0.12.0 bug: the downed Link (child or adult) does not move under the stick, and neither the room
           answer nor the lying ground-move line is logged
+  flicker the lying Link stands up in every other still-check shot (the Wait vs pose flicker), on both games
   farcam  the view stays the standing camera while downed (no crawl camera)
   nowrap  B's hookshot.exe has no patch 0046 (its hello says 'not wrapped'): a SETUP-FAIL, never a FAIL
 """
@@ -21,7 +22,7 @@ def bug(name):
 
 
 def setup(game):
-    game.downed_move = {"seen": False, "pos": None}
+    game.downed_move = {"seen": False, "pos": None, "shots": 0}
     if game.tag == "B" and bug("nowrap"):
         game.say("coop: down but not out: the crawl's room check not wrapped in this hookshot.exe (patch 0046)")
     else:
@@ -70,5 +71,13 @@ def state(game, st):
 
 
 def after(game, m, r):
+    if m.get("cmd") == "shot" and bug("flicker") and "-still" in (m.get("name") or "") and r.get("path"):
+        game.downed_move["shots"] += 1
+        if game.downed_move["shots"] % 2:
+            from PIL import Image, ImageDraw
+            im = Image.open(r["path"]).convert("RGB")
+            ImageDraw.Draw(im).rectangle([120, 10, 200, 170], fill=(250, 250, 250))   # (a Link standing)
+            im.save(r["path"])
+        return
     if m.get("cmd") == "input" and m.get("stick") and downed(game) and bug("still") and game.downed_move["pos"]:
         game.pos = list(game.downed_move["pos"])

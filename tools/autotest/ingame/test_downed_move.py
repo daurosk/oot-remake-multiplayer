@@ -5,16 +5,17 @@ lichii/hook/coop_dbno_body.cpp Crawl::NoRoom; Crawl::Skip lets the game's Walk /
 
 | Test | Checks | Kind |
 |---|---|---|
-| test_downed_child_moves | the room answer, B moves under the stick, crawl camera, turning probe, revive + walk | log + positions + view + LOOK |
-| test_downed_adult_moves | the lying ground move, B moves under the stick, revive (LDamageStandUp) | log + positions + LOOK |
+| test_downed_child_moves | the room answer, no flicker lying still, B moves under the stick, crawl camera, turning probe, revive + walk | log + positions + view + LOOK |
+| test_downed_adult_moves | no flicker lying still, the lying ground move, B moves under the stick, revive (LDamageStandUp) | log + positions + LOOK |
 
 B is the one downed, A (the host) sets the rules and revives. The set-up, the hits, the revive and the restore are
 test_dbno_crawl.py's own (imported, never copied): same place, same lines, same lane state after the test.
 Every log pattern is a line the module writes (file:line cited where it is defined).
 """
 import math
-import re
 import os
+import re
+import shutil
 import sys
 
 import pytest
@@ -85,6 +86,42 @@ def off_axis(yaw, facing):
     return min(d, 180 - d)
 
 
+# No flicker while he lies on the game's Wait (review-c123-16 755cc55b4 open point: the game's Wait command vs our
+# replayed lying pose): STILL_SHOTS bridge shots per game STILL_GAP frames apart, no input; each next to the one
+# before by imagecheck.ssim. STILL_MIN = test_dbno_crawl.shots' 0.80 (moving people in an open field,
+# docs/ingame-tests.md step 6): a Link standing up between two lying frames drops the tiles he is in far below it.
+STILL_SHOTS, STILL_GAP, STILL_MIN = 4, 4, 0.80
+
+
+def no_flicker(pair, name):
+    """The still check on each game; the shots are kept in <out>/still/ for the owner. Also: B did not get up and did
+    not move without a stick (state pos). Returns {game: lowest SSIM of a shot next to the one before}."""
+    import imagecheck   # (Pillow + scikit-image, as pair.check_shot)
+    keep = os.path.join(pair.out_dir or ".", "still")
+    os.makedirs(keep, exist_ok=True)
+    paths = {"A": [], "B": []}
+    before = pair.state("B")["pos"]
+    for i in range(STILL_SHOTS):
+        for x in ("A", "B"):
+            r = pair.call(x, "shot", name="%s-still%d-%s" % (name, i, x))
+            dest = os.path.join(keep, os.path.basename(r["path"]))
+            shutil.copyfile(r["path"], dest)
+            paths[x].append(dest)
+        pair.step_both(STILL_GAP)
+    low = {}
+    for x, ps in paths.items():
+        low[x] = min(imagecheck.ssim(a, b)[0] for a, b in zip(ps, ps[1:]))
+    moved = dc.dist(before, pair.state("B")["pos"])
+    pair.notes.append("%s still: lowest SSIM of a shot next to the one before A %.3f, B %.3f; B moved %.2f m "
+                      "without a stick" % (name, low["A"], low["B"], moved))
+    pair.never_log("B", dc.UP_LINE)
+    for x in ("A", "B"):
+        assert low[x] >= STILL_MIN, "%s: the lying Link flickers on %s (shots %d frames apart: SSIM %.3f < %.2f)" % (
+            name, x, STILL_GAP, low[x], STILL_MIN)
+    assert moved <= MOVE_MIN_M, "%s: B moved %.2f m lying with no stick" % (name, moved)
+    return low
+
+
 def wrapped(pair, x):
     """Set-up: this game's hookshot.exe has patch 0046 (its hello line since the boot), else no fix to test."""
     lines = pair.log[x].since(0)
@@ -110,6 +147,7 @@ def test_downed_child_moves(pair):
         pair.expect_log("B", dc.LYING_CHILD, max_frames=600)
         pair.step_both(30)
         dc.shots(pair, "downed-child-lying")
+        no_flicker(pair, "downed-child")
         a = pair.state("B")
         fwd_m = dc.stick_move(pair, "B", 0, CRAWL_FRAMES)
         b = pair.state("B")
@@ -164,6 +202,7 @@ def test_downed_adult_moves(pair):
         pair.expect_log("B", dc.LYING_ADULT, max_frames=300)
         pair.step_both(30)
         dc.shots(pair, "downed-adult-lying")
+        no_flicker(pair, "downed-adult")
         fwd_m = dc.stick_move(pair, "B", 0, CRAWL_FRAMES)
         dc.shots(pair, "downed-adult-moved", twice=False)
         pair.notes.append("adult downed: %.2f m in %d frames of full stick" % (fwd_m, CRAWL_FRAMES))

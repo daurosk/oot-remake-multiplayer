@@ -2624,6 +2624,11 @@ static void OpenAsPlayer(CoopPauseMenu::Page page) {
                  CoopPauseMenu::PageWord(page));
         return;
     }
+    // (why not the - menu, for the test's log: gate-ui-epona-0121 had only 'opened on a page' to go by)
+    LOG_INFO(Core, "coop: test menu: {}: Longshot's menu on co-op's tab (our - tabs {}, the - menu can open now {}, "
+                   "a co-op tab shows {})",
+             CoopPauseMenu::PageWord(page), now.minus_tabs ? "yes" : "no", now.minus_now ? "yes" : "no",
+             now.tab_shown ? "yes" : "no");
     Open(page);
 }
 

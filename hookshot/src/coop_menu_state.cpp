@@ -61,7 +61,9 @@ std::string ScreenJson(const Screen& s) {
     out += "],\"focused\":" + (has ? std::to_string(s.focus) : std::string("null"));
     out += ",\"focused_label\":" + (has ? Quote(s.texts.labels[static_cast<std::size_t>(s.focus)]) : std::string("null"));
     out += std::string(",\"mixer\":") + Bool(s.mixer) + ",\"page_no\":" + std::to_string(s.page_no) +
-           ",\"pages\":" + std::to_string(s.pages) + "}";
+           ",\"pages\":" + std::to_string(s.pages);
+    out += std::string(",\"keys\":{\"guide\":") + Bool(s.guide_keys) + ",\"page\":" + Bool(s.keys.page) +
+           ",\"mix\":" + Bool(s.keys.mix) + "}}";
     return out;
 }
 
@@ -77,6 +79,8 @@ Screen FromDriver(const CoopSnailCustom::Driver& d, bool open, bool driven) {
     s.mixer = d.Editing();
     s.page_no = d.PageNo();
     s.pages = d.Pages();
+    s.guide_keys = d.KeysShown();
+    s.keys = d.KeysNow();
     return s;
 }
 

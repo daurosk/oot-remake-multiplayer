@@ -139,6 +139,7 @@
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
+#include "hos_coop_crawl.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
@@ -725,6 +726,21 @@ void MapIcons(void* ctx) {
     }
 }
 
+// The steps that ran a second or more after the one before (coop_hookshot.h SlowStep), for the bridge's state.
+constexpr std::uint64_t kSlowStepMs = 1000;
+std::mutex g_slow_mutex;
+CoopHookshot::SlowStep g_party_slow, g_tags_slow;
+
+void NoteSlow(CoopHookshot::SlowStep& slot, std::uint64_t& last_ms, std::uint64_t now, int shown) {
+    const std::uint64_t gap = last_ms != 0 && now > last_ms ? now - last_ms : 0;
+    last_ms = now;
+    if (gap < kSlowStepMs) return;
+    std::lock_guard lock(g_slow_mutex);
+    ++slot.count;
+    slot.gap_ms = gap;
+    slot.shown = shown;
+}
+
 void NativeTags(void* ctx) {
     static const bool on = Env("LICHII_COOP_NATIVE_TAGS") != "0";
     static bool said = false, said_fail = false;
@@ -752,8 +768,13 @@ void NativeTags(void* ctx) {
             spots.push_back(std::move(s));
         }
     }
-    if (spots.empty() && g_balloons.shown() == 0) return;   // solo, or nobody near: the balloons are not touched
+    static std::uint64_t last_tags_ms = 0;
+    if (spots.empty() && g_balloons.shown() == 0) {   // solo, or nobody near: the balloons are not touched
+        NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), 0);
+        return;
+    }
     const bool up = g_balloons.Step(game, spots, markers ? markers->width : 0.0f, markers ? markers->height : 0.0f);
+    NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), up ? static_cast<int>(g_balloons.shown()) : 0);
     if (g_balloons.no_memory()) {
         g_tags_drawn.store(true);
         if (!said_fail) {
@@ -1496,6 +1517,8 @@ void PartyStep(NativeGame& game, void* ctx, std::uint64_t now) {
     hud.IgnorePack(no_pack);
     std::vector<std::string> log;
     const bool on = hud.Step(party, blocks, bottom, &log, now, own);
+    static std::uint64_t last_step_ms = 0;
+    NoteSlow(g_party_slow, last_step_ms, now, on ? static_cast<int>(blocks.size()) : 0);
     for (const auto& l : log) LOG_INFO(Core, "{}", l);
     if (g_party_native.exchange(on) != on) {
         LOG_INFO(Core, "coop: party hud: {}", on ? "on the game's HUD" : "hidden (the game's HUD has none of ours now; nothing drawn instead)");
@@ -1621,6 +1644,11 @@ void NativeStep(void* ctx) {
     g_native.feed.Update(in, now);
     // The held line (down but not out) keeps the banner; a page of ours whose time is over closes. Pages wait
     // meanwhile.
+    struct LogBanner {   // typing-blink-0121: the banner's changes (CoopNativeUi::TakeBannerLines), however we leave
+        ~LogBanner() {
+            for (const std::string& l : CoopNativeUi::TakeBannerLines()) LOG_INFO(Core, "{}", l);
+        }
+    } log_banner;
     if (g_native.banner.Step(game, g_native.ring, CoopNativeUi::HeldBanner(), now)) return;
     if (NativeTyping(game, now, colours)) return;
     if (g_native.feed.Busy(now) || now < g_native.failed_ms + 1000) return;
@@ -1643,6 +1671,16 @@ void NativeStep(void* ctx) {
 }
 
 }  // namespace
+
+SlowStep PartySlow() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_party_slow;
+}
+
+SlowStep TagsSlow() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_tags_slow;
+}
 
 void SetMapOptions(bool players, bool names) {
     g_map_players.store(players);
@@ -2335,6 +2373,9 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         SetBossShooter();
         SetShooterProbe();
         if (g_world_version.exchange(level.version) != level.version) {
+            LOG_INFO(Core, "coop: down but not out: the crawl's room check {}",
+                     WrapIn(HOS_COOP_WRAP_CRAWL_ROOM) ? "wrapped (a downed child keeps crawling)"
+                                                      : "not wrapped in this hookshot.exe (patch 0046)");
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
                      level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
@@ -2783,6 +2824,16 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         }
         x[0] = 1;
         return 1;
+    }
+    if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {
+        // 0.12.1 downed-move (patch 0046, hos_coop_crawl.h): the game's crawl asks whether the player (x0) has room
+        // to stand up. For our downed child the answer is "no room" (the game's false), so its crawl goes on with
+        // its own clips, stick movement and camera; everything else runs the game's own check.
+        if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {
+            x[0] = 0;
+            return 1;
+        }
+        return 0;
     }
     if (id == HOS_COOP_WRAP_SHOOTER_PREPARE || id == HOS_COOP_WRAP_SHOOTER_SHOOT ||
         id == HOS_COOP_WRAP_SHOOTER_SLEEP) {
@@ -3764,5 +3815,14 @@ namespace CoopHookshot {
 bool BridgeKey(std::uint32_t vk) {
     static CoopBoundary::Site site{"bridge_key"};
     return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int { return KeyPress(vk, false); }) != 0;
+}
+std::size_t BridgeChars(std::string_view text) {
+    static CoopBoundary::Site site{"bridge_chars"};
+    std::size_t taken = 0;
+    for (const char ch : text) {
+        const auto byte = static_cast<std::uint32_t>(static_cast<unsigned char>(ch));
+        taken += CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int { return TypeChar(byte) ? 1 : 0; });
+    }
+    return taken;
 }
 }  // namespace CoopHookshot

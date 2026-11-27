@@ -33,6 +33,7 @@
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
+#include "hos_coop_crawl.h"
 #include "coop_boss_orders.h"
 #include "coop_shooter_probe.h"
 #include "coop_svc.h"
@@ -1150,6 +1151,28 @@ TEST_CASE("hookshot: the boss orders wrap (patch 0036) is one row in 0005's tabl
           std::string::npos);
 }
 
+TEST_CASE("hookshot: the crawl's room check (patch 0046, 0.12.1 downed-move) is one row after 0045's, answered only for our downed Link") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0046-coop-crawl-room.patch");
+    CHECK(NewFile(patch, "host/hos_coop_crawl.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_crawl.h"));
+    // The row, with the function's first words (read from the game's main: pacibsp; stp x29, x30, [sp, #-0x30]!;
+    // str x28; stp x20, x19; mov x29, sp; sub sp, sp, #0xec0), right after 0045's last row.
+    CHECK(patch.find("+    (31, 0x301ac50, (0xd503237f, 0xa9bd7bfd, 0xf9000bfc, 0xa9024ff4, 0x910003fd, 0xd13b03ff)),") !=
+          std::string::npos);
+    CHECK(patch.find("     (30, 0x2eb26b0,") != std::string::npos);
+    CHECK(HOS_COOP_WRAP_CRAWL_ROOM == 31);  // free in the one wrap space (0045: 28-30) and in the hello's 64 bits
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    // Phase 0 only; "no room" (x0 = 0, the game's function skipped) only when the dbno body says so; else the game's.
+    const std::size_t from = module.find("if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {");
+    REQUIRE(from != std::string::npos);
+    // (it sits before the shooter branch: the shooter test reads that branch up to the action verb's)
+    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_SHOOTER_PREPARE ||", from);
+    REQUIRE(to != std::string::npos);
+    const std::string branch = module.substr(from, to - from);
+    CHECK(branch.find("if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {") != std::string::npos);
+    CHECK(branch.find("x[0] = 0;") != std::string::npos);
+    CHECK(branch.find("Write(") == std::string::npos);  // no guest memory written
+}
+
 TEST_CASE("hookshot: the shooter wraps (patch 0045, row 286's probe) are three rows at the table's end, the probe reads only, rows 222/286's table answers a copy's own call") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0045-coop-shooter-wraps.patch");
     CHECK(NewFile(patch, "host/hos_coop_boss_shooter.h") ==
@@ -1927,4 +1950,24 @@ TEST_CASE("hookshot: party-hud-crash-c126: the map page and the pause tab call i
     const std::size_t live = body.find("LiveDue(g_pages_gen) && CoopNativeUi::ScreenLive(g_pages_screen)) {");
     REQUIRE(live != std::string::npos);
     CHECK(live < body.find("LiveRows(ctx, g_pages_layout, g_pages_gen, ViewNow(ViewShown()));"));
+}
+
+TEST_CASE("hookshot: chartab-0121: Character Select's Customize keys get their texts from the module before they count as shown") {
+    // Owner, v0.12.0: the Characters tab's Customize screen showed neither the page key nor the exact-hue key. The
+    // kit's copies of PaGuideKey_00 are not given their "<part>-<pane>" labels by the game (as the - tabs' copies,
+    // which ApplyMinus sets), so SnailKeysLookUp sets each pane's text and shows the keys only when all took it.
+    const std::string tab = ReadFile(kRepo / "hookshot" / "src" / "coop_pause_tab_module.cpp");
+    const std::size_t at = tab.find("void SnailKeysLookUp(void* ctx, std::uint64_t layout) {");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = tab.find("\n}\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = tab.substr(at, end - at);
+    CHECK(body.find("for (const char* key : CoopSnailCustom::kKeyParts)") != std::string::npos);
+    CHECK(body.find("for (const char* pane : CoopSnailCustom::kKeyPanes)") != std::string::npos);
+    CHECK(body.find("SetTextCount(ctx, layout, path, \"LayoutMsg/CharacterCustomize_00\", label)") != std::string::npos);
+    CHECK(body.find("texts = n.value_or(0) != 0;") != std::string::npos);
+    CHECK(body.find("g_snail.SetKeysShown(CoopSnailCustom::KeysShownFrom(") != std::string::npos);
+    // (the 0.12.0 line, which took the parts alone for shown keys, is gone)
+    CHECK(body.find("g_snail.SetKeysShown(g_snail_key_page != 0 && g_snail_key_mix != 0);") == std::string::npos);
+    CHECK(body.find("if (!texts) g_snail_key_page = g_snail_key_mix = 0;") != std::string::npos);
 }

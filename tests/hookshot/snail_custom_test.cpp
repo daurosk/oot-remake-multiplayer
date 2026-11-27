@@ -233,3 +233,29 @@ TEST_CASE("snail customize: Y and A as the game's guide keys (menu-customize-011
     c.Close();
     CHECK(c.KeysNow() == Driver::Keys{});
 }
+
+TEST_CASE("snail customize (chartab-0121): the keys count as shown only with both parts AND their texts set, else the title keeps its hints") {
+    // Owner, v0.12.0: "no more indicator to pick the exact hue or change page". The kit's key parts were in his layout,
+    // so the title dropped its hints, but the game had not given their panes any text: nothing showed at all.
+    CHECK(KeysShownFrom(true, true, true));
+    CHECK_FALSE(KeysShownFrom(true, true, false));   // (the parts are there, their texts are not: the 0.12.0 case)
+    CHECK_FALSE(KeysShownFrom(true, false, true));
+    CHECK_FALSE(KeysShownFrom(false, true, true));
+    CHECK_FALSE(KeysShownFrom(false, false, false));
+    // The module sets these panes: the kit's parts (Y, then A) and PaGuideKey_00's two text panes.
+    CHECK(std::string(kKeyParts[0]) == "Pa_CoopKeyY_00");
+    CHECK(std::string(kKeyParts[1]) == "Pa_CoopKeyA_00");
+    CHECK(std::string(kKeyPanes[0]) == "T_Icon_00");
+    CHECK(std::string(kKeyPanes[1]) == "T_Guide_00");
+    // Not shown (texts not set): every page with more than one page and parts says both in words, as 0.11.12 did.
+    Driver d;
+    d.Open(Look{}, 0);
+    d.SetKeysShown(KeysShownFrom(true, true, false));
+    CHECK_FALSE(d.KeysShown());
+    const auto t = d.Shown();
+    CHECK(t.title.find("Y:") != std::string::npos);
+    CHECK(t.title.find("A:") != std::string::npos);
+    d.SetKeysShown(KeysShownFrom(true, true, true));
+    CHECK(d.KeysShown());
+    CHECK(d.Shown().title.find("Y:") == std::string::npos);
+}

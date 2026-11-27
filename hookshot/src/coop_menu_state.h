@@ -32,6 +32,9 @@ struct Screen {
     int focus = -1;          // the option focused (0..5: the left column top to bottom, then the right)
     bool mixer = false;      // the any-colour mixer is open
     int page_no = 0, pages = 0;
+    // chartab-0121: the keys as the game's guide keys (true; the title then has no worded hints) and the ones shown
+    CoopSnailCustom::Driver::Keys keys;
+    bool guide_keys = false;
 };
 // The snapshot of a driver (open and driven as the module knows them).
 Screen FromDriver(const CoopSnailCustom::Driver& d, bool open, bool driven);
@@ -53,7 +56,8 @@ struct Minus {
 };
 
 // Row 295: the game's Map page (the - menu's first tab) as its screen's last update left it: its content panes found
-// and how many of them show (the backdrop BG_00 not counted). `up`: that screen updated within the last 300 ms.
+// and how many of them show (the backdrop BG_00 not counted). `up`: that screen updated within the last 300 ms or 2
+// presents (CoopFresh: a held, stepped game keeps it).
 struct MapPage {
     bool up = false;
     int panes = 0;

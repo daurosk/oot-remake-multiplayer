@@ -125,7 +125,7 @@ runs. So **always hold both games** and step them in turn, the same number of fr
 | `dump` | `tag` (1 to 64 letters, digits, `-` and `_`) | Writes `playtest/dumps/<tag>.json` in the game's folder: `{"frame", "tag", "state", "flags": {name: value}}`, the shared flags (the checkpoint's lists) read inside the held frame. Replies with `path` (absolute) and `flags` (the count) |
 | `text` | `since` (a whole number, default 0: every text kept), `layout` (optional: only layouts whose name has it, e.g. `MessageDialog_00`) | The texts the game set in its text panes after `since`, oldest first; read only, no frame runs, not gated. Replies with `hooked` (this exe has patch 0041's wrap: false means `texts` stays empty), `last` (the newest `seq`: pass it as the next `since`), `lost` (texts after `since` that are no longer kept) and `texts`: `[{seq, frame, layout, pane, text, length, cut, markup}]`. See [Text boxes](#text-boxes) |
 | `shot` | `name` (optional; letters, digits, `-` and `_`; default `shot-f<frame>`) | A screenshot through Longshot's bridge into `playtest/shots/<name>.png`. A held game presents nothing, so it runs 1 frame at a time (at most 5) until the picture comes: the reply's `advanced` says how many. Replies with `path`, `width`, `height` |
-| `key` | `key`: a host key's name, `F1` to `F12`, `A` to `Z` or `0` to `9` (a key, not a character: text is `act chat`, the game's pad is `input`) | The key as the game window gives it to the module: `hos_coop_key`'s steps for `(vk, 0)`, as Longshot's `WM_KEYDOWN` calls it (not its Linux SDL-thread mark: the bridge's thread is not the window's) (ls32-src/host/display.c; `vk` the Windows virtual key, `KeyVk`), so what it does and logs is a real press's: F1's route (`coop: F1: ...`: free play opens the game's - menu on co-op's Multiplayer tab, an event, a load or the title Longshot's menu on co-op's Multiplayer tab, hookshot/src/coop_menu_tabs_rule.h), F6's Players, the chat key. No OS key, no window focus, no frame runs: what it opens moves at the next frames. Not gated (a key reaches no wire). Replies with `key`, `vk` and `taken` (co-op took it). A key co-op leaves is Longshot's, which the bridge never plays (`longshot` `none`), with one exception: F1 left while co-op's tab shows is Longshot's F1 closing its menu (gpu/vk/vk_menu.cpp: F1 toggles it), done as `HOS_COOP_MENU_WANT_CLOSE` (`longshot` `close`), so a test shuts what its F1 opened. Python: `Pair.key(x, name)`; tests: `tools/autotest/ingame/test_f1.py` |
+| `key` | `key`: a host key's name, `F1` to `F12`, `A` to `Z`, `0` to `9`, `Esc`, `Enter` or `Backspace` (a key, not a character: a chat line sent at once is `act chat`, the game's pad is `input`); or `text` in place of `key`: 1 to 64 printable ASCII characters, typed as the window hands them (`hos_coop_char`'s steps, one per byte: into the chat box T opened, or a field), replying `text` and `taken` (how many co-op took; typing-blink-0121) | The key as the game window gives it to the module: `hos_coop_key`'s steps for `(vk, 0)`, as Longshot's `WM_KEYDOWN` calls it (not its Linux SDL-thread mark: the bridge's thread is not the window's) (ls32-src/host/display.c; `vk` the Windows virtual key, `KeyVk`), so what it does and logs is a real press's: F1's route (`coop: F1: ...`: free play opens the game's - menu on co-op's Multiplayer tab, an event, a load or the title Longshot's menu on co-op's Multiplayer tab, hookshot/src/coop_menu_tabs_rule.h), F6's Players, the chat key. No OS key, no window focus, no frame runs: what it opens moves at the next frames. Not gated (a key reaches no wire). Replies with `key`, `vk` and `taken` (co-op took it). A key co-op leaves is Longshot's, which the bridge never plays (`longshot` `none`), with one exception: F1 left while co-op's tab shows is Longshot's F1 closing its menu (gpu/vk/vk_menu.cpp: F1 toggles it), done as `HOS_COOP_MENU_WANT_CLOSE` (`longshot` `close`), so a test shuts what its F1 opened. Python: `Pair.key(x, name)`; tests: `tools/autotest/ingame/test_f1.py` |
 
 **The verb gate.** `act`, `warp`, `flag` and `give` reach the wire and the other players' games, so they run only when
 the test runner asked for them and cheats are on: `LICHII_COOP_PLAYTEST_VERBS=1` and `LICHII_COOP_CHEATS=1`. The runner
@@ -192,7 +192,7 @@ gated.
 ```
 {"frame":5400,"paused":true,"scene":"KokiriForest_Child","room":null,"pos":[-7.5,0.0,71.1],"facing":90.0,
  "camera":180.0,"life":12,"max_life":12,"rupees":5,"age":"child","event":false,"loading":false,"prompt":"Talk","body":"child",
- "equips":{"weapon":"KokiriSword","shield":"DekuShield","head":null,"armor":"Kokiri","boots":"Normal"},
+ "equips":{"weapon":"Weapon_Sword_Kokiri","shield":null,"head":null,"armor":null,"boots":null},
  "inventory":{"PouchData.Item_Bomb.StockNum":0,"PouchData.Item_Hookshot.StockNum":1},"coop":{"players":[{"number":1,"name":"A","self":true,"state":"connected","scene":"KokiriForest_Child"}]},
  "snapshot_present":5398,"control":true}
 ```
@@ -207,7 +207,7 @@ title, a pause or a load: no Link update runs), every Link member except `scene`
 `snapshot_present`): a `state` with no sample runs one frame to take it the same way (the first on a fresh hold, and every one at a title or a file select until Link is in play), and if none comes the members are
 `null` with `snapshot_stale` `false`. `not_ready` is `null` when the sample is fresh, else the reason the Link members
 are `null` (no answer from the control bridge, no sample yet, or an old one): a `null` is never silent. Treat `null` as "do not know", never as "arrived" or
-"did not move". The `input`, `warp` and `checkpoint` states follow the same rule. `snapshot_present` is Longshot's present count when it was taken. `control` is false when Longshot's bridge did not answer (those fields are then `null`). `equips`, `inventory` and `coop` come from the module. A field it cannot read is `null`.
+"did not move". The `input`, `warp` and `checkpoint` states follow the same rule. `snapshot_present` is Longshot's present count when it was taken. `control` is false when Longshot's bridge did not answer (those fields are then `null`). `equips`, `inventory` and `coop` come from the module. A field it cannot read is `null`. An empty `equips` slot (no mask, no shield) is `null` too, never `""`.
 `room` is the dungeon room Link stands in, guessed from the puppet pack's rooms table (`coop_rooms.txt`, the same guess
 the Fairy and the joiner use: the room of the nearest placement, `lichii/hook/coop_rooms.h`) at the Link sample's
 `pos`; it is a guess, not the game's own room number, and `null` outside a dungeon, without a pack, with no placement
@@ -244,7 +244,9 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   `"driven":false` while co-op waits for its panes or has let go of it (no rows then). Driven: `title` (as the screen
   shows it, e.g. `"Eyes (page 1 of 3)  Y: page  A: exact hue"`), `options` (each `{"option", "label", "value"}`, his
   six places 0..5, left column top to bottom then the right; empty places are left out), `focused`, `focused_label`,
-  `mixer` (the any-colour mixer is open) and `page_no` and `pages` (`0` and `0` for a character with no colour option).
+  `mixer` (the any-colour mixer is open) and `page_no` and `pages` (`0` and `0` for a character with no colour option). `keys` (chartab-0121): `guide` (the Y and A keys show as the game's guide keys: the kit's key parts are in his
+  layout and the module gave all their panes their texts; `false`: the title has the hints in words), `page` and `mix`
+  (whether the Y and the A key show now).
   A character's Eye Colour row is left out when its model is known to have no iris.
 - `minus`: co-op's tabs of the game's - menu (Multiplayer, Lobby, Mods) as co-op last drew them. `{"open":false}`
   while none of them shows, else `tab` (`multiplayer`, `lobby`, `mods`), `view` (the rows' view: `main`, `session`,
@@ -254,13 +256,23 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   page `1` its lines (each `{"name", "value"}`, e.g. `{"name":"Songs","value":"3 of 12"}`), else `null`. The
   session's page is never given: it can hold a join code or an address.
 - `map_page` (row 295): the game's own Map page (the - menu's first tab) as its screen's last update left it: `up`
-  (that screen updated in the last 300 ms), `panes` (its content panes co-op found, 6 in the game) and `shown` (how many
+  (that screen updated in the last 300 ms or 2 presents: a held, stepped game keeps it), `panes` (its content panes co-op found, 6 in the game) and `shown` (how many
   of them show now; the backdrop BG_00 not counted). On the Map, menu up, `shown` is `panes`: fewer is the blank Map
   page of row 295 (co-op's page hid them and never gave them back).
 
 The labels and values are co-op's own words in the game's language, never text read from the game. Example, a
 Character Select character with irises:
-`"menu":{"coop":{"open":false},"customize_screen":{"open":true,"driven":true,"title":"Eyes (page 1 of 1)  A: exact hue","options":[{"option":0,"label":"Eye Colour","value":"Game's own"}],"focused":0,"focused_label":"Eye Colour","mixer":false,"page_no":1,"pages":1}}`.
+`"menu":{"coop":{"open":false},"customize_screen":{"open":true,"driven":true,"title":"Eyes (page 1 of 1)  A: exact hue","options":[{"option":0,"label":"Eye Colour","value":"Game's own"}],"focused":0,"focused_label":"Eye Colour","mixer":false,"page_no":1,"pages":1,"keys":{"guide":false,"page":false,"mix":true}}}`.
+
+**`banner`** (the bridge adds it to `state`; typing-blink-0121): what co-op did with the game's banner
+(`SimpleInfo_00`: chat lines, notices, the typed line, the held line), hookshot/src/coop_native_ui.h `BannerStats`:
+`opens` (co-op's open calls), `reopens` (opens asked of a banner already up or opening: kept up, never opened again,
+since the game's open plays the banner's `open` animation from its start even when it shows), `shut_by_game` (a
+banner of ours found shut without our close), `taken_by_game` (one of ours found showing a text that is not ours),
+`sets` (texts set), `state` and `request` (the screen's `+0x1a6` and `+0x1a5` at the last step, `state` -1 with no
+banner), `holds` (`shut`, `ours` or `game`), `page` (a page of ours is up) and `held` (the held line is up). Each
+change also logs `coop: native ui: banner: <from> -> <to> (state S, request R, ...)`. Test:
+`tools/autotest/ingame/test_typing_blink.py`.
 
 **`map_native`** (the bridge adds it to `state`; `null` until the module first published it): the
 other players on the game's own map icons (hookshot/src/coop_map_icons.h `State`, #255 item 8). `up` (the pack's
@@ -273,6 +285,13 @@ place known, solo, nobody else on the map) it is the turn probe's instead (`Icon
 solo too): `probe` true, nothing up or shown, `game_arrow_words` and `run_arrow_words` (the same words of up to 4 of the
 game's run-time icon copies under the map screen), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
 Test-only: nothing here changes what is shown.
+
+**`slow_steps`** (the bridge adds it to `state`): `party_hud` and `name_tags`, each the last step of that part that ran
+a second or more after the one before (a frame stepped after the game was held that long, a slow PC, a hitch):
+`count` such steps so far (0 none), `gap_ms` its gap, `shown` the other players' blocks on the game's HUD or the name
+tags on the game's balloons at that step (hookshot/src/coop_hookshot.h `SlowStep`). Before hud-fresh-0121 such a step
+showed 0 of both (its readings counted stale by the wall clock alone). Test-only: nothing here changes what is shown
+(tools/autotest/ingame/test_stepped_hud.py).
 
 **`world`** (the bridge adds it to `state` and to a `dump`): the actors the object walk sees, nearest to our Link first,
 the kinds that matter (player, enemy, npc, chest, door, switch, item) before `other` (grass, pots, ...). The walk

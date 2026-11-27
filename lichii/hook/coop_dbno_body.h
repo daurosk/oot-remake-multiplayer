@@ -354,6 +354,8 @@ public:
         std::uint64_t crawl_ended = 0; // downs in which the game's crawl ran and ended by itself (issue 337)
         std::uint64_t lie_downs = 0;   // downs a child was laid down by kChildLyingPose (any reason)
         std::uint64_t child_poses = 0; // kChildLyingPose played on our child Link (again: slot 0 showed another)
+        std::uint64_t ground_moves = 0;   // the game's Walk / Wait let through for a Link held in a lying pose
+        std::uint64_t kept_crawling = 0;  // the game's "room to stand up" answered "no room" (NoRoom, patch 0046)
         std::vector<std::int32_t> skipped_verbs;  // the first distinct ones (the log)
     };
     Counts Totals() const;
@@ -362,6 +364,13 @@ public:
     // Any thread (issue 337): our lying child's slot 0 shows the game's own
     // crawl now (CrawlCommand): the pad then gives the game the full stick.
     bool GameCrawl() const noexcept { return game_crawl_.load(std::memory_order_acquire); }
+    // A game thread (patch 0046's wrap of main+0x301ac50, hos_coop_crawl.h; 0.12.1 downed-move): the game's crawl
+    // asks whether `actor` has room to stand up; true would end it (its state 4 -> 5, the get-up). True here = answer
+    // "no room" for this call: `actor` is our Link, lying, in no event, a child (the crawl's clips are the child's)
+    // and our Crawl taken. So the game's crawl lasts the down where a standing body fits (open ground: it ended at
+    // once, and the downed child lay still in kChildLyingPose with no movement and no crawl camera). Up again
+    // (revived, bled out, rules off) or any other actor: the game's own check.
+    bool NoRoom(std::uint64_t actor);
 
     // Ask again at most this often while lying and not known to crawl.
     static constexpr std::uint64_t kAskEveryMs = 500;
@@ -429,6 +438,8 @@ private:
     bool moved_ = false;        // the world moved our Link since this round started
     bool ground_seen_ = false;  // a Walk/Wait of the game's while not crawling (Next may start a round)
     bool cleared_noted_ = false;
+    bool kept_noted_ = false;   // NoRoom's line, once a down
+    bool ground_noted_ = false; // the posed Link's ground move line, once a down
     int spot_rounds_ = 0;       // rounds since our Link last moved (kSpotRounds)
     // The game's own request ran on our slot since the caller's last frame
     // (Skip let it through): the slot is busy until the BSA's next update.

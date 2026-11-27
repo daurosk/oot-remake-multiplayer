@@ -1001,6 +1001,21 @@ void SettingMove(int count, int dy, int* page, int* row, int per_page = kSetting
 // Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
 inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
+// The same for readers on other threads (GameMenuUp: F1's rule, the bridge's `menu open`, markers under the menu), with
+// the present counts (lichii/hook/coop_fresh.h) when the strip was seen and now: stale only when kMenuUpMs old by the
+// wall clock AND presents went on without a strip update (gate-ui-epona-0121). By the wall clock alone a game stepped by
+// the play-test bridge, or one in a hitch over kMenuUpMs, read its open menu as shut between two frames.
+bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t seen_present,
+                std::uint64_t now_present);
+// Free play as SetFreePlay last stamped it (each present, coop_hookshot.cpp DrawScene) still counts when it is under
+// kFreePlayFreshMs old by the wall clock OR no two presents went by since (coop_fresh.h): a load or the title stamps
+// "no" at once, a stepped or hitching game keeps its last "yes". gate-ui-epona-0121 (S 309d7180c gate-ui, B's
+// game-out 6068 'free play: yes' then 6207/6866 'opened on a page'): by the wall clock alone the bridge's `menu open`,
+// run on the first frame after the bridge held the game, found the stamp stale, took Longshot's tab (0 co-op tabs in
+// free play) and no page came; Longshot's tab count flipped 3/0 in hitches while free play stayed yes.
+inline constexpr std::uint64_t kFreePlayFreshMs = 500;
+bool FreePlayFresh(bool free_play, std::uint64_t made_ms, std::uint64_t now_ms, std::uint64_t made_present,
+                   std::uint64_t now_present);
 // The Map page's content under our - page hidden (FollowMapUnder): while ours shows (`hide`) and the menu is up, not
 // while the Map and ours slide. Native (CoopMenu_00): only once that screen has been open kMapUnderAfterMs (the Map
 // sequence's own out animation plays first) and its updates still come (seen within kMenuUpMs).

@@ -135,3 +135,14 @@ TEST_CASE("menu state (row 295): the Map page's content goes last, as its screen
     CHECK(Has(j, ",\"minus\":{\"open\":false},\"map_page\":{\"up\":true,\"panes\":6,\"shown\":6}}"));
     CHECK(j.rfind("{\"coop\":", 0) == 0);
 }
+
+TEST_CASE("menu state (chartab-0121): the Customize screen says whether its keys are the game's guide keys and which show") {
+    Driver d;
+    OpenFor(d, 0);
+    auto j = Json(Tab{}, FromDriver(d, true, true));
+    CHECK(Has(j, "\"keys\":{\"guide\":false,\"page\":true,\"mix\":true}"));   // (words in the title)
+    d.SetKeysShown(true);
+    j = Json(Tab{}, FromDriver(d, true, true));
+    CHECK(Has(j, "\"keys\":{\"guide\":true,\"page\":true,\"mix\":true}"));
+    CHECK(Has(Json(Tab{}, FromDriver(d, false, false)), "\"customize_screen\":{\"open\":false}"));
+}

@@ -1,0 +1,77 @@
+"""hud-fresh-0121's in-game proof: the other player's party HUD block (name line + hearts) and name tag stay on a game
+stepped a frame every HOLD_S seconds by the bridge, on each game (testkit-0120's kit-in-play shots, about 1.5 s a frame,
+showed neither: PartyStep and the hook's markers dropped every reading older than a second by the wall clock).
+
+How it is judged (worker-rules TEST SYSTEM: state first, a shot for what a player sees):
+- state: the bridge's `slow_steps` (docs/playtest.md; hookshot/src/coop_hookshot.h SlowStep): the last party HUD step
+  and the last name-tag step that ran a second or more after the one before, and what each showed then. After the
+  held frame each game must have a NEW slow step of each (count up), its gap >= 1000 ms, showing >= 1 block and >= 1 tag.
+  Before hud-fresh-0121 such a step showed 0 of both (lichii/hook/coop_fresh.h's header).
+- shot: the bridge shot of that same held frame on each game (refs/stepped-hud-<x>.png; NO-REF until a person keeps
+  one): the block under the game's own hearts and the tag over the other Link.
+
+Sources of every value:
+- HOLD_S 1.5: testkit-0120's frame time (smoke-pause-A.png 16:15:55.15 -> kit-in-play-A.png 16:16:11.85 over presents
+  12361 -> 12372, game-out-A.txt:7499/:7587); the module's window is 1000 ms (coop_hookshot.cpp kSlowStepMs, PartyStep's
+  CoopFresh::Stale(.., 1000, ..)). The hold is the scenario's input (the game held by the bridge, frames not running),
+  not a wait for anything.
+- the shot runs the held frame: the bridge's `shot` lets 1 frame at a time run until the picture comes (at most 5;
+  docs/playtest.md `shot`, coop_playtest.cpp), so its first frame is the one after the hold.
+- HUD_ON: coop_hookshot.cpp PartyStep ("coop: party hud: on the game's HUD"); the tags' lines and the view checks:
+  test_regress_ui.py (TAGS_ON, TAGS_NO_MEMORY, TAGS_DIST, camera_behind_each, other_in_view, seen_not).
+"""
+import time
+
+import pytest
+
+from test_regress_ui import (CRASH, TAGS_DIST, TAGS_NO_MEMORY, TAGS_ON, camera_behind_each, other_in_view,
+                             seen_not)
+from test_rows import need_child_in_play, place_in_front
+
+GAMES = ("A", "B")
+HUD_ON = r"coop: party hud: on the game's HUD"
+HOLD_S = 1.5
+SLOW_MS = 1000
+
+
+def slow(pair, x):
+    """Game x's `slow_steps` from its state: {'party_hud': {...}, 'name_tags': {...}} (count, gap_ms, shown)."""
+    st = pair.state(x)
+    s = st.get("slow_steps")
+    assert isinstance(s, dict), "%s: no slow_steps in the bridge's state (a module without hud-stepped-0121)" % x
+    return s
+
+
+@pytest.mark.budget(180)
+@pytest.mark.look
+@pytest.mark.row("hud-fresh-0121: party HUD + name tags stay on a game stepped a frame every 1.5 s (testkit-0120 kit-in-play)")
+def test_stepped_hud_and_tags(pair):
+    with pair.setup():
+        need_child_in_play(pair)
+        place_in_front(pair, "B", of="A", dist=TAGS_DIST)       # B in front of A, facing A: each sees the other
+        camera_behind_each(pair)                                 # (each game's own view, proven on its state)
+        for x in GAMES:
+            seen_not(pair, x, TAGS_ON, TAGS_NO_MEMORY, max_frames=120)
+            if not pair.log[x].find(HUD_ON, pos=0):
+                pair.expect_log(x, HUD_ON, max_frames=120)
+        pair.step_both(30)                                       # (both running at full speed: no slow step here)
+        before = {x: slow(pair, x) for x in GAMES}
+    for x, other in (("A", "B"), ("B", "A")):
+        ok, why = other_in_view(pair, x, other)
+        assert ok, "%s: the other player is not in view before the held frame: %s" % (x, why)
+    time.sleep(HOLD_S)                                           # both games held: the next frame comes HOLD_S late
+    for x in GAMES:
+        res = pair.check_shot(x, "stepped-hud", tolerance=0.80)  # (runs the held frame; 0.80: Kakariko's people move)
+        pair.notes.append("%s shot: %s" % (x, res.get("why")))
+    for x in GAMES:
+        after = slow(pair, x)
+        for part, need in (("party_hud", "block"), ("name_tags", "tag")):
+            a, b = after[part], before[x][part]
+            assert a["count"] > b["count"], "%s: no %s step %d ms or more after the one before (count %d -> %d)" % (
+                x, part, SLOW_MS, b["count"], a["count"])
+            assert a["gap_ms"] >= SLOW_MS, "%s: %s's last slow step only %d ms after the one before" % (x, part, a["gap_ms"])
+            assert a["shown"] >= 1, "%s: the held frame (%d ms after the one before) showed no %s: %s" % (
+                x, a["gap_ms"], need, after)
+        pair.notes.append("%s slow_steps: %s" % (x, after))
+    for x in GAMES:
+        pair.never_log(x, CRASH)

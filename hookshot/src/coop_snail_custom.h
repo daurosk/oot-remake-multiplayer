@@ -52,6 +52,20 @@ inline constexpr std::uint64_t kA = 1ull << 0, kB = 1ull << 1, kY = 1ull << 3, k
                                kDown = 1ull << 15, kStickLeft = 1ull << 16, kStickUp = 1ull << 17,
                                kStickRight = 1ull << 18, kStickDown = 1ull << 19;
 
+// The two key parts the kit puts in his layout (tools/puppet_pack/merge_tables.py SNAIL_KEYS, Y then A) and each one's
+// text panes (the game's PaGuideKey_00: the button letter, then the words), whose labels are "<part>-<pane>" in his
+// message file. chartab-0121: the game does not give a copied part's panes those labels when it makes the layout, so
+// the module sets each pane's text itself (coop_pause_tab_module.cpp SnailKeysLookUp).
+inline constexpr const char* kKeyParts[] = {"Pa_CoopKeyY_00", "Pa_CoopKeyA_00"};
+inline constexpr const char* kKeyPanes[] = {"T_Icon_00", "T_Guide_00"};
+// Whether his screen shows the keys as the game's guide keys (the title then drops its worded hints): only with both
+// parts in his layout AND every one of their panes given its text. chartab-0121 (owner, v0.12.0): the parts were there,
+// their texts were not, so the keys drew nothing and the title had no hints either: neither "page" nor "exact hue"
+// could be seen. Anything less keeps the hints in the title's words.
+constexpr bool KeysShownFrom(bool page_part, bool mix_part, bool texts_set) {
+    return page_part && mix_part && texts_set;
+}
+
 class Driver {
 public:
     // His screen opened on co-op's look (the one waiting, else worn), for the character shown (0 Link).
@@ -76,6 +90,7 @@ public:
     };
     Keys KeysNow() const;
     void SetKeysShown(bool on) { keys_shown_ = on; }
+    bool KeysShown() const { return keys_shown_; }
     int Focus() const { return focus_; }
     bool Editing() const { return page_.editing(); }
     // The page of six shown (1 first) and how many there are (0: none to show, a character with no options).

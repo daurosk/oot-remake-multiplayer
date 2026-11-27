@@ -48,6 +48,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import game_names   # noqa: E402  (the ONE item name table)
 import huecheck     # noqa: E402  (vest-link's colour check)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
 try:
@@ -58,7 +59,7 @@ from test_gear_link import face_each_other   # noqa: E402  (the shared set-up he
 from test_rows import need_child_in_play     # noqa: E402
 
 RED, BLUE = 0xDD4527, 0x4F8AE1
-SKULL = "Armor_Child_Mask_Skull"   # (test_rows.test_masks_on_puppet)
+SKULL = game_names.SKULL_MASK   # (test_rows.test_masks_on_puppet; one table)
 
 OWN_HAIR = r"coop: look: your Link's gear is gear\S*\.hair-%06X now"
 PUP_HAIR = r"coop: look: the puppets' boots are boots\S*\.[A-Z]-hair-%06X\b\S* now"
@@ -199,14 +200,18 @@ def test_hair_unset_is_game(pair):
     try:
         before = shots(pair, "hair-link-unset")
         wear(pair, "A", RED)
+        coloured = shots(pair, "hair-link-unset-red")
         wear(pair, "A", None)
         back = shots(pair, "hair-link-unset-again")
         for x in ("A", "B"):
             score, err = imagecheck_ssim(before[x], back[x])
-            h = huecheck.changed_hue(before[x], back[x], RED)
-            note(pair, "huecheck %s unset-again #%06X changed=%d coloured=%d ssim=%s" % (
-                x, RED, h["changed"], h["coloured"], score))
-            assert h["coloured"] < MIN_CHANGED, "%s: red left on the hair after unset %s" % (x, h)
+            # (only the pixels the wear painted: a whole-frame count took the torch flames as red left, B #148)
+            h = huecheck.left_after_unset(before[x], coloured[x], back[x], RED)
+            note(pair, "huecheck %s unset-again #%06X wear=%d left=%d share=%.3f ssim=%s" % (
+                x, RED, h["wear"], h["left"], h["share"], score))
+            assert h["wear"] >= MIN_CHANGED, "%s: only %d pixels took the red: the hair was not repainted %s" % (
+                x, h["wear"], h)
+            assert h["share"] < huecheck.LEFT_SHARE, "%s: red left on the hair after unset %s" % (x, h)
             if err or score < SAME_SSIM:
                 low.append("%s: unset again vs before SSIM %s %s (want >= %.2f)" % (x, score, err or "", SAME_SSIM))
         done = True

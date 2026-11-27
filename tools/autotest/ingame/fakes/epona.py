@@ -15,6 +15,10 @@
 Selftest switches (tests/test_ingame_epona.py): BT_FAKE_EPONA_BUG=blink -> A makes a second horse copy at the
 remount (its line still says the same copy);
 =gone -> A drops B's waiting horse at the get-off (the copy deleted, no 'waits'); =nosong -> the song brings nobody.
+The field Epona is in B's list only near her spot (gate-ui-epona-0121: from the entrance-less warp B stood at
+HyruleField_FrontOfLostWoodBridge, S 309d7180c game-out-B 4806, and B's list had none): within NEAR_M of her, or after
+the rows' own entrance HyruleField_FrontOfMarket (hs-epona-sync.B.txt:24). NEAR_M models the old rows' 'place beside
+her' only; the real list's reach is measured by the probe (gate-probe-0121 test_probe_epona).
 A Get_Epona written lower than Complete comes back to Complete 30 frames on (so a --repeat round 2 finds her won).
 """
 import math
@@ -23,6 +27,8 @@ import os
 FIELD = "HyruleField_Adult"
 FIELD_EPONA = [-100.47, 150.60, 264.55]
 COMPLETE_HASH = "0x4c0a63f4"
+MARKET = "HyruleField_FrontOfMarket"
+NEAR_M = 5.0
 SONG = ["X", "Y", "A", "X", "Y", "A"]
 B_ON = "coop: ride: we ride Animal_Epona_Adult, sending PLAYER_RIDE"
 
@@ -77,6 +83,7 @@ def after(game, m, r):
         r.update(kind="enum", value=COMPLETE_HASH if v in ("Complete", COMPLETE_HASH) else (v or "0x00000000"))
     elif cmd == "warp" and game.tag == "B":
         game.horse = list(FIELD_EPONA) if m.get("scene") == FIELD and not _won(game) else None
+        game.epona_entrance = m.get("entrance")
         game.riding = False
         if m.get("scene") != FIELD:
             game.other.a_shown = None
@@ -95,7 +102,9 @@ def state(game, st):
 
 
 def actors(game):
-    if game.tag == "B" and _field(game) and game.horse:
+    far = (game.horse == FIELD_EPONA and getattr(game, "epona_entrance", None) != MARKET
+           and math.dist(game.pos[::2], FIELD_EPONA[::2]) > NEAR_M)   # (the field Epona, out of B's list's reach)
+    if game.tag == "B" and _field(game) and game.horse and not far:
         return [{"id": 77, "name": "Animal_Epona_Adult", "kind": "other", "pos": list(game.horse), "dist": 1.0}]
     return []
 

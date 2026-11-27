@@ -42,7 +42,7 @@ $cfg = Get-Content -Raw (Join-Path $env:USERPROFILE '.wslconfig') -ErrorAction S
 if (-not ($cfg -match '(?m)^\s*memory\s*=\s*(\d+)GB' -and [int]$Matches[1] -le 20)) { throw '.wslconfig must cap memory at <= 20GB (docs/ci-runner.md).' }
 if (-not ($cfg -match '(?m)^\s*processors\s*=\s*(\d+)' -and [int]$Matches[1] -le 12)) { throw '.wslconfig must cap processors at <= 12 (of 32: the test-lane games keep the rest).' }
 $free = [math]::Floor((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory / 1MB)
-if ($free -lt 40) { throw "free commit is $free GB (< 40 GB): a game test is running; run this later (jobs keep their own 40 GB guard)." }
+if ($free -lt 40) { throw "free commit is $free GB (< 40 GB): a game test is running; run this later (jobs keep their own 75 GB guard)." }
 if (-not ((& $wsl -l -q) -replace "`0", '' | Where-Object { $_.Trim() -eq $Distro })) {
     # A distro of its own: wsl.conf below turns off interop and drives, which the local-CI distro needs.
     $loc = Join-Path $env:LOCALAPPDATA 'squadala-ci\wsl'

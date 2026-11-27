@@ -1,8 +1,8 @@
 # Feeds the WSL runners' memory and disk guard (docs/ci-runner.md, "Linux runners in WSL"). install-wsl.ps1 copies
 # it to %LOCALAPPDATA%\squadala-ci and starts it at every logon (scheduled task 'squadala-ci status feed', hidden).
 # It runs `wsl.exe -d <distro> -u root -- /opt/squadala-ci/status-sink.sh` and writes
-# "<free commit GB> <C: free GB> <lanes busy 0|1>" to its stdin every 15 s; job-started.sh waits while commit < 40 GB
-# (lanes busy is only logged: jobs run while the lanes are busy, OWNER GO 2026-11-27) and refuses at C: < 60 GB. That wsl.exe also keeps the distro, and so the runners, running.
+# "<free commit GB> <C: free GB> <lanes busy 0|1>" to its stdin every 15 s; job-started.sh waits while commit < 75 GB
+# or lanes busy = 1, and refuses at C: < 60 GB. That wsl.exe also keeps the distro, and so the runners, running.
 # If it exits it is started again after 15 s.
 #
 # Lanes busy (review-c123-14: free commit alone cannot see a game pair that is about to grow) comes from the test

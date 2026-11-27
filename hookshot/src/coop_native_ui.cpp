@@ -653,11 +653,13 @@ Holds Banner::Holding(Game& game, const TextRing& ring) {
     return (text != 0 && (ring.Owns(text) || text == ours_)) ? Holds::kOurs : Holds::kGames;
 }
 
-bool Banner::Set(Game& game, std::uint64_t screen, std::uint64_t ref) {
+bool Banner::Set(Game& game, std::uint64_t screen, std::uint64_t ref, bool opening) {
     // As the game's f_83419b10 puts up a banner of an ordinary kind: its Type animation at its first frame (only
     // kind 0x1d plays it to its end), then T_Text_00. A banner the game showed last as that kind looks ordinary again.
+    // Only when it is put up: on a banner of ours that is up the Type is ordinary already, and putting it back at its
+    // first frame again made the banner blink at each new text (revive-flicker-0121).
     std::uint64_t type = 0;
-    if (ReadValue(game, screen + addr::kInfoType, type) && type != 0) {
+    if (opening && ReadValue(game, screen + addr::kInfoType, type) && type != 0) {
         game.Call(game.At(addr::kAnimFirstFrame), {type, 0, 0, 0, 0});
     }
     if (!SetPane(game, screen, addr::kNameT_Text_00, ref)) return false;
@@ -682,13 +684,14 @@ bool Banner::Show(Game& game, TextRing& ring, const Shown& page, std::uint64_t n
     if (holds == Holds::kGames) return false;  // the game's own banner (or none): the page waits
     const std::uint64_t screen = ScreenByVtable(game, addr::kInfoVtable);
     const std::uint64_t ref = ring.Put(game, BannerText(page));
-    if (screen == 0 || ref == 0 || !Set(game, screen, ref)) return false;
+    const bool reopen = !(page_ && holds == Holds::kOurs);   // (a page of ours up already: only the text changes)
+    if (screen == 0 || ref == 0 || !Set(game, screen, ref, reopen)) return false;
     // The speaker's colour on the line; a notice (or a text box not found) the game's own.
     if (page.notice || page.colour == 0 || !tint_.Set(game, ring, screen, addr::kNameT_Text_00, page.colour)) {
         tint_.Restore(game, ring);
     }
     // Up with ours already (open, or opening): only the text changed. Shut: opened, with the game's in animation.
-    if (!(page_ && holds == Holds::kOurs) && !Open(game, screen, addr::kInfoOpenMode)) return false;
+    if (reopen && !Open(game, screen, addr::kInfoOpenMode)) return false;
     page_ = true;
     until_ = now_ms + static_cast<std::uint64_t>(page.seconds * 1000.0f);
     return true;
@@ -755,10 +758,12 @@ bool Banner::Step(Game& game, TextRing& ring, const std::optional<std::string>& 
     }
     const bool shut = holds == Holds::kNothing;  // closed (by itself, or never opened) and no open asked
     if (text != shown_ || !up_ || shut) {
+        // Up with the held line already: only its text changes (the revive's share, the clock), nothing replayed.
+        const bool opening = !up_ || shut;
         const std::uint64_t ref = ring.PutFixed(game, 0, text);
-        if (ref == 0 || !Set(game, screen, ref)) return true;
+        if (ref == 0 || !Set(game, screen, ref, opening)) return true;
         tint_.Restore(game, ring);   // (the held line in the game's own colour)
-        if ((!up_ || shut) && !Open(game, screen, addr::kInfoOpenMode)) return true;
+        if (opening && !Open(game, screen, addr::kInfoOpenMode)) return true;
         shown_ = text;
         up_ = true;
     }

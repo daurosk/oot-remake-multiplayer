@@ -674,10 +674,12 @@ TEST_CASE("native ui: a held banner line stays, changes its text in place, close
     CHECK(w.g.Text(w.RefAt(sets[1].x[2]).text) == "You are down  0:31");
     CHECK(w.ring.Put(w.g, "chat") == kBlock);  // the ring's first slot still next
     CHECK(w.g.CallsTo(kOpen).size() == 1);  // up already: not opened again
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);  // nor its Type put back (revive-flicker-0121)
     // The banner closed by itself (state 0, nothing asked): opened again.
     w.g.Put<std::int8_t>(kBanner + ui::addr::kScreenRequest, 0);
     CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 2000));
     CHECK(w.g.CallsTo(kOpen).size() == 2);
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 2);  // put up again: the ordinary look again
     w.g.Put<std::int8_t>(kBanner + ui::addr::kScreenRequest, 1);
     ui::EndBanner();
     CHECK_FALSE(ui::HeldBanner());
@@ -689,6 +691,41 @@ TEST_CASE("native ui: a held banner line stays, changes its text in place, close
     CHECK_FALSE(b.up());
     CHECK_FALSE(b.Step(w.g, w.ring, std::nullopt, 4000));
     CHECK(w.g.CallsTo(kClose).size() == 1);  // once
+}
+
+TEST_CASE("native ui: a held line whose text changes every frame never replays the banner (revive-flicker-0121)") {
+    // 0.12.0: the downed player's line while revived ('Saria is reviving you  0:45  NN%') changes its share every frame;
+    // each change put the banner's Type animation back at its first frame (Banner::Set), and the banner blinked.
+    World w;
+    ui::Banner b;
+    ui::HoldBanner("Saria is reviving you  0:45  0%");
+    REQUIRE(b.Step(w.g, w.ring, ui::HeldBanner(), 0));
+    w.Up();
+    for (int frame = 1; frame <= 100; ++frame) {
+        ui::HoldBanner("Saria is reviving you  0:45  " + std::to_string(frame) + "%");
+        CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), static_cast<std::uint64_t>(frame) * 33));
+    }
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);   // once, when it was put up
+    CHECK(w.g.CallsTo(kClose).empty());
+    CHECK(w.g.CallsTo(At(ui::addr::kSetPaneText)).size() == 101);    // the text kept current, every frame
+    CHECK(w.LastText() == "Saria is reviving you  0:45  100%");
+    // The reviver's line ('Reviving Saria'), the downed clock, spectating's next player: the same held path.
+    ui::HoldBanner("Reviving Saria  0:45  50%");
+    CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 4000));
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);
+    ui::EndBanner();
+}
+
+TEST_CASE("native ui: a page of ours up already: the next page changes only the text (revive-flicker-0121)") {
+    World w;
+    ui::Banner b;
+    REQUIRE(b.Show(w.g, w.ring, Line("Saria", "one"), 0));
+    w.Up();
+    REQUIRE(b.Show(w.g, w.ring, Line("Saria", "two"), 100));
+    CHECK(w.g.CallsTo(kOpen).size() == 1);
+    CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);
+    CHECK(w.g.CallsTo(At(ui::addr::kSetPaneText)).size() == 2);
 }
 
 TEST_CASE("native ui: the held line takes the banner from a page of ours, in the game's own colour") {

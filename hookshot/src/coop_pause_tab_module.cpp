@@ -2906,6 +2906,7 @@ void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
         drawn.open = true;
         drawn.tab = tab == static_cast<int>(MinusPage::kMultiplayer) ? "multiplayer" : mods ? "mods" : "lobby";
         drawn.view = ViewWord(view);
+        drawn.keys = !mods && !v.typing_lines.empty();   // (row 297: the typing keys drawn on the list)
         if (!mods && v.typing_lines.empty()) {   // (the details list drawn: DetailLines' own page rule)
             const DetailPaging paging = DetailPages(view, v);
             drawn.details_pages = paging.pages, drawn.details_page = paging.page;

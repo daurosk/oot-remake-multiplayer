@@ -46,6 +46,7 @@ struct Minus {
     std::string view;           // the rows' view ("main", "session", "players", ...: CoopPauseTab::ViewWord)
     int details_page = 0;       // 0 the session's lines, 1 the key items
     int details_pages = 0;      // 2 while the game's key items can be read, 1 when not, 0 on a view without the list
+    bool keys = false;          // row 297: the list on the right is the typing keys (a field typed into, co-op's menu's too)
     struct Line {
         std::string name, value;   // "Songs", "3 of 12"
     };

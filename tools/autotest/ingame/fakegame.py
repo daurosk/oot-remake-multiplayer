@@ -99,6 +99,13 @@ class FakeGame:
             self.say("coop: puppet: P%d CoopPuppet_Child_Green spawned after 120 ms" % them)
         if tag == "A":
             self.say("coop: drawing over Hookshot's picture")
+        # (the host's boot mod list, as a real game-out: no_cs.has_character_select reads it; the no-CS switch drops
+        # the mod on that game only, lanes.py nocs)
+        cs = not self.env_on("COOP_TEST_NO_CHARACTER_SELECT=1")
+        self.say("mods: contents/0400486024DEC000/coop-puppet: 41275 RomFS files")
+        if cs:
+            self.say("mods: OoT Character Select: 6903 RomFS files (20 replace the game's, 6883 added), ExeFS patches")
+        self.say("mods: %d mods from %s: 48190 RomFS entries" % (2 if cs else 1, os.path.join(folder, "mods")))
         for h in hooks(self.fakes, "setup"):
             h(self)
         self.equip_later()

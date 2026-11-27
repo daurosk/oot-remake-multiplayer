@@ -2313,5 +2313,59 @@ class CommitSampler(unittest.TestCase):
             self.assertIsNone(b)
 
 
+class NoCs(unittest.TestCase):
+    """no_cs.has_character_select reads the boot's mod list in the game's log, not the pick Int (hair-link-7,
+    leather-nocs-309d7180: co-op's own Characters tab puts CharacterMenu_SelectedCharacter in the pack, so B without the
+    mod still had it and every no-CS test SETUP-FAILed). Lines as that run's game-out-A/B.txt wrote them."""
+    A_BOOT = ["[hos host] mods: contents/0400486024DEC000/coop-puppet: 41275 RomFS files (23 replace the game's)",
+              "[hos host] mods: OoT Character Select: ExeFS E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips: built into the game",
+              "[hos host] mods: OoT Character Select: 6903 RomFS files (20 replace the game's, 6883 added), ExeFS patches",
+              "[hos host] mods: 2 mods from %USERPROFILE%\lane1-A\mods: 48190 RomFS entries"]
+    B_BOOT = ["[hos host] mods: %USERPROFILE%\lane1-B-nocs\mods\coop-mods.list: 1 rows",
+              "[hos host] mods: 1 mods from %USERPROFILE%\lane1-B-nocs\mods: 1789 RomFS entries",
+              "[hos sead::MainThread] mods: Sequence/CharacterMenu.module.ainb <- ...\coop-puppet\romfs\Sequence\..."]
+
+    def pair_with(self, logs):
+        import no_cs
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+
+        class _P:
+            log = {}
+        for x, lines in logs.items():
+            path = os.path.join(d, "game-out-%s.txt" % x)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+            _P.log[x] = P.Log(path)
+        return no_cs, _P
+
+    def test_mod_list_not_pick_int(self):
+        no_cs, p = self.pair_with({"A": self.A_BOOT, "B": self.B_BOOT})
+        self.assertTrue(no_cs.has_character_select(p, "A"))
+        self.assertFalse(no_cs.has_character_select(p, "B"))
+        no_cs.prove(p)   # (the leather-nocs-309d7180 games: B without the mod, A with it)
+
+    def test_b_with_the_mod_fails(self):
+        no_cs, p = self.pair_with({"A": self.A_BOOT, "B": self.A_BOOT})
+        with self.assertRaisesRegex(AssertionError, "B still has Character Select"):
+            no_cs.prove(p)
+
+    def test_a_without_the_mod_fails(self):
+        no_cs, p = self.pair_with({"A": self.B_BOOT, "B": self.B_BOOT})
+        with self.assertRaisesRegex(AssertionError, "A has no Character Select"):
+            no_cs.prove(p)
+
+    def test_last_boot_counts(self):
+        # (a relaunch in the same log: only the last boot's block is read, both ways)
+        no_cs, p = self.pair_with({"A": self.B_BOOT + self.A_BOOT, "B": self.A_BOOT + self.B_BOOT})
+        self.assertTrue(no_cs.has_character_select(p, "A"))
+        self.assertFalse(no_cs.has_character_select(p, "B"))
+
+    def test_no_mod_list_is_not_a_guess(self):
+        no_cs, p = self.pair_with({"A": ["[hos host] boot: image 96 MB"], "B": self.B_BOOT})
+        with self.assertRaisesRegex(AssertionError, "its mod list is not known"):
+            no_cs.has_character_select(p, "A")
+
+
 if __name__ == "__main__":
     unittest.main()

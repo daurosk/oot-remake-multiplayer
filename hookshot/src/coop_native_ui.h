@@ -331,7 +331,11 @@ public:
     bool showing() const { return page_; }       // a page of ours is up
 
 private:
-    bool Set(Game& game, std::uint64_t screen, std::uint64_t ref);
+    // Our text on T_Text_00. `opening`: the banner is put up now (shut, or the game's before), so its Type animation is
+    // put back at its first frame first, as the game's f_83419b10 does before an open; never on a banner of ours that
+    // is up (revive-flicker-0121: replayed on every text change of the held line, the revive's share each frame, the
+    // banner blinked).
+    bool Set(Game& game, std::uint64_t screen, std::uint64_t ref, bool opening);
     void Close(Game& game, std::uint64_t screen);
     bool up_ = false, page_ = false;
     std::uint64_t until_ = 0;  // the page's time

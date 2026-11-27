@@ -20,7 +20,14 @@ The player ways, tried in this order on A until A's state equips.head names a ma
   HeadArmor, ootrr-src/data/flags.json; reports/world-fails-0115-2.md:57-59); D-pad Left is the ocarina
   (docs/items.md:320), so the other three directions are tried, one press each.
 After each try: note equips.head, the flags HeadShortcut / UI_CurrentShortCutCategory / PlayerStatus.EquipHeadArmor
-(flag_read), and a framebuffer shot of A (A's Link faces the camera: test_gear_link.face_each_other, as the hair rows).
+(flag_read), and a framebuffer shot of A.
+v0.11.12 (hair-link-7, review-rows-c130-7 03:00 MUST 1): its bridge has no `act` (verbs hello/state/pause/resume/step/
+input/warp/flag/give/dump/shot, v0.11.12 coop_playtest.cpp:327-408; `act` came with e6b8f9823) and no `flag_read`.
+So nothing in the set-up or the tries needs `act`: the quest Enum is the bridge's `flag` (it plays 'setenum NAME VALUE'
+for a non-number value on both versions: v0.11.12 coop_playtest.cpp:370-378), A's Link turns toward its camera by a
+plain stick input (stick 180 = toward the camera, docs/playtest.md `press`; facing and camera yaw are noted so the
+judge sees whether the face was toward the camera), the D-pad tries are plain input. Only `assign SkullMask` needs
+`act`: tried, and a refusal is noted (v0.11.12: ZR pressed with whatever is on it) - a finding, never a stop.
 The face is judged from the kept shots (mask-zr-*-A.png under new/): this probe ends NO-REF with its findings, never
 PASS or FAIL. Shots: before + up to 4 tries + 1 a second later = at most 6 (the suite's limit is 8).
 """
@@ -31,15 +38,15 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from test_gear_link import face_each_other   # noqa: E402  (the hair rows' set-up: A's face in A's shot)
 from test_rows import need_child_in_play   # noqa: E402  (the shared set-up helpers)
 
 SKULL = "Armor_Child_Mask_Skull"
 MASK_QUEST = "0xea010310"
 FLAGS = ("HeadShortcut", "UI_CurrentShortCutCategory", "PlayerStatus.EquipHeadArmor")
 SETTLE = 90   # frames after each try before the reads (the put-on animation; ESTIMATED, the probe notes the reads)
+TURN = (180, 1.0, 6)   # stick angle, strength, frames: Link turns toward the camera (ESTIMATED; facing/camera noted)
 TRIES = (
-    ("zr", ("setenum %s Complete" % MASK_QUEST, "assign SkullMask"), "ZR"),
+    ("zr", ("assign SkullMask",), "ZR"),
     ("dpad-up", (), "UP"),
     ("dpad-right", (), "RIGHT"),
     ("dpad-down", (), "DOWN"),
@@ -51,9 +58,21 @@ def note(pair, line):
     pair.notes.append(line)
 
 
+def try_call(pair, what, fn):
+    """A bridge call whose refusal is a finding (v0.11.12 has no act / flag_read): noted, never a stop."""
+    try:
+        r = fn()
+        ok = r.get("ok", True) if isinstance(r, dict) else r
+    except Exception as e:   # noqa: BLE001
+        ok = "refused (%s: %s)" % (type(e).__name__, str(e)[:120])
+    note(pair, "mask-zr A %s -> %s" % (what, ok))
+    return ok
+
+
 def reads(pair, what):
-    head = (pair.state("A").get("equips") or {}).get("head")
-    vals = []
+    st = pair.state("A")
+    head = (st.get("equips") or {}).get("head")
+    vals = ["facing=%s camera=%s" % (st.get("facing"), st.get("camera"))]
     for name in FLAGS:
         try:
             r = pair.flag_read("A", name)
@@ -66,12 +85,15 @@ def reads(pair, what):
 
 @pytest.mark.budget(240)   # ESTIMATED: set-up < 30 s, 4 tries x (8 + SETTLE) frames, 6 shots
 @pytest.mark.look
-@pytest.mark.row("#91 probe: a player's mask put-on on own Link (hair-link-6)")
+@pytest.mark.row("#91 probe: a player's mask put-on on own Link (hair-link-6/-7)")
 def test_mask_put_on_own_face(pair):
     with pair.setup():
         need_child_in_play(pair)
         pair.give("A", "PouchData.%s.StockNum" % SKULL)
-        face_each_other(pair)
+        angle, strength, frames = TURN
+        pair.press("A", stick=(angle, strength), frames=frames)   # (plain input: A faces its camera)
+        pair.step_both(20)
+    try_call(pair, "flag %s Complete" % MASK_QUEST, lambda: pair.call("A", "flag", name=MASK_QUEST, value="Complete"))
     found = None
     head = reads(pair, "before")
     pair.check_shot("A", "mask-zr-before")
@@ -79,8 +101,7 @@ def test_mask_put_on_own_face(pair):
         note(pair, "mask-zr: A already wears %r before any try (save state)" % head)
     for name, lines, button in TRIES:
         for line in lines:
-            r = pair.act("A", line)
-            note(pair, "mask-zr A %s: act %r -> %s" % (name, line, r.get("ok", r)))
+            try_call(pair, "%s: act %r" % (name, line), lambda line=line: pair.act("A", line))
         pair.press("A", buttons=[button], frames=8)
         pair.step_both(SETTLE)
         head = reads(pair, name)

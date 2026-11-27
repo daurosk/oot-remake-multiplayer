@@ -26,7 +26,7 @@ Sources (worker-rules "no guessed values"):
   there (that answers where she is for the next run).
 - The world list: docs/playtest.md "world": a dump lists every actor the objects walk sees (<= 200) with id, name, kind,
   pos [x, y, z] (y = height); the dump's state.pos is our own Link.
-- Lift: 'place x y z face_x face_z' (docs/playtest.md act place), then A held LIFT_FRAMES (rock.A.txt 'press A 12';
+- Lift: 'place X Y Z' then 'face X Z' (coop_testinput.cpp PLACE/FACE; test_enemies.py), then A held LIFT_FRAMES (rock.A.txt 'press A 12';
   'wait 20' before it), then HOLD_WAIT frames (rock.A.txt 'wait 50' before the throw).
 - Walk with it: the bridge 'move' (yaw, frames; docs/playtest.md), WALK_FRAMES.
 """
@@ -59,6 +59,7 @@ FIND_M = 30.0                                 # the object A lifts: the nearest 
 # The hands box (NOT measured: MEASURED below): the carried object over its carrier's Link.
 HANDS_XZ, HANDS_DY = (1.2, (0.2, 2.6))
 MISS_M = 2.5                                  # a copy further than this from A's Link (xz) is not in A's hands
+AWAY_M = 1.0                                  # A's own object this far (xz) from its rest place: it left it
 MISS_SHARE = 0.5                              # FAIL when more than this share of the samples miss
 MEASURED = None
 
@@ -113,9 +114,13 @@ def lift(pair, prefix, at, tag, within=FIND_M):
     b_at = (o[0] + (NEAR_M + B_FROM_M) * dx / n, o[1], o[2] + (NEAR_M + B_FROM_M) * dz / n)
     for x, spot, face in (("A", a_at, o), ("B", b_at, a_at)):
         pair.log[x].mark()
-        pair.act(x, "place %.2f %.2f %.2f %.2f %.2f" % (spot[0], spot[1], spot[2], face[0], face[2]))
+        pair.act(x, "place %.2f %.2f %.2f" % (spot[0], spot[1], spot[2]))  # coop_testinput.cpp PLACE: X Y Z only
         pair.step_both(2)
         pair.expect_log(x, r"coop: test place .*: done", max_frames=30)
+        pair.log[x].mark()
+        pair.act(x, "face %.2f %.2f" % (face[0], face[2]))  # coop_testinput.cpp FACE: X Z
+        pair.step_both(2)
+        pair.expect_log(x, r"coop: test face .*: Link at .* turned to yaw", max_frames=30)  # coop_boss_game.cpp:152
     pair.step_both(LIFT_SETTLE)
     _, b_actors, _ = dump(pair, "B", "%s-b-before" % tag)
     copy = nearest(b_actors, prefix, o, within=1.5)
@@ -145,7 +150,8 @@ def follow(pair, a_id, b_id, prefix, rest, tag):
             copy = nearest(b_actors, prefix, a_link, within=MISS_M * 2) if a_link else None
         rows.append({"i": i, "walking": walking, "a_link": a_link, "a_obj": mine and mine.get("pos"),
                      "b_copy": copy and copy.get("pos"), "b_copy_id": copy and copy.get("id"),
-                     "b_at_rest": nearest(b_actors, prefix, rest, within=0.5) is not None})
+                     "b_at_rest": nearest(b_actors, prefix, rest, within=0.5) is not None,
+                     "a_away": bool(mine and mine.get("pos") and xz(mine["pos"], rest) > AWAY_M)})
         if i == 2 and not shot:        # user-facing: the carried thing on both screens
             for x in ("A", "B"):
                 pair.check_shot(x, "carry-304-%s-held" % tag, tolerance=0.80)
@@ -163,12 +169,16 @@ def follow(pair, a_id, b_id, prefix, rest, tag):
 def judge(pair, rows, tag):
     a_ok = [r for r in rows if in_hands(r["a_obj"], r["a_link"])]
     miss = [r for r in a_ok if r["b_copy"] is None or xz(r["b_copy"], r["a_link"]) > MISS_M]
+    # B still shows it at the rest place after A's own left it: the row's bug itself, in any one sample (the rest place
+    # starts NEAR_M from A's Link, inside MISS_M, so the miss share alone let a copy left behind pass; fake 'rest')
+    left = [r["i"] for r in a_ok if r["b_at_rest"] and r["a_away"]]
     for r in rows:
         pair.notes.append("%s %02d %s A link %s A obj %s | B copy %s (id %s)%s" % (
             tag, r["i"], "walk" if r["walking"] else "still", r["a_link"], r["a_obj"], r["b_copy"], r["b_copy_id"],
             " B still has one at rest" if r["b_at_rest"] else ""))
     if not a_ok:
         pair.unproven("%s: A's own object left A's hands in every sample (A dropped it?)" % tag)
+    assert not left, "%s: B still shows it at its rest place while A carries it away (samples %s)" % (tag, left)
     assert len(miss) <= MISS_SHARE * len(a_ok), (
         "%s: B's copy NOT in A's hands in %d of %d samples while A carries it (absent or > %.1f m from A's Link)" % (
             tag, len(miss), len(a_ok), MISS_M))

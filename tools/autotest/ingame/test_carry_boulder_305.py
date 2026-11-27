@@ -122,6 +122,9 @@ def test_carry_boulder(pair, back_after):
                 lines = world_lines(pair, x, pos[x])
                 pair.notes.append("boulder: %s world lines (%d): %s" % (x, len(lines), lines[:12]))
         C.judge(pair, rows, "boulder")
+    except P.NoRef:
+        _restore_grade(pair, grade, failed=False)   # (the probe's normal end: a failed restore is the result)
+        raise
     except BaseException:
         _restore_grade(pair, grade, failed=True)
         raise
@@ -131,7 +134,7 @@ def test_carry_boulder(pair, back_after):
 def _restore_grade(pair, grade, failed):
     """Puts each game's LiftGrade back (preflight review-tests-153-2: a later test in the boot or a saved game must not
     inherit High). After a failure a failed restore is only noted (the test's own error stays the result, as
-    test_dbno_crawl.restored); after a pass it is the test's failure."""
+    test_dbno_crawl.restored); after a pass or a NO-REF (the probe's normal end) it is the test's failure."""
     for x, was in grade.items():
         if was is None:
             pair.notes.append("boulder: %s LiftGrade was unreadable before the test: not restored" % x)

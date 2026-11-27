@@ -39,8 +39,8 @@ CROSS = r"row 198 cross guard"                                         # coop_lo
 # (lichii/hook/coop_colors.cpp:21, hue 222), A's colour; green = the game's own Kokiri tunic (B wears no colour). The
 # Link wearing blue must hold more blue than green and at least COLOUR_MIN blue, the green one the other way round.
 # Each game's own Link is the control (its colour is the module's own line above), the other's puppet is the row.
-# NOT MEASURED: the hue/saturation/value ranges, COLOUR_MIN, BEARING and bandcheck.HEAD (an adult's 1.9 m on a child's
-# Link: the box is taller than the Link, the side box takes the background off). Until MEASURED cites a lane run's
+# bandcheck.HEAD is measured (a child's 1.25 m; the adult 1.9 m made the boxes overlap: run tunic-look-53d40ab3-2).
+# NOT MEASURED: the hue/saturation/value ranges, COLOUR_MIN and BEARING. Until MEASURED cites a lane run's
 # colourcheck lines, a run whose colour checks all hold ends NO-REF, never PASS (worker-rules: no guessed values).
 COLOUR_MIN = 4
 MEASURED = None   # e.g. "run <name>: A own blue .. green .., B's puppet of A blue .. green .., ..."

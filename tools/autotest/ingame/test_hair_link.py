@@ -48,6 +48,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import game_names   # noqa: E402  (the ONE item name table)
 import huecheck     # noqa: E402  (vest-link's colour check)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
 try:
@@ -58,7 +59,7 @@ from test_gear_link import face_each_other   # noqa: E402  (the shared set-up he
 from test_rows import need_child_in_play     # noqa: E402
 
 RED, BLUE = 0xDD4527, 0x4F8AE1
-SKULL = "Armor_Child_Mask_Skull"   # (test_rows.test_masks_on_puppet)
+SKULL = game_names.SKULL_MASK   # (test_rows.test_masks_on_puppet; one table)
 
 OWN_HAIR = r"coop: look: your Link's gear is gear\S*\.hair-%06X now"
 PUP_HAIR = r"coop: look: the puppets' boots are boots\S*\.[A-Z]-hair-%06X\b\S* now"

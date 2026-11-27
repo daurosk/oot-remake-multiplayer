@@ -29,7 +29,7 @@ Every value is cited:
  - SKINS: characters.json (number, file) and the adult rest angle of Arm_1 vs Link's (-35 deg) read from the lane mod's
    Model/Player_Adult_C<file>.Player_Adult.bfres (scratch reader, report): Malon 11/file 9 (+10 deg, the 74-skin
    45-deg class), Saria 2/file 0 (= Link's), Sheik 9/file 7 (-20 deg), Darunia's son 24/file 22 (10-deg class).
-   Every one is in both lane packs (coop_puppet.json characters.numbers / variants Adult, read 2026-11-27 21:3x UTC).
+   Every one is in both lane packs (coop_puppet.json characters.numbers / variants Adult, read 2026-11-27 21:0x UTC).
  - PUPPET: B's spawn line, coop_puppet.cpp:431 Say 'P<n> <actor> spawned after' (Director::Say adds 'coop: puppet: ');
    the actor name CoopPuppet_Adult_C<nnn> (coop_puppet.cpp CharacterActor, build.py character_actor), its quiet copy
    CoopPuppet_AdultQuiet_C<nnn> (build.py quiet_name).

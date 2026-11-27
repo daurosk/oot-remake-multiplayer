@@ -63,7 +63,7 @@ def _press_and_watch(pair, x, frames, tag, rec):
 @pytest.mark.row("PROBE ocarina D-pad Left on A and B (B #140 17:3x; not a row)")
 def test_probe_ocarina_left(pair):
     with pair.setup():
-        pair.until("both games in play", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=600)
+        pair.until("both games in play", lambda: all(pair.ready(x) for x in ("A", "B")), max_frames=600)
     for x in ("B", "A"):
         rec = {"game": x, "presses": []}
         try:

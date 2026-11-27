@@ -142,7 +142,7 @@ def run_170(pair, dead, host, password, boot_a=BOOT_A, boot_b=BOOT_B):
     """The step itself, after the set-up (the selftests drive it with a fake live.py)."""
     pair.rejoin("B", boot=boot_b, env=["LICHII_COOP_SERVER=127.0.0.1:%d" % dead,
                                        "LICHII_COOP_TEST_HOST=%d:%s" % (host, password)])
-    pair.until("170: B in play on its dead server line", lambda: pair.in_play(pair.state("B")), max_frames=1800)
+    pair.until("170: B in play on its dead server line", lambda: pair.ready("B"), max_frames=1800)
     pair.never_log("B", WELCOMED)                     # (no server runs on that port)
     pair.act("B", "menu host")
     pair.expect_log("B", TEST_HOST_ON % host, max_frames=600)
@@ -166,7 +166,7 @@ def run_170(pair, dead, host, password, boot_a=BOOT_A, boot_b=BOOT_B):
     pair.rejoin("A", boot=boot_a)
     for x in ("A", "B"):
         pair.expect_log(x, WELCOMED, max_frames=900)
-    pair.until("back: both in play", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=1800)
+    pair.until("back: both in play", lambda: all(pair.ready(x) for x in ("A", "B")), max_frames=1800)
     pair.notes.append("170: B's dead line 127.0.0.1:%d, B hosted on %d, A welcomed there; session back" % (dead, host))
 
 

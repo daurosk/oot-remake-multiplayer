@@ -124,7 +124,7 @@ def boss_arrival(pair, stage, then=None):
 
         def both_in_play():
             sts = {x: pair.state(x) for x in ("A", "B")}
-            return all(pair.in_play(v) and (v.get("scene") or "").lower() == stage.lower() for v in sts.values())
+            return all(pair.ready(x, v) and (v.get("scene") or "").lower() == stage.lower() for x, v in sts.items())
         phase = "both in play"
         timed(phase, lambda: pair.until("both games in play in %s after its arrival event" % stage, both_in_play,
                                         max_frames=IN_PLAY_FRAMES))

@@ -16,6 +16,7 @@ import re
 
 import pytest
 
+import game_names
 import pair as P
 from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
@@ -267,7 +268,7 @@ def test_sword_handle(pair):
     with pair.setup():
         need_child_in_play(pair)
         w = (pair.state("A").get("equips") or {}).get("weapon")
-        assert w == "KokiriSword", "A holds %s, not the Kokiri Sword: the hilt part would not show" % w
+        assert w == game_names.KOKIRI_SWORD, "A holds %s, not the Kokiri Sword: the hilt part would not show" % w
         assert pair.log["A"].find(A_PARTS, pos=0), "A: no '%s' since the boot (the switch did not reach the look)" % A_PARTS
         assert pair.log["B"].find(B_SLOTS, pos=0), "B: other players' gear colours are not on (%s)" % B_SLOTS
         stand_apart(pair)        # A beside B, each camera behind its own Link: A's own hilt on A, the puppet on B

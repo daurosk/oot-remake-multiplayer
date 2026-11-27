@@ -20,6 +20,8 @@ Set-up and judging, each cited where used:
   CoopLookParts::BootsPaintingName: `.<letter>[boots]L<leather>` per tunic colour.
 - Colour: the share of magenta pixels in a bridge shot (MAGENTA: nothing in Kokiri Forest is magenta, so the count
   before is near 0) must rise on each game when A's leather is magenta; shots are also compared to their references.
+  Unset: huecheck.left_after_unset (shared with the hair/vest unset rows): only the pixels the leather painted
+  (gold boots -> magenta leather) are judged after the unset, never the whole frame (B #148).
 - No Character Select: the ONE no-CS lane game, tools/autotest/ingame/no_cs.py: MARK (needs_env
   B:COOP_TEST_NO_CHARACTER_SELECT=1, harness-c132's switch; deselected and NOT-RUN without it) and prove() (B has no
   mod: flag_read of its saved Int, lichii/hook/coop_char_colours.cpp NoteOwnPick).
@@ -34,6 +36,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import huecheck     # noqa: E402  (the shared colour check: left_after_unset)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
 from test_rows import need_child_in_play, place_in_front   # noqa: E402  (the shared set-up helpers)
 
@@ -45,6 +48,7 @@ PUPPET_BOOTS = r"coop: look: the puppets' boots are (boots\S*) now"
 # "share <game> <what> before -> after" notes of each test), a run whose log checks all hold ends NO-REF
 # (pair.unproven), never PASS, and a share off MORE is noted, not failed (as test_vest_link.py MEASURED).
 MORE = 0.0005
+MIN_WEAR = 20   # (the hair/vest rows' MIN_CHANGED: fewer wear pixels than this is no repaint to judge an unset on)
 MEASURED = None   # e.g. "run <name>: own A .. -> .., puppet B .. -> .., over-boots .., unset .."
 
 
@@ -94,6 +98,11 @@ def last(pair, x, pattern, pos):
     """The newest match's group 1 since `pos` in game x's log, or None."""
     found = re.findall(pattern, "\n".join(pair.log[x].since(pos)))
     return found[-1] if found else None
+
+
+def paths(pair, name):
+    """A shot of each game compared to its reference; the shots' paths (for huecheck.left_after_unset)."""
+    return {x: pair.check_shot(x, name, tolerance=0.80)["path"] for x in ("A", "B")}
 
 
 def shots(pair, name):
@@ -178,9 +187,11 @@ def test_leather_unset_is_01112(pair):
         assert gear_01112 and "leather" not in gear_01112, "A: a boots-only gear name with leather: %s" % gear_01112
         assert boots_01112 and "L" not in boots_01112[len("boots"):], "B: a boots-only puppet name with L: %s" % (
             boots_01112)
+        gold = paths(pair, "leather-link-unset-gold")
         choose(pair, "link_leather", MAGENTA)
         pair.expect_log("B", PUPPET_BOOTS.replace(r"(boots\S*)", r"boots\S*L" + MAGENTA), max_frames=600)
         pair.step_both(30)
+        magenta = paths(pair, "leather-link-unset-magenta")
         mark_a, mark_b = pair.log["A"].mark(), pair.log["B"].mark()
         choose(pair, "link_leather", "none")
         pair.until("A's gear painting is 0.11.12's again",
@@ -188,12 +199,18 @@ def test_leather_unset_is_01112(pair):
         pair.until("B's puppets' boots painting is 0.11.12's again",
                    lambda: last(pair, "B", PUPPET_BOOTS, mark_b) == boots_01112, max_frames=600)
         pair.step_both(30)
-        back = shots(pair, "leather-link-unset")
+        back = paths(pair, "leather-link-unset")
         low = []
         for x in ("A", "B"):
-            note(pair, "share %s unset %.5f" % (x, back[x]))
-            if back[x] >= MORE:
-                low.append("%s: magenta left after the leather was unset (%.5f)" % (x, back[x]))
+            # (only the pixels the leather painted, not the whole frame's magenta: B #148, the hair/vest unset rows'
+            # whole-frame count took animated scene colour as 'left'; huecheck.left_after_unset)
+            h = huecheck.left_after_unset(gold[x], magenta[x], back[x], int(MAGENTA, 16))
+            note(pair, "huecheck %s leather unset-again #%s wear=%d left=%d share=%.3f" % (
+                x, MAGENTA, h["wear"], h["left"], h["share"]))
+            if h["wear"] < MIN_WEAR:
+                low.append("%s: only %d pixels took the magenta leather: no wear to judge the unset on" % (x, h["wear"]))
+            elif h["share"] >= huecheck.LEFT_SHARE:
+                low.append("%s: magenta left on the leather after unset %s" % (x, h))
         judged(pair, low)
     finally:
         reset(pair)

@@ -36,6 +36,7 @@
 #include "coop_hookshot.h"
 #include "coop_map_drawn.h"
 #include "coop_menu_state.h"
+#include "coop_native_ui.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
 #include "coop_playtest_core.h"
@@ -373,7 +374,10 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     for (const char* slot : {"weapon", "shield", "head", "armor", "boots"}) {
         const auto flag = CoopTestInput::WearFlag(slot);
         const auto v = flag ? CoopTestInput::FlagText(sys, "PlayerStatus." + *flag) : std::nullopt;
-        out += std::string(first ? "" : ",") + "\"" + slot + "\":" + (v ? Quote(*v) : "null");
+        // An empty slot (no mask: 'wear head none' empties the flag) is null, as docs/playtest.md "State" has it
+        // ("head":null) and the fake games answer: GameFlags::get_string64 reads an empty String64 as "", and a
+        // test waiting for null never saw the mask come off (B #148 gate-look 309d7180c hair_under_mask).
+        out += std::string(first ? "" : ",") + "\"" + slot + "\":" + (v && !v->empty() ? Quote(*v) : "null");
         first = false;
     }
     out += "},\"inventory\":{";
@@ -402,7 +406,16 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
         out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
     }
+    out += ",\"banner\":" + CoopNativeUi::StatsJson(CoopNativeUi::Stats());   // (typing-blink-0121: our banner's opens)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
+    {   // hud-stepped-0121: the last party HUD and name-tag steps a second or more after the one before (coop_hookshot.h)
+        const auto slow = [](const CoopHookshot::SlowStep& x) {
+            return "{\"count\":" + std::to_string(x.count) + ",\"gap_ms\":" + std::to_string(x.gap_ms) +
+                   ",\"shown\":" + std::to_string(x.shown) + "}";
+        };
+        out += ",\"slow_steps\":{\"party_hud\":" + slow(CoopHookshot::PartySlow()) +
+               ",\"name_tags\":" + slow(CoopHookshot::TagsSlow()) + "}";
+    }
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
     return out;
@@ -754,6 +767,10 @@ std::string Handle(const Request& r) {
         // reaches no wire. A key co-op leaves is Longshot's, and the bridge never plays Longshot's own keys, with one
         // exception: F1 left while co-op's tab shows is Longshot's F1 closing its menu (gpu/vk/vk_menu.cpp, F1 toggles
         // it), done here as HOS_COOP_MENU_WANT_CLOSE does it, so a test can shut what its F1 opened.
+        if (!r.chars.empty()) {   // typed characters (typing-blink-0121): hos_coop_char's steps, one per byte
+            const std::size_t taken = CoopHookshot::BridgeChars(r.chars);
+            return ok("\"text\":" + Quote(r.chars) + ",\"taken\":" + std::to_string(taken));
+        }
         const bool shown = CoopPause::TabShown();
         const std::string head = "\"key\":" + Quote(r.key) + ",\"vk\":" + std::to_string(r.vk);
         if (CoopHookshot::BridgeKey(r.vk)) return ok(head + ",\"taken\":true");

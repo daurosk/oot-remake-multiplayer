@@ -8,7 +8,8 @@ block per Link in that Link's hair colour (unset: the game's blond).
 - The other game: `coop: look: the puppets' boots are <name> now` (coop_look_live.cpp FollowBoots), the name as
   CoopLookParts::BootsPaintingName (`boots[.<L>-hair-RRGGBB]`); the fake's letters: A's puppet G, B's puppet R.
 - A warp to a scene ending `_Adult` makes the fake Link adult (the bridge's warp sets Sequence_IsChildhood: docs/playtest.md).
-Selftest variable: BT_FAKE_HAIR=norepaint (the lines are said but no hair is drawn: the texture not repainted).
+Selftest variable: BT_FAKE_HAIR=norepaint (the lines are said but no hair is drawn: the texture not repainted);
+BT_FAKE_HAIR=nounset (the unset line is said but the last colour stays drawn: the row's bug).
 """
 import os
 
@@ -18,7 +19,7 @@ BOX = {"A": 100, "B": 220}   # (x of each Link's hair block in the 320x180 fake 
 
 
 def setup(game):
-    game.hair_link, game.hair_link_seen = None, False
+    game.hair_link, game.hair_link_seen, game.hair_link_drawn = None, False, None
 
 
 def act(game, w):
@@ -30,6 +31,8 @@ def act(game, w):
     if hair == game.hair_link:
         return True
     game.hair_link = hair
+    if hair is not None or os.environ.get("BT_FAKE_HAIR") != "nounset":
+        game.hair_link_drawn = hair
     if hair is not None:
         game.later(2, lambda: game.say("coop: look: your Link's gear is gear.hair-%06X now (1 texture(s) drawn so by "
                                        "Longshot's texture overrides; the game's memory is left as it is)" % hair))
@@ -52,7 +55,7 @@ def after(game, m, r):
     im = Image.open(r["path"]).convert("RGB")
     d = ImageDraw.Draw(im)
     for g in (game, game.other):
-        c = g.hair_link if g.hair_link is not None and not norepaint else BLOND
+        c = g.hair_link_drawn if g.hair_link_drawn is not None and not norepaint else BLOND
         x0 = BOX[g.tag]
         d.rectangle([x0, 40, x0 + 30, 70], fill=((c >> 16) & 255, (c >> 8) & 255, c & 255))
     im.save(r["path"])

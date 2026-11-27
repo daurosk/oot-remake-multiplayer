@@ -57,6 +57,43 @@ def results(s):
     return {r["test"].split("::")[-1]: r["result"] for r in s["tests"]}
 
 
+class FakeIsolation(unittest.TestCase):
+    """B #149 (banner-steady-0121 b5abb38eb, chartab-0121): fake modules (ingame/fakes) act only while their own row
+    runs. Two fakes broke other rows only in a whole-suite run (dbno_banner's st['banner'] overwrote chat_typing's;
+    its `text` answer hid regress_ui's SystemWindow_00 text; f1_event's st['menu'] wiped chartab's). Here: (1) no
+    'fake-guard:' line (fakegame.py: a state key replaced by a second module) in a whole fake suite, (2) every test
+    file's results alone == its results in that whole suite (any other way one fake steps on another row)."""
+
+    def test_each_file_alone_as_in_the_suite(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        refs = os.path.join(tmp, "refs")
+        os.makedirs(refs)
+        env = {"BT_FAKE_REFS": refs}
+        whole = os.path.join(tmp, "whole")
+        p = pytest_run([".", "--fake", "--out", whole, "-q", "-p", "no:cacheprovider"], env=env)
+        guards = []
+        for root, _, files in os.walk(whole):
+            if "fake-guard.txt" in files:
+                with open(os.path.join(root, "fake-guard.txt"), encoding="utf-8") as f:
+                    guards += f.read().splitlines()
+        self.assertEqual(guards, [], "fake modules step on each other's state (fakegame.py guard 1)")
+        in_suite = {r["test"]: r["result"] for r in summary(whole)["tests"]}
+        self.assertTrue(in_suite, p.stdout[-2000:])
+        by_file = {}
+        for t, res in in_suite.items():
+            by_file.setdefault(t.split("::")[0], {})[t] = res
+        diffs = {}
+        for name in sorted(by_file):
+            out = os.path.join(tmp, "alone-" + name[:-3])
+            q = pytest_run([name, "--fake", "--out", out, "-q", "-p", "no:cacheprovider"], env=env)
+            alone = {r["test"]: r["result"] for r in summary(out)["tests"]} if os.path.exists(
+                os.path.join(out, "summary.json")) else {"(no summary)": q.stdout[-500:]}
+            if alone != by_file[name]:
+                diffs[name] = {"suite": by_file[name], "alone": alone}
+        self.assertEqual(diffs, {}, "a test's result depends on the other rows' fakes")
+
+
 class Suite(unittest.TestCase):
     """The real suite (smoke + pilot rows) against two fake games."""
 

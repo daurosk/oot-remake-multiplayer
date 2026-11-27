@@ -50,10 +50,14 @@ class HairLink(unittest.TestCase):
         s, p = self.run_it("on", NO_CS)
         self.assertEqual(results(s), {t: "NO-REF" for t in ALL}, p.stdout[-3000:])
         self.assertIn("the hair colour thresholds are not measured yet", p.stdout)
-        self.assertNotIn("low:", p.stdout)   # (the fake's hair blocks: every share holds)
-        # own+puppet 2 steps x 2 games, unset-again 2, mask 2, no-CS 2 x 2, adult 2
+        # (judged()'s own "; low: " in the NO-REF reason: a bare "low:" also matched the vest's traceback
+        # line "took the yellow: the vest", CI 45930967885)
+        self.assertNotRegex(p.stdout, r"NO-REF: [^\n]*; low: ")   # (the fake's hair blocks: every share holds)
+        # changed_hue: own+puppet 2 steps x 2 games, mask 2, no-CS 2 x 2, adult 2; left_after_unset: unset-again 2
         # (no ^: pytest's progress letters may stand before a printed line)
-        self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*changed=\d+", p.stdout)), 14, p.stdout[-3000:])
+        self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*changed=\d+", p.stdout)), 12, p.stdout[-3000:])
+        self.assertEqual(len(re.findall(r"huecheck [AB] unset-again [^\n]*wear=\d+ left=\d+", p.stdout)), 2,
+                         p.stdout[-3000:])
         self.assertNotIn("put back:", p.stdout)   # (the adult test's way back to child worked)
         s, p = self.run_it("off", [])
         self.assertEqual([d["test"] for d in s["deselected"]], ["test_hair_link.py::test_hair_without_character_select",
@@ -76,6 +80,15 @@ class HairLink(unittest.TestCase):
                   "test_hair_adult"):
             self.assertEqual(r[t], "FAIL", (t, p.stdout[-3000:]))
         self.assertIn("the hair was not repainted", p.stdout)
+
+    def test_hair_unset_judged_on_the_hair_only(self):
+        """B #148: a flickering orange torch flame (#DD4527's hue) is not 'red left' (gate-look 309d7180c false FAIL),
+        and a hair whose unset line is said but whose red stays drawn is a FAIL."""
+        s, p = self.run_it("flame", NO_CS, env={"BT_FAKE_FLAME": "E85020"})
+        self.assertEqual(results(s)["test_hair_unset_is_game"], "NO-REF", p.stdout[-3000:])
+        s, p = self.run_it("nounset", NO_CS, env={"BT_FAKE_HAIR": "nounset"})
+        self.assertEqual(results(s)["test_hair_unset_is_game"], "FAIL", p.stdout[-3000:])
+        self.assertIn("red left on the hair after unset", p.stdout)
 
 
 if __name__ == "__main__":

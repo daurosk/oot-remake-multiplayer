@@ -159,14 +159,18 @@ def test_vest_unset_is_tunic(pair):
     try:
         before = shots(pair, "vest-link-unset")
         wear(pair, "A", YELLOW)
+        coloured = shots(pair, "vest-link-unset-yellow")
         wear(pair, "A", None)
         back = shots(pair, "vest-link-unset-again")
         for x in ("A", "B"):
             score, err = imagecheck_ssim(before[x], back[x])
-            h = huecheck.changed_hue(before[x], back[x], YELLOW)
-            note(pair, "huecheck %s unset-again #%06X changed=%d coloured=%d ssim=%s" % (
-                x, YELLOW, h["changed"], h["coloured"], score))
-            assert h["coloured"] < MIN_CHANGED, "%s: yellow left on the vest after unset %s" % (x, h)
+            # (only the pixels the wear painted: a whole-frame count took the torch flames as yellow left, B #148)
+            h = huecheck.left_after_unset(before[x], coloured[x], back[x], YELLOW)
+            note(pair, "huecheck %s unset-again #%06X wear=%d left=%d share=%.3f ssim=%s" % (
+                x, YELLOW, h["wear"], h["left"], h["share"], score))
+            assert h["wear"] >= MIN_CHANGED, "%s: only %d pixels took the yellow: the vest was not repainted %s" % (
+                x, h["wear"], h)
+            assert h["share"] < huecheck.LEFT_SHARE, "%s: yellow left on the vest after unset %s" % (x, h)
             if err or score < SAME_SSIM:
                 low.append("%s: unset again vs before SSIM %s %s (want >= %.2f)" % (x, score, err or "", SAME_SSIM))
         done = True

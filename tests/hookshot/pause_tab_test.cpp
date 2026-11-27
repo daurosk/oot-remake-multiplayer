@@ -2564,6 +2564,25 @@ TEST_CASE("pause tab (row 199): the menu is up while the tab strip is open or op
     CHECK_FALSE(MenuUpFrom(2, 2000, 1000));                 // (a clock that went back)
 }
 
+TEST_CASE("gate-ui-epona-0121: a stepped or hitching game keeps its menu-up and free-play readings") {
+    // (presents: the strip / free play stamped at present 10; a reader at present 11 = the first frame after the
+    // bridge held the game, or a hitch: no newer stamp could exist)
+    CHECK(MenuUpFrom(2, 1000, 1000 + 5000, 10, 11));                       // (held 5 s, then one present)
+    CHECK(MenuUpFrom(2, 1000, 1000 + 5000, 10, 10));                       // (held: no present at all)
+    CHECK_FALSE(MenuUpFrom(2, 1000, 1000 + kMenuUpMs, 10, 12));            // (presents went on: closed, or a load)
+    CHECK(MenuUpFrom(2, 1000, 1000 + kMenuUpMs - 1, 10, 40));              // (fresh by the clock)
+    CHECK_FALSE(MenuUpFrom(3, 1000, 1000, 10, 10));                        // (closing)
+    CHECK_FALSE(MenuUpFrom(2, 0, 50, 0, 0));                               // (never seen)
+    CHECK_FALSE(MenuUpFrom(2, 2000, 1000, 10, 10));                        // (a clock that went back)
+    // S 309d7180c gate-ui: free play 'yes' stamped, the bridge's `menu open` 12 s later at the next frame
+    CHECK(FreePlayFresh(true, 1000, 1000 + 12000, 10, 11));
+    CHECK_FALSE(FreePlayFresh(true, 1000, 1000 + kFreePlayFreshMs, 10, 12));   // (presents on, no stamp: a load)
+    CHECK(FreePlayFresh(true, 1000, 1000 + kFreePlayFreshMs - 1, 10, 50));
+    CHECK_FALSE(FreePlayFresh(false, 1000, 1000, 10, 10));                     // (stamped "no": at once)
+    CHECK_FALSE(FreePlayFresh(true, 0, 100, 0, 0));                            // (never stamped)
+    CHECK_FALSE(FreePlayFresh(true, 2000, 1000, 10, 10));
+}
+
 TEST_CASE("pause tab (0.11.9, lane 062917): Character Select's Customize screen is taken as open only in a menu that is up") {
     // A real opening: his state reads open at 1000 with the strip's update of the frame before (990, open); taken once
     // the strip has updated since (1006), and kept while it stays up.

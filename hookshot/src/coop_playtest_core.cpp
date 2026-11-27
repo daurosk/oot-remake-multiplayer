@@ -29,6 +29,10 @@ double IdleFrom(std::string_view value) {
 }
 
 std::optional<std::uint32_t> KeyVk(std::string_view name) {
+    // typing-blink-0121: the keys that end or edit the chat box's line (the Windows virtual keys TypeKey reads)
+    if (name == "Esc") return 0x1Bu;
+    if (name == "Enter") return 0x0Du;
+    if (name == "Backspace") return 0x08u;
     if (name.size() == 1) {
         const char c = name[0];
         if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return static_cast<std::uint32_t>(c);
@@ -495,10 +499,27 @@ std::optional<Request> ParseRequest(std::string_view line, std::string& error) {
     if (c == "key") {
         // A host key as the window gives it to the module (hos_coop_key; port-g7 f1-event C3-1, B #137). A key, not a
         // character: text is typed with `act chat`, the game's pad is `input`.
+        // typing-blink-0121: `text` in place of `key` types characters, as the window hands them (hos_coop_char):
+        // printable ASCII, 1 to 64 of them (what a test types into the chat box or a field).
+        if (const auto text = v->Text("text")) {
+            if (v->Get("key")) {
+                error = "key: give key or text, not both";
+                return std::nullopt;
+            }
+            bool printable = !text->empty() && text->size() <= 64;
+            for (const char ch : *text) printable = printable && ch >= 0x20 && ch <= 0x7E;
+            if (!printable) {
+                error = "text: 1 to 64 printable ASCII characters (typed as the window hands them, hos_coop_char)";
+                return std::nullopt;
+            }
+            r.chars = *text;
+            return r;
+        }
         const auto key = v->Text("key");
         const auto vk = key ? KeyVk(*key) : std::nullopt;
         if (!vk) {
-            error = "key: F1 to F12, A to Z or 0 to 9 (a host key, as the window gives it to the module)";
+            error = "key: F1 to F12, A to Z, 0 to 9, Esc, Enter or Backspace (a host key, as the window gives it to "
+                    "the module), or text";
             return std::nullopt;
         }
         r.key = *key;

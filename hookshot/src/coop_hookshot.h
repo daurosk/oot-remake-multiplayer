@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "coop_draw.h"
 #include "coop_game_build.h"
@@ -120,6 +121,18 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
 
+// hud-stepped-0121 (the proof of hud-fresh-0121): the last party HUD step and the last name-tag step that ran a second
+// or more after the one before (a game stepped by the play-test bridge, a slow PC, a hitch), and what each showed then:
+// `count` such steps so far (0 none yet), `gap_ms` that step's gap, `shown` the other players' blocks on the game's HUD
+// (0 when the HUD hid them or was not there) or the name tags on the game's balloons. The bridge's state carries them
+// ("slow_steps"); before hud-fresh-0121 such a step showed 0 blocks and 0 tags (testkit-0120 kit-in-play). Any thread.
+struct SlowStep {
+    std::uint64_t count = 0, gap_ms = 0;
+    int shown = 0;
+};
+SlowStep PartySlow();
+SlowStep TagsSlow();
+
 // The players on the map (Multiplayer > Settings: "Show players on map",
 // "Names on map"; LICHII_COOP_MAP, LICHII_COOP_MAP_NAMES at start): count
 // from the next present. Any thread.
@@ -145,6 +158,8 @@ bool KeysTaken();
 // The play-test bridge's `key` (docs/playtest.md): hos_coop_key's steps (vk, no repeat), as the window's WM_KEYDOWN
 // gives it (ls32-src/host/display.c), without its SDL-thread mark (the bridge's thread is not the window's). True: co-op took it (F1: its route logged as "coop: F1: ..."); false: the key is Longshot's.
 bool BridgeKey(std::uint32_t vk);
+// The bridge's typed characters (typing-blink-0121): hos_coop_char's steps for each byte; how many co-op took.
+std::size_t BridgeChars(std::string_view text);
 // The chat box or the cheats panel is open (it has the keyboard).
 bool ChatOpen();
 // The key that opens the chat box from now on (the Multiplayer tab's Settings

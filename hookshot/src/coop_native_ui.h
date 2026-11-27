@@ -308,6 +308,31 @@ void HoldBanner(std::string_view text);   // held, or its text changed
 void EndBanner();                         // let go: the banner closes, chat goes on
 std::optional<std::string> HeldBanner();  // the held text, if any
 
+// typing-blink-0121: what our banner did, for the play-test bridge's state ("banner") and the log. The game's open
+// (slot 5) with mode 2 plays the banner's "open" animation from its start EVEN WHEN IT IS UP ALREADY (its update
+// f_802f1380 calls slot 70 f_80795d20 -> f_802f62e0 for every request of 2: "open" animation, state 1): an open of
+// ours on a banner that shows would be the banner going out and coming in again: Banner never does it (it only sets
+// the text then), and `reopens` counts the times it was asked; `shut_by_game`
+// counts a banner of ours (a page or the held line) found shut without our close; `taken_by_game` one found showing a
+// text that is not ours.
+struct BannerStats {
+    std::uint64_t opens = 0;          // our open calls (the banner was shut, or closing)
+    std::uint64_t reopens = 0;        // opens asked on a banner already up or opening: kept up, not opened again
+    std::uint64_t shut_by_game = 0;   // ours, then shut without our close
+    std::uint64_t taken_by_game = 0;  // ours, then showing a text that is not ours
+    std::uint64_t sets = 0;           // texts set
+    std::uint64_t type_resets = 0;    // the Type animation put back at its first frame (only when it is put up)
+    int state = -1, request = 0;      // the screen's +0x1a6 and +0x1a5 at the last step (-1: no banner)
+    Holds holds = Holds::kNothing;    // at the last step
+    bool page = false, held = false;  // a page of ours is up; the held line is up
+};
+BannerStats Stats();
+std::string StatsJson(const BannerStats& s);
+// The banner's changes since the last call, as log lines ("coop: native ui: banner: ..."): each change of whose it is
+// (shut / ours / the game's) with the screen's state and request, and each open of ours on a banner already up. The
+// first 300 a run, then every 100th (the game's thread logs them: coop_hookshot.cpp NativeStep).
+std::vector<std::string> TakeBannerLines();
+
 // The game's banner (SimpleInfo_00), every write of ours to it. It is never taken from the game: while it is up with
 // a text that is not ours (its T_Text_00 text box's pointer is not in our block and not the last one we set), a page
 // waits and so does the held line; closing touches only a banner of ours. Each text goes up as the game's own
@@ -331,9 +356,20 @@ public:
     bool showing() const { return page_; }       // a page of ours is up
 
 private:
-    bool Set(Game& game, std::uint64_t screen, std::uint64_t ref);
+    // Our text on T_Text_00. `opening`: the banner is put up now (shut, or the game's before), so its Type animation is
+    // put back at its first frame first, as the game's f_83419b10 does before an open; never on a banner of ours that
+    // is up (revive-flicker-0121: replayed on every text change of the held line, the revive's share each frame, the
+    // banner blinked).
+    bool Set(Game& game, std::uint64_t screen, std::uint64_t ref, bool opening);
     void Close(Game& game, std::uint64_t screen);
+    bool Raise(Game& game, std::uint64_t screen);   // our open call (counted; see BannerStats)
+    // True when the banner shows or is about to (state 1/2 with no close of ours pending, or an open asked): then it is
+    // neither opened again nor its Type reset, only its text set (counted as `reopens`; typing-blink-0121).
+    bool KeptUp(Game& game, std::uint64_t screen);
+    void Note(Game& game, std::uint64_t screen, Holds holds);   // each step's look (BannerStats, the log)
     bool up_ = false, page_ = false;
+    bool closed_ = false;      // our close asked since the last open (a shut after it is ours, not the game's)
+    Holds noted_ = Holds::kNothing;
     std::uint64_t until_ = 0;  // the page's time
     std::string shown_;
     std::uint64_t ours_ = 0;   // the text box's pointer after our last set (the game may copy the text)

@@ -756,6 +756,45 @@ class PlayerTest(unittest.TestCase):
                 self.assertIn("give bombs", f.read())
             self.assertEqual(log.lines[-1], "coop: test script done")
 
+    def late_mark(self, take_after, late_for):
+        """A mark whose commands file the module empties only `take_after` s (fake clock) after it was written."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands-A.txt")
+            game = FakeGame()
+            log, b = hs.Log(), game.connect()
+            written = []
+            clock = game.clock
+
+            def sleep(s):
+                clock.sleep(s)
+                try:
+                    if os.path.getsize(path) and not written:
+                        written.append(clock())
+                    if written and clock() - written[0] >= take_after:
+                        open(path, "w").close()
+                except OSError:
+                    pass
+            p = hs.Player(b, log, clock=clock, sleep=sleep, commands=path, take_for=5.0, late_for=late_for)
+            p.play(hs.parse("mark start\nwait 6"))
+            game.close()
+            return p, log
+
+    def test_a_mark_taken_late_is_not_a_failure(self):
+        """gate-mark-0121 (gate-hud-309d7180): A took its first mark after 5 s, just after a 460 s shader start-up;
+        the module had it (its log's 'coop: test mark start'), yet the boot FAILED as 'NOT taken'."""
+        p, log = self.late_mark(take_after=8.0, late_for=60.0)
+        self.assertEqual(p.not_taken, [])
+        self.assertEqual(len(p.late), 1)
+        self.assertTrue(p.late[0].startswith("mark start "), p.late)
+        self.assertTrue(any("coop: test mark start taken late after" in line for line in log.lines), log.lines)
+
+    def test_a_mark_never_taken_still_fails(self):
+        p, log = self.late_mark(take_after=1e9, late_for=2.0)
+        self.assertEqual(p.not_taken, ["mark start"])
+        self.assertEqual(p.late, [])
+        self.assertTrue(any("coop: test mark start NOT taken" in line for line in log.lines), log.lines)
+
     def test_module_lines_read_back_the_same(self):
         """The module gets each step's line as written: read alone, it is the same step."""
         n = 0
@@ -943,7 +982,18 @@ class RunTest(unittest.TestCase):
         start answered ok. Now the run FAILs, naming them."""
         self.two_games(module=False)
 
-    def two_games(self, module):
+    def test_scripts_wait_for_the_modules_commands_reader(self):
+        """gate-mark-0121 (gate-hud / gate-title / gate-host170-309d7180): the first mark was written the second the
+        renderer was ready, before the module's commands reader ran (its 'coop: test commands file' line), and counted
+        NOT taken. Now each script waits for that line: a reader 5 s late still passes, and the steps say the wait."""
+        steps = self.two_games(module=True, reader_after=5.0, mark_late=15.0)
+        # (B's fake starts last, so its reader is still late after the load: the script waited for it)
+        self.assertRegex(steps, r"B: module reads its commands file \(waited [1-9]\.\d s after the save load\)")
+        self.assertRegex(steps, r"A: module reads its commands file \(waited \d+\.\d s after the save load\)")
+        self.assertNotIn("NOT taken", steps)
+        self.assertNotIn("taken late", steps)   # (the wait came first: the marks themselves on time)
+
+    def two_games(self, module, reader_after=0.0, mark_late=0.5):
         import tempfile
         import threading
         done = threading.Event()
@@ -959,8 +1009,15 @@ class RunTest(unittest.TestCase):
                 if module:   # (the module reads its commands file: empties it, as coop_test_commands does)
                     import threading
                     path = self.env["LICHII_COOP_TEST_COMMANDS"]
+                    out = getattr(kw.get("stdout"), "name", None)   # (the game's log by path: run closes its handle)
 
                     def read():
+                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
+                        if reader_after and done.wait(reader_after):
+                            return
+                        if isinstance(out, str):
+                            with open(out, "ab") as f:
+                                f.write(("[hos Presentation Thread] coop: test commands file %s\n" % path).encode())
                         while not done.is_set():
                             try:
                                 if os.path.getsize(path):
@@ -997,7 +1054,7 @@ class RunTest(unittest.TestCase):
                                 "--out", os.path.join(tmp, "out"), "--name", "t", "--script-a",
                                 os.path.join(tmp, "a.txt"), "--script-b", os.path.join(tmp, "b.txt"),
                                 "--every", "0", "--env", "B:ONLY_B=1", "--env", "BOTH=1",
-                                "--display", "DISPLAY7", "--playtest-ports", "5010"])
+                                "--display", "DISPLAY7", "--playtest-ports", "5010", "--mark-late", str(mark_late)])
             finally:
                 done.set()
                 hs.subprocess.Popen, hs.Bridge.connect = popen, connect
@@ -1011,7 +1068,9 @@ class RunTest(unittest.TestCase):
                     g.close()
                 return
             with open(os.path.join(out, "steps.txt")) as f:
-                self.assertEqual(code, 0, f.read())
+                steps = f.read()
+            self.assertEqual(code, 0, steps)
+            self.assertIn("A: module reads its commands file (", steps)
             self.assertTrue(os.path.isdir(os.path.join(tmp, "A", "user", "save", "u")))   # baseline put back
             self.assertEqual([p.env["HOS_CONTROL_MEM"] for p in started], ["ro", "ro"])
             if hs.WINDOWS:   # each game's window is placed on the chosen monitor: A in the first place, B in the second
@@ -1034,6 +1093,7 @@ class RunTest(unittest.TestCase):
                 self.assertEqual(len(g.cmds("quit")), 1)
                 g.close()
             self.assertEqual(ga.cmds("stick")[0]["y"], 1)
+            return steps
             self.assertEqual([r["buttons"] for r in gb.cmds("press")][-1], ["A"])
             with open(os.path.join(out, "player-A.txt")) as f:
                 a_log = f.read()

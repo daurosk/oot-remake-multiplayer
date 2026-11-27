@@ -15,11 +15,10 @@ player_equip branch). The tunic and boots are not in that line: the shots carry 
 """
 import pytest
 
+import game_names
 from test_rows import need_child_in_play, place_in_front
 
-GOLD = "Armor_Adult_Gauntlet_Gold"      # hs-gear-age.A.txt / hs-gear-adult.A.txt wear lines
-GORON = "Armor_Adult_Goron"
-HOVER = "Armor_Adult_HoverBoot"
+GOLD, GORON, HOVER = game_names.GOLD_GAUNTLETS, game_names.GORON_TUNIC, game_names.HOVER_BOOTS   # (one table)
 SLOTS = (("hand", GOLD), ("armor", GORON), ("boots", HOVER))
 FLAG = {"hand": "PlayerStatus.EquipHandArmor", "armor": "PlayerStatus.EquipArmor",   # coop_testinput.cpp WearFlag
         "boots": "PlayerStatus.EquipBoot"}

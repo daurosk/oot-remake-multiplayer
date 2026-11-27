@@ -1,5 +1,5 @@
 """Selftests of chartab-0121's bridge test (tools/autotest/ingame/test_chartab.py) on the fake games
-(ingame/fakes/chartab.py). Run by test_ingame.py's load_tests (CI) or alone."""
+(ingame/fakes/menu_chartab.py). Run by test_ingame.py's load_tests (CI) or alone."""
 import os
 import shutil
 import sys

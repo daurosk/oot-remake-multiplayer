@@ -4,6 +4,9 @@
 # Longshot rebuild for co-op. Per version: build stock with the release's own builder (--cli), check its symbols offline
 # (selftest.exe), drop our winmm.dll beside the game's bin\longshot.exe, start the game, wait for our log's frame lines,
 # screenshot, close; winmm.dll removed again on every path. Unattended; exit 0 = PASS (both), 1 = FAIL, 2 = SETUP-FAIL.
+# GAME STARTS moved to the bridge pytest test tools/autotest/ingame/test_dropin_longshot.py (worker rule 2026-11-26:
+# every in-game run is a pytest test): this script now runs ONLY with -SetupOnly or -BuildOnly (the official tools and the
+# stock build); without either it stops at once as SETUP-FAIL.
 # Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 -Expect <sha of this checkout> [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2] [-SetupOnly] [-BuildOnly] [-ShortRoot C:\lsb]
 # -SetupOnly: the setup proof and the official setup's --check only (installs the tools, checks the game file): no build, no game.
 # -BuildOnly: also the stock build and the offline symbol check (selftest) of its exe; no game start, nothing dropped in.
@@ -34,6 +37,7 @@ function Say([string]$m) { $l = (Get-Date).ToUniversalTime().ToString('HH:mm:ss'
 function SetupFail([string]$m) { Say "SETUP-FAIL $m"; Say "RESULT SETUP-FAIL $m"; exit 2 }
 
 # ---- setup proof (each check < 2 min) -------------------------------------------------------------------------------
+if (-not $SetupOnly -and -not $BuildOnly) { SetupFail 'game starts are the pytest test tools/autotest/ingame/test_dropin_longshot.py (--env BT_DROPIN=1); use -SetupOnly or -BuildOnly here' }
 Say "v1-dropin-proof $stamp versions $($Versions -join ',') out $out"
 $repo = Split-Path -Parent (Split-Path -Parent $here)                                # this checkout (hookshot\dropin -> repo)
 $sha = try { "$(git -C $repo rev-parse HEAD)".Trim() } catch { '' }

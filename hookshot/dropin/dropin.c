@@ -16,6 +16,7 @@
    SQUADALA_DROPIN=0 in the environment: the proxy only forwards winmm, no hook. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>                /* CommandLineToArgvW (shell32) */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -187,6 +188,14 @@ static void attach(void) {
     wcscpy(slash + 1, L"squadala-dropin.log");
     g_log = _wfopen(logp, L"a");
     dlog("dropin: attached to %ls (proof build %s %s)", exe, __DATE__, __TIME__);
+    /* The game starts a helper of ITSELF early, `longshot --crash-watch <pid> ...` (Longshot v3.2.0
+       host/hos_crash_dialog.h HOS_CRASH_WATCH_ARG; also v3.1.1): same exe, same folder, so it loads this winmm.dll too.
+       It never runs the guest, so it gets no hook (run 20261126-064809 hooked both processes). */
+    int argc = 0;
+    wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    int helper = argv && argc > 1 && wcscmp(argv[1], L"--crash-watch") == 0;
+    if (argv) LocalFree(argv);
+    if (helper) { dlog("dropin: the game's --crash-watch helper (pid %lu): forwarding winmm only", GetCurrentProcessId()); return; }
     if (e && env[0] == '0') { dlog("dropin: SQUADALA_DROPIN=0: forwarding winmm only"); return; }
     Want want[] = {{"f_83b6e300", 0, 0}, {"hos_guest_base", 0, 0}};
     if (!find_symbols(exe, want, 2)) { dlog("dropin: symbols missing: no hook"); return; }

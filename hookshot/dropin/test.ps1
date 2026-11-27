@@ -5,6 +5,7 @@
 #      through the trampoline, forwarded winmm calls answered;
 #   2. "badword": the guest word differs -> pass-through, no frame lines, the body still runs 1200 times;
 #   3. SQUADALA_DROPIN=0: forwarding only, no hook.
+#   4. "--crash-watch" (the game's own crash helper, Longshot host/hos_crash_dialog.h): forwarding only, no hook.
 # Exit 0 = PASS. Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\test.ps1
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -40,6 +41,7 @@ Run-Case 'hook-on' '' '' @('dropin: attached', '2 of 2 wanted found', 'hooked at
     'dropin: frame 1 \(x0 0x1000, lr guest 0x806e6dd8\)', 'dropin: frame 600 ', 'dropin: frame 1200 ') @('left out', 'pass-through')
 Run-Case 'bad-word' 'badword' '' @('hooked at', 'NOT the expected word: pass-through') @('dropin: frame [0-9]')
 Run-Case 'off' '' '0' @('SQUADALA_DROPIN=0: forwarding winmm only') @('hooked at', 'dropin: frame [0-9]')
+Run-Case 'crash-watch' '--crash-watch' '' @("the game's --crash-watch helper \(pid [0-9]+\): forwarding winmm only") @('hooked at', 'dropin: frame [0-9]', 'COFF symbols')
 $st = & (Join-Path $out 'selftest.exe') (Join-Path $fake 'longshot.exe') 2>&1
 Write-Output "selftest on the stand-in (expected to miss the real game's other symbols): $(@($st)[0])"
 if ($fails) { Write-Output "TEST FAIL ($fails case(s))"; exit 1 }

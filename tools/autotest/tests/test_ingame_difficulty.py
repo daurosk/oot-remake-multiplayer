@@ -42,15 +42,24 @@ class DifficultyBridgeTests(unittest.TestCase):
     def kept_files(self, out):
         return glob.glob(os.path.join(out, "**", "coop-difficulty.ini"), recursive=True)
 
-    def test_hard_lobby_judged_by_state_and_kept_file_put_back(self):
-        """Hard from the first player and the Host page's kept steps: the state/log judge passes (NO-REF: no refs
-        yet), and A's kept file is as it was before the run."""
-        p, s, out = self.run_it("ok", "hard", before="preset = custom\nhp = 300\n")
-        self.assertEqual(results(s), {LOBBY: "NO-REF", HOST: "NO-REF"}, p.stdout[-2000:])
+    def test_kept_file_before_is_setup_fail_and_left_as_it_was(self):
+        """A coop-difficulty.ini left by an earlier run (lane1-A/lane2-A 2026-11-26: a kept Custom hp=300, read once at
+        game start, the Host page starts there): each set-up is SETUP-FAIL naming the file, before any input, and the
+        file is as it was (B #148 / review-rows-c130-6 02:22)."""
+        p, s, out = self.run_it("kept", "hard", before="preset = custom\nhp = 300\n")
+        self.assertEqual(results(s), {LOBBY: "SETUP-FAIL", HOST: "SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertIn("holds a kept difficulty from an earlier run", p.stdout)
         files = self.kept_files(out)
         self.assertEqual(len(files), 1, files)
         with open(files[0], encoding="utf-8") as f:
             self.assertEqual(f.read(), "preset = custom\nhp = 300\n")
+
+    def test_lobby_hard_and_kept_steps_then_no_file_after(self):
+        """Hard from the first player and the Host page's kept steps: the state/log judge passes (NO-REF: no refs
+        yet), and the file the Host page wrote is gone after (the lane had none before)."""
+        p, s, out = self.run_it("ok", "hard")
+        self.assertEqual(results(s), {LOBBY: "NO-REF", HOST: "NO-REF"}, p.stdout[-2000:])
+        self.assertEqual(self.kept_files(out), [])
 
     def test_no_kept_file_before_means_none_after(self):
         p, s, out = self.run_it("none", "hard")
@@ -64,20 +73,18 @@ class DifficultyBridgeTests(unittest.TestCase):
         self.assertIn("coop: difficulty: Hard", p.stdout)
 
     def test_fails_when_the_idle_host_page_refuses(self):
-        p, s, out = self.run_it("refused", "refused", before="x\n")
+        p, s, out = self.run_it("refused", "refused")
         self.assertEqual(results(s)[HOST], "FAIL", p.stdout[-2000:])
-        with open(self.kept_files(out)[0], encoding="utf-8") as f:
-            self.assertEqual(f.read(), "x\n")
+        self.assertEqual(self.kept_files(out), [])
 
     def test_out_of_the_session_is_setup_fail(self):
         """review-rows-c136 15:09: a test run after the Host page test (A left the session for good), or a --repeat
         r2, finds A in play but with no connected players: each set-up says SETUP-FAIL with the counts, never a FAIL
         half-way, and nothing of the test runs (A's kept file untouched)."""
-        p, s, out = self.run_it("left", "hard", before="y\n", left="A")
+        p, s, out = self.run_it("left", "hard", left="A")
         self.assertEqual(results(s), {LOBBY: "SETUP-FAIL", HOST: "SETUP-FAIL"}, p.stdout[-2000:])
         self.assertIn("connected players A=0 B=2", p.stdout)
-        with open(self.kept_files(out)[0], encoding="utf-8") as f:
-            self.assertEqual(f.read(), "y\n")
+        self.assertEqual(self.kept_files(out), [])
 
     def test_deselected_on_the_default_boot(self):
         out = os.path.join(self.tmp, "default")

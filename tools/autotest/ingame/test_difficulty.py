@@ -26,14 +26,16 @@ Sources of every value (worker-rules "no guessed values"):
   game folder, coop-kit/ls/lane1-A/coop-difficulty.ini beside coop.ini). A kept choice is OFFERED to every later
   automatic session where the player may edit (coop_difficulty_game.cpp:271 OffersKept): left behind it turns later lane
   runs to that difficulty (2026-11-26: lane1-A/lane2-A kept 'custom hp=300' from an old run; lane logs said 'Custom:
-  life 300%'), so test_host_page_difficulty_kept puts the file back as it found it, always.
+  life 300%'), so test_host_page_difficulty_kept puts the file back as it found it, always. The module reads it once
+  at game start and the idle Host page starts on it, so a file there before the boot is SETUP-FAIL: in lane_check
+  (pair.kept_difficulty, every lane run) and again in each set-up here (B #148 / review-rows-c130-6 02:22).
 """
 import os
 import re
 
 import pytest
 
-from pair import SetupFail
+from pair import SetupFail, kept_difficulty
 
 BOOT = "live-lobby-hard"
 HARD = r"coop: difficulty: Hard"
@@ -74,6 +76,8 @@ def need_start(pair):
     sample (pair.need_boot_place, harness-c133-scene; never one read right after the boot), and both in the lane's
     session with two connected players (the state's coop.players, as test_smoke.test_connect reads). Run after
     test_host_page_difficulty_kept (A left the session) or on a --repeat r2, this is SETUP-FAIL naming the counts."""
+    for x in ("A", "B"):     # (before any input; lane_check checks it at the boot too: pair.kept_difficulty)
+        kept_difficulty(pair.games[x]["folder"])
     pair.need_boot_place()
     n = {x: len(connected(pair, x)) for x in ("A", "B")}
     if any(v < 2 for v in n.values()):

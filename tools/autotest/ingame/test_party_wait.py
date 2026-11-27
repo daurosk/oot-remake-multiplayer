@@ -5,7 +5,7 @@ coop_party_wait_game.cpp (the frame: the boss door moment, who is here).
 | Test | docs/party-wait.md | Kind |
 |---|---|---|
 | test_party_wait_boss_door | Not proven (1) | A before Gohma's door, B elsewhere: A's wait line (1/2 here) + its chat line; B beside A: 'Everyone is here.' (shots) |
-| test_party_wait_gives_up | Not proven (3) | nobody comes: 60 s later 'Not everyone is here: going on.'; A walks meanwhile (state, log) |
+| test_party_wait_gives_up | Not proven (3) | nobody comes: 60 s later 'Not everyone is here: going on.' (shot); A walks meanwhile (state, log) |
 | test_party_wait_off | Not proven (4) | the setting off (the default): no party wait line at all (log) |
 
 Solo and co-op idle (Not proven (4), second half) are not a pair's case: the frame returns before reading anything
@@ -106,7 +106,7 @@ def set_up(pair):
         place(pair, "B", ROOM_E)
         place(pair, "A", CORRIDOR)
         pair.step_both(30)
-        assert not ring(pair.state("A")["pos"]), "A's corridor place is not in the room: %s" % pair.state("A")["pos"]
+        assert not ring(pair.state("A")["pos"]), "A's corridor place is in the ring (a moment): %s" % pair.state("A")["pos"]
         rules(pair, True)
 
 
@@ -142,7 +142,8 @@ def test_party_wait_boss_door(pair):
         put_back(pair)
 
 
-@pytest.mark.budget(420)   # set-up + 900 walk + 5400 frames for the 60 s + the walk meanwhile
+@pytest.mark.budget(420)   # set-up + 900 walk + 5400 frames for the 60 s + the walk meanwhile + a shot
+@pytest.mark.look
 @pytest.mark.row("#298 wait for the party: nobody comes: 60 s, then 'Not everyone is here: going on.', never blocked")
 def test_party_wait_gives_up(pair):
     set_up(pair)
@@ -161,6 +162,9 @@ def test_party_wait_gives_up(pair):
         pair.until("A log /%s/" % GAVE_UP, lambda: pair.log["A"].find(GAVE_UP, pos=at), max_frames=GIVE_UP_FRAMES)
         line = pair.log["A"].find(ALL_HERE, pos=at)
         assert line is None, "'Everyone is here.' with B in room E: %s" % line
+        pair.step_both(SHOT_AFTER)
+        pair.check_shot("A", "party-wait-gave-up-1", tolerance=0.80)    # A's banner: 'Not everyone is here: going on.'
+        pair.check_shot("B", "party-wait-gave-up-1", tolerance=0.80)    # B's screen: no notice of A's (A's line only)
     finally:
         put_back(pair)
 

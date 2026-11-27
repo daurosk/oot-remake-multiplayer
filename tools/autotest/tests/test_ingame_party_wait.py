@@ -34,18 +34,18 @@ class PartyWait(unittest.TestCase):
         return p, results(summary(out)), out
 
     def test_good_game(self):
-        """The boss door test is NO-REF with no stored shots (never PASS), PASS with them; the other two PASS."""
+        """The boss door and give-up tests are NO-REF with no stored shots (never PASS), PASS with them; off PASSes."""
         p, r, out = self.run_file()
-        self.assertEqual(r, {DOOR: "NO-REF", GIVE_UP: "PASS", OFF: "PASS"}, p.stdout[-3000:])
+        self.assertEqual(r, {DOOR: "NO-REF", GIVE_UP: "NO-REF", OFF: "PASS"}, p.stdout[-3000:])
         refs = os.path.join(self.tmp, "refs")
         os.makedirs(refs)
         new = os.path.join(out, "lane1", "new")
         names = sorted(os.listdir(new))
-        self.assertEqual(len(names), 3, names)        # A waiting, B's chat, A everyone here
+        self.assertEqual(len(names), 5, names)        # A waiting, B's chat, A everyone here, A and B at the give-up
         for f in names:
             shutil.copyfile(os.path.join(new, f), os.path.join(refs, f))
-        p, r, _ = self.run_file(refs=refs, only=DOOR)
-        self.assertEqual(r, {DOOR: "PASS"}, p.stdout[-3000:])
+        p, r, _ = self.run_file(refs=refs)
+        self.assertEqual(r, {DOOR: "PASS", GIVE_UP: "PASS", OFF: "PASS"}, p.stdout[-3000:])
 
     def test_no_wait_line_fails(self):
         p, r, _ = self.run_file(env={"BT_FAKE_PARTY_WAIT_BUG": "nowait"})

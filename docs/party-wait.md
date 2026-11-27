@@ -85,8 +85,18 @@ never starts one (not a moment any more).
    (1/2 here), B's log has the chat line; B warped next to A: `Everyone is here.` on A's banner shot.
 2. Chests and counters are read from the objects walk by placement hash (`[actor+0x3d8]+0x88`, coop_objects.cpp
    header): not yet known whether `Obj_EnemyCounter_*` is in the actor list at all (it may be a logic-only
-   placement). Probe first (a one-line log of the loaded counters and big chests with key and position in the Deku
-   Tree), then build those two moments.
+   placement). **The probe needs no new code**: the objects walk's debug pass (`LICHII_COOP_DEBUG_OBJECTS=1`,
+   `Objects::Walk`) already logs every actor that comes as `coop: objects: + <name> <address> state <s> at <x y z>
+   hash <key>` (`LogPose`); actors there at the very first walk are not logged, so the probe warps after boot.
+   One game alone (no session needed), two warps, read the log:
+   - Deku Tree room 2 (the slingshot room, docs/dungeon.md: chest `Obj_TBox_A_02`, key `0x0b66198d17d6584e`, at
+     -54.4 112.0 12.2): PASS for big chests when a `+ Obj_TBox_A_02` line has that hash and a position within 1 unit.
+   - Dodongo's Cavern (4 `Obj_EnemyCounter_A_09` keys in `CoopDungeon::Keys()`, e.g. `0x0ee46075ae271ed6`): warp to
+     the dungeon's start and walk the scene's rooms by `place` until a counter's room loads; PASS for counters when a
+     `+ Obj_EnemyCounter_A_09` line carries one of the four keys. None after every room: counters are not actors,
+     and the locked-room moment is taken from the room's `..._Clear` flag rooms instead (a second design step).
+   Both PASS: the game side gets a small hand-over from the walk (the loaded actors whose hash is a big-chest or
+   counter key, with their position, once per walk) and the two moments are built on it.
 3. The time-out and the never-block: A alone before the door, nobody comes: the line, then after 60 s
    `Not everyone is here: going on.`; A walks through meanwhile and nothing stops it.
 4. Solo and co-op idle: no line, no read (the frame returns before reading anything while the setting is off or

@@ -15,7 +15,7 @@
 #include "coop_boss_scenes.h"
 #include "coop_fairy.h"
 #include "coop_party_wait.h"
-#include "coop_puppet.h"
+#include "coop/presence/presence.hpp"
 #include "coop_teleport.h"
 
 namespace CoopPartyWait {
@@ -159,30 +159,30 @@ void Frame(const std::optional<std::string>& scene, const std::optional<proto::V
         in.scene = *scene;
         in.moment = BossDoor(*scene, *position);
     }
-    if (in.moment) {   // (who is here is read only in a moment)
-        std::uint8_t self = 0;
-        session->with_client([&](coop::net::Client& client) { self = client.player_number(); });
+    // Everyone in the session counts, whatever presence shows of them (just joined, on the title, samples gone:
+    // not here). Review c123-17: never from CoopPuppet::Collect, which hands over queued sounds and emotes.
+    session->with_client([&](coop::net::Client& client) {
+        for (const auto& p : client.players()) {
+            if (p.number != client.player_number()) ++in.others;
+        }
+    });
+    if (in.moment && in.others != 0) {   // (who is here is read only in a moment)
         static const CoopRooms::Table rooms = CoopFairy::RoomTable();
         const CoopTeleport::Vec ours{(*position)[0], (*position)[1], (*position)[2]};
-        for (const CoopPuppet::Remote& r : CoopPuppet::Collect(session, server_now_us)) {
-            if (r.number == self) continue;
-            ++in.others;
-            const bool in_game = r.scene && !r.scene->empty() && (r.status & proto::status::loading) == 0;
-            if (in_game && proto::same_place(*r.scene, *scene) &&
-                CoopTeleport::CheckMove(rooms, *scene, ours,
-                                        CoopTeleport::Vec{r.position[0], r.position[1], r.position[2]}) ==
-                    CoopTeleport::MoveCheck::ok) {
-                ++in.here;
+        session->with_presence([&](coop::presence::Presence& p) {
+            for (const std::uint8_t n : p.players()) {
+                const coop::presence::Player* who = p.player(n);
+                if (who == nullptr || !who->scene() || who->has_flag(proto::status::loading) ||
+                    !proto::same_place(*who->scene(), *scene)) {
+                    continue;
+                }
+                const auto pose = p.shown(n, server_now_us);
+                if (pose && CoopTeleport::CheckMove(rooms, *scene, ours,
+                                                    CoopTeleport::Vec{pose->position[0], pose->position[1],
+                                                                      pose->position[2]}) == CoopTeleport::MoveCheck::ok) {
+                    ++in.here;
+                }
             }
-        }
-    } else {
-        // Not in a moment: the count matters only to say "others" is not 0 (alone: nothing waits).
-        session->with_client([&](coop::net::Client& client) {
-            unsigned n = 0;
-            for (const auto& p : client.players()) {
-                if (p.number != client.player_number()) ++n;
-            }
-            in.others = n;
         });
     }
     std::lock_guard lock(g.mutex);

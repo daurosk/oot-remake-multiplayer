@@ -731,6 +731,7 @@ void MapIcons(void* ctx) {
 constexpr std::uint64_t kSlowStepMs = 1000;
 std::mutex g_slow_mutex;
 CoopHookshot::SlowStep g_party_slow, g_tags_slow;
+CoopHookshot::TagsNow g_tags_now;   // (g_slow_mutex)
 
 void NoteSlow(CoopHookshot::SlowStep& slot, std::uint64_t& last_ms, std::uint64_t now, int shown) {
     const std::uint64_t gap = last_ms != 0 && now > last_ms ? now - last_ms : 0;
@@ -772,9 +773,16 @@ void NativeTags(void* ctx) {
     static std::uint64_t last_tags_ms = 0;
     if (spots.empty() && g_balloons.shown() == 0) {   // solo, or nobody near: the balloons are not touched
         NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), 0);
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {};
         return;
     }
     const bool up = g_balloons.Step(game, spots, markers ? markers->width : 0.0f, markers ? markers->height : 0.0f);
+    {
+        const auto seen = g_balloons.seen();
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {static_cast<int>(seen.shown), static_cast<int>(seen.open), seen.screen_root};
+    }
     NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), up ? static_cast<int>(g_balloons.shown()) : 0);
     if (g_balloons.no_memory()) {
         g_tags_drawn.store(true);
@@ -1681,6 +1689,11 @@ SlowStep PartySlow() {
 SlowStep TagsSlow() {
     std::lock_guard lock(g_slow_mutex);
     return g_tags_slow;
+}
+
+TagsNow TagsSeen() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_tags_now;
 }
 
 void SetMapOptions(bool players, bool names) {

@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <utility>
 #include <string>
@@ -269,20 +270,29 @@ void SetVisible(void* ctx, std::uint64_t pane, bool on) {
 
 // A text pane's text from a label of the pack's (LayoutMsg/<file>), the way the game sets its own (coop_title.cpp's
 // SetRowTexts): [0x00] the message ref, [0x20] &file, [0x28] &label, [0x30] file, [0x50] label, [0x90] the pane's path.
-bool SetText(void* ctx, std::uint64_t layout, const std::string& path, const std::string& file, const std::string& label) {
-    if (file.size() >= 0x20 || label.size() >= 0x40 || path.size() >= 0x40) return false;
+// (the game's call's own count of the panes it set; nullopt: the call could not be made. chartab-0121: Snail's
+// Customize keys count as shown only when each of their panes took its text)
+std::optional<std::uint64_t> SetTextCount(void* ctx, std::uint64_t layout, const std::string& path,
+                                          const std::string& file, const std::string& label) {
+    if (file.size() >= 0x20 || label.size() >= 0x40 || path.size() >= 0x40) return std::nullopt;
     std::uint8_t b[0xd0] = {};
     const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
-    if (base == 0) return false;
+    if (base == 0) return std::nullopt;
     const std::uint64_t at_file = base + 0x30, at_label = base + 0x50, at_path = base + 0x90;
     std::memcpy(b + 0x20, &at_file, 8);
     std::memcpy(b + 0x28, &at_label, 8);
     std::memcpy(b + 0x30, file.c_str(), file.size() + 1);
     std::memcpy(b + 0x50, label.c_str(), label.size() + 1);
     std::memcpy(b + 0x90, path.c_str(), path.size() + 1);
-    if (g_api->scratch(ctx, b, sizeof b) != base) return false;
-    return Call(ctx, kMsgRefInit, base) && Call(ctx, kMsgRefSet, base, base + 0x20, base + 0x28, 1) &&
-           Call(ctx, kPaneText, layout, at_path, base, 1, 0);
+    if (g_api->scratch(ctx, b, sizeof b) != base) return std::nullopt;
+    std::uint64_t set = 0;
+    if (!Call(ctx, kMsgRefInit, base) || !Call(ctx, kMsgRefSet, base, base + 0x20, base + 0x28, 1) ||
+        !Call(ctx, kPaneText, layout, at_path, base, 1, 0, &set))
+        return std::nullopt;
+    return set & 0xffffffffu;
+}
+bool SetText(void* ctx, std::uint64_t layout, const std::string& path, const std::string& file, const std::string& label) {
+    return SetTextCount(ctx, layout, path, file, label).has_value();
 }
 
 // --- Live text: our own words in the game's text panes ---
@@ -539,11 +549,34 @@ std::atomic<bool> g_snail_driven{false};   // (CharacterCustomizeOpen: any threa
 std::uint64_t g_snail_key_page = 0, g_snail_key_mix = 0;
 std::array<int, 2> g_snail_keys_on{-1, -1};
 
+// chartab-0121 (owner, v0.12.0: "no more indicator to pick the exact hue or change page"): a copied part's text panes
+// are not given their "<part>-<pane>" labels by the game when its layout is made (the - tabs' copies Pa_Category_04..06
+// are set by the module too: ApplyMinus), so the two keys showed with empty words and no button letter, nothing at
+// all, while the title had dropped its worded hints for them. Each key's button letter and words are set here, as the
+// game sets its own guide keys (kPaneText on the part's "@" panes: PaGuideKey_00 has @T_Icon_00 and @T_Guide_00), and
+// the keys count as shown only when all four took their text; otherwise the title keeps the hints in words.
 void SnailKeysLookUp(void* ctx, std::uint64_t layout) {
     g_snail_key_page = FindOwnPane(ctx, layout, "Pa_CoopKeyY_00");
     g_snail_key_mix = FindOwnPane(ctx, layout, "Pa_CoopKeyA_00");
     g_snail_keys_on = {-1, -1};
-    g_snail.SetKeysShown(g_snail_key_page != 0 && g_snail_key_mix != 0);
+    bool texts = g_snail_key_page != 0 && g_snail_key_mix != 0;
+    std::string said;
+    for (const char* key : CoopSnailCustom::kKeyParts) {
+        for (const char* pane : CoopSnailCustom::kKeyPanes) {
+            if (!texts) break;
+            const std::string path = std::string(key) + "/" + pane, label = std::string(key) + "-" + pane;
+            const auto n = SetTextCount(ctx, layout, path, "LayoutMsg/CharacterCustomize_00", label);
+            said += fmt::format("{}{} {}", said.empty() ? "" : ", ", path, n ? static_cast<long long>(*n) : -1ll);
+            texts = n.value_or(0) != 0;
+        }
+    }
+    g_snail.SetKeysShown(CoopSnailCustom::KeysShownFrom(g_snail_key_page != 0, g_snail_key_mix != 0, texts));
+    LOG_INFO(Core, "coop: characters: Character Select's Customize screen keys: Y part {:#x}, A part {:#x}, texts set "
+                   "[{}]: {}",
+             g_snail_key_page, g_snail_key_mix, said,
+             g_snail_key_page != 0 && g_snail_key_mix != 0 && texts ? "shown as the game's guide keys"
+                                                                    : "the title keeps its worded hints");
+    if (!texts) g_snail_key_page = g_snail_key_mix = 0;   // (never shown empty)
 }
 
 // Each key shown while it does something (both hidden: on = {false, false}); only a change is written.

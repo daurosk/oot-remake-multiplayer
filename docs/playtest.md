@@ -244,7 +244,9 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   `"driven":false` while co-op waits for its panes or has let go of it (no rows then). Driven: `title` (as the screen
   shows it, e.g. `"Eyes (page 1 of 3)  Y: page  A: exact hue"`), `options` (each `{"option", "label", "value"}`, his
   six places 0..5, left column top to bottom then the right; empty places are left out), `focused`, `focused_label`,
-  `mixer` (the any-colour mixer is open) and `page_no` and `pages` (`0` and `0` for a character with no colour option).
+  `mixer` (the any-colour mixer is open) and `page_no` and `pages` (`0` and `0` for a character with no colour option). `keys` (chartab-0121): `guide` (the Y and A keys show as the game's guide keys: the kit's key parts are in his
+  layout and the module gave all their panes their texts; `false`: the title has the hints in words), `page` and `mix`
+  (whether the Y and the A key show now).
   A character's Eye Colour row is left out when its model is known to have no iris.
 - `minus`: co-op's tabs of the game's - menu (Multiplayer, Lobby, Mods) as co-op last drew them. `{"open":false}`
   while none of them shows, else `tab` (`multiplayer`, `lobby`, `mods`), `view` (the rows' view: `main`, `session`,
@@ -256,7 +258,7 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
 
 The labels and values are co-op's own words in the game's language, never text read from the game. Example, a
 Character Select character with irises:
-`"menu":{"coop":{"open":false},"customize_screen":{"open":true,"driven":true,"title":"Eyes (page 1 of 1)  A: exact hue","options":[{"option":0,"label":"Eye Colour","value":"Game's own"}],"focused":0,"focused_label":"Eye Colour","mixer":false,"page_no":1,"pages":1}}`.
+`"menu":{"coop":{"open":false},"customize_screen":{"open":true,"driven":true,"title":"Eyes (page 1 of 1)  A: exact hue","options":[{"option":0,"label":"Eye Colour","value":"Game's own"}],"focused":0,"focused_label":"Eye Colour","mixer":false,"page_no":1,"pages":1,"keys":{"guide":false,"page":false,"mix":true}}}`.
 
 **`map_native`** (the bridge adds it to `state`; `null` until the module first published it): the
 other players on the game's own map icons (hookshot/src/coop_map_icons.h `State`, #255 item 8). `up` (the pack's

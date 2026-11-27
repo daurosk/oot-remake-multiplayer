@@ -628,6 +628,29 @@ std::pair<float, float> LayoutPoint(int px, int py, int w, int h);
 // The row whose box holds (x, y), -1 for none. Boxes one above the other meet halfway across a gap under 240 units, and
 // the column's ends grow by as much (no dead line between two rows, as Longshot's mouse takes the game's lists).
 int RowAt(const RowBoxes& boxes, float x, float y);
+// The mouse over the rows' column (between the shown rows' left and right edges) but on no shown row: a gap, such as
+// the hidden rows between an option up on the left and one below it.
+bool MouseOverRowsGap(const RowBoxes& boxes, float x, float y);
+
+// Whether Longshot's mouse has the game's cursor now, so that no step of ours may move it (player report 296). Longshot's
+// mouse puts the game's cursor on the game's button under it at each move, hidden ones too (the rows with nothing on
+// them in a gap of the column, the Settings list's Options rows). A step of ours off that button (RowSkip, the mouse's
+// own steps toward a row, the Settings page's Left back to the categories and its step to the kept category) was undone
+// at the next move, and the hover went back and forth between the rows on either side of the gap without end. Geno's
+// fix (fb1861824) held RowSkip alone, on the Multiplayer page; this is the one guard every page's steps go through.
+// Held while the mouse is over a gap of the column, over another button of the game's the page names (`over_other`),
+// or moved in the last kSettleMs (its next move would take the cursor again).
+class MouseHold {
+public:
+    static constexpr std::uint64_t kSettleMs = 300;
+    bool Step(bool inside, float x, float y, std::uint64_t now_ms, const RowBoxes& boxes, bool over_other = false);
+    void Reset() { *this = MouseHold{}; }
+
+private:
+    bool seen_ = false;
+    float x_ = 0, y_ = 0;
+    std::uint64_t moved_ms_ = 0;
+};
 
 class MouseRows {
 public:

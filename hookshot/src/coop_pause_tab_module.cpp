@@ -3297,8 +3297,7 @@ bool g_b_swallow = false;           // (that B, held: not the page's)
 std::uint64_t g_list_left_ms = 0;    // (the mouse's Left off the list: the last one)
 std::uint64_t g_page_since_ms = 0;
 int g_mouse_steps_logged = 0;        // (trace: the mouse's steps logged so far)
-float g_skip_mouse_x = 0, g_skip_mouse_y = 0;   // (the mouse's last place and when it moved: RowSkip waits then)
-std::uint64_t g_skip_mouse_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
+MouseHold g_mouse_hold;   // (Longshot's mouse has the game's cursor: none of our steps move it then, report 296)
 int g_slow_logged = 0;               // (trace: slow updates of ours logged so far)
 RowSkip g_row_skip;          // (the game's cursor kept off hidden buttons on the Multiplayer page)
 int g_skip_logged = 0;       // (its steps logged the first times)
@@ -4642,6 +4641,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             decide = g_page.TakeDecide();
             // The mouse over our rows (MouseRows): the game's cursor stepped to the row under it, and an A just after
             // a click (Longshot presses A for it) is the clicked row's, not the row the game's cursor is on.
+            bool mouse_holds = false;   // (Longshot's mouse has the game's cursor this read: MouseHold)
             if (shown && !typing && !mv.typing) {   // (co-op's menu typing: the keyboard's)
                 MouseRows::In mi;
                 mi.now_ms = NowMs();
@@ -4681,22 +4681,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // cursor on the hidden button under it, and stepping it off there went on without end as the mouse
                 // passed, a tester's "bounces between Hosting and Stop hosting", 2026-11-19. The cursor is left there
                 // then; the next step of the pad or the mouse onto a row takes it on)
-                bool mouse_over_gap = false;
-                if (mi.inside) {
-                    if (std::abs(mi.x - g_skip_mouse_x) > 2 || std::abs(mi.y - g_skip_mouse_y) > 2) {
-                        g_skip_mouse_x = mi.x, g_skip_mouse_y = mi.y, g_skip_mouse_ms = mi.now_ms;
-                    }
-                    float x0 = 1e30f, x1 = -1e30f;
-                    for (const RowBox& b : mi.boxes) {
-                        if (b.shown) x0 = std::min(x0, b.x0), x1 = std::max(x1, b.x1);
-                    }
-                    mouse_over_gap = (mi.x >= x0 && mi.x <= x1 && RowAt(mi.boxes, mi.x, mi.y) < 0) ||
-                                     mi.now_ms - g_skip_mouse_ms < 300;
-                }
+                // (the one guard of every page's steps: MouseHold, coop_pause_tab.h)
+                mouse_holds = g_mouse_hold.Step(mi.inside, mi.x, mi.y, mi.now_ms, mi.boxes);
                 // (not while the page opens: the cursor is still on System's button then, and an Up there went into
                 // the opening's own landing, a run's log)
                 if (g_page.Which() == 0 && !g_rows_moment.load() && g_slide.dir == 0 && g_rows_back_ms == 0 &&
-                    mi.now_ms - g_page_since_ms > 500 && !mouse_over_gap) {
+                    mi.now_ms - g_page_since_ms > 500 && !mouse_holds) {
                     RowSkip::In si;
                     si.now_ms = mi.now_ms;
                     si.focused = FocusedButtonRow(&si.hidden);
@@ -4714,6 +4704,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             } else {
                 g_mouse_rows.Reset();
                 g_row_skip.Reset();
+                g_mouse_hold.Reset();
             }
             // The game browser's cells (View::kLan): Right goes into them, the arrows move among them (none reaches the
             // game's cursor), Left from the left column or B gives the pad back to the rows; the mouse picks one by
@@ -4837,10 +4828,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     if (g_set_keep < 0) g_set_keep = g_set_category.load();
                     g_set_keep_until = now + 1500;
                 }
+                // (Longshot's mouse has the game's cursor (MouseHold, report 296): on the list or a gap, or just moved.
+                // A step of ours now was undone at the mouse's next move, the hover went between a category and the
+                // list's row without end; the steps wait until the mouse rests off the list)
+                const bool set_hold = mouse_holds || mouse_on_list;
                 if (const int focused = FocusedRow(); focused >= 0 && g_set_keep >= 0 && now < g_set_keep_until) {
                     if (focused == g_set_keep && !on_list_now) {
                         g_set_keep = -1, g_set_seen_row = focused;   // (back: the category as it was)
-                    } else if (!on_list_now && now - g_set_keep_step_ms >= 120) {
+                    } else if (!on_list_now && !set_hold && now - g_set_keep_step_ms >= 120) {
                         g_set_keep_step_ms = now;
                         keep_step = focused > g_set_keep ? kPadUp : kPadDown;
                     }
@@ -4952,7 +4947,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // mouse's steps toward a category went down and up the list, the category never changed, B was needed
                 // first). A Left sends it back to the categories, each 300 ms at most while it is there.
                 out |= keep_step;
-                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && now - g_list_focus_fix_ms > 300) {
+                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && !set_hold &&
+                                                           now - g_list_focus_fix_ms > 300) {
                     g_list_focus_fix_ms = now;
                     out |= kPadLeft;
                     if (g_set_keep < 0) g_set_keep = g_set_category.load();

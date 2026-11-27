@@ -961,11 +961,28 @@ int RowAt(const RowBoxes& boxes, float x, float y) {
     return -1;
 }
 
+bool MouseOverRowsGap(const RowBoxes& boxes, float x, float y) {
+    float x0 = 1e30f, x1 = -1e30f;
+    for (const RowBox& b : boxes) {
+        if (b.shown) x0 = std::min(x0, b.x0), x1 = std::max(x1, b.x1);
+    }
+    return x >= x0 && x <= x1 && RowAt(boxes, x, y) < 0;
+}
+
+bool MouseHold::Step(bool inside, float x, float y, std::uint64_t now_ms, const RowBoxes& boxes, bool over_other) {
+    if (!inside) return false;
+    if (!seen_ || std::abs(x - x_) > 2 || std::abs(y - y_) > 2) seen_ = true, x_ = x, y_ = y, moved_ms_ = now_ms;
+    return over_other || MouseOverRowsGap(boxes, x, y) || now_ms - moved_ms_ < kSettleMs;
+}
+
 std::uint64_t MouseRows::Step(const In& in) {
     const int hover = in.inside ? RowAt(in.boxes, in.x, in.y) : -1;
     const bool moved = in.inside && (!seen_ || std::abs(in.x - x_) > 2 || std::abs(in.y - y_) > 2);
     if (in.inside) seen_ = true, x_ = in.x, y_ = in.y;
     if (in.pad) target_ = -1;   // (the player's own steps: the mouse's stop)
+    // (over a gap of the column: Longshot's mouse has the cursor on the hidden button there, and a step toward the row
+    // the mouse was on before was undone at its next move, back and forth: no target then, MouseHold, report 296)
+    if (in.inside && MouseOverRowsGap(in.boxes, in.x, in.y)) target_ = -1, step_from_ = -1;
     if (moved && hover >= 0 && hover != target_ && hover != in.focused) target_ = hover, since_ = in.now_ms, step_from_ = -1;
     // A click is its press: Longshot's mouse presses A 50 ms after the left button goes down on a button (oot_menu.c,
     // mouse_tick_locked: "0.05:A/80"), mostly before it is let go, so the row is taken where the button went down.

@@ -3,7 +3,7 @@
 # user lci is never touched), label squadala-wsl. Runs as the owner, NOT elevated, from a checkout of this repo:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\wsl\install-wsl.ps1
 # Safe to run again (it skips registered runners). What it does:
-#  1. checks gh is daurosk, %UserProfile%\.wslconfig caps WSL (memory <= 20GB, processors <= 24) and free commit >= 40 GB;
+#  1. checks gh is daurosk, %UserProfile%\.wslconfig caps WSL (memory <= 20GB, processors <= 12) and free commit >= 40 GB;
 #  2. copies tools\ci-runner\wsl into the distro over stdin and runs setup.sh as root (packages, user squadala-ci
 #     without sudo, wsl.conf without interop or Windows drives, hooks, runner folders, systemd units);
 #  3. restarts the distro so wsl.conf applies, then checks /mnt/c is gone and Windows programs do not start;
@@ -36,9 +36,9 @@ $login = (& $Gh api user --jq .login)
 if ($login -ne 'daurosk') { throw "gh is signed in as '$login', not daurosk." }
 $cfg = Get-Content -Raw (Join-Path $env:USERPROFILE '.wslconfig') -ErrorAction SilentlyContinue
 if (-not ($cfg -match '(?m)^\s*memory\s*=\s*(\d+)GB' -and [int]$Matches[1] -le 20)) { throw '.wslconfig must cap memory at <= 20GB (docs/ci-runner.md).' }
-if (-not ($cfg -match '(?m)^\s*processors\s*=\s*(\d+)' -and [int]$Matches[1] -le 24)) { throw '.wslconfig must cap processors at <= 24.' }
+if (-not ($cfg -match '(?m)^\s*processors\s*=\s*(\d+)' -and [int]$Matches[1] -le 12)) { throw '.wslconfig must cap processors at <= 12 (of 32: the test-lane games keep the rest).' }
 $free = [math]::Floor((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory / 1MB)
-if ($free -lt 40) { throw "free commit is $free GB (< 40 GB): a game test is running; run this later (jobs keep their own 75 GB guard)." }
+if ($free -lt 40) { throw "free commit is $free GB (< 40 GB): a game test is running; run this later (jobs keep their own 40 GB guard)." }
 if (-not ((& $wsl -l -q) -replace "`0", '' | Where-Object { $_.Trim() -eq $Distro })) {
     # A distro of its own: wsl.conf below turns off interop and drives, which the local-CI distro needs.
     $loc = Join-Path $env:LOCALAPPDATA 'squadala-ci\wsl'

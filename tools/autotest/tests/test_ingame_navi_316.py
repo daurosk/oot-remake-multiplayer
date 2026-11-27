@@ -1,5 +1,6 @@
 """Selftests of row 316's Navi probe (ingame/test_probe_navi_316.py, fakes/navi_316.py) on the fake games, no game.
 Run by test_ingame.py's load_tests (CI: python tools/autotest/tests/test_ingame.py)."""
+import json
 import os
 import shutil
 import sys
@@ -45,6 +46,12 @@ class NaviProbe(unittest.TestCase):
         self.assertIn("'lock_on': {0: ['LockOn_St']}", notes, notes)
         self.assertIn("'idle': {0: ['Wait']}", notes, notes)
         self.assertNotIn("error: ", notes.replace("error None", ""), notes)
+        self.assertNotIn("NOT put back", notes, notes)
+        for x in ("A", "B"):
+            path = [os.path.join(d, f) for d, _, fs in os.walk(out) for f in fs if f == "probe-navi-%s.json" % x][0]
+            with open(path, encoding="utf-8") as f:
+                low = json.load(f)["phases"]["low_life"]
+            self.assertTrue(low and all(s["life"]["PlayerStatus.Life"] == 1 for s in low), low)
 
     def test_null_member_is_setup_fail(self):
         """A module without the probe (navi null): SETUP-FAIL naming the member, never a run on nothing."""

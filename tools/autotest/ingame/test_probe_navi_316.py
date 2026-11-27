@@ -12,7 +12,7 @@ writes it restores: PlayerStatus.Life (flag needs LICHII_COOP_CHEATS=1, as test_
 Per game (A then B; each game's JSON is written in a finally with any exception's text; one game's exception never
 skips the other's phases):
 - idle: 12 samples 10 frames apart (the slots' names and frames move with her Wait animation);
-- low life: PlayerStatus.Life 4 (quarter hearts: one heart; fakegame.py LINK_LIFE), 12 samples, Life put back;
+- low life: PlayerStatus.Life 1 (the lowest in either unit), 12 samples each with Life + MaxLife read, Life put back;
 - lock-on: the other game's Link placed 2.5 m in front (test_rows.place_in_front), ZL held 60 frames, 6 samples
   during (each `input` returns after its frames: the samples are taken between 10-frame holds of ZL);
 - load: a warp to the boot's own place (test_gear SCENE_CHILD / GATE, the lane's way back), samples right after.
@@ -28,8 +28,10 @@ from test_gear import GATE, SCENE_CHILD
 from test_rows import need_child_in_play, place_in_front
 
 PROBE_ENV = ("BT_PROBE_NAVI=1", "LICHII_COOP_CHEATS=1")   # give/flag need the cheats (test_songs.ROW_ENV, docs/playtest.md)
-LIFE = "PlayerStatus.Life"           # quarter hearts (fakegame.py LINK_LIFE; docs/items.md)
-LOW_LIFE = 4                         # one heart
+LIFE, MAX_LIFE = "PlayerStatus.Life", "PlayerStatus.MaxLife"   # our Link's life (fakegame.py LINK_LIFE)
+# 1: the lowest life in either unit (docs/items.md:19 says quarter hearts, marked inferred; review-rows-c130-11): low
+# health whichever it is. Each low-life sample carries its own Life + MaxLife read (flag_read) as the proof.
+LOW_LIFE = 1
 SAMPLES, EVERY = 12, 10
 
 
@@ -39,14 +41,17 @@ def _navi(pair, x):
             "navi": st.get("navi")}
 
 
-def _samples(pair, x, n=SAMPLES, every=EVERY, hold=None):
+def _samples(pair, x, n=SAMPLES, every=EVERY, hold=None, life=False):
     out = []
     for _ in range(n):
         if hold:
             pair.press(x, hold, frames=every)
         else:
             pair.step_both(every)
-        out.append(_navi(pair, x))
+        s = _navi(pair, x)
+        if life:
+            s["life"] = {k: pair.flag_read(x, k).get("value") for k in (LIFE, MAX_LIFE)}
+        out.append(s)
     return out
 
 
@@ -93,13 +98,16 @@ def test_probe_navi_316(pair):
                 rec["life_was"] = was
                 pair.flag(x, LIFE, LOW_LIFE)
                 try:
-                    got = _samples(pair, x)
+                    got = _samples(pair, x, life=True)
                     pair.check_shot(x, "probe-navi-low", tolerance=0.0)
                     return got
                 finally:
                     value = was.get("value") if isinstance(was, dict) else was
                     if isinstance(value, int) and value > 0:
                         pair.flag(x, LIFE, value)
+                    else:
+                        pair.notes.append("%s: Life NOT put back (read %r): later tests in this boot start at Life %d"
+                                          % (x, was, LOW_LIFE))
             _phase(rec, "low_life", low)
 
             def lock():

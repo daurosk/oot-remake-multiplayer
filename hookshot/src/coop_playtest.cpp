@@ -38,6 +38,7 @@
 #include "coop_menu_state.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
+#include "coop_pause_world.h"
 #include "coop_playtest_core.h"
 #include "coop_talk_text.h"
 #include "coop_teleport_game.h"
@@ -402,6 +403,7 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
         out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
     }
+    out += ",\"pause_world\":" + CoopPauseWorld::StateJson();   // (row 299: the PauseMgr's holds, reads only)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());

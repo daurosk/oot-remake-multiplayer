@@ -945,11 +945,11 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(17);
+    m.Select(18);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(17, 1);   // the On half
+    m.Click(18, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(17, -1);
+    m.Click(18, -1);
     CHECK_FALSE(m.options().voice);
     m.Click(14, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
@@ -1068,7 +1068,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 24);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 25);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 

@@ -147,9 +147,11 @@ void Frame(const std::optional<std::string>& scene, const std::optional<proto::V
            coop::host::Session* session, std::uint64_t server_now_us) {
     Glue& g = TheGlue();
     if (session == nullptr || !g.on.load()) {
-        // Solo, co-op idle, or off: nothing read. A wait in progress ends quietly.
+        // Solo, co-op idle, or off: nothing read. A wait in progress ends quietly, and the moments already waited
+        // are forgotten: the scene is not followed while off, so a visit that began then must wait again once on
+        // (party-wait-298-2: wait, everyone came, /wait off, leave and come back, /wait on: no wait before).
         std::lock_guard lock(g.mutex);
-        if (g.waiter.waiting()) g.waiter.Reset();
+        g.waiter.Reset();
         return;
     }
     Input in;

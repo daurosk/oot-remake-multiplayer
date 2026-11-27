@@ -65,7 +65,9 @@ out's), and nothing is drawn.
    come.
 
 Each moment waits once a visit: the same moment (kind + dungeon + boss room or placement key) starts no new wait until
-our scene changes. So walking in and out of the antechamber does not repeat it, and a beaten room or opened chest
+our scene changes. While the setting is off (or there is no session) the frame forgets every moment already waited each
+frame (`coop_party_wait_game.cpp` Frame: `waiter.Reset()`): the scene is not followed then, so turning it on again
+starts a fresh visit. So walking in and out of the antechamber does not repeat it, and a beaten room or opened chest
 never starts one (not a moment any more).
 
 ## Code
@@ -78,6 +80,12 @@ never starts one (not a moment any more).
 - Protocol: `PartyWaitMode` in `messages.hpp`, codec, server `Session` (as PvP).
 
 ## Not proven (the in-game checks)
+
+Bridge tests: `tools/autotest/ingame/test_party_wait.py` (1), (3), (4) (fakes `fakes/party_wait.py`, selftests
+`tools/autotest/tests/test_ingame_party_wait.py`). The corridor before Gohma's door (-12.0 48.5 66.5) is inside her
+room's circle (19.5 m of 37): not a moment. The test walks A from there away from the door to the ring's middle
+(x -36.5) and reads where A got: no place in the ring is known yet, so a first run that does not reach it is NO-REF
+naming A's place, never a guessed one.
 
 1. The boss door: a player standing before a boss door is in `InArea` and not `InRoom`. The antechamber margin is
    the boss-cutscene rules' own, which docs/dungeons-boss.md calls not checked in game; the same run proves both.

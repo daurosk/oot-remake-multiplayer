@@ -36,6 +36,7 @@ HOLD_TENTHS = 100      # '/dbno hold 100' (coop_dbno.cpp Parse 'hold', messages.
 STEP = 3               # frames A holds A between B's shots (B runs them too: Pair.press)
 SAMPLES = 24           # B's shots during the hold (each its own frame)
 MIN_REVIVING = 8       # of them while B's line says it is being revived
+CHAT = "revive-banner"      # A's chat line to B before the hold (a page that comes while B's held line is up)
 REVIVING = "is reviving you"   # coop_dbno_draw.cpp Caption (downed with a reviver)
 
 
@@ -56,6 +57,15 @@ def banner_sets(pair, x, since):
     r = pair.call(x, "text", since=since, layout=LAYOUT)
     texts = [t for t in (r.get("texts") or []) if t.get("pane") == PANE]
     return texts, int(r.get("last") or since), bool(r.get("hooked"))
+
+
+def banner_deltas(before, after):
+    """The module's banner counts (state['banner'], CoopNativeUi::Stats, typing-blink-0121) over the hold; None on a
+    build without them (v0.12.0)."""
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    return {k: int(after.get(k) or 0) - int(before.get(k) or 0)
+            for k in ("opens", "reopens", "type_resets", "shut_by_game", "taken_by_game", "sets")}
 
 
 def keep(pair, path, name):
@@ -106,7 +116,13 @@ def test_revive_banner_steady(pair):
         pair.check_shot("B", "revive-banner-beside")
         pair.step_both(3)
         pair.check_shot("A", "revive-banner-beside-2")
+        # A chat line reaches B just before the hold: a page that comes while B's held line is up (it waits; never
+        # an open of the banner that shows: typing-blink-0121 KeptUp).
+        pair.act("A", "chat %s" % CHAT)
+        pair.expect_log("A", r"coop: test chat '%s': sent" % CHAT, max_frames=120)   # coop_testinput.cpp test chat
+        pair.step_both(15)
         since = {x: banner_sets(pair, x, 0)[1] for x in ("A", "B")}
+        before = {x: pair.state(x).get("banner") for x in ("A", "B")}
         samples, hooked = [], {}
         for i in range(SAMPLES):
             if pair.log["B"].find(dc.event(dc.EV_REVIVED)):
@@ -121,9 +137,12 @@ def test_revive_banner_steady(pair):
                 pair.check_shot("B", "revive-banner-held")
             if i == 7:
                 pair.check_shot("B", "revive-banner-held-2")
+        after = {x: pair.state(x).get("banner") for x in ("A", "B")}
         a_texts, since["A"], hooked["A"] = banner_sets(pair, "A", since["A"])
         a_shown = sorted({t.get("text") or "" for t in a_texts})
-        report = {"samples": samples, "hooked": hooked, "A_sets": len(a_texts), "A_texts": a_shown[:12]}
+        deltas = {x: banner_deltas(before[x], after[x]) for x in ("A", "B")}
+        report = {"samples": samples, "hooked": hooked, "A_sets": len(a_texts), "A_texts": a_shown[:12],
+                  "banner": {"before": before, "after": after, "deltas": deltas}}
         if pair.out_dir:
             os.makedirs(os.path.join(pair.out_dir, "revive-banner"), exist_ok=True)
             with open(os.path.join(pair.out_dir, "revive-banner", "frames.json"), "w", encoding="utf-8") as f:
@@ -132,6 +151,7 @@ def test_revive_banner_steady(pair):
             "%d:%s:%.4f:%d" % (s["i"], s["frame"], s["words"], s["sets"]) for s in samples))
         pair.notes.append("B banner texts: %s" % sorted({t for s in samples for t in s["texts"]})[:12])
         pair.notes.append("A banner sets during the hold: %d, texts %s (hooked %s)" % (len(a_texts), a_shown[:8], hooked))
+        pair.notes.append("banner state deltas over the hold: %s" % deltas)
         reviving = [s for s in samples if any(REVIVING in (t or "") for t in s["texts"])]
         # B finishes being revived (the hold is only paused for the shots, never let go)
         ran = 0
@@ -144,6 +164,12 @@ def test_revive_banner_steady(pair):
         assert len(reviving) >= MIN_REVIVING or not hooked.get("B"), (
             "B's banner said '%s' in only %d of %d shot frames (texts %s)" % (
                 REVIVING, len(reviving), len(samples), sorted({t for s in samples for t in s["texts"]})[:8]))
+        for x in ("A", "B"):       # (the module's own count: a build with state 'banner', typing-blink-0121)
+            d = deltas[x]
+            if d is None:
+                continue
+            assert d["opens"] <= 1 and d["type_resets"] <= 1 and d["shut_by_game"] == 0, (
+                "%s's banner replayed during the hold: %s (want opens <= 1, type_resets <= 1, shut_by_game 0)" % (x, d))
         top = max(s["words"] for s in samples)
         assert top >= MIN_WORDS, "no banner line in any of B's %d frames (best %.4f of the band)" % (len(samples), top)
         dark = [s for s in samples if s["words"] < max(MIN_WORDS, SEEN * top)]

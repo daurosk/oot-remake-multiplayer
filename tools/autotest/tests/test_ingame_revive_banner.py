@@ -70,6 +70,11 @@ class ReviveBanner(unittest.TestCase):
         self.assertEqual(res[TEST]["result"], "FAIL", p.stdout[-2000:])
         self.assertIn("banner blinked", res[TEST]["why"])
 
+    def test_a_type_replay_fails(self):
+        p, res = run(self.out("replay"), TEST, refs=self.refs, bug="replay")
+        self.assertEqual(res[TEST]["result"], "FAIL", p.stdout[-2000:])
+        self.assertIn("banner replayed", res[TEST]["why"])
+
     def test_a_fail_leaves_the_lane_for_the_next_rows(self):
         p, res = run(self.out("after"), "%s or test_puppets_spawn or test_teleport_to_player" % TEST, refs=self.refs,
                      bug="blink")

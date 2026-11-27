@@ -9,6 +9,10 @@ its 'chat /dbno hold N' is answered here and every other /dbno line there).
 
 BT_FAKE_BANNER_BUG (selftests, tests/test_ingame_revive_banner.py):
   blink   0.12.0: B's line is gone in every other shot while A holds A (the owner's "blinks rapidly")
+  replay  B's banner state counts a Type reset per text change while A holds A (1d8a1b11e not in the build)
+
+state['banner'] (typing-blink-0121's CoopNativeUi::Stats): opens/type_resets 1 once a line is held; with 'replay',
+type_resets grows with each `text` set while B is being revived.
 """
 import math
 import os
@@ -51,6 +55,16 @@ def act(game, words):
     return False
 
 
+def state(game, st):
+    if line(game) is None and not getattr(game, "banner_stats", None):
+        return
+    b = getattr(game, "banner_stats", None) or {"opens": 1, "reopens": 0, "shut_by_game": 0, "taken_by_game": 0,
+                                                "sets": 0, "type_resets": 1, "state": 2, "request": 1,
+                                                "holds": "ours", "page": False, "held": True}
+    game.banner_stats = b
+    st["banner"] = dict(b)
+
+
 def command(game, m):
     if m.get("cmd") != "text":
         return None
@@ -60,6 +74,11 @@ def command(game, m):
     if shown is not None and m.get("layout") in (None, "SimpleInfo_00"):
         seq += 1
         game.banner_seq = seq
+        b = getattr(game, "banner_stats", None)
+        if b is not None:
+            b["sets"] += 1
+            if bug("replay") and game.tag == "B" and game.dbno["held"] > 0:
+                b["type_resets"] += 1
         texts.append({"seq": seq, "frame": game.frame, "layout": "SimpleInfo_00", "pane": "T_Text_00",
                       "text": shown, "length": len(shown), "cut": False, "markup": False})
     since = int(m.get("since") or 0)

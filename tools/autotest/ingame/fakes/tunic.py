@@ -7,7 +7,11 @@
 - a camera (view.clip) and on each shot both Links: A in blue 3070FF, B in green, each in its bandcheck.box.
 Selftest switches (tests/test_ingame_tunic.py): BT_FAKE_TUNIC_BUG=cross -> B logs the row 198 cross guard
 (hookshot/src/coop_look_live.cpp:591) 200 frames in; BT_FAKE_TUNIC_BUG=green -> B draws A's puppet green (the colour
-fault a grey compare cannot see); BT_FAKE_TUNIC_ON_LINE=1 -> a camera that draws both Links on one spot (SETUP-FAIL).
+fault a grey compare cannot see); BT_FAKE_TUNIC_ON_LINE=1 -> a camera that draws both Links on one spot (SETUP-FAIL);
+BT_FAKE_TUNIC_BUG=leftover -> the module does not take LICHII_COOP_LOOK and A wears the lane file's Cap trim
+(gate-tunic-309d7180: 'tunic-3070FF-cap-3070FF').
+- with the test's LICHII_COOP_LOOK=cap_trim: (no parts): its line on each game (hookshot/src/coop_look_live.cpp
+  StartModule, 'the parts are LICHII_COOP_LOOK's (cap_trim:), not the settings': 0 part(s) set').
 """
 import os
 
@@ -33,11 +37,18 @@ def _view():
     return ON_LINE_VIEW if os.environ.get("BT_FAKE_TUNIC_ON_LINE") else FAKE_VIEW
 
 
+NO_PARTS = "LICHII_COOP_LOOK=cap_trim:"
+
+
 def setup(game):
+    leftover = os.environ.get("BT_FAKE_TUNIC_BUG") == "leftover"
+    if game.env_on(NO_PARTS) and not leftover:
+        game.say("coop: look: the parts are LICHII_COOP_LOOK's (cap_trim:), not the settings': 0 part(s) set")
     if game.tag != "A" or not game.env_on("LICHII_COOP_COLOR=blue"):
         return
     game.say("coop: your Link wears green at the start; green players get CoopPuppet_<Age>_Green")
-    game.later(30, lambda: game.say("coop: look: your Link's tunic is tunic-3070FF now (4 drawn)"))
+    own = "tunic-3070FF-cap-3070FF" if leftover else "tunic-3070FF"
+    game.later(30, lambda: game.say("coop: look: your Link's tunic is %s now (4 drawn)" % own))
 
 
 def lane(fl):

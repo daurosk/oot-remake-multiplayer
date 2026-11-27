@@ -65,7 +65,7 @@ if ($hsOnly) { $script:KitPackRemake = 'Start "Start Squadala.bat" again: it mak
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
 function Clear-KeysTypedAhead {
     Start-Sleep -Milliseconds 300
-    try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
+    [void](Clear-KitKeysAhead)   # (kit-paths.ps1: a local co-op digit is kept, row 302)
 }
 function Read-YesNo([string]$Question, [int]$Seconds) {
     $redirected = $true
@@ -84,6 +84,7 @@ function Read-YesNo([string]$Question, [int]$Seconds) {
             # an empty answer: player report 87, 'No game files given' at every start)
             if ($key.Key -eq 'N') { Write-Host 'n'; Clear-KeysTypedAhead; return $false }
             if ($key.Key -eq 'Y' -or $key.Key -eq 'Enter') { Write-Host 'y'; Clear-KeysTypedAhead; return $true }
+            [void](Save-KitLocalDigit $key)   # (not this question's key: a local co-op digit is kept, row 302)
         }
         Start-Sleep -Milliseconds 100
     }
@@ -99,7 +100,7 @@ function Wait-AnyKey([int]$Seconds) {
     Write-Host -NoNewline "Press a key to go on (goes on in $Seconds s) "
     $end = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $end) {
-        if ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null; break }
+        if ([Console]::KeyAvailable) { [void](Save-KitLocalDigit ([Console]::ReadKey($true))); break }
         Start-Sleep -Milliseconds 100
     }
     Write-Host ''

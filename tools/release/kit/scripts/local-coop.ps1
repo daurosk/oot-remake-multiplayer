@@ -37,7 +37,7 @@ $script:KitLocalKeys = @('LICHII_COOP_PAD', 'LICHII_COOP_KEYBOARD', 'LICHII_COOP
 # (Read-KitLocalPlayersAnswer) is answered with 2, 3 or 4; it is asked when a digit 2 to 4 was pressed while Squadala
 # started (Show-KitLocalPlayersHint says so) or when the last answer (hookshot\local-players.txt, written only from an
 # answer) was 2 to 4. No key, Enter, N or 1 = 1 game. OOT_COOP_LOCAL_PLAYERS (1-4) sets it outright. A start with no
-# console (input from a file or a pipe: unattended) is always 1 player.
+# console (input from a file or a pipe: unattended) is always 1 player and waits for nothing.
 function Get-KitLocalPlayersLast([string]$Kit) {
     $file = Join-Path $Kit 'hookshot\local-players.txt'
     try { if (Test-Path -LiteralPath $file) { $n = [int]"$(Get-Content -LiteralPath $file -TotalCount 1)".Trim(); if ($n -ge 1 -and $n -le 4) { return $n } } } catch { }
@@ -48,11 +48,52 @@ function Test-KitLocalConsole {
     try { return -not [Console]::IsInputRedirected } catch { return $false }
 }
 
+# The digit pressed while Squadala starts (row 302: players pressed 2 and no question came). Between this hint and the
+# question come other questions and key reads that throw typed-ahead keys away (the Character Select line at every
+# start, the update and problem-report questions, the game build's questions in a process of its own). Each of them
+# hands every key it reads or throws away to kit-paths.ps1 Save-KitLocalDigit, which keeps a 2, 3 or 4 in the file
+# named here ($env:OOT_COOP_LOCAL_PRESSED: a file, so a child process's reads count too). It only makes the question
+# come (C2-2). $env:OOT_COOP_LOCAL_HINT_AT: when the hint was said (UTC ticks), for the short window on a quick start.
+$script:KitLocalPressedName = 'hookshot\local-players-pressed.txt'
+$script:KitLocalWindowSeconds = 3
+$script:KitLocalInGame = 'or in the game: the - menu, Multiplayer, Local co-op, Start the games'
+
 function Show-KitLocalPlayersHint([string]$Kit) {
+    $env:OOT_COOP_LOCAL_PRESSED = ''
+    $env:OOT_COOP_LOCAL_HINT_AT = ''
     if ("$env:OOT_COOP_LOCAL_PLAYERS".Trim() -match '^[1-4]$' -or -not (Test-KitLocalConsole)) { return }
+    $file = Join-Path $Kit $script:KitLocalPressedName
+    try { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force } } catch { }   # (a start before's)
+    $env:OOT_COOP_LOCAL_PRESSED = $file
+    $env:OOT_COOP_LOCAL_HINT_AT = "$([DateTime]::UtcNow.Ticks)"
     $last = Get-KitLocalPlayersLast $Kit
     if ($last -gt 1) { Write-Host "Local co-op: last time $last players on this PC. Squadala asks again before it starts more than one game." -ForegroundColor Cyan }
-    else { Write-Host 'Local co-op (2 to 4 players on this PC): press 2, 3 or 4 in this window while Squadala starts; it asks before it starts more than one game.' -ForegroundColor Cyan }
+    else { Write-Host "Local co-op (2 to 4 players on this PC): press 2, 3 or 4 in this window while Squadala starts, then answer its question ($($script:KitLocalInGame))." -ForegroundColor Cyan }
+}
+
+# A digit kept by Save-KitLocalDigit since the hint: $true once, the file taken out and the keeping ended (the
+# question's own keys are not kept for a next start).
+function Receive-KitLocalDigit {
+    $file = "$env:OOT_COOP_LOCAL_PRESSED"
+    $env:OOT_COOP_LOCAL_PRESSED = ''
+    if (-not $file) { return $false }
+    $got = $false
+    try {
+        if (Test-Path -LiteralPath $file) {
+            $got = "$(Get-Content -LiteralPath $file -TotalCount 1)".Trim() -match '^[2-4]$'
+            Remove-Item -LiteralPath $file -Force
+        }
+    } catch { }
+    return $got
+}
+
+# The seconds still to wait for a digit on a quick start: the hint stays on screen $script:KitLocalWindowSeconds from
+# when it was said (a start with an update or a build is long past it: 0). No hint said: 0.
+function Get-KitLocalWindowLeft {
+    $at = "$env:OOT_COOP_LOCAL_HINT_AT"
+    if ($at -notmatch '^\d+$') { return 0 }
+    $gone = ([DateTime]::UtcNow - [DateTime]::new([long]$at, [DateTimeKind]::Utc)).TotalSeconds
+    return [Math]::Max(0, $script:KitLocalWindowSeconds - $gone)
 }
 
 # The question (the kit's rule for a timed question, as Read-KitCharacterSelectAnswer: its line says what each key does
@@ -82,13 +123,17 @@ function Read-KitLocalPlayersAnswer([int]$Last = 1, [int]$Seconds = 15, [scriptb
     return @{ Players = 1; Answered = $false }
 }
 
-# $ReadKey and $Pressed (the characters pressed while the start ran): tests only.
-function Read-KitLocalPlayers([string]$Kit, [int]$Seconds = 15, [scriptblock]$ReadKey = $null, [string[]]$Pressed = @()) {
+# The digit counts from wherever it was pressed since the hint: a key still waiting here, or one an earlier key read
+# kept (Receive-KitLocalDigit). A quick start (no update, no build: a second or two) waits out the hint's short window
+# with one line, so there is time to press it; a digit there makes it ask too. $ReadKey and $Pressed (the characters
+# pressed while the start ran): tests only. $Window: tests (seconds; -1 = what is left of the hint's window).
+function Read-KitLocalPlayers([string]$Kit, [int]$Seconds = 15, [scriptblock]$ReadKey = $null, [string[]]$Pressed = @(), [double]$Window = -1) {
     $given = "$env:OOT_COOP_LOCAL_PLAYERS".Trim()
     if ($given -match '^[1-4]$') { return [int]$given }
     if (-not $ReadKey -and -not (Test-KitLocalConsole)) { return 1 }
     $last = Get-KitLocalPlayersLast $Kit
-    $asked = $last -gt 1
+    $kept = Receive-KitLocalDigit
+    $asked = $last -gt 1 -or $kept
     if (-not $ReadKey) {
         try {
             while ([Console]::KeyAvailable) {   # (only what was pressed already: no wait; a digit only makes it ask)
@@ -97,6 +142,19 @@ function Read-KitLocalPlayers([string]$Kit, [int]$Seconds = 15, [scriptblock]$Re
             }
         } catch { }
     } elseif (@($Pressed | Where-Object { "$_" -match '^[2-4]$' }).Count) { $asked = $true }   # (tests: keys pressed during the start)
+    $left = if ($Window -ge 0) { $Window } else { Get-KitLocalWindowLeft }
+    if (-not $asked -and $left -gt 0) {
+        $end = (Get-Date).AddSeconds($left)
+        $shown = -1
+        while (-not $asked -and (Get-Date) -lt $end) {
+            $now = [int][Math]::Ceiling(($end - (Get-Date)).TotalSeconds)
+            if ($now -ne $shown) { $shown = $now; Write-Host -NoNewline "`rLocal co-op: press 2, 3 or 4 now (the game starts in $now s; $($script:KitLocalInGame))  " }
+            $key = if ($ReadKey) { & $ReadKey } else { try { if ([Console]::KeyAvailable) { [Console]::ReadKey($true) } } catch { $null } }
+            if ($key -and "$($key.KeyChar)" -match '^[2-4]$') { $asked = $true }
+            elseif (-not $asked) { Start-Sleep -Milliseconds 100 }
+        }
+        Write-Host ''
+    }
     if (-not $asked) { return 1 }
     $a = Read-KitLocalPlayersAnswer $last $Seconds $ReadKey
     if ($a.Answered) {

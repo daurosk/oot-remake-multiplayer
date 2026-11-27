@@ -60,7 +60,8 @@ class NativeBodyFake(unittest.TestCase):
         p, s = self.run_fake("ok")
         res, why = self.result(p, s)
         self.assertEqual(res, "NO-REF", why)
-        self.assertIn("no stored reference", why)
+        self.assertIn("the N1 thresholds are not measured yet", why)
+        self.assertNotIn("misses", why)
         notes = json.dumps(s)
         for step in ("walk: moved 2.50 m, closest 0.50 m", "drop: A over B's feet ['1.17'", "summary: rest 240, moved 60",
                      "old spot: A got"):
@@ -73,11 +74,17 @@ class NativeBodyFake(unittest.TestCase):
         self.assertFalse([t for t in s["tests"] if t["test"].endswith(NAME) and t["result"] in ("PASS", "FAIL", "NO-REF")],
                          s)
 
+    def test_threshold_miss_is_no_ref_listed(self):
+        p, s = self.run_fake("lowtop", bug="lowtop")
+        res, why = self.result(p, s)
+        self.assertEqual(res, "NO-REF", why)
+        self.assertIn("misses: A never stood still 1.17 +- 0.35 m over B's feet", why)
+
     def test_no_body_fails(self):
         p, s = self.run_fake("nobody", bug="nobody")
         res, why = self.result(p, s)
         self.assertEqual(res, "FAIL", why)
-        self.assertIn("walked into/through B's copy", why)
+        self.assertIn("A walked through B's standing copy", why)
 
     def test_no_body_line_is_setup_fail(self):
         p, s = self.run_fake("noline", bug="noline")

@@ -43,6 +43,13 @@ BODY_DRIFT_MAX_M = 0.02           # docs/native-puppets.md probe B1: "x under 0.
 PAST_M = 1.5                      # A walks at a point this far past B's old spot along +x
 PASSED_M = 0.5                    # and must get at least this far past it (ESTIMATED: > a capsule radius)
 AWAY_FRAMES = 60                  # B walks away this long (yaw 0: toward +z, off the line A walks along x)
+# The ESTIMATED thresholds above (GAP slack, WALK_FROM_M, WALK_FRAMES, MOVED_MIN_M, TOP_TOL_M, PASSED_M) are starting
+# values (worker-rules: no guessed values; as test_hair_link.py). Until MEASURED cites a lane run's notes (walk/drop/
+# old spot values), a run whose clear checks all hold ends NO-REF (pair.unproven) with the measured values, never PASS;
+# a threshold miss is listed there, not failed. Clear FAILs at once, whatever MEASURED: no body line (SETUP-FAIL), the
+# body made no move/setter call or the game had it farther than B1's 0.02 m (docs/native-puppets.md), A passed through
+# B's standing copy (his x crossed B's), A dropped over B went down to B's feet (no top), A stopped at B's old spot.
+MEASURED = None   # e.g. "run native-body-<sha8>: closest 0.4x m, top 1.1x m, past 2.x m"
 
 
 def flat(a, b):
@@ -112,10 +119,12 @@ def test_native_body(pair):
     moved = flat(seen[0], seen[-1])
     passed = (seen[-1][0] - b1[0]) * (seen[0][0] - b1[0]) < 0      # A's x crossed B's
     pair.notes.append("walk: moved %.2f m, closest %.2f m to B, end %.2f m" % (moved, closest, flat(seen[-1], b1)))
-    assert moved >= MOVED_MIN_M, "A moved only %.2f m toward B (< %.1f): held by something else" % (moved, MOVED_MIN_M)
-    assert not passed and closest >= GAP_MIN_M, (
-        "A walked into/through B's copy: closest %.2f m (< %.2f), passed %s: the copy has no body in A's game" % (
-            closest, GAP_MIN_M, passed))
+    assert not passed, "A walked through B's standing copy (closest %.2f m): the copy has no body in A's game" % closest
+    misses = []
+    if moved < MOVED_MIN_M:
+        misses.append("A moved only %.2f m toward B (< %.1f): held by something else?" % (moved, MOVED_MIN_M))
+    if closest < GAP_MIN_M:
+        misses.append("A came %.2f m close to B's copy (< %.2f)" % (closest, GAP_MIN_M))
     shots(pair, "native-body-stop")
 
     # 2. A dropped over the copy stands on its top
@@ -125,16 +134,18 @@ def test_native_body(pair):
         pair.step_both(SAMPLE)
         p = pos(pair, "A")
         ys.append(p[1] - b1[1])
-        if len(ys) >= 2 and abs(ys[-1] - ys[-2]) <= STILL_M:
+        if len(ys) >= 2 and ys[-1] < DROP_M - 0.3 and abs(ys[-1] - ys[-2]) <= STILL_M:   # (fallen a bit, then still)
             if abs(ys[-1] - CHILD_HEIGHT_M) <= TOP_TOL_M:
                 on_top = True
                 break
             if abs(ys[-1]) <= TOP_TOL_M:
                 fell = True
-                break
+            break                                  # (still: on the top, at the feet, or somewhere between)
     pair.notes.append("drop: A over B's feet %s" % ["%.2f" % y for y in ys])
-    assert on_top and not fell, (
-        "A dropped over B did not stand on the copy's top (%.2f m +- %.2f): heights over B's feet %s" % (
+    assert not fell, "A dropped over B went down to B's feet (no top on the copy): heights over B's feet %s" % (
+        ["%.2f" % y for y in ys])
+    if not on_top:
+        misses.append("A never stood still %.2f +- %.2f m over B's feet (heights %s)" % (
             CHILD_HEIGHT_M, TOP_TOL_M, ["%.2f" % y for y in ys]))
     shots(pair, "native-body-top")
 
@@ -142,8 +153,9 @@ def test_native_body(pair):
     pair.act("A", "place %.2f %.2f %.2f" % (b1[0] - WALK_FROM_M, b1[1], b1[2]))
     pair.step_both(10)
     mark = pair.log["A"].mark()
-    pair.call("B", "move", yaw=0.0, strength=1.0, frames=AWAY_FRAMES)
-    pair.step_other("A", AWAY_FRAMES)
+    for _ in range(AWAY_FRAMES // SAMPLE):      # (B's walk and A's frames in turn: A's copy moves while B walks,
+        pair.call("B", "move", yaw=0.0, strength=1.0, frames=SAMPLE)   # so the summary's window holds the walk)
+        pair.step_other("A", SAMPLE)
     b2 = pos(pair, "B")
     assert flat(b2, b1) >= 1.0, "B did not walk away (%.2f m)" % flat(b2, b1)
     line = pair.until("A's next body summary of P%d" % n,
@@ -161,5 +173,11 @@ def test_native_body(pair):
     seen = walk_at(pair, (b1[0] + PAST_M, b1[1], b1[2]), WALK_FRAMES)
     went = max(p[0] for p in seen) - b1[0]
     pair.notes.append("old spot: A got %.2f m past it" % went)
-    assert went >= PASSED_M, "A got only %.2f m past B's old spot (< %.1f): a body left behind there" % (went, PASSED_M)
+    assert went > 0, "A stopped %.2f m short of B's old spot: a body left behind there" % -went
+    if went < PASSED_M:
+        misses.append("A got only %.2f m past B's old spot (< %.1f)" % (went, PASSED_M))
     pair.never_log("A", NOT_MOVED % n)
+    if not MEASURED:
+        pair.unproven("the N1 thresholds are not measured yet%s (MEASURED: this run's notes: %s)" % (
+            "; misses: " + "; ".join(misses) if misses else "", "; ".join(pair.notes[-4:])))
+    assert not misses, "; ".join(misses)

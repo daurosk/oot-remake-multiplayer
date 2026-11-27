@@ -69,10 +69,19 @@ def ssim(a_path, b_path, grid=GRID, colour=True, box=None):
     return float(min(tiles)), None
 
 
+def _boxes(box):
+    """None, one box (left, top, right, bottom fractions) or a list of boxes -> a list of boxes ([None]: the whole)."""
+    if not box:
+        return [None]
+    return [tuple(box)] if isinstance(box[0], (int, float)) else [tuple(b) for b in box]
+
+
 def compare(shot, ref, tolerance, keep_dir=None, box=None):
+    """box: one box or a list of boxes; with several, the score is the lowest box's (each part must match)."""
     out = {"path": shot, "ref": ref, "score": None, "ok": False, "tolerance": tolerance}
+    boxes = _boxes(box)
     if box:
-        out["box"] = list(box)
+        out["box"] = [list(b) for b in boxes] if len(boxes) > 1 else list(boxes[0])
     if not shot or not os.path.exists(shot):
         out["why"] = "no shot file (%s)" % shot
         return out
@@ -87,12 +96,16 @@ def compare(shot, ref, tolerance, keep_dir=None, box=None):
             shutil.copyfile(shot, os.path.join(keep_dir, "new", os.path.basename(ref)))
         out["why"] = "NO-REF: no reference %s yet (candidate kept under new/)" % os.path.basename(ref)
         return out
-    score, err = ssim(shot, ref, box=box)
+    score, err = None, None
+    for b in boxes:
+        s, e = ssim(shot, ref, box=b)
+        if score is None or s < score:
+            score, err = s, e
     out["score"] = round(score, 4)
     if err:
         out["why"] = err
         return out
     out["ok"] = score >= tolerance
     out["why"] = "colour SSIM %.4f %s %.2f%s" % (score, ">=" if out["ok"] else "<", tolerance,
-                                                 " (box %s)" % (list(box),) if box else "")
+                                                 " (box %s)" % (out["box"],) if box else "")
     return out

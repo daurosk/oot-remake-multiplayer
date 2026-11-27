@@ -473,6 +473,45 @@ class LiveLifecycle(unittest.TestCase):
         self.assertEqual(s["offsets"], {"A": 7, "B": 0})
         self.assertEqual(s["planned"], {})
 
+    def test_relaunch_answers_a_held_old_log_as_its_error(self):
+        # downed-move-53d40ab3-2: os.replace WinError 32 on game-out-B.txt was a traceback ('no JSON answer'); now the
+        # rotate's reason is relaunch's JSON error, nothing is started and the plan is cleared
+        live.quit_one(self.args(player="B", kill=True), alive=self.alive, killer=self.live.discard,
+                      sleep=lambda s: None)
+        out = live.relaunch(self.args(player="B", boot=None, no_load=False, restore=False), alive=self.alive,
+                            runner=lambda argv: 1 / 0, rotate=lambda log: "game-out-B.txt still held")
+        self.assertEqual(out, {"error": "game-out-B.txt still held"})
+        self.assertEqual(live.load(self.d)["planned"], {})
+
+    def test_rotate_log_waits_for_a_held_file_then_moves_it(self):
+        log = os.path.join(self.d, "game-out-B.txt")
+        with open(log, "w") as f:
+            f.write("first run")
+        c, tries = FakeClock(0.0), []
+
+        def replace(src, dst):
+            tries.append(dst)
+            if len(tries) < 3:
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+            os.replace(src, dst)
+        self.assertIsNone(live.rotate_log(log, replace=replace, sleep=c.sleep, clock=c))
+        self.assertEqual(len(tries), 3)
+        with open(log + ".1") as f:
+            self.assertEqual(f.read(), "first run")
+        self.assertIsNone(live.rotate_log(log + ".missing"))      # (no old log: nothing to move)
+
+    def test_rotate_log_gives_up_with_its_reason(self):
+        log = os.path.join(self.d, "game-out-B.txt")
+        with open(log, "w") as f:
+            f.write("held")
+        c = FakeClock(0.0)
+
+        def replace(src, dst):
+            raise PermissionError(32, "being used by another process")
+        why = live.rotate_log(log, held_s=3.0, replace=replace, sleep=c.sleep, clock=c)
+        self.assertIn("game-out-B.txt still held by another process 3 s after the game ended", why)
+        self.assertTrue(os.path.exists(log))
+
     def test_relaunch_stdout_is_only_its_json(self):
         # C #132 rule (review-c123-11): the runner's boot lines go to stderr; stdout = the ONE JSON answer _live reads
         import contextlib

@@ -695,7 +695,33 @@ def relaunch_argv(r, d, x, boot=None, no_load=False, restore=False, env=()):
     return argv
 
 
-def relaunch(a, alive=None, runner=None):
+ROTATE_HELD_S = 15.0   # how long relaunch waits for the old game-out-X.txt to be let go before it answers an error
+
+
+def rotate_log(log, held_s=ROTATE_HELD_S, replace=os.replace, sleep=time.sleep, clock=time.monotonic):
+    """Moves game-out-X.txt to the first free game-out-X.txt.N. A file still held by another handle after the game's pid
+    ended (Windows WinError 32: its stdout handle, inherited by a process the game started, closes a moment later) is
+    tried again every 0.5 s for `held_s`. Returns None when moved, else the reason (still held) as text: relaunch answers
+    it as its JSON error, never a traceback (downed-move-53d40ab3-2 23:39: one PermissionError at once made the lane's
+    recovery 'no JSON answer' -> LaneLost)."""
+    if not os.path.exists(log):
+        return None
+    end = clock() + held_s
+    while True:
+        n = 1
+        while os.path.exists("%s.%d" % (log, n)):
+            n += 1
+        try:
+            replace(log, "%s.%d" % (log, n))
+            return None
+        except PermissionError as e:
+            if clock() >= end:
+                return "%s still held by another process %.0f s after the game ended (%s): not relaunched" % (
+                    os.path.basename(log), held_s, e)
+            sleep(0.5)
+
+
+def relaunch(a, alive=None, runner=None, rotate=rotate_log):
     """Starts a game that `quit` closed (or that crashed) again, joining the session's server."""
     alive = alive or lanes.hs.pid_alive
     d = os.path.abspath(a.session)
@@ -715,11 +741,10 @@ def relaunch(a, alive=None, runner=None):
         return {"error": "game %s still runs (pid %d): live.py quit first" % (x, pid)}
     plan(d, x, "relaunch")
     log = s["games"][x]["log"]
-    if os.path.exists(log):   # the runner writes game-out-X.txt from the start: the old one is kept beside it
-        n = 1
-        while os.path.exists("%s.%d" % (log, n)):
-            n += 1
-        os.replace(log, "%s.%d" % (log, n))
+    held = rotate(log)   # the runner writes game-out-X.txt from the start: the old one is kept beside it
+    if held:
+        plan(d, x, None)
+        return {"error": held}
     import contextlib
     with contextlib.redirect_stdout(sys.stderr):      # (the runner's boot lines: stdout is the ONE JSON answer, as start)
         code = (runner or hookshot.main)(relaunch_argv(r, d, x, a.boot, a.no_load, a.restore,

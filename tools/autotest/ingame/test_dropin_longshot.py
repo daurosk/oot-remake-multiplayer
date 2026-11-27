@@ -5,6 +5,7 @@ and builds the stock game: -SetupOnly / -BuildOnly). A stock game has no play-te
 so this test boots no lane pair: it judges by our proxy's own log (squadala-dropin.log, hookshot/dropin/dropin.c) and
 keeps one window shot through the shared helper (offline/lib/screen-shot.ps1 via hs_steps.window_shot_command).
 
+BT_DROPIN_EXPECT=<sha> in the environment is required: HEAD must start with it, no tracked changes (SETUP-FAIL).
 Runs only with --env BT_DROPIN=1 (needs_env: every other run deselects it, no rc pass carries it). No lane, no
 --expect-commit: the stock game is the one the official builder made at C:\\lsb\\<tag>\\game (proof-run.ps1 -BuildOnly;
 BT_DROPIN_ROOT changes C:\\lsb), <tag> = hookshot/PIN's tag (the Longshot release co-op ships on).
@@ -41,6 +42,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 DROPIN = os.path.join(REPO, "hookshot", "dropin")
 PIN = os.path.join(REPO, "hookshot", "PIN")
 ROOT_ENV = "BT_DROPIN_ROOT"
+EXPECT_ENV = "BT_DROPIN_EXPECT"          # the sha this checkout must be at (no lane-server.txt here, so not --expect-commit)
 SETUP_ONLY_ENV = "BT_DROPIN_SETUP_ONLY"   # =1: steps 1-2 only (no game start), ends NO-REF: the preflight's real set-up run
 DEFAULT_ROOT = r"C:\lsb"          # proof-run.ps1 -ShortRoot default (MAX_PATH: reports/v1-longshot-dropin-2.md)
 ATTACH_S = 90                     # proof-run.ps1's wait for 'dropin: attached' (seen at +0.1 s, run 20261126-064809)
@@ -138,6 +140,14 @@ def test_dropin_stock_longshot(request):
 
     # ---- 1. set-up proof ----
     t0 = time.time()
+    want = (os.environ.get(EXPECT_ENV) or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", want):
+        raise P.SetupFail("%s=<sha of this checkout> is required (7-40 hex), got %r" % (EXPECT_ENV, want))
+    head = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "-C", REPO, "status", "--porcelain", "--untracked-files=no"],
+                           capture_output=True, text=True).stdout.strip()
+    if not head.startswith(want) or dirty:
+        raise P.SetupFail("checkout %s is at %s%s, not %s" % (REPO, head or "?", " with changes" if dirty else "", want))
     for p in (exe, stamp):
         if not os.path.isfile(p):
             raise P.SetupFail("no stock game file %s (build it: hookshot/dropin/proof-run.ps1 -Versions %s -BuildOnly)" % (p, tag))
@@ -154,6 +164,7 @@ def test_dropin_stock_longshot(request):
     if r.returncode != 0 or "TEST PASS" not in (r.stdout or ""):
         raise P.SetupFail("hookshot/dropin/test.ps1 not PASS on this tree (exit %s): see dropin-test-ps1.txt" % r.returncode)
     dll, selftest = os.path.join(DROPIN, "out", "winmm.dll"), os.path.join(DROPIN, "out", "selftest.exe")
+    say("checkout %s at %s" % (REPO, head))
     say("stock %s game %s; test.ps1 PASS; winmm.dll %d bytes" % (tag, game, os.path.getsize(dll)))
     was = blank_telemetry(stamp)
     say("telemetry addresses blank in the stamp%s" % (" (blanked now: %s)" % ", ".join(was) if was else ""))

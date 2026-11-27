@@ -2,7 +2,7 @@
 (B #149): it acts only in a game started with LICHII_COOP_PVP_NATIVE=1 (the probe's own switch, no other test sets it)
 and only in the probe's scene.
 
-- A 'chat /pvp on': both games log the mode (coop_pvp_game.cpp:152), then their _Pvp copies (coop_pvp_native_game.cpp
+- A 'chat /pvp on' / 'off': both games log the mode (coop_pvp_game.cpp:152), then their _Pvp copies (coop_pvp_native_game.cpp
   :232).
 - A pressing the sword (Y), the jump (A) or the item (ZR) with ZL, within 3 m of B: A logs the copy's U2 record and its
   strike 4 frames later, B its outcome 6 frames after that: kept_off (6, PathBLive false on this base), or guarded
@@ -34,7 +34,13 @@ def setup(game):
 
 
 def act(game, w):
-    if game.tag != "A" or w[:3] != ["chat", "/pvp", "on"] or not _on(game):
+    if game.tag != "A" or w[:2] != ["chat", "/pvp"] or not _on(game):
+        return False
+    if w[2:3] == ["off"]:
+        for g in (game, game.other):
+            g.later(4, lambda g=g: g.say("coop: pvp: off (set by 1)"))
+        return False
+    if w[2:3] != ["on"]:
         return False
     for g, other in ((game, 2), (game.other, 1)):
         g.later(4, lambda g=g: g.say("coop: pvp: on (set by 1)"))

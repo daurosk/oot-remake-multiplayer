@@ -33,6 +33,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from test_enemies import face, place   # noqa: E402  (bridge place / face, as the scenarios' 'place' / 'toward')
 import kit_fight   # noqa: E402  (LOCK, SWORD, SHIELD: the one button map)
+import test_boss_respawn as tb   # noqa: E402  (give_hearts: the shared ten-hearts set-up, never a copy)
 
 SCENE, ENTRANCE = "HyruleField_Child", "HyruleField_FrontOfKakarikoVillage"   # pvp-probe.A/B.txt 'warp'
 A_AT = (198.63, 163.4, 309.87)          # pvp-probe.A.txt 'place'
@@ -50,6 +51,7 @@ GUARD_FRAMES = 30                       # B raises the shield this long before A
 MODE_FRAMES = 300                       # pvp-probe.A.txt 'chat /pvp on' then 'wait 240'
 
 PVP_ON = r"coop: pvp: on \(set by \d+\)"                                         # coop_pvp_game.cpp:152
+PVP_OFF = r"coop: pvp: off \(set by \d+\)"                                       # coop_pvp_game.cpp:152
 COPIES = r"coop: pvp native: _Pvp copies for players 0x[0-9a-f]+ \(PvP on\)"     # coop_pvp_native_game.cpp:232
 NO_PACK = r"coop: pvp native: on; the puppet pack has no _Pvp copies"             # coop_pvp_native_game.cpp:112
 RECORD = r"coop: pvp native: U2 record of our hit on P(\d+)'s copy \(id (0x[0-9a-f]+), \+0x228 (-?\d+)\): ([0-9a-f ]+)"
@@ -143,14 +145,8 @@ def one_kind(pair, name, buttons, frames, b_buttons=()):
     return got
 
 
-@pytest.mark.budget(420)   # ESTIMATED: one warp + ~2'500 game frames (the old scenario's waits) + 10 shots
-@pytest.mark.look
-@pytest.mark.needs_pack("native")
-@pytest.mark.needs_env("LICHII_COOP_PVP_NATIVE=1", "LICHII_COOP_DEBUG_OBJECTS=1", "LICHII_COOP_CHEATS=1")
-@pytest.mark.row("true PvP probe: A's weapons on B's _Pvp copy -> strike -> B's outcome (U2/U5/U7 values)")
-def test_pvp_probe(pair):
-    with pair.setup():
-        to_field(pair)
+def probe(pair):
+    """The kinds in pvp-probe.A.txt's order, then a slash at B's raised shield (U5 / N4). Returns their facts."""
     facts = []
     for name, line, buttons, frames in KINDS:
         if line:
@@ -159,13 +155,39 @@ def test_pvp_probe(pair):
         face(pair, "A", B_AT)
         pair.step_both(4)
         facts.append(one_kind(pair, name, buttons, frames))
-    # The guard (U5 / N4): B raises the shield toward A, A slashes.
     face(pair, "A", B_AT)
     face(pair, "B", A_AT)
     for _ in range(GUARD_FRAMES // 2):
         pair.call("B", "input", buttons=[SHIELD], frames=2)
         pair.call("A", "step", frames=2)
     facts.append(one_kind(pair, "slash-at-guard", (LOCK, SWORD), 8, b_buttons=(SHIELD,)))
+    return facts
+
+
+def put_back(pair):
+    """PvP off again (the host's 'chat /pvp off'), heard by both games, so later tests on this boot have no live
+    strikes (review-rows-c130-10 20:48)."""
+    pair.act("A", "chat /pvp off")
+    for x in ("A", "B"):
+        pair.expect_log(x, PVP_OFF, max_frames=MODE_FRAMES)
+
+
+@pytest.mark.budget(420)   # ESTIMATED: one warp + ~2'500 game frames (the old scenario's waits) + 10 shots
+@pytest.mark.look
+@pytest.mark.needs_pack("native")
+@pytest.mark.needs_env("LICHII_COOP_PVP_NATIVE=1", "LICHII_COOP_DEBUG_OBJECTS=1", "LICHII_COOP_CHEATS=1")
+@pytest.mark.row("true PvP probe: A's weapons on B's _Pvp copy -> strike -> B's outcome (U2/U5/U7 values)")
+def test_pvp_probe(pair):
+    turned_on = False
+    try:
+        with pair.setup():
+            tb.give_hearts(pair)                     # five hits must not put child B down before the guard kind
+            turned_on = True                         # (to_field turns PvP on: put back from here on, whatever)
+            to_field(pair)
+        facts = probe(pair)
+    finally:
+        if turned_on:
+            put_back(pair)
     out = os.path.join(pair.out_dir or os.path.join(HERE, "out"), "pvp-probe.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:

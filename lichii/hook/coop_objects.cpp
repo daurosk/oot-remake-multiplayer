@@ -4748,6 +4748,8 @@ private:
                             }
                         }
                         TheLinkGuardWords().store(words);
+                    } else {
+                        TheLinkGuardWords().store(0);  // PvP native off: no stale words (review-c123-18 nit)
                     }
                     // Difficulty: the Life component whose hits from enemies are scaled.
                     if (const auto table = r.Ptr(a + kActorComponents)) {

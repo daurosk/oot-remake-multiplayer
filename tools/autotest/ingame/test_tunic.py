@@ -44,6 +44,12 @@ CROSS = r"row 198 cross guard"                                         # coop_lo
 # NOT MEASURED: the hue/saturation/value ranges, COLOUR_MIN and BEARING. Until MEASURED cites a lane run's
 # colourcheck lines, a run whose colour checks all hold ends NO-REF, never PASS (worker-rules: no guessed values).
 COLOUR_MIN = 4
+# Only the top CAP_BAND of each box is counted: the cap. From the camera behind (ZL) the Hylian Shield on the Link's
+# back hides the tunic, and its lit blue face counts as blue (run tunic-look-182cd53b, lane1/new/tunic-blue-B.png: B's
+# own green Link, its whole box blue 3904 / green 333 with the shield's rows y 451-561, the green cap's rows y 411-450).
+# On that run's two shots the top 30 % reads: A own blue 3489 / green 0, B's puppet on A green 86 / blue 2, B own green
+# 310 / blue 40, A's puppet on B blue 830 / green 3 (each right, the shield's top only from 30 %: B 0.35 blue 262).
+CAP_BAND = 0.30
 MEASURED = None   # e.g. "run <name>: A own blue .. green .., B's puppet of A blue .. green .., ..."
 # A stands BEARING degrees off B's facing, and A faces BEARING beside B, so from the camera behind each Link (ZL) the
 # other is beside it on the shot, not behind it (as test_look.py's kokiri band). Every shot proves it: the 4 boxes
@@ -68,8 +74,9 @@ def count(px, b, test):
 
 
 def colours(path, view, pos, other, age, other_age):
-    """{box, side, blue, green} of the Link of `age` at `pos` on the shot (net of the side box away from `other`, a Link
-    of `other_age`), or None when it is off the shot."""
+    """{box, side, cap, blue, green} of the Link of `age` at `pos` on the shot: the blue and green pixels of its cap
+    band (the top CAP_BAND of its box) net of the same rows of the side box away from `other`, a Link of `other_age`;
+    None when it is off the shot."""
     import bandcheck
     from PIL import Image
     im = Image.open(path).convert("RGB")
@@ -80,9 +87,12 @@ def colours(path, view, pos, other, age, other_age):
     ob = bandcheck.box(view, other, w, h, other_age)
     side = bandcheck.side_box(b, w, (ob[0] + ob[2]) / 2 if ob else None)
     px = im.load()
-    out = {"box": b, "side": side}
+    y1 = b[1] + max(2, int((b[3] - b[1]) * CAP_BAND))
+    cap = (b[0], b[1], b[2], y1)
+    side_cap = (side[0], side[1], side[2], y1) if side else None
+    out = {"box": b, "side": side, "cap": cap}
     for name, test in (("blue", is_blue), ("green", is_green)):
-        out[name] = max(0, count(px, b, test) - (count(px, side, test) if side else 0))
+        out[name] = max(0, count(px, cap, test) - (count(px, side_cap, test) if side_cap else 0))
     return out
 
 
@@ -136,8 +146,8 @@ def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour, 
         assert got, "%s: the %s is off the shot" % (x, who)
         other = "green" if want == "blue" else "blue"
         assert got[want] >= COLOUR_MIN and got[want] > got[other], (
-            "%s's shot: the %s is not %s: %d %s px, %d %s px in its box %s" % (
-                x, who, want, got[want], want, got[other], other, got["box"]))
+            "%s's shot: the %s is not %s: %d %s px, %d %s px in its cap band %s (box %s)" % (
+                x, who, want, got[want], want, got[other], other, got["cap"], got["box"]))
 
 
 @pytest.mark.budget(180)

@@ -20,11 +20,12 @@ class SteppedHud(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_fake(self, name, bug=False):
+    def run_fake(self, name, bug=False, env_more=None):
         out = os.path.join(self.tmp, name)
         env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")}
         if bug:
             env["BT_FAKE_STEPPED_BUG"] = "1"
+        env.update(env_more or {})
         p = T.pytest_run([".", "--fake", "--out", out, "-q", "-p", "no:cacheprovider", "-k", TEST], env=env)
         return p, T.summary(out)
 
@@ -36,3 +37,10 @@ class SteppedHud(unittest.TestCase):
         p, s = self.run_fake("bug", bug=True)
         self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-1500:])
         self.assertIn("showed no block", s["tests"][0]["why"])
+
+    def test_tag_part_never_opened_fails(self):
+        """nametags-300-2 (stepped-hud-c889af41-2 on 182cd53b5: B in A's shot with no tag, name_tags shown 1): a module
+        without row 300's fix (the tag "shown", its balloon part never opened, the screen root hidden) must FAIL."""
+        p, s = self.run_fake("closed", env_more={"BT_FAKE_NAMETAGS300": "closed"})
+        self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-1500:])
+        self.assertIn("name_tags open and the screen root shown", s["tests"][0]["why"])

@@ -27,7 +27,7 @@ import time
 import pytest
 
 from test_regress_ui import (CRASH, TAGS_DIST, TAGS_NO_MEMORY, TAGS_ON, camera_behind_each, other_in_view,
-                             seen_not)
+                             seen_not, tags_open, tags_seen)
 from pair import CHUNK
 from test_rows import need_child_in_play, place_in_front
 
@@ -73,10 +73,19 @@ def test_stepped_hud_and_tags(pair):
     for x, other in (("A", "B"), ("B", "A")):
         ok, why = other_in_view(pair, x, other)
         assert ok, "%s: the other player is not in view before the held frame: %s" % (x, why)
+    # (nametags-300-2, stepped-hud-c889af41-2 08:33: A's shot had B in view and no tag while name_tags said shown 1: on
+    # 182cd53b5, without row 300's fix 58e1b85d8, the tag's balloon part was never opened, so the game drew none. shown
+    # >= 1 alone let 0.12.0 pass; row 300's check is the part open + the balloon screen's root shown (test_regress_ui
+    # tags_open), here before the held frame and AT it, with no frames stepped in between)
+    for x in GAMES:
+        tags_open(pair, x)
     for x, other in (("A", "B"), ("B", "A")):
         hold_running_other(pair, x, other)                       # x held HOLD_S while the other runs (sends samples)
         res = pair.check_shot(x, "stepped-hud", tolerance=0.80)  # (runs the held frame; 0.80: Kakariko's people move)
-        pair.notes.append("%s shot: %s" % (x, res.get("why")))
+        t = tags_seen(pair, x)                                   # (the held frame's state: nothing stepped since)
+        assert t.get("open", 0) >= 1 and t.get("screen_root") is True and t.get("shown", 0) >= 1, (
+            "%s: at the held frame no tag drawn (row 300: its balloon part open and the screen root shown): %s" % (x, t))
+        pair.notes.append("%s shot: %s; tags %s" % (x, res.get("why"), t))
     for x in GAMES:
         after = slow(pair, x)
         for part, need in (("party_hud", "block"), ("name_tags", "tag")):

@@ -83,5 +83,29 @@ class Carry305(unittest.TestCase):
         self.assertTrue(any(n.endswith(TEST) for n in names), names)
 
 
+class WorldMiss(unittest.TestCase):
+    """The shared world-list lookup (pair.nearest_named / world_miss / find_actor; B #167 after the 04:23 SETUP-FAIL):
+    a miss in a full list says CAP HIT, a miss in a short one does not; the nearest named actor is found."""
+    def actors(self, n, extra=()):
+        return [{"name": "Obj_Grass_A_01", "kind": "other", "pos": [float(i % 50), 0.0, float(i // 50)]}
+                for i in range(n)] + list(extra)
+
+    def test_full_list_miss_says_cap_hit(self):
+        why = T.P.world_miss("A", "Obj_LiftRock_B_", 120.0, (1.6, 115.9, 34.4), self.actors(200), {"other_count": 200})
+        self.assertIn("200 actors, CAP HIT: the walk keeps the 200 nearest", why)
+        self.assertIn("no Obj_LiftRock_B_ within 120 m of A's Link", why)
+
+    def test_short_list_miss_has_no_cap_hit(self):
+        why = T.P.world_miss("A", "Obj_LiftRock_B_", 120.0, (0.0, 0.0, 0.0), self.actors(12), {"other_count": 12})
+        self.assertIn("12 actors, other 12", why)
+        self.assertNotIn("CAP HIT", why)
+
+    def test_nearest_named(self):
+        rock = [{"name": "Obj_LiftRock_B_01", "id": 7, "pos": [3.0, 0.0, 4.0]},
+                {"name": "Obj_LiftRock_B_01", "id": 8, "pos": [30.0, 0.0, 40.0]}]
+        self.assertEqual(T.P.nearest_named(self.actors(5, rock), "Obj_LiftRock_B_", (0.0, 0.0, 0.0), 120.0)["id"], 7)
+        self.assertIsNone(T.P.nearest_named(self.actors(5, rock), "Obj_LiftRock_B_", (0.0, 0.0, 0.0), 4.0))
+
+
 if __name__ == "__main__":
     unittest.main()

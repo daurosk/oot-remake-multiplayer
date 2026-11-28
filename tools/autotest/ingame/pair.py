@@ -12,6 +12,7 @@ ends as FAIL 'timeout' on its own instead of hanging the lane.
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -116,6 +117,35 @@ OCARINA_PLAYS_FRAMES = 240
 
 class SetupFail(Exception):
     """The test could not be set up (the lane, a warp, a give, the set-up took more than 30 s): SETUP-FAIL, not FAIL."""
+
+
+WALK_CAP = 200   # docs/playtest.md "world": the objects walk keeps up to 200 actors, nearest first, `other` last
+
+
+def nearest_named(actors, prefix, at, within):
+    """The actor whose name starts with `prefix` nearest to `at` on the ground (x, z), within `within` m; or None."""
+    best = None
+    for a in actors:
+        p = a.get("pos")
+        if str(a.get("name", "")).startswith(prefix) and p:
+            d = math.hypot(p[0] - at[0], p[-1] - at[-1])
+            if d <= within and (best is None or d < best[0]):
+                best = (d, a)
+    return best and best[1]
+
+
+def world_miss(x, prefix, within, at, actors, meta=None):
+    """The text of a world-list miss (carry-boulder-305, B #167): run carry-boulder-305-182cd53b (04:23 UTC 11-28)
+    found no Obj_LiftRock_B_ with A's list at 200 actors, so the miss could not tell "not there" from "cut off by the
+    cap". CAP HIT says the list is full: a farther actor of that name may exist (its `other` kind goes last)."""
+    meta = meta or {}
+    far = max([math.hypot(a["pos"][0] - at[0], a["pos"][-1] - at[-1]) for a in actors if a.get("pos")] or [0.0])
+    cap = len(actors) >= WALK_CAP
+    names = sorted({str(a.get("name")) for a in actors if str(a.get("name", "")).startswith(prefix[:4])})
+    return "no %s within %.0f m of %s's Link %s in %s's world list (%d actors%s, other %s, farthest %.1f m; %s: %s)" % (
+        prefix, within, x, list(at), x, len(actors),
+        ", CAP HIT: the walk keeps the %d nearest, kinds first, so a farther %s is not listed" % (WALK_CAP, prefix)
+        if cap else "", meta.get("other_count", "?"), far, prefix[:4] + "*", names[:12])
 
 
 class LaneLost(SetupFail):
@@ -516,6 +546,30 @@ class Pair:
 
     def state(self, x):
         return self.call(x, "state")
+
+    def world_dump(self, x, tag):
+        """Game x's whole world list through the bridge's `dump` (docs/playtest.md "world": up to WALK_CAP actors,
+        nearest first, `other` last). Returns (Link's pos, actors, the list's own fields such as total/other_count)."""
+        r = self.call(x, "dump", tag=tag)
+        with open(r["path"], encoding="utf-8") as f:
+            st = (json.load(f).get("state") or {})
+        w = st.get("world") or {}
+        return st.get("pos"), w.get("actors") or [], {k: v for k, v in w.items() if k != "actors"}
+
+    def find_actor(self, x, prefix, within, at=None, tag="find", missing_ok=False):
+        """The nearest actor of game x's world list whose name starts with `prefix`, within `within` m (x, z) of `at`
+        (default x's Link). None found: SetupFail (or, with missing_ok, None and a note), its text from
+        world_miss: it says CAP HIT when the list is full (a farther actor is not in it, so "not there" is
+        unproven) and names what the list held. Returns (Link's pos, the actor or None, actors)."""
+        link, actors, meta = self.world_dump(x, tag)
+        here = at or link or (0.0, 0.0, 0.0)
+        obj = nearest_named(actors, prefix, here, within)
+        if obj is None:
+            why = world_miss(x, prefix, within, here, actors, meta)
+            if not missing_ok:
+                raise SetupFail(why)
+            self.notes.append(why)
+        return link, obj, actors
 
     def until(self, what, pred, max_frames=600):
         """Steps both games CHUNK frames at a time until pred() is true (checked before the first step too).

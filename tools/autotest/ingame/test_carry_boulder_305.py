@@ -24,8 +24,9 @@ Sources (worker-rules "no guessed values"):
 - Strength: PlayerStatus.LiftGrade, enum None/Low/Middle/High (docs/items.md "Strength, scale"; docs/playtest.md
   `flag` takes an enum value's name). High = the most Link can lift, so the grade is never why a lift fails.
 - The boulder's place is NOT cited: at each place the test finds the nearest Obj_LiftRock_B_ in A's world list (dump,
-  <= 200 actors, docs/playtest.md "world"), notes what each place's list held (count, cap, big rocks, farthest) and
-  SETUP-FAILs naming every place's findings when none has one.
+  <= 200 actors, docs/playtest.md "world") through the shared pair.find_actor, whose miss says CAP HIT when the list
+  is full (B #167); each place's findings (count, cap, big rocks; the miss text) go into the notes, and the SETUP-FAIL
+  names every place when none has one.
 - Lift: test_carry_304's place/face (coop_testinput.cpp PLACE/FACE), A held LIFT_FRAMES; a big lift's animation length
   is NOT measured, so A's boulder is sampled every LIFT_POLL frames up to LIFT_MAX frames until it is in A's hands
   (SETUP-FAIL with every sample if never).
@@ -52,7 +53,6 @@ PLACES = (                                    # (scene, entrance): coop_start_po
     ("GerudoValley_Adult", "GerudoValley_FromGerudoFortress"), # :45
     ("DesertColossus_Adult", "DesertColossus_FromSpiritTempleRightHand"),  # :25
 )
-WALK_CAP = 200                                # docs/playtest.md "world": the walk keeps up to 200
 BOULDER = "Obj_LiftRock_B_"
 FIND_M = 120.0                                # nearest big rock to A's start within this (the whole city)
 LIFT_POLL, LIFT_MAX = 10, 240
@@ -70,17 +70,13 @@ def find_place(pair, tag):
             pair.warp_both(scene, entrance)
             pair.step_both(30)
             DC.need_at(pair, "adult", scene)
-        link, actors, _ = C.dump(pair, "A", "%s-find-%d" % (tag, i))
-        at = link or (0.0, 0.0, 0.0)
+        link, obj, actors = pair.find_actor("A", BOULDER, FIND_M, tag="%s-find-%d" % (tag, i), missing_ok=True)
         big = [a for a in actors if str(a.get("name", "")).startswith(BOULDER) and a.get("pos")]
-        far = max([((a["pos"][0] - at[0]) ** 2 + (a["pos"][-1] - at[-1]) ** 2) ** 0.5
-                   for a in actors if a.get("pos")] or [0.0])
-        line = "%s/%s: A at %s, %d actors%s, farthest %.1f m, %s: %s" % (
-            scene, entrance, link, len(actors), " (the walk's cap)" if len(actors) >= WALK_CAP else "", far, BOULDER,
+        line = "%s/%s: A at %s, %d actors%s, %s: %s" % (
+            scene, entrance, link, len(actors), " (CAP HIT)" if len(actors) >= P.WALK_CAP else "", BOULDER,
             [(a.get("name"), a.get("id"), a.get("pos")) for a in big][:6] or "none")
         pair.notes.append("%s find: %s" % (tag, line))
-        found.append("%s %d%s" % (entrance, len(actors), "cap" if len(actors) >= WALK_CAP else ""))
-        obj = C.nearest(actors, BOULDER, at, FIND_M)
+        found.append("%s %d%s" % (entrance, len(actors), "cap" if len(actors) >= P.WALK_CAP else ""))
         if obj is not None:
             return link, obj
     raise P.SetupFail("no %s within %.0f m of A's Link at any of %d places (entrance, actors in A's list; each "

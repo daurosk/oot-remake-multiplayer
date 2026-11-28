@@ -61,6 +61,13 @@ class RegressUi(unittest.TestCase):
         self.assertNotIn("DIALOG_MEASURED is not set", s["tests"][0]["why"])
         self.assertIn("no stored reference for regress-sys-tab", s["tests"][0]["why"])
 
+    def test_title_wrong_question_fails(self):
+        # another SystemWindow question in the pane must not pass the text part (DIALOG_TEXT, measured gate-title-182cd53b)
+        p, s = self.run_fake("title-text", TITLE, bug="title-text")
+        self.assertEqual(T.results(s), {TITLE: "FAIL"}, p.stdout[-1500:])
+        self.assertIn("is not the measured question", s["tests"][0]["why"])
+        self.assertIn("Save your progress?", s["tests"][0]["why"])
+
     def test_title_no_question_not_pass(self):
         p, s = self.run_fake("title-bug", TITLE, bug="title")
         self.assertEqual(T.results(s), {TITLE: "NO-REF"}, p.stdout[-1500:])

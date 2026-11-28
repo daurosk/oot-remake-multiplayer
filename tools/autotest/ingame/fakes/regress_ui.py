@@ -11,6 +11,7 @@
   coop_look_share.cpp:355, B's coop_look_live.cpp:900 + coop_look_share.cpp:334 + coop_look_live.cpp:320.
 Selftest switch (tests/test_ingame_regress_ui.py): BT_FAKE_REGRESS_BUG=tags -> no tag line, the drawn-tags warning
 instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is not painted (:314);
+=title-text -> the question's pane holds another text (WRONG_QUESTION);
 =camera -> B's ZL leaves B's camera in front of B (c272735f8: B's shots of its own Link's face, no A).
 """
 import math
@@ -18,7 +19,8 @@ import os
 
 STATE_FILE = "coop-test-state.txt"
 HILT = "LICHII_COOP_LOOK=kokiri_hilt:blue"
-QUESTION = "Return to the title screen?"
+QUESTION = "Return to the title screen?\nAny unsaved progress will be lost."   # (gate-title-182cd53b, both games)
+WRONG_QUESTION = "Save your progress?"   # BT_FAKE_REGRESS_BUG=title-text: another SystemWindow question
 
 
 def _bug(name):
@@ -80,7 +82,8 @@ def press(game, buttons):
         if g.rg_page == 5 and g.rg_focus == 4 and not _bug("title"):
             g.rg_dialog = True
             g.rg_texts.append({"seq": len(g.rg_texts) + 1, "frame": g.frame, "layout": "SystemWindow_00",
-                               "pane": "T_Text_00", "text": QUESTION, "length": len(QUESTION), "cut": False,
+                               "pane": "T_Text_00", "text": WRONG_QUESTION if _bug("title-text") else QUESTION,
+                               "length": len(WRONG_QUESTION if _bug("title-text") else QUESTION), "cut": False,
                                "markup": False, "wrap": 25})
         return True
     if "B" in buttons:

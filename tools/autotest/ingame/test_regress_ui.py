@@ -142,6 +142,7 @@ TAP_GAP = 30       # frames after a tap (ToTitleStep's gaps: R 500 ms, Down 250 
 # patch 0041/0042's setters. Until DIALOG_MEASURED cites a lane run's 'dialog text' note, a run that does not see it ends
 # NO-REF (the shot regress-title-dialog is then the proof), never PASS on the text.
 DIALOG_LAYOUT, DIALOG_PANE = "SystemWindow_00", "T_Text_00"
+DIALOG_TEXT = "Return to the title screen?\nAny unsaved progress will be lost."   # measured: DIALOG_MEASURED
 DIALOG_MEASURED = ("run gate-title-182cd53b (2026-11-28 01:32 UTC, lane 1 module 182cd53b5): A and B text "
                    "'Return to the title screen?\\nAny unsaved progress will be lost.' (T_Text_00), the same on "
                    "the shots regress-title-dialog-A/B")
@@ -241,6 +242,10 @@ def test_title_screen_dialog(pair):
     if missing:
         pair.unproven("no %s/%s text after A on Title Screen in %s (DIALOG_MEASURED: the setter is not proven); the shot "
                       "regress-title-dialog shows it" % (DIALOG_LAYOUT, DIALOG_PANE, ", ".join(missing)))
+    wrong = {x: [tx.get("text") for tx in texts[x]] for x in games
+             if texts[x] and not any(tx.get("text") == DIALOG_TEXT for tx in texts[x])}
+    assert not wrong, "%s: %s/%s after A on Title Screen is not the measured question %r (DIALOG_MEASURED)" % (
+        wrong, DIALOG_LAYOUT, DIALOG_PANE, DIALOG_TEXT)
     if DIALOG_MEASURED is None:
         pair.unproven("dialog text seen (%s) but DIALOG_MEASURED is not set yet: cite this run there" % (
             {x: texts[x][0].get("text") for x in games}))

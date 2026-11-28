@@ -238,6 +238,12 @@ void Crawl::Want(const Wanted& w) {
     if (w.lying || w.event || w.actor != posed_actor_) {
         standing_ = false;
     }
+    if (!w.lying || w.event || w.actor != want_.actor) {
+        // Up again, in an event or another Link: the game's plays run from this frame on (an adult's
+        // LDamageStandUp plays its own get-up before StepPose runs again).
+        held_actor_.store(0, std::memory_order_release);
+        play_noted_ = false;
+    }
     want_ = w;
     bsa_.store(w.bsa, std::memory_order_release);
 }
@@ -351,8 +357,9 @@ bool Crawl::Skip(std::uint64_t bsa, const CoopBossNative::Request& request, bool
     if (ground && our_slot && (want_.adult || lie_)) {
         // 0.12.1 downed-move: a Link held in a lying pose (an adult's kLyingPose, a child's kChildLyingPose once the
         // game's crawl could not go on) has no crawl to move him: with the game's Walk / Wait skipped too, nothing
-        // read the stick and he lay still. The game's own ground move runs (the pad's slow stick); StepPose plays
-        // the pose again whenever the game plays another command on slot 0, so he slides while lying.
+        // read the stick and he lay still. The game's own ground move runs (the pad's slow stick); its plays of
+        // Wait / Walk / Run on slot 0 are skipped (SkipPlay, patch 0049), so he moves in the held pose. (Before,
+        // StepPose played the pose again after each of them and the game's Wait won on screen: he stood.)
         slot_taken_ = true;
         ++counts_.ground_moves;
         if (!std::exchange(ground_noted_, true)) {
@@ -368,6 +375,25 @@ bool Crawl::Skip(std::uint64_t bsa, const CoopBossNative::Request& request, bool
         counts_.skipped_verbs.push_back(a->verb);
         Note("our downed Link: the game's action verb " + std::to_string(a->verb) + " (slot " +
              std::to_string(a->slot) + ") skipped");
+    }
+    return true;
+}
+
+bool Crawl::SkipPlay(std::uint64_t actor, std::int32_t slot, std::string_view command) {
+    if (actor == 0 || actor != held_actor_.load(std::memory_order_acquire) || slot != 0) {
+        return false;
+    }
+    if (command == kLyingPose || command == kChildLyingPose || Riding(command)) {
+        return false;  // the pose itself (ours, or the game's own Crouch), or a horse's (StepPose reads riding_ from it)
+    }
+    std::lock_guard lock(mutex_);
+    if (actor != held_actor_.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    ++counts_.plays_skipped;
+    if (!std::exchange(play_noted_, true)) {  // (once a hold) the probe line of the root fix
+        Note("our downed Link: the game's play of '" + std::string(command) +
+             "' on slot 0 skipped (the lying pose is held; the game's ground verb still runs)");
     }
     return true;
 }
@@ -510,6 +536,8 @@ std::optional<CoopPuppet::Call> Crawl::StepPose(CoopPuppet::Guest& guest, std::u
         if (!want_.lying) {
             crawl_seen_.clear();
         }
+        // Held in kChildLyingPose: the game's own slot-0 plays are skipped from now (SkipPlay), so the pose stays.
+        held_actor_.store(lie_ && down && !now ? want_.actor : 0, std::memory_order_release);
         if (lie_ && down && !now && !held) {
             pose_seen_ = slot ? slot->name : std::string("?");
             return Play(guest, kChildLyingPose, kPlayRate, main_base);
@@ -517,6 +545,7 @@ std::optional<CoopPuppet::Call> Crawl::StepPose(CoopPuppet::Guest& guest, std::u
         return std::nullopt;
     }
     game_crawl_.store(false, std::memory_order_release);
+    held_actor_.store(0, std::memory_order_release);  // (set again below while the pose is wanted)
     if (want_.actor == 0 || (!want_.lying && releases_left_ == 0)) {
         riding_ = false;
         return std::nullopt;
@@ -532,7 +561,10 @@ std::optional<CoopPuppet::Call> Crawl::StepPose(CoopPuppet::Guest& guest, std::u
         return std::nullopt;
     }
     const bool held = slot && slot->name == kLyingPose && slot->rate == kHeldRate;
-    if (PoseWanted(want_.adult, want_.lying, want_.event, crawling_, riding_)) {
+    const bool pose = PoseWanted(want_.adult, want_.lying, want_.event, crawling_, riding_);
+    // Held in kLyingPose: the game's own slot-0 plays are skipped from now (SkipPlay), so the pose stays.
+    held_actor_.store(pose ? want_.actor : 0, std::memory_order_release);
+    if (pose) {
         if (held) {
             return std::nullopt;
         }

@@ -141,6 +141,7 @@
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
 #include "hos_coop_crawl.h"
+#include "hos_coop_pose_play.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
@@ -2398,6 +2399,9 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             LOG_INFO(Core, "coop: down but not out: the crawl's room check {}",
                      WrapIn(HOS_COOP_WRAP_CRAWL_ROOM) ? "wrapped (a downed child keeps crawling)"
                                                       : "not wrapped in this hookshot.exe (patch 0046)");
+            LOG_INFO(Core, "coop: down but not out: the game's play request {}",
+                     WrapIn(HOS_COOP_WRAP_POSE_PLAY) ? "wrapped (a downed Link's lying pose is held)"
+                                                     : "not wrapped in this hookshot.exe (patch 0049)");
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
                      level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
@@ -2857,6 +2861,30 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // its own clips, stick movement and camera; everything else runs the game's own check.
         if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {
             x[0] = 0;
+            return 1;
+        }
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_POSE_PLAY && phase == 0) {
+        // 0.12.1 downed-move root fix (patch 0049, hos_coop_pose_play.h): the game plays an AS command (x0 the
+        // request). On our downed Link held in a lying pose, slot 0, the game's own command is answered "played"
+        // (its skip-if-same answer, 1) and not played, so the game's ground verb moves him in the pose. Fast: one
+        // read and a compare for every other actor.
+        const std::uint64_t held = CoopDbno::Body::TheCrawl().HeldActor();
+        std::uint64_t actor = 0;
+        if (held == 0 || !CoopRuntime::Read(x[0], &actor, sizeof actor) || actor != held) {
+            return 0;
+        }
+        std::int32_t slot = -1;
+        std::uint64_t text = 0;
+        char name[32] = {};  // (31 read: the pose names and a horse's prefixes are shorter; a longer one is no pose)
+        if (!CoopRuntime::Read(x[0] + 0x10, &slot, sizeof slot) || slot != 0 ||
+            !CoopRuntime::Read(x[0] + 8, &text, sizeof text) || text == 0 ||
+            !CoopRuntime::Read(text, name, sizeof name - 1)) {
+            return 0;
+        }
+        if (CoopDbno::Body::TheCrawl().SkipPlay(actor, slot, std::string_view(name))) {
+            x[0] = 1;
             return 1;
         }
         return 0;

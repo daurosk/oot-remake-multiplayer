@@ -1,7 +1,12 @@
 """0.12.1 owner issue (docs/known-issues.md "To be fixed in 0.12.1"): a downed player plays the crawl animation but
 cannot move, and the view does not go first person. The fix under test: downed-move-0121 89133f1ee (patch 0046 wrap 31
 = the crawl's room-to-stand check, hookshot/src/coop_hookshot.cpp WrapCall HOS_COOP_WRAP_CRAWL_ROOM ->
-lichii/hook/coop_dbno_body.cpp Crawl::NoRoom; Crawl::Skip lets the game's Walk / Wait through for a Link held lying).
+lichii/hook/coop_dbno_body.cpp Crawl::NoRoom; Crawl::Skip lets the game's Walk / Wait through for a Link held lying),
+and its root fix downed-pose-0121 (patch 0049 wrap 32 = the game's AS play request main+0x2022a0, WrapCall
+HOS_COOP_WRAP_POSE_PLAY -> Crawl::SkipPlay: the game's own slot-0 plays skipped on a Link held in a lying pose, so its
+Wait never replaces the pose; run-182cd53b: the pose was played again 3385x and B stood in every still shot).
+The probe (B #172): the skip line is asserted first, and the move under the stick then says which case it is: the
+ground verb moves him with its plays skipped (state-driven), or not at all (root motion: its clip moved him).
 
 | Test | Checks | Kind |
 |---|---|---|
@@ -32,6 +37,14 @@ NO_ROOM = (r"coop: dbno: our downed Link: the game's crawl asks for room to stan
            r"the crawl goes on")
 # lichii/hook/coop_dbno_body.cpp:359 Crawl::Skip (once a down): a Link held lying keeps the game's Walk / Wait
 GROUND_MOVE = r"coop: dbno: our downed Link: the game's action verb \d+ let through: he moves lying, in the held pose"
+# hookshot/src/coop_hookshot.cpp (the hello, with ROOM_WRAPPED): patch 0049 is in this game
+POSE_WRAPPED = r"coop: down but not out: the game's play request wrapped \(a downed Link's lying pose is held\)"
+POSE_NOT_WRAPPED = r"coop: down but not out: the game's play request not wrapped"
+# lichii/hook/coop_dbno_body.cpp Crawl::SkipPlay (once a hold): the probe line of the root fix
+PLAY_SKIPPED = (r"coop: dbno: our downed Link: the game's play of '[^']*' on slot 0 skipped \(the lying pose is held; "
+                r"the game's ground verb still runs\)")
+# test_dbno_crawl.LYING_CHILD's second case (coop_dbno_body.cpp LieDown): the child is held in kChildLyingPose
+CHILD_HELD = r"coop: dbno: our downed Link: .*: the game's AS 'Crouch' \(Tunnel_Wait, its lying wait\) is held on slot 0"
 # The minimum move: test_dbno_crawl.CRAWL_MIN_M (the test's own: "the stick moves the downed Link at all").
 MOVE_MIN_M = dc.CRAWL_MIN_M
 CRAWL_FRAMES = 120     # hs-dbno-child.B.txt 'stick 0 1 120' (test_dbno_crawl's crawl)
@@ -128,6 +141,17 @@ def wrapped(pair, x):
     if any(re.search(ROOM_NOT_WRAPPED, ln) for ln in lines):
         raise AssertionError("%s: the crawl's room check is not wrapped: this game lacks patch 0046" % x)
     assert any(re.search(ROOM_WRAPPED, ln) for ln in lines), "%s: no 'crawl's room check' hello line" % x
+    if any(re.search(POSE_NOT_WRAPPED, ln) for ln in lines):
+        raise AssertionError("%s: the game's play request is not wrapped: this game lacks patch 0049" % x)
+    assert any(re.search(POSE_WRAPPED, ln) for ln in lines), "%s: no 'game's play request' hello line" % x
+
+
+def probe(pair, name, fwd_m, frames):
+    """B #172's probe: with the ground verb's own plays skipped (PLAY_SKIPPED, asserted before this), did the
+    stick still move him? Noted as the finding; the move assert after it judges."""
+    case = ("state-driven (the ground verb moves him, its plays skipped)" if fwd_m > MOVE_MIN_M else
+            "root motion (no move with the plays skipped: move him ourselves)")
+    pair.notes.append("PROBE %s: %s; %.2f m in %d frames of full stick" % (name, case, fwd_m, frames))
 
 
 @pytest.mark.budget(420)
@@ -146,11 +170,18 @@ def test_downed_child_moves(pair):
         dc.down(pair)
         pair.expect_log("B", dc.LYING_CHILD, max_frames=600)
         pair.step_both(30)
+        held_pose = pair.log["B"].find(CHILD_HELD) is not None
+        if held_pose:   # (the game's own crawl has its own clips: no pose, nothing skipped)
+            pair.expect_log("B", PLAY_SKIPPED, max_frames=60)
         dc.shots(pair, "downed-child-lying")
         no_flicker(pair, "downed-child")
         a = pair.state("B")
         fwd_m = dc.stick_move(pair, "B", 0, CRAWL_FRAMES)
         b = pair.state("B")
+        if held_pose:
+            probe(pair, "child (kChildLyingPose held)", fwd_m, CRAWL_FRAMES)
+        else:
+            pair.notes.append("child: the game's own crawl ran (no pose held, no play skipped)")
         # after the stick (review-rows-c130-7): the game's crawl may ask for room only while he moves
         pair.expect_log("B", NO_ROOM, max_frames=60)     # the game's crawl asked for room and goes on
         dc.shots(pair, "downed-child-moved", twice=False)
@@ -201,9 +232,11 @@ def test_downed_adult_moves(pair):
         pair.expect_log("B", dc.CRAWL_TAKEN, max_frames=300)
         pair.expect_log("B", dc.LYING_ADULT, max_frames=300)
         pair.step_both(30)
+        pair.expect_log("B", PLAY_SKIPPED, max_frames=60)
         dc.shots(pair, "downed-adult-lying")
         no_flicker(pair, "downed-adult")
         fwd_m = dc.stick_move(pair, "B", 0, CRAWL_FRAMES)
+        probe(pair, "adult (DamageLStand held)", fwd_m, CRAWL_FRAMES)
         dc.shots(pair, "downed-adult-moved", twice=False)
         pair.notes.append("adult downed: %.2f m in %d frames of full stick" % (fwd_m, CRAWL_FRAMES))
         dc.same_scene(pair, "B", field, "after the stick")

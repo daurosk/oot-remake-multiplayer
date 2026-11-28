@@ -8,7 +8,8 @@ BT_FAKE_DOWNED_BUG (selftests, tests/test_ingame_downed_move.py):
           answer nor the lying ground-move line is logged
   flicker the lying Link stands up in every other still-check shot (the Wait vs pose flicker), on both games
   farcam  the view stays the standing camera while downed (no crawl camera)
-  nowrap  B's hookshot.exe has no patch 0046 (its hello says 'not wrapped'): a SETUP-FAIL, never a FAIL
+  nowrap  B's hookshot.exe has no patch 0046 / 0049 (its hellos say 'not wrapped'): a SETUP-FAIL, never a FAIL
+  noskip  the held adult's slot-0 plays are not skipped (no patch 0049 skip line: the 89133f1ee flicker's cause)
 """
 import math
 import os
@@ -25,8 +26,10 @@ def setup(game):
     game.downed_move = {"seen": False, "pos": None, "shots": 0}
     if game.tag == "B" and bug("nowrap"):
         game.say("coop: down but not out: the crawl's room check not wrapped in this hookshot.exe (patch 0046)")
+        game.say("coop: down but not out: the game's play request not wrapped in this hookshot.exe (patch 0049)")
     else:
         game.say("coop: down but not out: the crawl's room check wrapped (a downed child keeps crawling)")
+        game.say("coop: down but not out: the game's play request wrapped (a downed Link's lying pose is held)")
 
 
 def here(game):
@@ -55,6 +58,9 @@ def state(game, st):
     dm = game.downed_move
     if downed(game) and not dm["seen"]:
         dm["seen"], dm["pos"] = True, list(game.pos)
+        if game.age() == "adult" and not bug("noskip"):
+            game.later(5, lambda: game.say("coop: dbno: our downed Link: the game's play of 'Wait' on slot 0 skipped "
+                                           "(the lying pose is held; the game's ground verb still runs)"))
         if game.age() == "adult" and not bug("still"):
             game.later(25, lambda: game.say("coop: dbno: our downed Link: the game's action verb 1 let through: he "
                                             "moves lying, in the held pose"))

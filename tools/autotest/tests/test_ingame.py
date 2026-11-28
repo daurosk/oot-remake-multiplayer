@@ -166,7 +166,10 @@ class Suite(unittest.TestCase):
         r = results(s)
         self.assertEqual(r.get("test_gear_hidden_solo"), "NO-REF", p.stdout[-2000:])
         self.assertEqual(s["counts"]["SETUP-FAIL"], 0, p.stdout[-2000:])
-        self.assertTrue(all(d.get("needs_pair") for d in s["deselected"]), s["deselected"])
+        # (every pair test is needs_pair; a solo test is left out only for a switch this run's --env lacks, e.g.
+        # test_arms_cs_314's test_arms_adult_solo needs LICHII_COOP_DEBUG_POSE=1: bt_plugin._deselect_needs_env)
+        self.assertTrue(all(d.get("needs_pair") or (set(d) == {"test", "needs_env"} and d["needs_env"])
+                            for d in s["deselected"]), s["deselected"])
         self.assertGreaterEqual(len(s["deselected"]), suite_size())   # (every test a default run runs is a pair test)
 
     def test_repeat_keeps_one_boot_and_orders_by_round(self):

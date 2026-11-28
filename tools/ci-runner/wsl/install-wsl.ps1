@@ -3,7 +3,7 @@
 # user lci is never touched), label squadala-wsl. Runs as the owner, NOT elevated, from a checkout of this repo:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\wsl\install-wsl.ps1
 # Safe to run again (it skips registered runners). What it does:
-#  1. checks gh is daurosk, %UserProfile%\.wslconfig caps WSL (memory <= 20GB, processors <= 24) and free commit >= 40 GB;
+#  1. checks gh is daurosk, %UserProfile%\.wslconfig caps WSL (memory <= 20GB, processors <= 12) and free commit >= 40 GB;
 #  2. copies tools\ci-runner\wsl into the distro over stdin and runs setup.sh as root (packages, user squadala-ci
 #     without sudo, wsl.conf without interop or Windows drives, hooks, runner folders, systemd units);
 #  3. restarts the distro so wsl.conf applies, then checks /mnt/c is gone and Windows programs do not start;
@@ -24,7 +24,11 @@ function Invoke-WslStdin([string]$Arguments, [byte[]]$Bytes) {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $wsl; $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true
-    $p = [Diagnostics.Process]::Start($psi)
+    # The stdin writer takes Console.InputEncoding; with UTF-8 (BOM) there it put EF BB BF before the tar
+    # (2026-11-27: 'tar: This does not look like a tar archive'). Start wsl.exe with a BOM-less encoding.
+    $oldIn = $null
+    try { $oldIn = [Console]::InputEncoding; [Console]::InputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+    try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($oldIn) { try { [Console]::InputEncoding = $oldIn } catch { } } }
     $p.StandardInput.BaseStream.Write($Bytes, 0, $Bytes.Length)
     $p.StandardInput.Close()
     $p.WaitForExit()
@@ -36,7 +40,7 @@ $login = (& $Gh api user --jq .login)
 if ($login -ne 'daurosk') { throw "gh is signed in as '$login', not daurosk." }
 $cfg = Get-Content -Raw (Join-Path $env:USERPROFILE '.wslconfig') -ErrorAction SilentlyContinue
 if (-not ($cfg -match '(?m)^\s*memory\s*=\s*(\d+)GB' -and [int]$Matches[1] -le 20)) { throw '.wslconfig must cap memory at <= 20GB (docs/ci-runner.md).' }
-if (-not ($cfg -match '(?m)^\s*processors\s*=\s*(\d+)' -and [int]$Matches[1] -le 24)) { throw '.wslconfig must cap processors at <= 24.' }
+if (-not ($cfg -match '(?m)^\s*processors\s*=\s*(\d+)' -and [int]$Matches[1] -le 12)) { throw '.wslconfig must cap processors at <= 12 (of 32: the test-lane games keep the rest).' }
 $free = [math]::Floor((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory / 1MB)
 if ($free -lt 40) { throw "free commit is $free GB (< 40 GB): a game test is running; run this later (jobs keep their own 75 GB guard)." }
 if (-not ((& $wsl -l -q) -replace "`0", '' | Where-Object { $_.Trim() -eq $Distro })) {
@@ -91,7 +95,7 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) 
 Register-ScheduledTask -TaskName 'squadala-ci status feed' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'squadala-ci status feed'
 Start-Sleep -Seconds 40
-& $wsl -d $Distro -u root -- sh -c 'echo "status (time, free commit GB, C: free GB): $(cat /run/squadala-ci/status)"; systemctl is-active squadala-ci-runner@1 squadala-ci-runner@2 squadala-ci-runner@3'
+& $wsl -d $Distro -u root -- sh -c 'echo status time/commit GB/C: GB/lanes busy: $(cat /run/squadala-ci/status); systemctl is-active squadala-ci-runner@1 squadala-ci-runner@2 squadala-ci-runner@3'
 # (no quotes inside the jq filter: Windows PowerShell 5.1 splits a native argument at embedded quotes)
 & $Gh api "repos/$Repo/actions/runners" --jq '.runners[] | [.name, .status] | @tsv'
 "WSL runners installed. Linux jobs use them only while the repo variable COOP_SELF_HOSTED_LINUX is on (docs/ci-runner.md)."

@@ -29,6 +29,8 @@ Runs already queued keep their runner: cancel and re-run them. Keep it `off` whe
   is not free/none: queue jobs, manual holders and owner-playing lines alike) or Windows' free commit is below
   75 GB, at most 5 h, then fails the job ("memory guard: waited ..."). It refuses at once when C: has less than
   60 GB free ("disk guard"). After every job a second hook empties the job's workspace.
+  Do not drop the lane wait: on 2026-11-27 jobs run while a lane game ran (VM at 12 of 32 CPUs, 20 GB) dropped
+  both games to 0.1-0.4 fps within 10 s (downed-move-53d40ab3-2 SETUP-FAIL, Build 46083381220).
 - The offline queue's start gate (`coord-multiplayer\offline\lib\wsl-reserve.ps1`, Get-WslReserveGB) counts a
   live WSL VM as its whole `.wslconfig` memory cap already taken, so a game pair never starts into memory a
   running CI job can still grow into.
@@ -45,7 +47,7 @@ no switches). The runners have a WSL distro of their own, `squadala-ci` (in
 is not changed. How `squadala-ci` is locked down:
 
 - `%UserProfile%\.wslconfig` (one VM for every distro, so local CI shares the cap): `memory=20GB` (3 jobs at
-  make -j4), `processors=24`, `swap=8GB` (a file on the VM's side, not Windows commit), `autoMemoryReclaim=dropCache`.
+  make -j4), `processors=12` (of 32), `swap=8GB` (a file on the VM's side, not Windows commit), `autoMemoryReclaim=dropCache`.
   Never raise them: the test lanes need the rest of the commit.
 - `/etc/wsl.conf`: no Windows interop (a job cannot start Windows programs as the owner) and no
   Windows drives (`/mnt/c` is gone). install-wsl.ps1 checks both after the restart.

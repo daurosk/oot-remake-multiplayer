@@ -195,13 +195,14 @@ def pytest_collection_modifyitems(config, items):
     _deselect_needs_env(config, items)
 
 
-@pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
-def _lane_check_last(config, items):
-    """--lane-check-only after every other plugin's modifyitems, so its 'tests collected N' is what the run gets: pytest's
-    own -k / -m deselection (the mark plugin's modifyitems) ran after ours before, and the chk line counted the tests
-    -k/-m leaves out (B #158: gate-hilt 23:09 'collected 49', pause-press 23:27 'collected 6 not 2')."""
-    if config.getoption("lane_check_only"):
-        _lane_check_only(config, items)
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session):
+    """--lane-check-only once collection is done (after EVERY plugin's modifyitems), so its 'tests collected N' is what
+    the run gets: pytest's own -k / -m deselection (the mark plugin's modifyitems) ran after ours before, and the chk
+    line counted the tests -k/-m leaves out (B #158: gate-hilt 23:09 'collected 49', pause-press 23:27 'collected 6
+    not 2'). (Not a renamed modifyitems impl: pytest registers only functions named pytest_*, CI 46086753563.)"""
+    if session.config.getoption("lane_check_only"):
+        _lane_check_only(session.config, session.items)
 
 
 def _deselect_line(d):

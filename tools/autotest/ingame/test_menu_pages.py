@@ -42,11 +42,12 @@ MINUS_VIEW_PAGE = {"main": "main", "join": "join", "host": "host", "lan": "find"
 DRAWN_FRAMES = 4 * FPS   # (kMapUnderAfterMs 450 + the strip's slide, at the lanes' slowest ~11 fps: 4 s of game)
 
 
-def map_content_shown(st):
-    """The Map page's content panes that show under the - menu now (menu.map_page.shown while its screen is up); 0 when
-    its screen is not up or none show."""
+def map_drawn_under(st):
+    """B #171: co-op's - menu page drawn over the Map page: the Map screen up (menu.map_page.up), its content panes
+    found (panes > 0) and every one hidden under ours (shown 0). False when menu.map_page is missing or not up: nothing
+    then says our page is drawn (review-tests-153-7, B #171: never pass at once)."""
     mp = ((st or {}).get("menu") or {}).get("map_page") or {}
-    return int(mp.get("shown") or 0) if mp.get("up") else 0
+    return bool(mp.get("up")) and int(mp.get("panes") or 0) > 0 and mp.get("shown") == 0
 
 
 def coop_tab(pair, x):
@@ -90,21 +91,17 @@ def open_page(pair, x, page):
 
 
 def wait_page_drawn(pair, x, page):
-    """B #171: co-op's - menu page drawn over the Map page (its content hidden: map_content_shown 0) and still the one
-    asked; SETUP-FAIL after DRAWN_FRAMES (a shot then would be the Map tab, not the page)."""
+    """B #171: co-op's - menu page drawn over the Map page (map_drawn_under) and still the one asked; SETUP-FAIL after
+    DRAWN_FRAMES (a shot then would be the Map tab, not the page)."""
     try:
-        pair.until("%s: co-op's %s page drawn over the Map page (state menu.map_page shown 0)" % (x, page),
-                   lambda: map_content_shown(pair.state(x)) == 0 and page_shown(pair.state(x)) == ("minus", page),
+        pair.until("%s: co-op's %s page drawn over the Map page (state menu.map_page up, panes > 0, shown 0)" % (x, page),
+                   lambda: map_drawn_under(pair.state(x)) and page_shown(pair.state(x)) == ("minus", page),
                    max_frames=DRAWN_FRAMES)
     except AssertionError as e:
         st = pair.state(x)
         raise SetupFail("%s: the - menu's %s page not drawn: %s (menu.map_page %s, page %s)"
                         % (x, page, e, ((st.get("menu") or {}).get("map_page")), page_shown(st)))
-    # (which way it passed, kept with the result (review-tests-153-7): the Map's content hidden under the page (up, panes
-    # > 0, shown 0) or no Map page up at all (none drawn under it: missing or not up))
-    mp = (pair.state(x).get("menu") or {}).get("map_page")
-    pair.notes.append("%s %s page drawn: %s" % (x, page, "Map content hidden %s" % mp if mp and mp.get("up")
-                                                       else "no Map page up (%s)" % mp))
+    pair.notes.append("%s %s page drawn: menu.map_page %s" % (x, page, (pair.state(x).get("menu") or {}).get("map_page")))
 
 
 def close_menu(pair, x):

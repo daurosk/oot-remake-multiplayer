@@ -79,6 +79,12 @@ class MenuPages(unittest.TestCase):
         self.assertEqual(results(s), {TEST: "SETUP-FAIL"}, p.stdout[-2000:])
         self.assertIn("page not drawn", p.stdout)
 
+    def test_setup_fail_without_the_map_state(self):
+        """B #171 / review-tests-153-7: no menu.map_page (or not up) never counts as drawn: SETUP-FAIL, not a pass at once."""
+        p, s = self.run_it("nomap", env={"BT_FAKE_MENU": "nomap"})
+        self.assertEqual(results(s), {TEST: "SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertIn("page not drawn", p.stdout)
+
     def test_fail_on_a_second_home(self):
         """A page that shows in Longshot's tab while the game is in free play: not co-op's home there (one home)."""
         p, s = self.run_it("longshot", env={"BT_FAKE_MENU": "longshot"})

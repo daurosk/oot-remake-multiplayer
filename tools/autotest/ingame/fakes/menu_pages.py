@@ -18,7 +18,8 @@ BT_FAKE_MENU=nopage: a page step is asked but no page comes; =wrong: every page 
 all four.
 B #171: co-op's - menu page is drawn over the Map page DRAWN frames after it shows (the module's FollowMapUnder hides the
 Map's content then: state menu.map_page {up, panes 6, shown 0}; before it, shown 6). BT_FAKE_MENU=undrawn: the Map's
-content never hides (the page's shot would be the Map tab): open_page must SETUP-FAIL.
+content never hides (the page's shot would be the Map tab); =nomap: no menu.map_page at all: open_page must SETUP-FAIL in
+both (nothing says the page is drawn).
 """
 import os
 import sys
@@ -94,8 +95,10 @@ def state(game, st):
     if game.mp_minus and st.get("scene"):
         view, page = game.mp_minus
         menu["minus"] = {"open": True, "tab": "multiplayer", "view": view}
-        drawn = os.environ.get("BT_FAKE_MENU", "") != "undrawn" and game.frame >= game.mp_minus_at + DRAWN
-        menu["map_page"] = {"up": True, "panes": MAP_PANES, "shown": 0 if drawn else MAP_PANES}
+        mode = os.environ.get("BT_FAKE_MENU", "")
+        drawn = mode != "undrawn" and game.frame >= game.mp_minus_at + DRAWN
+        if mode != "nomap":
+            menu["map_page"] = {"up": True, "panes": MAP_PANES, "shown": 0 if drawn else MAP_PANES}
         if view == "menu":   # (Settings and look: co-op's own page shown natively, CoopPause::OpenNative)
             menu["coop"] = {"open": True, "tab": "multiplayer", "page": page}
     if game.mp_page and st.get("scene"):

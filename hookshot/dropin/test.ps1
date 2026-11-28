@@ -10,14 +10,19 @@
 #   6. the helper's command line exactly as Longshot quotes it ("--crash-watch" "<pid>" ... "<folder>\\" ...): forwarding only
 #      (run v1-dropin-43b1a3d9 FAILED on this: 43b1a3d91 hooked the quoted helper);
 #   7. a quoted other word ("--crash-watcher"): hooked as the game. Every log line carries [pid N].
-# Exit 0 = PASS. Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\test.ps1
+# Exit 0 = PASS. Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\test.ps1 [-Toolchain <llvm-mingw bin>] [-Python <python.exe>]
+# (both passed on to build.ps1; CI's build.yml windows job runs this with Longshot's own llvm-mingw and Python)
+param([string]$Toolchain = '', [string]$Python = '')
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))
-$cc = Join-Path $root 'hookshot-tools\llvm-mingw-20261104-ucrt-x86_64\bin\x86_64-w64-mingw32-clang.exe'
+if (-not $Toolchain) { $Toolchain = Join-Path $root 'hookshot-tools\llvm-mingw-20261104-ucrt-x86_64\bin' }
+$cc = Join-Path $Toolchain 'x86_64-w64-mingw32-clang.exe'
 $out = Join-Path $here 'out'
 $fake = Join-Path $out 'fake'
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'build.ps1')
+$buildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $here 'build.ps1'), '-Toolchain', $Toolchain)
+if ($Python) { $buildArgs += @('-Python', $Python) }
+& powershell @buildArgs
 if ($LASTEXITCODE -ne 0) { Write-Output 'TEST FAIL build.ps1'; exit 1 }
 & $cc -O1 -o (Join-Path $out 'selftest.exe') (Join-Path $here 'selftest.c')
 if ($LASTEXITCODE -ne 0) { Write-Output 'TEST FAIL selftest.c'; exit 1 }

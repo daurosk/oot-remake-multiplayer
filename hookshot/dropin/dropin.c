@@ -192,13 +192,13 @@ static int is_crash_watch(const wchar_t *c) {
     while (*c == L' ' || *c == L'\t') c++;
     while (*c && (q || (*c != L' ' && *c != L'\t'))) {
         size_t bs = 0;
-        while (*c == L'\') { bs++; c++; }
+        while (*c == L'\\') { bs++; c++; }
         if (*c == L'"') {
-            for (size_t i = 0; i < bs / 2; i++) { if (n + 1 >= 32) return 0; a1[n++] = L'\'; }
+            for (size_t i = 0; i < bs / 2; i++) { if (n + 1 >= 32) return 0; a1[n++] = L'\\'; }
             if (bs % 2) { if (n + 1 >= 32) return 0; a1[n++] = L'"'; } else q = !q;
             c++;
         } else {
-            for (size_t i = 0; i < bs; i++) { if (n + 1 >= 32) return 0; a1[n++] = L'\'; }
+            for (size_t i = 0; i < bs; i++) { if (n + 1 >= 32) return 0; a1[n++] = L'\\'; }
             if (*c && (q || (*c != L' ' && *c != L'\t'))) { if (n + 1 >= 32) return 0; a1[n++] = *c++; }
         }
     }

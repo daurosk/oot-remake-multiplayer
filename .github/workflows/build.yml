@@ -379,6 +379,19 @@ jobs:
           key: longshot-dl-${{ hashFiles('hookshot/PIN', 'tools/release/kit/hookshot/TOOLS.txt') }}
       - name: Our patches' Windows host code compiles (Longshot's clang, syntax only)
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/hookshot/host_compile_check.ps1 -Cache "$env:GITHUB_WORKSPACE\.longshot-dl"
+      # The v1 drop-in proof (hookshot/dropin: winmm.dll on a stock Longshot game) built and run on its stand-in game with
+      # the same llvm-mingw and Python the step above unpacked (its default work folder, RUNNER_TEMP\longshot-host-check):
+      # no other job compiles hookshot/dropin, so b68c92ecb's unterminated L'\' literal was green here (review-c123-20).
+      - name: Drop-in proof builds and passes its stand-in test (hookshot/dropin/test.ps1)
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'longshot-host-check\tools'
+          $cc = @(Get-ChildItem -LiteralPath $tools -Recurse -Depth 3 -Filter 'x86_64-w64-mingw32-clang.exe' -File)
+          $py = @(Get-ChildItem -LiteralPath $tools -Depth 2 -Filter 'python.exe' -File)
+          if ($cc.Count -ne 1 -or $py.Count -ne 1) { Write-Output "SETUP-FAIL want one clang and one python under $tools, found $($cc.Count) and $($py.Count)"; exit 2 }
+          Write-Output "toolchain $($cc[0].DirectoryName), python $($py[0].FullName)"
+          powershell -NoProfile -ExecutionPolicy Bypass -File hookshot/dropin/test.ps1 -Toolchain $cc[0].DirectoryName -Python $py[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: sccache stats
         run: sccache --show-stats
       - name: Kit updater tests

@@ -58,6 +58,12 @@ BOOT_STEP_FPS = 11.9    # (budgets only now; the event rule's deadline is EVENT_
 # lane keeps stepping the intro up to its frame cap. 30 s = 20 chunks at the slowest lane measured (6.6 fps,
 # row286-wake-182cd53b-3: 1580 frames in 240 s), and SETUP_LIMIT_S.
 EVENT_SLACK_S = 30.0
+# The event rule's wall-clock cap on a boot with no enclosing deadline (the lane's first boot proof, bt_plugin lane_pair:
+# a fixture, outside pytest-timeout; review-tests-153-8): a game that keeps stepping but never leaves its event (a stuck
+# cutscene) is bounded by this past the boot deadline, not only by BOOT_EVENT_FRAMES (at a lower fps: no bound).
+# (BOOT_EVENT_FRAMES - BOOT_FRAMES) / 6.6 fps = 545 s: the event frames past the load ceiling at the slowest lane
+# measured (row286-wake-182cd53b-3, 1580 frames in 240 s); Pair.recover keeps its own cap (_boot_grow_cap).
+BOOT_EVENT_CAP_S = 545.0
 EVENT_BEGAN = r"coop: event: our Link's event began: .*"      # coop event lines (game-out-X.txt, both runs above)
 EVENT_ENDED = r"coop: event: our Link's event ended"
 EVENT_STILL = r"coop: event: our Link is still in its event after ([0-9]+) s"
@@ -839,12 +845,15 @@ class Pair:
         games = tuple(self.c)
         what = "both games in play after the boot"
         cap = getattr(self, "_boot_grow_cap", None)    # (Pair.recover: the enclosing deadline's end, never passed)
+        cap_name = "the enclosing deadline"
+        if cap is None:      # (the lane's first boot: no enclosing deadline; BOOT_EVENT_CAP_S past its own)
+            cap, cap_name = self.deadline.end + BOOT_EVENT_CAP_S, "the boot's event cap (%.0f s)" % BOOT_EVENT_CAP_S
         try:
             return self.until_in_play(what, games, max_frames, event_frames=event_frames, cap=cap)
         except AssertionError as e:            # (TestTimeout too: its own type kept)
             raise type(e)("%s%s" % (e, self._event_notes(games, event_frames))) from None
         finally:
-            note = self.event_note_line(event_frames, "the enclosing deadline")
+            note = self.event_note_line(event_frames, cap_name)
             if note:
                 self.notes.append("boot: " + note)
 

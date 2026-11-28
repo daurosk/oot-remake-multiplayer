@@ -2438,6 +2438,20 @@ class BootProof(unittest.TestCase):
         self.assertTrue(any(n.startswith("boot: A+B in an event before the frame ceiling") or
                             n.startswith("boot: A+B in an event after") for n in pair.notes), pair.notes)
 
+    def test_a_slow_lane_event_that_never_ends_is_setup_fail_by_the_boot_cap(self):
+        """review-tests-153-8: the lane's first boot has no enclosing deadline; a game stepping on in an event that
+        never ends (frame ceiling out of reach: BOOT_EVENT_FRAMES raised) is SETUP-FAIL boot by BOOT_EVENT_CAP_S
+        past the boot deadline, the event named, never an unbounded wait."""
+        from unittest import mock
+        pair = self.intro_pair(self.INTRO_FAKE.replace("game.frame + 300", "10 ** 9"))
+        now = self.slow(pair, P.BOOT_READY_S)
+        with mock.patch.object(P, "BOOT_EVENT_FRAMES", 10 ** 7):
+            with self.assertRaisesRegex(P.SetupFail, r"^boot: TestTimeout: timeout after"):
+                pair.boot_ready("BossStage")
+        self.assertLessEqual(now[0], P.BOOT_READY_S + P.BOOT_EVENT_CAP_S + 5)
+        self.assertGreater(now[0], P.BOOT_READY_S + P.BOOT_EVENT_CAP_S - P.EVENT_SLACK_S)
+        self.assertTrue(any("capped by the boot's event cap" in n for n in pair.notes), pair.notes)
+
     def test_a_slow_lane_with_no_event_keeps_the_boot_deadline(self):
         """Only an event grows it: a slow lane whose games are loading (stale samples, no event) still times out at
         BOOT_READY_S, SETUP-FAIL boot, the deadline not grown."""

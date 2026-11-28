@@ -1484,6 +1484,29 @@ TEST_CASE("look parts: Link's hair is painted whole on your own Link and on each
     }
 }
 
+TEST_CASE("look parts: two other players in the same tunic colour each keep their own hair (row 293)") {
+    // hair-link-13 listed 'two others in the SAME tunic colour show the first one's hair' as a known limit. With the
+    // pack's tunic copies (g_ptunics) each other player gets a copy of his own (AssignTunicCopies: one exact copy
+    // each, up to nine, painted in his real tunic colour), and the hair follows the COPY's letter, not the tunic
+    // colour: coop_look_live.cpp FollowBoots, w.letter = LetterOf(TunicName(TunicColour(given->second.suffix))).
+    // The same steps here, for two red players with different hair colours.
+    const auto copies = CoopColors::AssignTunicCopies({{2, 0xFF3030u}, {3, 0xFF3030u}});
+    REQUIRE(copies.size() == 2);
+    REQUIRE(copies.at(2).exact);
+    REQUIRE(copies.at(3).exact);
+    CHECK(copies.at(2).suffix != copies.at(3).suffix);
+    const auto letter = [](const CoopColors::TunicCopy& c) {
+        return CoopLookParts::LetterOf(CoopLook::TunicName(CoopColors::TunicColour(c.suffix)));
+    };
+    const auto l2 = letter(copies.at(2)), l3 = letter(copies.at(3));
+    REQUIRE(l2);
+    REQUIRE(l3);
+    CHECK(*l2 != *l3);
+    const std::vector<CoopLookParts::Wearer> others{{l2, {}, {}, 0xDD4527u}, {l3, {}, {}, 0x123456u}};
+    CHECK(CoopLookParts::AssignHair({}, others) == CoopLookParts::HairWearers{{*l2, 0xDD4527u}, {*l3, 0x123456u}});
+    // (beyond nine others no exact copy is left: the nearest copy is shared, its tunic and hair with it)
+}
+
 TEST_CASE("look parts: the boots wardrobe draws a colour's copy, and leaves your own boots alone") {
     const std::string kChild = "Mt_Leather_Player_Child_Alb";
     FakeTextures m(kBase, 0x10000);

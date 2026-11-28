@@ -305,6 +305,8 @@ struct Wearer {
 };
 Wearers Assign(const Wearer& own, const std::vector<Wearer>& others);
 // hair-link: the same for the hair (the first of a letter has it, with or without a hair colour).
+// (A letter is the player's tunic COPY, FollowBoots: with the pack's copies each other player has one of his own,
+// even two in the same tunic colour, so each keeps his own hair; only beyond nine others is a copy shared. Row 293.)
 HairWearers AssignHair(const Wearer& own, const std::vector<Wearer>& others);
 // The boots wardrobe's base (every colour's copies in the game's colour) and
 // the name of a painting: kBootsBase when no colour has boots set.

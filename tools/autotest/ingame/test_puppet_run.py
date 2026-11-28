@@ -132,8 +132,9 @@ def wait_spawn(pair, at, want, what):
 
 def collect(pair, tag, a_at, b_at):
     """The probe and pose lines of the phase, into the notes (each game's probe report and A's pose copy)."""
-    b_probe = [ln for ln in pair.log["B"].since(b_at) if PROBE in ln]
-    a_probe = [ln for ln in pair.log["A"].since(a_at) if PROBE in ln]
+    # The probe's own report lines; its 'vars' line (AsVarsProbeFrame) has the same head and is read by vars_of.
+    b_probe = [ln for ln in pair.log["B"].since(b_at) if PROBE in ln and PROBE + "vars" not in ln]
+    a_probe = [ln for ln in pair.log["A"].since(a_at) if PROBE in ln and PROBE + "vars" not in ln]
     a_pose = [ln for ln in pair.log["A"].since(a_at) if re.search(POSE, ln)]
     pair.notes.append("%s: B probe %d lines, last report: %s" % (tag, len(b_probe), " | ".join(b_probe[-14:])))
     pair.notes.append("%s: A probe (its puppet of B): %s" % (tag, " | ".join([ln for ln in a_probe if " P" in ln][-3:])))

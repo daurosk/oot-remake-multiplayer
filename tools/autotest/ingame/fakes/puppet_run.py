@@ -75,7 +75,8 @@ def after(game, m, r):
         char = a.pr_actor.endswith("C003")
         k = float(m.get("strength") or 0.0)
         vals = (k, 5.2 * k, 5.2 * k, (1 if k > 0 else 0) | (2 if k >= 1.0 else 0))
-        game.say(VARS % (("ours",) + vals))
+        if _bug() != "noprobe":   # the probe switch off: no report and no vars line
+            game.say(VARS % (("ours",) + vals))
         held = (0.0, 0.0, 0.0, 0) if (char and _bug() == "novars") else vals
         a.say(VARS % ("ours", 0.0, 0.0, 0.0, 0) + " | P2 %s L=%.3f V=%.3f S=%.3f bits=%d" % ((a.pr_actor,) + held))
         a.say(POSE_A % (0 if char else 60, 0 if char else 0))

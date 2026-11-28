@@ -66,6 +66,32 @@ def last_front(pair, x):
     return hits[-1] if hits else None
 
 
+def foreground_info():
+    """Who holds the foreground right now, read only (no focus change): 'pid N class "C" exstyle 0xE title "T"'.
+    Row 83 SETUP-FAIL 03:59 UTC (row83-unfocus-182cd53b): neither game ever logged 'hid: game window ...', i.e. nn_hid.c
+    game_in_front() said 'in front' on every read (was_front starts 1; a line only on a change). Longshot counts a
+    WS_EX_TOOLWINDOW / WS_EX_NOACTIVATE foreground window as the game's own (nn_hid.c:309-312), so this names the window
+    that decided it; the SETUP-FAIL message carries it."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.GetForegroundWindow.restype = wintypes.HWND
+        w = u.GetForegroundWindow()
+        if not w:
+            return "no foreground window"
+        pid = wintypes.DWORD(0)
+        u.GetWindowThreadProcessId(w, ctypes.byref(pid))
+        cls, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(80)
+        u.GetClassNameW(w, cls, 64)
+        u.GetWindowTextW(w, title, 80)
+        u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        ex = u.GetWindowLongPtrW(w, -20)   # GWL_EXSTYLE
+        return 'pid %d class "%s" exstyle 0x%X title "%s"' % (pid.value, cls.value, ex & 0xFFFFFFFF, title.value)
+    except Exception as e:   # not Windows / no desktop: say so, never hide the real failure
+        return "foreground unreadable (%s)" % e
+
+
 def windows(lines):
     """[(fps, seconds, buckets)] of each full window in `lines` (a 'vi: N frames presented' line + its buckets line)."""
     out, fps = [], None
@@ -90,7 +116,8 @@ def test_back_window_fps(pair):
             cap = frame_rate_cap(pair.games[x]["folder"])
             assert cap == "0", "%s: frame_rate_cap=%s in %s (row 83 is the 60 cap: 0)" % (x, cap, pair.games[x]["folder"])
             front = last_front(pair, x)
-            assert front and front[0] == "not in front", "%s: window not behind (last hid line: %s)" % (x, front)
+            assert front and front[0] == "not in front", "%s: window not behind (last hid line: %s; foreground now: %s; game pids %s)" % (
+                x, front, foreground_info(), {g: pair.games[g].get("pid") for g in pair.games})
         marks = {x: pair.log[x].mark() for x in ("A", "B")}
     for x in ("A", "B"):
         pair.call(x, "resume")

@@ -98,7 +98,10 @@ class HairLink(unittest.TestCase):
         """hair-link-309d7180 (hair-link-8): a turning windmill on B (a moving warm block outside the Links) and the
         game's brown hair with specks of red's hue are not 'red left' and not 'repainted': every test ends NO-REF (not
         FAIL), and the specks add nothing to a count (the gain is the painted patch alone)."""
-        for name, env in (("windmill", {"BT_FAKE_WINDMILL": "DD4527"}), ("speckle", {"BT_FAKE_HAIR": "speckle"})):
+        # othertunic (hair-measure-0defc551, 9 false FAILs): B's red tunic over B's box, which overlaps A's, on the
+        # shots before a colour only: the other Link's box is left out of every count, so it adds nothing either
+        for name, env in (("windmill", {"BT_FAKE_WINDMILL": "DD4527"}), ("speckle", {"BT_FAKE_HAIR": "speckle"}),
+                          ("othertunic", {"BT_FAKE_HAIR": "othertunic"})):
             s, p = self.run_it(name, NO_CS, env=env)
             self.assertEqual(results(s), {t: "NO-REF" for t in ALL}, (name, p.stdout[-3000:]))
             self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*before=0 after=\d+ gain=", p.stdout)), 14,
@@ -148,6 +151,21 @@ class SolidCount(unittest.TestCase):
         # a 320-wide shot counts 16x per pixel (scaled to REF_W)
         small = self.pic("small", lambda im, d: d.rectangle([30, 30, 49, 39], fill=(0xDD, 0x45, 0x27)), size=(320, 180))
         self.assertEqual(huecheck.solid_count(small, (25, 25, 60, 50), red) % 16, 0)
+
+    def test_outside_and_covered(self):
+        """The other Link's box left out (hair-measure-0defc551: B's red tunic in A's box) and the share of a Link's
+        hair area (its box's top third) under it."""
+        import huecheck
+        red, box = 0xDD4527, (100, 100, 200, 220)
+        tunic = self.pic("tunic", lambda im, d: d.rectangle([150, 100, 199, 219], fill=(0xC8, 0x3A, 0x22)))
+        self.assertGreater(huecheck.solid_count(tunic, box, red), 3000)
+        keep = huecheck.outside(tunic, [(150, 100, 200, 220), None])
+        self.assertEqual(huecheck.solid_count(tunic, box, red, keep), 0)
+        self.assertTrue(keep[110, 120] and not keep[110, 160])
+        self.assertEqual(huecheck.covered(box, []), 0.0)
+        self.assertAlmostEqual(huecheck.covered(box, [(150, 0, 400, 400)]), 0.5)
+        self.assertEqual(huecheck.covered(box, [(100, 140, 200, 220)]), 0.0)   # (below the top third: the body only)
+        self.assertEqual(huecheck.covered(box, [(0, 0, 999, 999)]), 1.0)
 
     def test_lit(self):
         import huecheck

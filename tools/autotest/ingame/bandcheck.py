@@ -6,13 +6,15 @@ lichii/hook/coop_hook.cpp, the camera debug block), from the feet (`pos`) to HEA
 """
 import colorsys
 
-# m: a child Link's height and a little (feet at `pos`). Every user (test_look, test_hood_trim, test_tunic) runs child
-# Link (need_child_in_play). MEASURED on run tunic-look-53d40ab3-2 (lane 1, 2026-11-27, lane1/new/tunic-blue-A.png):
-# with the old 1.9 (an adult's) A's own Link's box was 437 px tall (y 215-656) and the Link 269 px (cap top y 385 to
-# the feet), B's puppet's box 272 px (y 295-571) and the puppet 167 px (cap top y 402): 1.17 m both. The adult height
-# made each box 1.6x too tall and, by the half-width (0.35 x tall), too wide: the two side-by-side Links' boxes
-# overlapped (x 486-792 and 736-927; the Links themselves are x 569-710 and 800-895) and the run ended SETUP-FAIL.
-HEAD = 1.25
+# m: a Link's height and a little (feet at `pos`), by the bridge state's `age` (docs/playtest.md "State").
+# adult 1.9: test_look / test_hood_trim (KakarikoVillage_Adult). child 1.25, MEASURED on run tunic-look-53d40ab3-2
+# (lane 1, 2026-11-27, lane1/new/tunic-blue-A.png, both Links child): with 1.9 A's own Link's box was 437 px tall
+# (y 215-656) and the Link 269 px (cap top y 385 to the feet), B's puppet's box 272 px (y 295-571) and the puppet 167 px
+# (cap top y 402): 1.17 m both. The adult height made each child box 1.6x too tall and, by the half-width
+# (0.35 x tall), too wide: two side-by-side Links' boxes overlapped (x 486-792 and 736-927; the Links themselves
+# x 569-710 and 800-895) and the run ended SETUP-FAIL.
+HEADS = {"adult": 1.9, "child": 1.25}
+HEAD = HEADS["adult"]
 
 
 def project(view, p, w, h):
@@ -25,10 +27,10 @@ def project(view, p, w, h):
     return (nx + 1) / 2 * w, py
 
 
-def box(view, pos, w, h):
-    """The screen box (x0, y0, x1, y1) of a Link standing at `pos`, or None off the screen."""
+def box(view, pos, w, h, age="adult"):
+    """The screen box (x0, y0, x1, y1) of a Link of `age` (HEADS) standing at `pos`, or None off the screen."""
     feet = project(view, pos, w, h)
-    head = project(view, (pos[0], pos[1] + HEAD, pos[2]), w, h)
+    head = project(view, (pos[0], pos[1] + HEADS[age], pos[2]), w, h)
     if not feet or not head:
         return None
     tall = abs(feet[1] - head[1])

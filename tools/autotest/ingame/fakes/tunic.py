@@ -73,7 +73,7 @@ def after(game, m, r):
     d = ImageDraw.Draw(im)
     d.rectangle([0, 0, im.size[0], im.size[1]], fill=EARTH)
     for who in (game, game.other):
-        b = bandcheck.box(_view(), who.pos, im.size[0], im.size[1])
+        b = bandcheck.box(_view(), who.pos, im.size[0], im.size[1], who.age())
         if not b:
             continue
         colour = BLUE if who.tag == "A" else GREEN

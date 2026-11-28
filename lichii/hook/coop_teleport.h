@@ -19,7 +19,8 @@
 //    does: by default the loading zone's own event Dm_SY_BancChangeGo with
 //    NextBanc, NextStartPos and the entrance's arrival event (ArrivalEvent),
 //    started by our Link (map_event; teleport-direct-0116). It is asked again
-//    every 3 s while no event runs, at most kMaxEventAsks times, until the
+//    3 s after the last event ended (never while the game reserved our scene,
+//    row 329), at most kMaxEventAsks times, until the
 //    game takes it (it starts loading, or empties the request), then waits
 //    for the scene to settle, asks the player again for where it stands now,
 //    and moves there (in a dungeon into any room: moving Link loads his room,

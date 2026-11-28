@@ -613,7 +613,19 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
             }
             // map_event: the map change event again if none runs and the last
             // one was not taken (refused: Link in the air, swimming, held).
-            if (map_event_ && !local.event && !local.loading_banc && now_us - event_us_ >= kEventAgainUs) {
+            // Row 329: counted from the last frame an event ran, not from the
+            // ask. The game loads the scene its event reserved a frame or two
+            // AFTER that event ends; a first event that started late and ended
+            // past kEventAgainUs after the ask had a second one asked in that
+            // gap, the load began inside it and the arrival never came (black
+            // picture, no Link). And never while the game's own reservation
+            // already names our scene: that load is coming.
+            if (local.event) {
+                event_us_ = now_us;
+            }
+            const bool reserved_ours = local.reserved_banc && *local.reserved_banc == scene_;
+            if (map_event_ && !local.event && !local.loading_banc && !reserved_ours &&
+                now_us - event_us_ >= kEventAgainUs) {
                 if (event_asks_ >= kMaxEventAsks) {
                     phase_ = Phase::idle;
                     a.cancel_scene = requested_;

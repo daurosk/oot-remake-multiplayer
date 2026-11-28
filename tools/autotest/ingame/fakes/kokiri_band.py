@@ -3,7 +3,8 @@
 Only with the test's switch LICHII_COOP_LOOK=cap_trim:yellow (+ LICHII_COOP_COLOR=blue): the module's look lines, an
 adult Kakariko, a camera (view.clip) and on each shot both Links in blue with the hood band yellow.
 Selftest variables: BT_FAKE_CAP_BLOCKS (43600 = look_cap_old's pack before the fix, 43228 an older one), BT_FAKE_BAND=blue (the row's bug: the
-puppet's band in the tunic's blue), BT_FAKE_KOKIRI_ON_LINE=1 (a camera with A on B's line of sight: boxes overlap).
+puppet's band in the tunic's blue), BT_FAKE_KOKIRI_ON_LINE=1 (a camera with A on B's line of sight: boxes overlap), BT_FAKE_KOKIRI_HIDDEN=1 (the
+puppet never drawn on B's shot: behind a wall, as run kokiri-look-182cd53b's Kakariko gate; sight.prove must SETUP-FAIL).
 """
 import os
 
@@ -57,6 +58,8 @@ def after(game, m, r):
     im = Image.open(r["path"]).convert("RGB")
     d = ImageDraw.Draw(im)
     for who, p in (("own", game.pos), ("puppet", game.other.pos)):
+        if who == "puppet" and os.environ.get("BT_FAKE_KOKIRI_HIDDEN"):
+            continue
         b = bandcheck.box(_view(), p, im.size[0], im.size[1])
         if b:
             d.rectangle([b[0] + 3, b[1] + 3, b[2] - 4, b[3] - 4], fill=BLUE)

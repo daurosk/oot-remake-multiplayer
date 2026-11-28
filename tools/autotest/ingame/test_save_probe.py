@@ -9,9 +9,14 @@ Three suspects, told apart by ONE run (nothing here is judged; the product is <o
      save_flags.get for the profile's flags, next to the value in play. A file whose values equal the in-play ones is
      where the game got them ('source'); files that read the profile's values (0) while the game reads 1 mean the
      profile reached a file the game did not use.
+     A file is only a SOURCE when it was not written after the game started: each file's mtime is compared with the
+     game's start (the creation time of its game-out-X.txt, which the lane makes at the start; restore_save runs before
+     it) and a file newer than that is marked 'written_after_start' and never counted ('match_files' skips it): a save
+     the game itself wrote after the load reads as in play and would look like S1 while it is S2 (review-tests-153-7).
   S2 something gives the ocarina after the load: every module log line since the game's start that is about a save,
      an item/give/gift or the ocarina, with its line number and the save-load line's number, so a give between the load
-     and the first in-play frame shows (the boot script live-kakariko-child.A.txt is read too: its give/setflag lines).
+     and the first in-play frame shows; the boot script the lane booted the game with (pair.boot[x], here
+     live-kakariko-child.A.txt/.B.txt) is read too: its give/setflag/flag lines go into 'boot_script_lines'.
   S3 the value is read too early / changes later: the flags are read in play, the pair stepped SECOND_AFTER frames, and
      read again ('changes' = they differ).
 
@@ -43,6 +48,8 @@ SAVE_LINE = re.compile(r"coop: save: the game (starts loading|loaded) a save|coo
 FOLDER_LINE = re.compile(r"coop: save: the game's save folder is (.+)$")
 ABOUT = re.compile(r"coop: .*(save|give|gift|item|ocarina|Ocarina|IsGet)", re.I)
 SKIP = re.compile(r"vk:|vcores:|texture|traffic:")
+BOOT_WRITES = re.compile(r"^\s*(give|setflag|flag|item)", re.I)    # scenario lines that put an item/flag in (docs/playtest.md)
+START_SLACK_S = 1.0     # an mtime this close to the start is the lane's own set-up, not the game
 
 
 def _expand(path):
@@ -57,7 +64,7 @@ def _norm(kind, v):
     return (v & 0xff) if kind == SF.TYPES["bool"] else v
 
 
-def _file_values(path, flags):
+def _file_values(path, flags, started):
     """{hash: value or None} of the profile's flags in the progress.sav at `path` (save_flags.get)."""
     with open(path, "rb") as f:
         data = f.read()
@@ -67,7 +74,9 @@ def _file_values(path, flags):
             out["0x%08x" % h] = _norm(kind, SF.get(data, kind, h))
     except SF.SaveError as e:
         out = {"error": str(e)}
-    return {"size": len(data), "sha8": hashlib.sha256(data).hexdigest()[:8], "mtime": os.path.getmtime(path),
+    mtime = os.path.getmtime(path)
+    return {"size": len(data), "sha8": hashlib.sha256(data).hexdigest()[:8], "mtime": mtime,
+            "game_started": started, "written_after_start": bool(started and mtime > started + START_SLACK_S),
             "values": out}
 
 
@@ -101,7 +110,17 @@ def test_save_probe(pair):
             if m:
                 said = _expand(m.group(1))
         folder = (session.get(x) or {}).get("folder")
-        g = {"game_folder": folder, "save_folder_said": said, "files": {}}
+        try:
+            started = os.path.getctime(pair.log[x].path)      # the game's start: its log is created then (Windows: creation)
+        except OSError:
+            started = None
+        boot = (pair.boot or {}).get(x)
+        boot_lines = []
+        if boot and os.path.isfile(boot):
+            with open(boot, encoding="utf-8", errors="replace") as bf:
+                boot_lines = [ln.strip() for ln in bf if BOOT_WRITES.search(ln)]
+        g = {"game_folder": folder, "save_folder_said": said, "files": {}, "game_started": started,
+             "boot_script": boot, "boot_script_lines": boot_lines}
         roots = set()
         if said:
             roots.add(said)
@@ -117,7 +136,7 @@ def test_save_probe(pair):
         for path in cand:
             if path not in seen:
                 seen.add(path)
-                g["files"][path] = _file_values(path, flags)
+                g["files"][path] = _file_values(path, flags, started)
         g["in_play_1"] = _read_game(pair, x, flags, clear)
         # S2: the module's lines about a save / a give / the ocarina, with line numbers, and the load nodes' line numbers
         g["save_load_lines"] = [(i, ln[:200]) for i, ln in enumerate(lines) if SAVE_LINE.search(ln)]
@@ -133,14 +152,17 @@ def test_save_probe(pair):
         want = {"0x%08x" % h: _norm(k, 1 if k == SF.TYPES["bool"] and w else w) for k, h, w in flags}
         kinds = {"0x%08x" % h: k for k, h, _w in flags}
         g["match_files"] = [p for p, f in g["files"].items()
-                            if all(f["values"].get(h) == _norm(kinds[h], g["in_play_1"][h]) for h in want)]
+                            if not f["written_after_start"]
+                            and all(f["values"].get(h) == _norm(kinds[h], g["in_play_1"][h]) for h in want)]
+        g["written_after_start"] = [p for p, f in g["files"].items() if f["written_after_start"]]
         g["profile_files"] = [p for p, f in g["files"].items()
                               if all(f["values"].get(h) == w for h, w in want.items())]
-        pair.notes.append("%s: in play %s; files read as in play: %s; files read as the profile: %s; changes later: %s"
+        pair.notes.append("%s: in play %s; files read as in play: %s; files read as the profile: %s; written after the game started (never a source): %s; boot script give/setflag lines: %d; changes later: %s"
                           % (x, {h: v for h, v in g["in_play_1"].items() if h in want},
                              [os.path.relpath(p, g["game_folder"] or "") for p in g["match_files"]],
                              [os.path.relpath(p, g["game_folder"] or "") for p in g["profile_files"]],
-                             g["changes"] or "none"))
+                             [os.path.relpath(p, g["game_folder"] or "") for p in g["written_after_start"]] or "none",
+                             len(g["boot_script_lines"]), g["changes"] or "none"))
     with open(os.path.join(pair.out_dir or ".", "save-probe.json"), "w", encoding="utf-8") as f:
         json.dump(rec, f, indent=1, default=str)
     pair.unproven("probe only: see save-probe.json (S1 files vs in play, S2 about_lines, S3 changes) and the notes")

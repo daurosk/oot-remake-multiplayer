@@ -2337,14 +2337,56 @@ class BootProof(unittest.TestCase):
             self.assertTrue(pair.in_play(st[x]), st[x])
         self.assertTrue(any(n.startswith("boot: ") and "in an event after 100 frames: waited on up to %d"
                             % P.BOOT_EVENT_FRAMES in n for n in pair.notes), pair.notes)
-        self.assertAlmostEqual(pair.deadline.seconds - before, (P.BOOT_EVENT_FRAMES - 100) / P.BOOT_STEP_FPS)
+        # (a fast lane: the deadline never ran low, so nothing grew; the growth is by time left, not a frame count)
+        self.assertEqual(pair.deadline.seconds - before, 0)
+
+    def slow(self, pair, seconds, s_per_frame=0.15):
+        """A slow lane: pair's deadline on a fake clock that each step moves s_per_frame per frame (0.15 = 6.6 fps,
+        row286-wake-182cd53b-3's lane 1: 1580 frames in BOOT_READY_S 240 s)."""
+        now = [0.0]
+        pair.deadline = P.Deadline(seconds, clock=lambda: now[0])
+        real = pair.step_both
+
+        def step_both(frames=1):
+            real(frames)
+            now[0] += frames * s_per_frame
+        pair.step_both = step_both
+        return now
+
+    def test_a_slow_lane_steps_an_intro_past_the_boot_deadline(self):
+        """row286-wake-182cd53b-3: on a 6.6 fps lane the boot proof hit BOOT_READY_S 240 s at ~1580 frames, before
+        the old once-at-2400 growth; Twinrova's stepped intro is 2700 / 2880 frames (probe-intro-182cd53b). Now the
+        deadline is kept EVENT_SLACK_S ahead while a game is in its event: a 3000-frame intro boots (2400 = 360 s
+        here), and the growth stays bounded by the event's frames."""
+        pair = self.intro_pair(self.INTRO_FAKE.replace("game.frame + 300", "game.frame + 3000"))
+        now = self.slow(pair, P.BOOT_READY_S)
+        st = pair.boot_ready("BossStage")
+        for x in ("A", "B"):
+            self.assertTrue(pair.in_play(st[x]), st[x])
+        self.assertGreater(now[0], P.BOOT_READY_S)            # (it really ran past the old 240 s)
+        grown = pair.deadline.seconds - P.BOOT_READY_S
+        self.assertGreater(grown, 0)
+        self.assertLessEqual(grown, now[0] - P.BOOT_READY_S + P.EVENT_SLACK_S + 1e-6)
+        self.assertTrue(any(n.startswith("boot: A+B in an event before the frame ceiling") or
+                            n.startswith("boot: A+B in an event after") for n in pair.notes), pair.notes)
+
+    def test_a_slow_lane_with_no_event_keeps_the_boot_deadline(self):
+        """Only an event grows it: a slow lane whose games are loading (stale samples, no event) still times out at
+        BOOT_READY_S, SETUP-FAIL boot, the deadline not grown."""
+        pair = self.lane(BT_FAKE_STALE_FRAMES=100000)
+        self.slow(pair, P.BOOT_READY_S)
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: TestTimeout: timeout after 240 s"):
+            pair.boot_ready("KakarikoVillage_Child")
+        self.assertEqual(pair.deadline.seconds, P.BOOT_READY_S)
 
     def test_the_event_growth_never_passes_an_enclosing_deadline(self):
         """review-rows-c130-8 S2: inside Pair.recover the growth is capped at the recovery's own deadline end."""
         pair = self.intro_pair(self.INTRO_FAKE)
+        self.slow(pair, 20.0)                       # (20 s left < EVENT_SLACK_S: the rule wants to grow at once)
         cap = pair.deadline.end + 5.0
         pair._boot_grow_cap = cap
-        pair.boot_ready("BossStage", max_frames=100)
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: TestTimeout"):   # (the 300-frame intro needs 45 s here)
+            pair.boot_ready("BossStage", max_frames=100)
         self.assertLessEqual(pair.deadline.end, cap + 1e-6)
         self.assertTrue(any("capped by the enclosing deadline" in n for n in pair.notes), pair.notes)
 

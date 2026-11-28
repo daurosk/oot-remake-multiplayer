@@ -1188,6 +1188,43 @@ TEST_CASE("dbno body: issue 337, the do action is read from our Link's work obje
     CHECK(ReadDoAction(g, kActor) == std::optional<std::uint32_t>(14));
 }
 
+TEST_CASE("dbno body: issue 337, the attention receiver's pick range is read as main+0x206d80 walks it") {
+    Guest g;
+    CHECK_FALSE(ReadAttention(g, 0));
+    CHECK_FALSE(ReadAttention(g, kActor));  // no components
+    const std::uint64_t parts = kActor + 0x100, recv = kActor + 0xb000, list = kActor + 0xc000;
+    g.Write(kActor + addr::kActorComponents, &parts, sizeof parts);
+    CHECK_FALSE(ReadAttention(g, kActor));  // no receiver
+    g.Write(parts + attn::kComponentReceiver, &recv, sizeof recv);
+    const std::int32_t count = 3, start = 1, none = -1, end_more = 3;
+    const std::uint32_t mode = 0;
+    g.Write(recv + attn::kMode, &mode, sizeof mode);
+    g.Write(recv + attn::kCount, &count, sizeof count);
+    g.Write(recv + attn::kStart, &start, sizeof start);
+    g.Write(recv + attn::kEnd, &none, sizeof none);
+    for (std::size_t i = 0; i < attn::kEndMoreSlots; ++i) {
+        g.Write(recv + attn::kEndMore + 4 * i, &none, sizeof none);
+    }
+    g.Write(recv + attn::kEndMore + 4, &end_more, sizeof end_more);  // the second fallback end is the one set
+    g.Write(recv + attn::kList, &list, sizeof list);
+    const std::array<std::uint32_t, 3> types{1, 0, addr::kDoActionCrawl};
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        const std::uint64_t entry = list + 0x100 + 0x10 * i, record = list + 0x400 + 0x80 * i;
+        const std::uint16_t flags = i == 1 ? 0 : 1;  // entry 1 not valid
+        g.Write(list + 8 * i, &entry, sizeof entry);
+        g.Write(entry, &record, sizeof record);
+        g.Write(record + attn::kRecordFlags, &flags, sizeof flags);
+        g.Write(record + attn::kRecordActionType, &types[i], sizeof types[i]);
+    }
+    const auto r = ReadAttention(g, kActor);
+    REQUIRE(r);
+    CHECK(r->count == 3);
+    CHECK(r->start == 1);
+    CHECK(r->end == 3);
+    CHECK(r->types == std::vector<std::int64_t>{1, -1, 14});
+    CHECK(DescribeAttention(*r) == "mode 0, 3 targets, pick range [1, 3): 0:1 1:-1 2:14(anchor?)");
+}
+
 TEST_CASE("dbno body: issue 337, a child's Crawl is asked only when the game itself offers it, and its own verbs run until then") {
     const std::array<float, 9> identity{1, 0, 0, 0, 1, 0, 0, 0, 1};
     Guest g;

@@ -153,6 +153,51 @@ std::optional<std::uint32_t> ReadDoAction(CoopPuppet::Guest& guest, std::uint64_
     return action;
 }
 
+std::optional<AttentionRange> ReadAttention(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    std::uint64_t parts = 0, recv = 0, list = 0;
+    AttentionRange r;
+    if (actor == 0 || !guest.Read(actor + addr::kActorComponents, &parts, sizeof parts) || parts == 0 ||
+        !guest.Read(parts + attn::kComponentReceiver, &recv, sizeof recv) || recv == 0 ||
+        !guest.Read(recv + attn::kMode, &r.mode, sizeof r.mode) ||
+        !guest.Read(recv + attn::kCount, &r.count, sizeof r.count) ||
+        !guest.Read(recv + attn::kStart, &r.start, sizeof r.start) ||
+        !guest.Read(recv + attn::kEnd, &r.end, sizeof r.end) || !guest.Read(recv + attn::kList, &list, sizeof list)) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; r.end == -1 && i < attn::kEndMoreSlots; ++i) {
+        if (!guest.Read(recv + attn::kEndMore + 4 * i, &r.end, sizeof r.end)) {
+            return std::nullopt;
+        }
+    }
+    if (r.end == -1) {
+        r.end = r.count;
+    }
+    const std::int32_t n = std::clamp<std::int32_t>(r.count, 0, static_cast<std::int32_t>(attn::kMaxEntries));
+    for (std::int32_t i = 0; list != 0 && i < n; ++i) {
+        std::uint64_t entry = 0, record = 0;
+        std::uint16_t flags = 0;
+        std::uint32_t type = 0;
+        const bool ok = guest.Read(list + 8 * static_cast<std::uint64_t>(i), &entry, sizeof entry) && entry != 0 &&
+                        guest.Read(entry, &record, sizeof record) && record != 0 &&
+                        guest.Read(record + attn::kRecordFlags, &flags, sizeof flags) && (flags & 1) != 0 &&
+                        guest.Read(record + attn::kRecordActionType, &type, sizeof type);
+        r.types.push_back(ok ? static_cast<std::int64_t>(type) : -1);
+    }
+    return r;
+}
+
+std::string DescribeAttention(const AttentionRange& r) {
+    std::string s = "mode " + std::to_string(r.mode) + ", " + std::to_string(r.count) + " targets, pick range [" +
+                    std::to_string(r.start) + ", " + std::to_string(r.end) + "):";
+    for (std::size_t i = 0; i < r.types.size(); ++i) {
+        s += " " + std::to_string(i) + ":" + std::to_string(r.types[i]);
+        if (r.types[i] == addr::kDoActionCrawl) {
+            s += "(anchor?)";
+        }
+    }
+    return s;
+}
+
 // --- Crawl ---
 
 void Crawl::StepOffer(CoopPuppet::Guest& guest) {
@@ -194,6 +239,9 @@ void Crawl::StepOffer(CoopPuppet::Guest& guest) {
     if (offered) {
         offer_waits_ = 0;
     } else if (++offer_waits_ >= kOfferWaitReads) {
+        const auto range = ReadAttention(guest, want_.actor);
+        Note("our downed Link: the game's attention receiver: " +
+             (range ? DescribeAttention(*range) : std::string("not read")));
         LieDown("the game offered no Crawl in " + std::to_string(kOfferWaitReads) + " frames");
         awaits_offer_ = false;
     }

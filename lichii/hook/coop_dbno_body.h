@@ -206,6 +206,29 @@ struct AsSlot {
 std::optional<AsSlot> ReadSlot0(CoopPuppet::Guest& guest, std::uint64_t actor);
 // Issue 337: the actor's do action (addr::kWorkDoAction), or nothing (no actor, no work object).
 std::optional<std::uint32_t> ReadDoAction(CoopPuppet::Guest& guest, std::uint64_t actor);
+// Issue 337 (no offer at KokiriForest_Child FrontDekuTree, and in VolvagiaStage while Link was in LockOnWait):
+// the do action is the ActionType of the receiver's pick, main+0x206d80(receiver, 0, -1, -1) (c_011.cpp:35500):
+// the receiver ([actor+0x270]+0x158) keeps its targets as a sorted list ([recv+0x30] -> entry pointers, entry[0]
+// -> the target record: u16 +0x20 bit 0 = valid, u32 +0x34 = ActionType); the pick walks the range from index
+// [recv+0x38] up to the first of [recv+0x3c], [recv+0x40..0x60] that is set (else the count [recv+0x28]) and
+// takes the first record whose ActionType is not 0. Read when the game offered no Crawl, so a run says whether
+// our CrawlAnchor (ActionType 14) was in that range and what came before it. Not read in mode 2 (u32 +0x108).
+namespace attn {
+inline constexpr std::uint64_t kComponentReceiver = 0x158;
+inline constexpr std::uint64_t kCount = 0x28, kList = 0x30, kStart = 0x38, kEnd = 0x3c, kEndMore = 0x40;
+inline constexpr std::size_t kEndMoreSlots = 9;  // +0x40 .. +0x60
+inline constexpr std::uint64_t kMode = 0x108;
+inline constexpr std::uint64_t kRecordFlags = 0x20, kRecordActionType = 0x34;
+inline constexpr std::size_t kMaxEntries = 16;
+}  // namespace attn
+struct AttentionRange {
+    std::int32_t count = 0, start = -1, end = -1;
+    std::uint32_t mode = 0;
+    std::vector<std::int64_t> types;  // each entry's ActionType from 0 (-1: no record / not valid), at most kMaxEntries
+};
+std::optional<AttentionRange> ReadAttention(CoopPuppet::Guest& guest, std::uint64_t actor);
+// One line: "mode M, N targets, pick range [S, E): i:type ...", our anchor's type (14) marked.
+std::string DescribeAttention(const AttentionRange& r);
 // Issue 337: whether an AS command of our child Link's is one of the game's
 // own crawl: Crouch / CrouchLockOnMove / CrouchLockOnMoveEnd, the three
 // commands of AS/Player_Child.root.asb that play the Tunnel_* clips. A Crawl

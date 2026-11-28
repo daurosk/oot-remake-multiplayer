@@ -644,6 +644,11 @@ bool KeepsTarget(std::string_view name) {
     return name.starts_with("Enemy_Anubis");
 }
 
+bool RidesThePaintings(std::string_view name, std::string_view animation) {
+    return name == "Enemy_DungeonBoss_PhantomGanon" &&
+           (animation == "Appear" || animation == "Run" || animation.starts_with("RideJumpAttack"));
+}
+
 bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1882,7 +1887,8 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
-    state.state = AttackBits(KeepsTarget(o.name) ? std::nullopt : o.attacking);  // boss turns (not Anubis)
+    const bool no_turns = KeepsTarget(o.name) || (o.animation && RidesThePaintings(o.name, o.animation->name));
+    state.state = AttackBits(no_turns ? std::nullopt : o.attacking);  // boss turns (not Anubis, not PG's ride: row 287)
     if (o.own_event_until > now_us) {
         state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
     }

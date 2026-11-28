@@ -1,0 +1,298 @@
+From 8f38bb33402f5a2405d4e827186b8f30f169db90 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 12:38:31 -0900
+Subject: [PATCH] Co-op null guards: loads through a puppet's missing
+ components read 0
+
+A co-op puppet (CoopPuppet_*) has no Player component (main+0x82acc0
+returns 0) and no component in slot 10. Game code that runs for the
+puppet or an item it wears loads through those null pointers. The
+emulator reads 0 there; Hookshot and a real Switch fault. Patch 0002's
+zero page hides it on Windows; these guards make it unneeded.
+
+a64_lift.py: Lifter.unless ({pc: (condition, C instead)}): a plain
+instruction runs only when the condition is false, else the given C
+runs. nx2/coop_null_guards.py puts it on 29 loads of main e0f3ccfa
+(word and build id checked): the 25 loads through x0 straight after
+`bl main+0x82acc0` with no check, main+0x27975f0 (reached from
+the call by a tbz that leaves x0 alone), and the slot-10 chain in f_804d84b0
+(main+0x4b85e4..ec). A base below 1 MB gives the load's register 0,
+what the emulator reads; the first few uses of each are logged. Seen in
+logs: main+0x2dceef8 (guest 0x7d8), main+0x26cf2a4 (guest 0xe58),
+main+0x4b85e8 (guest 0x20, a player's crash before 0002's page was on).
+Link, who has both components, runs as shipped.
+
+Patch 0038 (bow guard) meets main+0x2dceef8 first and takes the game's
+own exit there; this guard stays as its backstop. Patch 0002's zero
+page (and the module-armed null page) stays too: it covers loads not
+listed here.
+
+nx2/fastfp.py: its copy of emit_function (A64_FASTFP, on by default:
+what the game's lift runs instead of the kit's) writes the same guard,
+and a guarded load joins no fast float run. nx2/chunks.py: Lifter.unless
+goes to the emit's new processes (Windows), as 0005's wraps. Both count
+each guard written (stats unless_emitted); nx2/lift.py prints 'co-op null
+guards: N of M emitted in the lifted C'.
+
+a64_lift.Lifter.unless defaults to an empty read-only mapping for a
+lifter made without __init__ (Longshot's tests/test_fastfp_override.py
+runs unchanged).
+
+No file under tests/ (the Linux AppImage ships none, so the kit could not
+apply it): the tests are oot-remake-multiplayer's tools/hookshot/
+null_guards_cases.py, run on the patched source.
+---
+ nx2/chunks.py                        |   3 +-
+ nx2/coop_hooks.py                    |   2 +
+ nx2/coop_null_guards.py              | 119 +++++++++++++++++++++++++++
+ nx2/fastfp.py                        |  10 ++-
+ nx2/lift.py                          |   2 +
+ third_party/a64-kit/lift/a64_lift.py |  14 ++++
+ 6 files changed, 147 insertions(+), 3 deletions(-)
+ create mode 100644 nx2/coop_null_guards.py
+
+diff --git a/nx2/chunks.py b/nx2/chunks.py
+index f48efd9d..2a3f7dce 100644
+--- a/nx2/chunks.py
++++ b/nx2/chunks.py
+@@ -212,7 +212,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
+ # What the emit reads of the lifter besides the bodies of the functions it emits (a64_lift.Lifter.emit_function and the
+ # methods it calls): sent once to each new process
+ EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks",
+-               "wraps")   # (oot-remake-multiplayer's patch 0005)
++               "wraps",   # (oot-remake-multiplayer's patch 0005)
++               "unless")   # (oot-remake-multiplayer's patch 0023: the null guards, Lifter.unless)
+ _view = None   # (a new process's view: a lifter with the tables only, and its counters)
+ 
+ 
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index e9905c58..7ebc48de 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -65,6 +65,8 @@ def install(lifter, img, build_id):
+     coop_world_wraps.install(lifter, img, build_id)
+     import coop_player_wraps   # (patch 0017: the other players' Link reads its own input)
+     coop_player_wraps.install(lifter, img, build_id)
++    import coop_null_guards   # (patch 0023: loads through the puppet's missing components read 0, as on the emulator)
++    coop_null_guards.install(lifter, img, build_id)
+     import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
+     coop_actor_lift.install(lifter, img, build_id)
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+diff --git a/nx2/coop_null_guards.py b/nx2/coop_null_guards.py
+new file mode 100644
+index 00000000..7ceb1582
+--- /dev/null
++++ b/nx2/coop_null_guards.py
+@@ -0,0 +1,119 @@
++"""Co-op's null guards (oot-remake-multiplayer's patch 0023, its docs/hookshot.md "Null reads").
++
++A co-op puppet (CoopPuppet_*) is a stripped copy of Link: it has no Player component (the one main+0x82acc0 returns,
++[[actor+0x270]+0x358]) and no component in slot 10 ([actor+0x270]+0x50). Code of the game that runs for the puppet, or
++for an item it wears, loads through those null pointers. On the emulator such a read gives 0 and the game takes its own
++"nothing there" branch; on Hookshot it is a host read and the game crashes ("guest 0x7d8", "guest 0x20", "guest 0xe58"),
++and on a real Switch it faults too. Patch 0002 maps a zero page under the guest's first MB to hide that; these guards
++make the page unneeded: each listed load runs only when its base register holds a real pointer, otherwise its register
++gets 0, exactly the value the emulator's read gives (a64_lift.py Lifter.unless). Nothing else changes: Link, who has
++both components, runs as shipped, and the shipped game crashes in the other case.
++
++The loads, in main of e0f3ccfaf50065ae (Ocarina of Time 1.1.1):
++- After `bl main+0x82acc0` (the wearer's Player component), every load through x0 that comes straight after the call
++  with no check: the 25 of the call's 110 callers that do so. Three were seen in players' and lane logs (main+0x2dceef8
++  in the item update f_82deee60, "guest 0x7d8"; main+0x26cf2a4 in f_826ef260, "guest 0xe58"); the rest read the same
++  missing component the same way. One more (review): main+0x27975f0, ldrb w8, [x0, #0x7c1], reached from the call at
++  main+0x27975d0 by a tbz over two instructions that leave x0 alone.
++  main+0x2dceef8 (the bow's wearer) is also met first by patch 0038 (nx2/coop_puppet_bow_guard.py), which takes the
++  game's own way out for a wearer with no Player component; this guard stays as the backstop when 0038 is left out.
++- Slot 10 in f_804d84b0 (main+0x4b85e4..0x4b85ec): the chain [table+0x50] -> +0x20 -> +0x1c8 before its own cbz; a
++  player's game crashed there ("guest 0x20", lr main+0x4b85e0) before patch 0002's guard had switched the zero page
++  on. Patch 0002 guards the same chain in main+0x4b8240 already. Slot 10 is read unchecked at 574 places in main, so it
++  is not guarded everywhere: only where a puppet was seen to go.
++
++Each load's word is checked (it must be the listed LDR/LDRB/LDRH with an immediate offset) and, for the Player ones,
++that the instruction before it calls main+0x82acc0; and the build id. A changed word leaves that one guard out; another
++build leaves them all out. The first few times each guard is used it says so in the log.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++PLAYER_OF = 0x82acc0     # [[x0+0x270]+0x358]: the actor's Player component, 0 when it has none
++NULL_BELOW = 0x100000    # Hookshot leaves the guest's first MB unmapped: a base below it is a null pointer
++
++# (main offset, its word): loads through x0 straight after `bl main+0x82acc0`
++PLAYER_LOADS = (
++    (0x82ac1c, 0xf9400c08), (0x84a070, 0x3940b008), (0x26cf2a4, 0xb94e5814), (0x2731e50, 0x39797c08),
++    (0x2733184, 0x39796808), (0x2794cf8, 0x3940c808), (0x27d470c, 0xb95be008), (0x27e4f6c, 0xf9400c08),
++    (0x27fa83c, 0xb94e4408), (0x27fca9c, 0x39792008), (0x27fed04, 0x3978e408), (0x27ff61c, 0x3978e408),
++    (0x280c6ec, 0x3940b808), (0x2b3093c, 0x3940c008), (0x2b30b70, 0xb9472c08), (0x2b37314, 0xf9400c08),
++    (0x2dceef8, 0xb947d808), (0x2eae030, 0xb947d808), (0x2f49fd0, 0xb947d808), (0x2f49fe4, 0x39408c08),
++    (0x2f9f9c0, 0x39797008), (0x2fa0e44, 0x39796c08), (0x2fa0ee8, 0x39796c08), (0x30507a0, 0x3940b008),
++    (0x3050874, 0x3940b008),
++)
++# (main offset, its word, the `bl main+0x82acc0` before it, the words between that leave x0 alone): a load reached from the
++# call by a branch. main+0x27975f0 sits after a retab; only the tbz at main+0x27975d8 goes there (whole main scanned)
++PLAYER_LOADS_LATER = (
++    (0x27975f0, 0x395f0408, 0x27975d0, ((0x27975d4, 0x394422a8),    # ldrb w8, [x21, #0x108]
++                                         (0x27975d8, 0x360000c8))),  # tbz w8, #0, main+0x27975f0
++)
++# (main offset, its word): slot 10 in f_804d84b0
++SLOT10_LOADS = ((0x4b85e4, 0xf9402908), (0x4b85e8, 0xf9401108), (0x4b85ec, 0xf940e508))
++
++# LDR (64/32), LDRH, LDRB with an unsigned immediate offset: (mask, value, bytes)
++_LOADS = ((0xffc00000, 0xf9400000, 8), (0xffc00000, 0xb9400000, 4), (0xffc00000, 0x79400000, 2),
++          (0xffc00000, 0x39400000, 1))
++
++
++def decode(word):
++    """(dest register, base register, offset) of a load the guards know, else None"""
++    for mask, value, size in _LOADS:
++        if word & mask == value:
++            return word & 31, (word >> 5) & 31, ((word >> 10) & 0xfff) * size
++    return None
++
++
++def calls(word, pc, target):
++    """True when `word` at main offset pc is `bl main+target`"""
++    if word is None or word >> 26 != 0x25:
++        return False
++    imm = word & 0x3ffffff
++    if imm & (1 << 25):
++        imm -= 1 << 26
++    return pc + imm * 4 == target
++
++
++def text(off, word):
++    """(condition, C instead) for Lifter.unless: the load's register gets 0 when its base is a null pointer"""
++    rt, rn, imm = decode(word)
++    put = "c->x[%d] = 0; " % rt if rt != 31 else ""
++    return ("c->x[%d] < 0x%xULL" % (rn, NULL_BELOW),
++            "%s{ extern void hos_log(const char *fmt, ...); static volatile long said; if (said++ < 4) "
++            "hos_log(\"coop: null guard at main+%#x: a read through a null x%d (+%#x) gives 0, as on the emulator "
++            "(nx2/coop_null_guards.py)\"); }" % (put, off, rn, imm))
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def install(lifter, img, build_id):
++    """The guards into lifter.unless; a load whose words differ is left out, another build leaves them all out.
++    Returns how many went in."""
++    if build_id != BUILD_ID:
++        print("co-op null guards: build %s is not %s: left out" % (build_id or "?", BUILD_ID))
++        return 0
++    n = 0
++    later = tuple((off, want) for off, want, _, _ in PLAYER_LOADS_LATER)
++    between = {off: (call, words) for off, _, call, words in PLAYER_LOADS_LATER}
++    for group, loads in (("player", PLAYER_LOADS + later), ("slot 10", SLOT10_LOADS)):
++        for off, want in loads:
++            have = _word(img, MAIN + off)
++            call, words = between.get(off, (off - 4, ()))
++            if have != want or decode(want) is None or (group == "player" and (
++                    not calls(_word(img, MAIN + call), call, PLAYER_OF)
++                    or any(_word(img, MAIN + o) != w for o, w in words))):
++                print("co-op null guards: main+%#x (%s) is not the code it was made for: left out" % (off, group))
++                continue
++            if MAIN + off in lifter.unless:
++                print("co-op null guards: main+%#x has a guard already: left out" % off)
++                continue
++            lifter.unless[MAIN + off] = text(off, want)
++            n += 1
++    print("co-op null guards: %d of %d loads guarded (a null base reads 0, as on the emulator)" % (
++        n, len(PLAYER_LOADS) + len(PLAYER_LOADS_LATER) + len(SLOT10_LOADS)))
++    return n
+diff --git a/nx2/fastfp.py b/nx2/fastfp.py
+index 06771f6e..bd5693c6 100644
+--- a/nx2/fastfp.py
++++ b/nx2/fastfp.py
+@@ -631,9 +631,10 @@ def emit_function(self, e, texts):
+         (k, w) = body[pc]
+         kind = k[0]
+         # (an instruction joins the run when nothing can enter or leave between it and the next: no label, no patch after  # (fastfp)
+-        # it, an op a64emit handled, whose text ff_eligible takes; what it appends below goes to the run instead)  # (fastfp)
++        # it or around it (Lifter.unless, patch 0023), an op a64emit handled, whose text ff_eligible takes; what it appends  # (fastfp)
++        # below goes to the run instead)  # (fastfp)
+         joins = False  # (fastfp)
+-        if ff and kind == "op" and pc not in self.after and not (pc in labels or (pc == e and e in labels)):  # (fastfp)
++        if ff and kind == "op" and pc not in self.after and pc not in self.unless and not (pc in labels or (pc == e and e in labels)):  # (fastfp)
+             t, f = texts[(w, pc) if pc_relative(w) else w]  # (fastfp)
+             if not f & (a64emit.UNHANDLED | a64emit.TERMINATOR):  # (fastfp)
+                 joins = ff_joins(t, dead.get(pc, 0), stores)  # (fastfp)
+@@ -660,7 +661,12 @@ def emit_function(self, e, texts):
+                 if pc in dead:
+                     text = drop_flag_stores(text, dead[pc])
+                     self.stats["dead_flag_stores"] += bin(dead[pc]).count("1")
++                if pc in self.unless:   # (patch 0023)
++                    out.append("if (%s) { %s } else {" % self.unless[pc])
++                    self.stats["unless_emitted"] = self.stats.get("unless_emitted", 0) + 1
+                 out.append(text.rstrip("\n"))
++                if pc in self.unless:
++                    out.append("}")
+                 if pc in self.after:
+                     out.append(self.after[pc])
+                     self.stats["after_patches"] = self.stats.get("after_patches", 0) + 1
+diff --git a/nx2/lift.py b/nx2/lift.py
+index dcbb883b..9b481bba 100644
+--- a/nx2/lift.py
++++ b/nx2/lift.py
+@@ -259,6 +259,8 @@ def main():
+         print("\n".join(chunks.end_side(side, tables)), flush=True)
+         took("runtime tables and standalone files (beside the edits)" if side else "runtime tables and standalone files")
+         L.report()
++        if L.unless:   # (oot-remake-multiplayer's patch 0023: the guards written into the C, not only the ones asked for)
++            print("co-op null guards: %d of %d emitted in the lifted C" % (L.stats.get("unless_emitted", 0), len(L.unless)))
+         if L.stats["entry_gotos"]:   # (nx2/lift_fixes.py, 4)
+             print("functions with code below their entry, started at it by a goto: %d" % L.stats["entry_gotos"])
+         if a.standalone:   # (nx2/entry_hooks.py: one per hook the lift found a function for)
+diff --git a/third_party/a64-kit/lift/a64_lift.py b/third_party/a64-kit/lift/a64_lift.py
+index 2d961c3f..bad581ab 100644
+--- a/third_party/a64-kit/lift/a64_lift.py
++++ b/third_party/a64-kit/lift/a64_lift.py
+@@ -22,6 +22,7 @@ import re
+ import struct
+ import sys
+ from collections import Counter
++from types import MappingProxyType   # (oot-remake-multiplayer's patch 0023: Lifter.unless below)
+ 
+ import a64emit
+ 
+@@ -964,6 +965,10 @@ def op_text(text, fpx):
+ 
+ 
+ class Lifter:
++    # (oot-remake-multiplayer's patch 0023) no guards on a lifter made without __init__ (a test's, a new emit process's
++    # view before its tables): read-only, so nothing is added to it by mistake; __init__ gives each lifter its own dict
++    unless = MappingProxyType({})
++
+     def __init__(self, img, comments=False):
+         self.img = img
+         self.entries = set(img.entries) | set(img.hooks)
+@@ -973,6 +978,10 @@ class Lifter:
+         # (hookshot) C emitted right after the instruction at a guest address ({pc: text}): a game patch that adds to an
+         # instruction instead of replacing a function (nx2/oot_wide.py). Only after plain instructions (kind "op")
+         self.after = {}
++        # (oot-remake-multiplayer's patch 0023, nx2/coop_null_guards.py) an instruction that runs only when a C condition is
++        # false, else C of its own runs ({pc: (condition, C instead)}): a load through a pointer the game may leave null.
++        # Only plain instructions (kind "op"), like self.after
++        self.unless = {}
+         # (oot-remake-multiplayer's patch 0005, nx2/coop_world_wraps.py) wrapped functions ({entry: wrap id}): every call and
+         # the indirect table reach hos_coop_w_<entry> (a64_hooks.c), which calls the co-op module before and after f_<entry>
+         self.wraps = {}
+@@ -1669,7 +1678,12 @@ class Lifter:
+                     if pc in dead:
+                         text = drop_flag_stores(text, dead[pc])
+                         self.stats["dead_flag_stores"] += bin(dead[pc]).count("1")
++                    if pc in self.unless:   # (patch 0023)
++                        out.append("if (%s) { %s } else {" % self.unless[pc])
++                        self.stats["unless_emitted"] = self.stats.get("unless_emitted", 0) + 1
+                     out.append(text.rstrip("\n"))
++                    if pc in self.unless:
++                        out.append("}")
+                     if pc in self.after:
+                         out.append(self.after[pc])
+                         self.stats["after_patches"] = self.stats.get("after_patches", 0) + 1
+-- 
+2.56.0.windows.4
+

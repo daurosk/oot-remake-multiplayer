@@ -684,6 +684,43 @@ class BuildPackTest(unittest.TestCase):
             {build.actor_param_path("Npc_Zora_Ruto_Child_001"): byml.dumps({"Components": {}})}))
         self.assertIsNone(build.liftable_param({}))
 
+    def test_pack_lift_prompt(self):
+        # Row 317 (a): the young copy's own attention sender with Ruto's Lift client (ActionType murmur3 "Lift"), so the
+        # game shows its own "Lift" prompt; adult copies, `_Pvp` copies and the plain pack stay as they were.
+        d, x = "Attention/ClientParam/", ".game__attention__ClientParam.bgyml"
+        base = f"{d}NpcBase_Grab{x}"
+        ruto = dict(fake_ruto_pack())
+        ruto[build.LIFT_CLIENT_SRC] = byml.dumps({"$parent": "Work/" + base[:-len(".bgyml")] + ".gyml",
+                                                  "ActionType": byml.UInt(1217591945),
+                                                  "CheckAffiliation": {"AffiliationType": byml.UInt(145979025)}})
+        ruto[base] = byml.dumps({"PriorityType": 2, "ActionType": 1})
+        client = build.lift_client(ruto)
+        self.assertEqual(client, {"PriorityType": 2, "ActionType": byml.UInt(1217591945),
+                                  "CheckAffiliation": {"AffiliationType": byml.UInt(145979025)}})
+        self.assertIsNone(build.lift_client(fake_ruto_pack()))   # no client: none
+        ruto[build.LIFT_CLIENT_SRC] = byml.dumps({"ActionType": byml.UInt(1)})
+        self.assertIsNone(build.lift_client(ruto))                # not a Lift client: none
+        lift = build.liftable_param(fake_ruto_pack())
+        members = fake_player_pack("Child")
+        pack, ap, names, _ = build.build_pack(members, "Child", liftable=lift, lift_prompt=client)
+        sender, path = build.lift_prompt_paths("CoopPuppet_Child")
+        self.assertEqual(sender, "Component/AttentionSenderParam/CoopPuppet_Child.game__component__AttentionSenderParam.bgyml")
+        self.assertEqual(path, f"{d}CoopPuppet_Child_Lift{x}")
+        out = sarc.read(pack)
+        self.assertEqual(byml.loads(ap)["Components"]["AttentionSenderRef"], "?" + sender)
+        self.assertEqual(byml.loads(out[sender]), {"ClientList": [f"Work/{d}CoopPuppet_Child_Lift.game__attention__ClientParam.gyml"]})
+        self.assertEqual(byml.loads(out[path]), client)
+        self.assertNotIn(build.LIFT_CLIENT_SRC, names)          # never Ruto's own file
+        # Without liftable: nothing (the prompt rides on the LiftableRef only).
+        self.assertEqual(build.build_pack(members, "Child", lift_prompt=client), build.build_pack(members, "Child"))
+        # Adult: never.
+        adult = fake_player_pack("Adult")
+        self.assertEqual(build.build_pack(adult, "Adult", liftable=lift, lift_prompt=client), build.build_pack(adult, "Adult"))
+        # A copy with a sender of its own already (the `_Pvp` copy) keeps it.
+        doc = {"Components": {"AttentionSenderRef": "?mine"}}
+        self.assertIsNone(build.add_lift_prompt(doc, "CoopPuppet_Child_Pvp", {}, client))
+        self.assertEqual(doc["Components"]["AttentionSenderRef"], "?mine")
+
     def test_pack_pvp(self):
         # Native puppets phase 4 (--puppet-pvp): the _Pvp copy's pieces, cut from the player's and EnemyCommon's.
         clients = build.attention_clients(fake_attention_pack())

@@ -1172,6 +1172,53 @@ def add_pvp(doc, player_components, members, actor, files, clients):
     return own
 
 
+# Row 317 (a): the game's own A prompt "Lift" at a young copy. The game offers a lift only through an attention client
+# whose ActionType is Lift: Ruto's is `NpcZoraRutoChild_Grab` (romfs Npc_Zora_Ruto_Child_001's pack, her
+# AttentionSenderParam's 6th client: ActionType 1217591945 = murmur3 "Lift", CheckAffiliation 145979025 = murmur3
+# "Player": only a player may lift). The LiftableRef alone (add_liftable) gives no such client, so the game never
+# offered Lift at a copy: no do action, no HUD label. With --puppet-liftable the young plain copy gets an attention
+# sender of its own whose one client is cut from Ruto's (its in-pack `$parent` chain merged). The game then writes its
+# do action, shows its own "Lift" on A, and Link's own lifter lifts. A `_Pvp` copy keeps its own sender (LockOn and
+# AutoAim) unchanged: no lift prompt there. Not run in a game yet: probe P1 (reports/carry-revive-317.md).
+LIFT_CLIENT_SRC = f"{ATTENTION_CLIENT_DIR}NpcZoraRutoChild_Grab{ATTENTION_CLIENT_SUFFIX}"
+LIFT_ACTION_TYPE = 1217591945  # murmur3("Lift"): the client's ActionType
+
+
+def lift_client(source_members):
+    """Ruto's Lift client (LIFT_CLIENT_SRC) with its in-pack `$parent` chain merged, or None when her pack lacks it
+    or its ActionType is not Lift."""
+    if LIFT_CLIENT_SRC not in source_members:
+        return None
+    param = _merged_chain(source_members, LIFT_CLIENT_SRC)
+    return param if int(param.get("ActionType", 0)) == LIFT_ACTION_TYPE else None
+
+
+def lift_prompt_paths(actor):
+    """The young copy's (attention sender param, Lift client param) member paths."""
+    return (f"{ATTENTION_SENDER_DIR}{actor}{ATTENTION_SENDER_SUFFIX}",
+            f"{ATTENTION_CLIENT_DIR}{actor}_Lift{ATTENTION_CLIENT_SUFFIX}")
+
+
+def lift_prompt_files(actor, client):
+    """{member path: (bytes, the member it is cut from)} of the young copy's lift prompt."""
+    sender, path = lift_prompt_paths(actor)
+    return {path: (byml.dumps(client), LIFT_CLIENT_SRC),
+            sender: (byml.dumps({"ClientList": [_work_ref(path)]}),
+                     f"{ATTENTION_SENDER_DIR}NpcZoraRutoChild{ATTENTION_SENDER_SUFFIX}")}
+
+
+def add_lift_prompt(doc, actor, files, client):
+    """Gives the young copy's ActorParam `doc` its own attention sender with the Lift client (lift_prompt_files).
+    Nothing for a copy that already has a sender (the `_Pvp` copy). Returns the files made, or None."""
+    if "AttentionSenderRef" in doc["Components"]:
+        return None
+    own = lift_prompt_files(actor, client)
+    for path, (data, _) in own.items():
+        files[path] = data
+    doc["Components"]["AttentionSenderRef"] = "?" + lift_prompt_paths(actor)[0]
+    return own
+
+
 def add_carry(doc, actor, files):
     """The young puppet's carried pose (asb_carry): its own AnimationParam (the player's, Ruto's animations
     added, retargeted) and its ASRef on the carry AS root. Returns the AnimationParam's member path, or None
@@ -1195,7 +1242,7 @@ def tunic_model_info(actor, variant, project):
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
                project=None, basic_xlink=False, perception=None, as_ref=None, body=False, liftable=None,
-               carry=False, pvp=None):
+               carry=False, pvp=None, lift_prompt=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
@@ -1220,6 +1267,8 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
         add_pvp(doc, player_components, members, actor, files, pvp)
     if liftable and variant in LIFTABLE_VARIANTS:
         add_liftable(doc, actor, files, liftable)
+        if lift_prompt is not None:
+            add_lift_prompt(doc, actor, files, lift_prompt)
         if carry and variant in asb_carry.CARRY_VARIANTS and not as_ref:
             add_carry(doc, actor, files)
     if project:
@@ -2171,6 +2220,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     seen_by = None
     lift_param = None
     lift_chain = None
+    lift_grab = None
+    lift_grab_chain = None
     carry_data = None
     if liftable:
         src = os.path.join(romfs, "Pack", "Actor", f"{LIFTABLE_SOURCE}.pack.zs")
@@ -2181,6 +2232,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         if lift_param is None:
             raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no LiftableRef in its pack")
         lift_chain = chain_paths(ruto, lift_param[0])
+        # Row 317 (a): Ruto's Lift attention client, so the game offers its own "Lift" at a young copy.
+        lift_grab = lift_client(ruto)
+        if lift_grab is None:
+            raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no Lift client {LIFT_CLIENT_SRC} in its pack")
+        lift_grab_chain = chain_paths(ruto, LIFT_CLIENT_SRC)
         # Ruto's carried pose on the young copies (asb_carry): the player's AS root with the carry clips, or the
         # game's own Eaten when it cannot be made (the fallback, logged).
         carry_src = f"AS/Player_{asb_carry.CARRY_VARIANTS[0]}.root.asb"
@@ -2361,6 +2417,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                            basic_xlink=basic_xlink, perception=None if quiet else seen_by,
                                            as_ref=wears[1][v] if wears else None, body=body,
                                            liftable=lift_param, carry=carry_data is not None,
+                                           lift_prompt=lift_grab if not pvp_copy else None,
                                            pvp=clients if pvp_copy else None)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
@@ -2434,6 +2491,16 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             size = chain_entry(table, lift_chain, byml.dumps(lift_param[1]))
             table.add_new(path, size)
             lift_file = {"param": path, "size": size}
+            sender, client = lift_prompt_paths(actor)
+            if client in names:
+                # Sized as Ruto's Lift client and every `$parent` merged into it (chain_entry); the one-line sender
+                # as Ruto's own sender param, plus the margin.
+                c_size = chain_entry(table, lift_grab_chain, byml.dumps(lift_grab))
+                ruto_sender = f"{ATTENTION_SENDER_DIR}NpcZoraRutoChild{ATTENTION_SENDER_SUFFIX}"
+                s_size = max(table.get(ruto_sender) or 0, PACK_SIZE_MARGIN)
+                table.add_new(client, c_size)
+                table.add_new(sender, s_size)
+                lift_file["prompt"] = {"sender": sender, "client": client, "sizes": [s_size, c_size]}
             carry_anim = asb_carry.carry_animation_path(actor)
             if carry_anim in names:
                 src = ref_to_member(flatten_actor_param(members, player).get("AnimationRef"))

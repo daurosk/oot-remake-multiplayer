@@ -13,7 +13,7 @@ import pytest
 
 from test_gear import AGE_FLAG, GATE, GORON, SCENE_ADULT, saved_gear, way_back, wear
 from test_rows import need_child_in_play
-from test_tunic import puppet_at, stand_apart
+from test_tunic import prove_apart, puppet_at, stand_apart
 
 # The old run's coop-options.ini lines as the test's switch (LICHII_COOP_LOOK: hookshot/src/coop_look.h EnvParts, key:value
 # by the settings keys look_cap_trim / look_cap_trim_hoods of coop_look.cpp Parts(); 'on' is the switch's word,
@@ -121,6 +121,7 @@ def run_row(pair, hoods_on):
     done = False
     got = {}
     try:
+        prove_apart(pair, ("B",), "hood-trim-child")   # (B's shot judges its puppet of A: trim_at)
         pair.step_both(60)
         got["child-kokiri"] = trim_at(pair, "child-kokiri")
         for x in ("A", "B"):          # hat-trim-278 A/B: age flag after the load, wait 60, then the warp
@@ -131,6 +132,7 @@ def run_row(pair, hoods_on):
             s = pair.state(x)
             assert pair.in_play(s) and s.get("age") == "adult", "%s not an adult in play (%s)" % (x, s.get("age"))
         stand_apart(pair)
+        prove_apart(pair, ("B",), "hood-trim-adult")
         pair.step_both(120)
         got["adult-kokiri"] = trim_at(pair, "adult-kokiri")
         pair.give("A", "PouchData.%s.StockNum" % GORON)

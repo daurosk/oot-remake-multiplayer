@@ -110,6 +110,16 @@ def stand_apart(pair):
     pair.step_both(20)
 
 
+def prove_apart(pair, viewers, name):
+    """After stand_apart, outside the set-up block (two shots per proof do not fit SETUP_LIMIT_S; a SetupFail is still
+    SETUP-FAIL): each viewer whose shot of the other player's puppet is judged sees it IN SIGHT, not only inside its
+    projected box (sight.prove; kokiri-band-c124-7, run kokiri-look-182cd53b: a place by distance put the other Link
+    behind a wall)."""
+    import sight
+    for x in viewers:
+        sight.prove(pair, x, "B" if x == "A" else "A", "%s-%s" % (name, x))
+
+
 def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour, own_age, pup_age):
     own = colours(path, view, own_pos, pup_pos, own_age, pup_age)
     pup = colours(path, view, pup_pos, own_pos, pup_age, own_age)
@@ -138,6 +148,7 @@ def test_own_colour_no_cross_guard(pair):
     with pair.setup():
         need_child_in_play(pair)
         stand_apart(pair)             # hs-tunic.A.txt: A steps off and stands by B; B.txt: faces A, camera behind
+    prove_apart(pair, ("A", "B"), "tunic")   # (both shots judge the other's puppet: colour_check)
     # the colour is set at the module's start: these lines are from the boot (pos=0), as the old row read them
     for x in ("A", "B"):              # (else the lane file's parts are worn: the lines below would judge them)
         bad = pair.log[x].find(r"LICHII_COOP_LOOK: '", pos=0)

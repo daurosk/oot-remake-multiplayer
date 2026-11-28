@@ -21,6 +21,7 @@ import game_names
 import pair as P
 from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
+from test_tunic import prove_apart
 
 # The old step's NOT pattern (regress-01113-steps/s6-ui.ps1 -Not 'exception 0x'), with test_look.py's CRASH forms.
 CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
@@ -339,6 +340,7 @@ def test_sword_handle(pair):
         assert pair.log["A"].find(A_PARTS, pos=0), "A: no '%s' since the boot (the switch did not reach the look)" % A_PARTS
         assert pair.log["B"].find(B_SLOTS, pos=0), "B: other players' gear colours are not on (%s)" % B_SLOTS
         ahead_back_turned(pair, "A", of="B")   # A ahead of B facing away: both cameras see A's back (the sheath)
+    prove_apart(pair, ("B",), "regress-hilt")   # (B's shots are of A's puppet: in sight, not only in view; kokiri-sight)
     seen_once(pair, "A", A_SENT, max_frames=300)
     seen_once(pair, "B", B_GOT, max_frames=300)
     seen_not(pair, "B", B_PAINTED, B_NOT_PAINTED, max_frames=300)

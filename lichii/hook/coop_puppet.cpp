@@ -12,6 +12,7 @@
 #include "coop_pvp_native.h"
 #include "coop_puppet_own.h"
 #include "coop_show_delay.h"
+#include "coop_platform_carry.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2258,6 +2259,27 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     } else {
         slot.follow.Reset();
         slot.raw_follow.Reset();
+    }
+    // N5 (coop_platform_carry.h): standing on one of our lifts, the place is carried by what that lift moved
+    // over their show delay (the place is that late; our lift is where theirs is now).
+    if (!held) {
+        const auto carried =
+            CoopPlatformCarry::TheStore().Carried(place, CoopShowDelay::Us(slot.number) / 1000, now_ms);
+        if (carried.has_value() != slot.lift_carried) {
+            slot.lift_carried = carried.has_value();
+            if (carried) {
+                char buf[120];
+                std::snprintf(buf, sizeof(buf), " lift carry: on our lift, carried %.3f m (show delay %llu ms)",
+                              CoopPuppetBody::Length(CoopPuppetBody::Sub(*carried, place)),
+                              static_cast<unsigned long long>(CoopShowDelay::Us(slot.number) / 1000));
+                Say(who + buf);
+            } else {
+                Say(who + " lift carry: off our lift");
+            }
+        }
+        if (carried) {
+            place = *carried;
+        }
     }
     // jitter-3: the rotation followed the same way (coop_follow.h Turner).
     Mat3 rotation = target.rotation;

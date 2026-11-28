@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 import game_names              # noqa: E402  (the ONE item name table)
 import ocarina_notes as ON     # noqa: E402  (the ONE key -> note table)
 import playtest_client as pc   # noqa: E402
-from pair import READY_FRAMES   # noqa: E402
+from kit_move import on_screen  # noqa: E402  (a point on a game's screen from its state `view`)
+from pair import READY_FRAMES, SetupFail   # noqa: E402
 
 
 def need_child_in_play(pair):
@@ -41,6 +42,64 @@ def place_in_front(pair, x, of, dist=2.5):
     pair.act(x, "place %.2f %.2f %.2f" % (tx, py, tz))
     pair.act(x, "face %.2f %.2f" % (px, pz))
     pair.step_both(10)
+
+
+# The name tag floats just over the other Link's head: lichii/hook/coop_hook.cpp:196-197 kHeadChild 1.35 / kHeadAdult 1.9
+# (m above the feet; HeadHeight by age), where the module's markers put it (tag_head) and the balloon goes.
+HEAD_M = {"child": 1.35, "adult": 1.9}
+EDGE = 0.9        # |x|, |y| <= 0.9 of the screen (-1..1, kit_move.on_screen): in view, not cut at the edge
+CAM_TRIES = 3     # ZL taps per game at most (the game's own camera reset: docs/playtest.md `shoot`, "taps ZL (the camera
+                  # goes behind him)"); c272735f8: one tap each left B's camera on A's side (rc-release-0120-5's shots)
+CAM_WAIT = 20     # frames after each tap (the camera's swing behind Link; as before)
+
+
+def other_in_view(pair, x, other, behind=True):
+    """Game x's camera behind its own Link, facing the other player, read from x's state (`view` = the last drawn
+    frame's camera, kit_move.on_screen): the other player's feet and tag point (HEAD_M over the feet) on x's screen,
+    and x's own Link nearer the camera than the other (clip w, the depth: the camera behind x's Link, not on the other's
+    side; behind=False: side by side, as stand_apart, only in view). The other player's place is its own game's Link
+    (x shows it as the puppet). Returns (ok, why)."""
+    st, ot = pair.state(x), pair.state(other)
+    view, own, far = st.get("view"), st.get("pos"), ot.get("pos")
+    if not view or not own or not far:
+        return False, "%s: no view or place (view %s, pos %s, %s's pos %s)" % (x, bool(view), own, other, far)
+    head = [far[0], far[1] + HEAD_M.get(ot.get("age"), HEAD_M["child"]), far[2]]
+    feet_s, head_s, own_s = on_screen(view, far), on_screen(view, head), on_screen(view, own)
+    m = view["clip"]
+
+    def depth(p):
+        return sum(m[12 + j] * v for j, v in enumerate(list(p) + [1.0]))
+    why = "%s: %s's feet %s, tag point %s on screen; own Link at depth %.2f, %s's at %.2f" % (
+        x, other, feet_s, head_s, depth(own), other, depth(far))
+    inside = all(s is not None and abs(s[0]) <= EDGE and abs(s[1]) <= EDGE for s in (feet_s, head_s))
+    return inside and (not behind or (own_s is not None and depth(own) < depth(far))), why
+
+
+def camera_behind_each(pair):
+    """Each game's camera behind its own Link facing the other, by the game's own ZL reset (CAM_TRIES taps each at
+    most), proven per game on state (other_in_view); else SetupFail naming the game and its numbers."""
+    for x, other in (("A", "B"), ("B", "A")):
+        why = ""
+        for n in range(CAM_TRIES):
+            pair.press(x, ["ZL"], frames=8)
+            pair.step_both(CAM_WAIT)
+            ok, why = other_in_view(pair, x, other)
+            if ok:
+                pair.notes.append("camera behind %s after %d ZL: %s" % (x, n + 1, why))
+                break
+        else:
+            raise SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
+
+
+def face_each_other(pair):
+    """THE set-up for a check that needs each game to see the other's Link (its puppet): A is put in front of B facing
+    it, B faces A, then each camera goes behind its own Link (camera_behind_each: the game's own ZL reset, proven on
+    each game's state). place/face move a Link, never its camera: before this, A's camera stayed behind B and B's
+    puppet was cut off at the bottom of every A shot (nocs4-182cd53b 01:36, gear/hair/leather/vest no-CS)."""
+    place_in_front(pair, "A", of="B")
+    pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
+    pair.step_both(10)
+    camera_behind_each(pair)
 
 
 @pytest.mark.budget(120)
@@ -67,9 +126,7 @@ def test_masks_on_puppet(pair):
     with pair.setup():
         need_child_in_play(pair)
         pair.give("A", "PouchData.%s.StockNum" % skull)
-        place_in_front(pair, "A", of="B")
-        pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
-        pair.step_both(10)
+        face_each_other(pair)
     # 'wear' writes PlayerStatus.EquipHeadArmor at once (coop_testinput.cpp WearFlag head); 'dress head' is the
     # game's own equip call (queued: frames run). equips.head is that flag's text (coop_playtest.cpp state).
     pair.act("A", "wear head %s" % skull)

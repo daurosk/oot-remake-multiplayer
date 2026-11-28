@@ -16,7 +16,7 @@ player_equip branch). The tunic and boots are not in that line: the shots carry 
 import pytest
 
 import game_names
-from test_rows import need_child_in_play, place_in_front
+from test_rows import face_each_other, need_child_in_play
 
 GOLD, GORON, HOVER = game_names.GOLD_GAUNTLETS, game_names.GORON_TUNIC, game_names.HOVER_BOOTS   # (one table)
 SLOTS = (("hand", GOLD), ("armor", GORON), ("boots", HOVER))
@@ -27,16 +27,6 @@ GOLD_SENT = EQUIP + r".*hand 'Armor_Adult_Gauntlet_"  # the row 148 bug: a child
 HAND_EMPTY = EQUIP + r".*hand ''"
 SCENE_CHILD, SCENE_ADULT, GATE = "KakarikoVillage_Child", "KakarikoVillage_Adult", "Kakariko_WellSide"  # the rows' warp
 AGE_FLAG = "Sequence_IsChildhood"                   # hs-gear-adult.A.txt: set after the load, then the warp
-
-
-def face_each_other(pair):
-    """hs-gear-*.A.txt: A steps aside to face B; B.txt: B faces A, 'press ZL' = camera behind B (so B's shots hold A's
-    puppet). Here by place/face (docs/ingame-tests.md step 3: never walk to a spot)."""
-    place_in_front(pair, "A", of="B")
-    a = pair.state("A")["pos"]
-    pair.act("B", "face %.2f %.2f" % (a[0], a[2]))
-    pair.press("B", ["ZL"], frames=8)
-    pair.step_both(20)
 
 
 def shots(pair, name):

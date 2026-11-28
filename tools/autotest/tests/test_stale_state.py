@@ -122,6 +122,18 @@ class FlagGuardTest(unittest.TestCase):
         p.flag("B", "Step_Get_Epona", "Complete")
         self.assertEqual(p.writes, [("B", "flag", {"name": "Step_Get_Epona", "value": "Complete"})])
 
+    def test_hash_name_with_a_number_is_setup_fail(self):
+        p = self.pair("int")     # (flag_read takes 0x names, the write does not: test_rejoin's old RUPEES)
+        with self.assertRaises(P.SetupFail) as c:
+            p.flag("B", "0xa77921d7", 50)
+        self.assertIn("a 0x name is no name for a number write", str(c.exception))
+        self.assertEqual(p.writes, [])
+
+    def test_hash_name_with_an_enum_hash_is_written(self):
+        p = self.pair("enum")    # (the bridge's enum-by-hash write takes a 0x name: SetEnumHash uses NameHash)
+        p.flag("B", "0x92431c55", "0x7c4a1f2e")
+        self.assertEqual(len(p.writes), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

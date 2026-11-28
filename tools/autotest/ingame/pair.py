@@ -1200,7 +1200,12 @@ class Pair:
         """A set-up write of flag `name` on game x. A name the game has no flag for (flag_read kind 'unknown') is
         SETUP-FAIL before the write: the bridge's write of it is a no-op the module only logs ('coop: test setenum
         Get_Epona Complete: unknown (was -)', probe0121e-16ac9701 2026-11-28 05:07: test_epona's GET_EPONA was not the
-        quest's Enum name, so every 'won' set-up never won)."""
+        quest's Enum name, so every 'won' set-up never won). A 0xHASH name with a number is SETUP-FAIL too: that write
+        is the module's setflag, which hashes the name's TEXT (SetFlag/FlagInt use flag_hash, not NameHash as
+        flag_read does), so it wrote nothing (test_rejoin's '0xa77921d7', flag_names.py, B #168)."""
+        if re.match(r"0[xX][0-9a-fA-F]{1,8}$", str(name)) and re.match(r"-?\d+$", str(value)):
+            raise SetupFail("%s: flag %r = %s: a 0x name is no name for a number write (setflag hashes its text): "
+                            "use the flag's name" % (x, name, value))
         k = (self.flag_read(x, name) or {}).get("kind")
         if k == "unknown":
             raise SetupFail("%s: flag %r is unknown to the game (flag_read kind 'unknown'): a wrong name, nothing "

@@ -31,8 +31,11 @@ from test_rows import need_child_in_play
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import save_flags   # noqa: E402  (tools/autotest/save_flags.py: the progress.sav reader)
 
-RUPEES = "0xa77921d7"     # PlayerStatus.CurrentRupee (coop/host/src/game_items.cpp:224, int32, per player)
-LIFE = "0x31ab5580"       # PlayerStatus.Life (coop/host/src/game_items.cpp:83, int32, per player)
+# By NAME, never 0xHASH: the bridge's flag write is the module's setflag, which hashes the name's text (SetFlag/FlagInt
+# use flag_hash, not NameHash), so a '0xa77921d7' wrote nothing (flag_names.py, B #168 2026-11-28).
+RUPEES = "PlayerStatus.CurrentRupee"   # 0xa77921d7 (coop/host/src/game_items.cpp:224, int32, per player)
+RUPEES_HASH = 0xa77921d7               # (the save file's key: save_flags.get below)
+LIFE = "PlayerStatus.Life"             # 0x31ab5580 (coop/host/src/game_items.cpp:83, int32, per player)
 OWN_SAVE_OFF = "B:LICHII_COOP_TEST_OWN_SAVE=0"   # coop_save.cpp:154 (hookshot.py TEST_GAME_DEFAULTS sets 1)
 ELSEWHERE = "KokiriForest_Child"                         # scenarios/boulder.A.txt "warp KokiriForest_Child"
 HOME, HOME_AT = "KakarikoVillage_Child", "Kakariko_WellSide"   # live-kakariko-child.B.txt's warp (the default boot)
@@ -62,7 +65,7 @@ def newest_rupees(folder):
     if best is None:
         return None, None
     try:
-        return best[1], save_flags.get(save_flags.read_file(best[1]), save_flags.TYPES["int"], int(RUPEES, 16))
+        return best[1], save_flags.get(save_flags.read_file(best[1]), save_flags.TYPES["int"], RUPEES_HASH)
     except (OSError, save_flags.SaveError):
         return best[1], None
 

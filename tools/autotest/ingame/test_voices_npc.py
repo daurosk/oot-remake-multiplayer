@@ -23,7 +23,8 @@ Every value is cited:
  - Malon (child): Character Select number 5, file 3; Saria: number 2, file 0 (lane1-A's coop_puppet.json characters.numbers
    {"0": 2, "3": 5}, variants Child + Adult for both; sound_lists CoopPuppet_Child_C000 = Player_Child_V02,
    CoopPuppet_Child_C003 = Player_Child_V05, CoopPuppet_Child_Green = CoopPuppet_Child: read 2026-11-28 01:0x UTC).
- - CHAR_FLAG, CHAR_WAIT, the spawn line and the Link / Malon actor patterns: test_puppet_run.py's.
+ - CHAR_FLAG and CHAR_WAIT: test_levitate.py's (CHAR_FLAG line 48, CHAR_WAIT 900 line 49). The actor names: a character's
+   puppet is CoopPuppet_<Age>[Quiet]_C<file:03d> (tools/puppet_pack/build.py:299), a Link / colour one has no _C<nnn>.
  - The sword is Y, held with ZL: test_boss_hit_react.py ('pair.press("B", ["ZL", "Y"], frames=SLASH_HOLD)').
  - The hearing distance: coop_link_sound.h kHearDistance 30 (game units, about metres); the watcher is placed 2 m from
    the actor (bridge `place`, metres: docs/playtest.md).
@@ -47,7 +48,7 @@ CHAR_FLAG = "CharacterMenu_SelectedCharacter"   # test_levitate.CHAR_FLAG
 LINK, SARIA, MALON = 0, 2, 5                     # characters.json / the pack's characters.numbers
 CHAR_WAIT = 900                                  # test_levitate.CHAR_WAIT (frames after the setflag)
 SPAWN = r"coop: puppet: P(\d+) (CoopPuppet_\w+) spawned after .*?(?:, sound list (\S+))?$"   # coop_puppet.cpp:456
-LINK_RX = r"CoopPuppet_Child(?!(?:Quiet)?_C\d{3})\w*"     # test_puppet_run (a Link / colour puppet)
+LINK_RX = r"CoopPuppet_Child(?!(?:Quiet)?_C\d{3})\w*"     # a Link / colour puppet (no _C<nnn>: build.py:299)
 MALON_RX = r"CoopPuppet_Child(?:Quiet)?_C003"
 SARIA_RX = r"CoopPuppet_Child(?:Quiet)?_C000"
 SWINGS, HOLD, AFTER = 5, 8, 40                   # 5 swings of 8 frames, 40 frames after each

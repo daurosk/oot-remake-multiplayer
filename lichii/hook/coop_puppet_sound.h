@@ -122,6 +122,9 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
 void Finish(State& state, std::uint64_t result, const std::string& who, const Say& say);
 // A new actor for the slot (made again or lost): nothing sounds on it.
 void Reset(State& state);
+// The slot's puppet is made again (row 319 review): the new actor and its sound user may land at the freed old
+// addresses, so the next Next resets as for a new actor and LogPlaying names the user again.
+void MadeAgain(State& state);
 
 // The sound user of an actor (its SLink user instance), 0 if none.
 std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor);

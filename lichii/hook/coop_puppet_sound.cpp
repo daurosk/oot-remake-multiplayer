@@ -359,6 +359,11 @@ void Reset(State& state) {
     state.named_user = 0;
 }
 
+void MadeAgain(State& state) {
+    state.actor = 0;       // Next: 'actor != state.actor' -> Reset, once no call is pending
+    state.named_user = 0;  // LogPlaying: the new user's name is said even at the old address
+}
+
 std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPuppet::Guest& guest,
                                      std::uint64_t main_base, std::uint64_t actor,
                                      std::uint64_t block, std::uint64_t now_ms,

@@ -191,6 +191,9 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
                                      const std::string& who, const Say& say, bool debug);
 // The call Next gave was not made (the cave's limit): the sound is lost, the next one goes.
 void Dropped(Player& player);
+// The puppet is made again (row 319 review): the next Next forgets the old user's assets even when the new actor
+// and user reuse the old addresses.
+void MadeAgain(Player& player);
 // The result (x0) of the call Next gave.
 void Finish(Player& player, std::uint64_t result, CoopPuppet::Guest& guest, std::uint64_t block,
             const std::string& who, const Say& say, bool debug);

@@ -1098,6 +1098,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.take = slot.drop = false;
     slot.anim_name.clear();
     slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    CoopPuppetSound::MadeAgain(slot.sound);     // (so may its sound user: row 319 review)
+    CoopLinkSound::MadeAgain(slot.link_sound);
     slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();

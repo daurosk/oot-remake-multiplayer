@@ -299,6 +299,10 @@ bool AlreadyPlaying(std::string_view playing, std::string_view name) {
     return false;
 }
 
+void MadeAgain(Player& player) {
+    player.actor = 0;  // Next: 'actor != player.actor' -> the assets, found and started are cleared
+}
+
 std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet::Guest& guest,
                                      std::uint64_t main_base, std::uint64_t actor,
                                      std::uint64_t user, std::uint64_t block, std::uint64_t now_ms,

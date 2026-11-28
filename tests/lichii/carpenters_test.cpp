@@ -103,7 +103,7 @@ TEST_CASE("carpenters: never in an event, never without a save, and a count abov
     CHECK(CoopCarpenters::Rescued(half.flag()) == 1);
 }
 
-TEST_CASE("carpenters: a stuck save gets the card scene once, in the fortress, out of events, after the wait") {
+TEST_CASE("carpenters: a stuck save gets the card scene in the fortress, out of events, after the wait, again while unplayed") {
     Game g;
     for (int n = 0; n < CoopCarpenters::kCells; ++n) g.Free(n);
     CoopCarpenters::Mender m;
@@ -115,7 +115,12 @@ TEST_CASE("carpenters: a stuck save gets the card scene once, in the fortress, o
     CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress", true, t0 + wait));     // an event runs: the wait starts again
     CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + wait + 1));
     CHECK(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + 2 * wait + 1));
-    CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + 3 * wait));  // asked once
+    // The ask expired unplayed (Requester::Expire: it could not start in time): asked again after another full wait.
+    CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + 2 * wait + 2));
+    CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + 3 * wait));
+    CHECK(m.Tick(g.flag(), "GerudoFortress_Adult", false, t0 + 3 * wait + 1));
+    // The scene starts (an event): no ask while it plays.
+    CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress_Adult", true, t0 + 5 * wait));
     // Played: never again. Three rescued: nothing (the 4th rescue plays it itself).
     g.bools[CoopCarpenters::kCardScene] = true;
     CHECK_FALSE(m.Tick(g.flag(), "GerudoFortress", false, t0 + 9 * wait));

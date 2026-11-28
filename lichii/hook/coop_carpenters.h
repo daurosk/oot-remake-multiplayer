@@ -102,7 +102,9 @@ inline Follow FollowRescues(const ReadBool& flag, const ReadInt& value, bool in_
 }
 
 // The stuck save: all four rescued, the card scene not played. Asked once the state held kStuckUs with our Link in
-// the fortress and no event running; the wait starts again whenever one of those is not so.
+// the fortress and no event running; the wait starts again whenever one of those is not so, and after each ask: the
+// requester drops an ask that could not start in time (Requester::Expire: kJoinUs behind another event, a teleport
+// pause, a door), so while the scene is still unplayed it is asked again every kStuckUs (review-c123-21).
 class Mender {
 public:
     // True on the tick our game should get IsInFirstPlace and the card scene.
@@ -112,23 +114,21 @@ public:
         const bool stuck = n == kCells && played == false;
         if (!stuck || in_event || !scene.starts_with("GerudoFortress")) {
             since_us_ = 0;
-            if (!stuck) asked_ = false;
             return false;
         }
         if (since_us_ == 0) {
             since_us_ = now_us;
         }
-        if (asked_ || now_us - since_us_ < kStuckUs) {
+        if (now_us - since_us_ < kStuckUs) {
             return false;
         }
-        asked_ = true;  // once a stuck spell (the requester drops it once played; a new spell asks again)
+        since_us_ = now_us;  // the next ask only after another full wait (the scene, once it starts, is an event)
         return true;
     }
-    void Reset() { since_us_ = 0; asked_ = false; }
+    void Reset() { since_us_ = 0; }
 
 private:
     std::uint64_t since_us_ = 0;
-    bool asked_ = false;
 };
 
 }  // namespace CoopCarpenters

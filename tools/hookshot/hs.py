@@ -891,6 +891,7 @@ class KillOnCloseJob:
     def __init__(self):
         self.h = None
         self.added = set()
+        self.skipped = {}
         if not WINDOWS:
             return
         import ctypes
@@ -930,21 +931,54 @@ class KillOnCloseJob:
             return
         self.h = h
 
-    def add(self, pid):
-        """Puts pid in the job (once); True when it is in. A pid already gone, or one Windows will not let in, is False."""
+    def identity(self, p):
+        """(image path, creation time as Unix seconds) of an open process handle; None for what cannot be read."""
+        import ctypes
+        from ctypes import wintypes
+        k = self.k
+        k.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                 ctypes.POINTER(wintypes.DWORD))
+        k.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(ctypes.c_uint64),) * 4
+        buf = ctypes.create_unicode_buffer(32768)
+        n = wintypes.DWORD(len(buf))
+        image = buf.value if k.QueryFullProcessImageNameW(p, 0, buf, ctypes.byref(n)) else None
+        t = [ctypes.c_uint64() for _ in range(4)]
+        made = None
+        if k.GetProcessTimes(p, *[ctypes.byref(x) for x in t]):
+            made = t[0].value / 1e7 - 11644473600.0   # FILETIME (100 ns since 1601) -> Unix seconds
+        return image, made
+
+    def add(self, pid, image, not_after):
+        """Puts pid in the job (once) only when it is still the process that was named: its image is `image` (path,
+        case-insensitive) and it was created no later than `not_after` (Unix s: the pids.json write that named it).
+        Windows reuses pids fast and pids.json can keep a dead game's pid, so without this an unrelated process (the
+        owner's game, the other lane's) could be put in and killed at the watchdog's end (review-tests-153-7).
+        Returns True when it is in; else False and why in self.skipped[pid]."""
         if not self.h or not pid:
             return False
         if pid in self.added:
             return True
-        p = self.k.OpenProcess(0x0100 | 0x0001, False, int(pid))   # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        # PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION
+        p = self.k.OpenProcess(0x0100 | 0x0001 | 0x1000, False, int(pid))
         if not p:
+            self.skipped[pid] = "not opened (gone?)"
             return False
         try:
+            got, made = self.identity(p)
+            if not got or not image or os.path.normcase(os.path.abspath(got)) != os.path.normcase(os.path.abspath(image)):
+                self.skipped[pid] = "image %s, not %s" % (got, image)
+                return False
+            if made is None or not_after is None or made > not_after + 2.0:   # (2 s: file time vs process time)
+                self.skipped[pid] = "created %s, after its pids.json write %s" % (made, not_after)
+                return False
             ok = bool(self.k.AssignProcessToJobObject(self.h, p))
         finally:
             self.k.CloseHandle(p)
         if ok:
             self.added.add(pid)
+            self.skipped.pop(pid, None)
+        else:
+            self.skipped[pid] = "AssignProcessToJobObject refused"
         return ok
 
 

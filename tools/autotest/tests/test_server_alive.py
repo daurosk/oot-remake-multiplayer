@@ -8,7 +8,8 @@ hookshot.py run slept 1 s and went on, and both games joined the orphan. These t
 - live.py server start: the same two checks;
 - hs.udp_port_holder: free = '' and held = non-empty (the pid on Windows);
 - hs.KillOnCloseJob: a process put in it dies when its holder is killed outright (TerminateProcess);
-- live.py adopt: every pid of pids.json (games + server) goes in the job.
+- live.py adopt: every pid of pids.json (games + server) goes in the job only while it is still that process (its
+  image = the session's game/server exe, made no later than the pids.json write: review-tests-153-7).
 """
 import json
 import os
@@ -174,24 +175,59 @@ class LiveServerStart(unittest.TestCase):
                 self.assertIsNone(json.load(f)["server"])
 
 
+class FakeJob:
+    def __init__(self, refuse=()):
+        self.calls, self.refuse, self.skipped = [], set(refuse), {}
+
+    def add(self, pid, image, not_after):
+        self.calls.append((pid, image, not_after))
+        if pid in self.refuse:
+            self.skipped[pid] = "image other.exe, not %s" % image
+            return False
+        return True
+
+
+def session_dir(d, games, server, runner_server="C:/k/coop_server.exe"):
+    with open(os.path.join(d, "session.json"), "w") as f:
+        json.dump({"started": 0, "max_s": 0, "booted": False,
+                   "games": {x: {"folder": os.path.join(d, "lane1-" + x)} for x in games},
+                   "runner": {"server": runner_server}}, f)
+    with open(os.path.join(d, "pids.json"), "w") as f:
+        json.dump({"games": games, "server": server}, f)
+
+
 class Adopt(unittest.TestCase):
-    def test_games_and_server(self):
+    def test_games_and_server_with_their_images(self):
         with tempfile.TemporaryDirectory() as d:
+            session_dir(d, {"A": 11, "B": 12}, 13)
+            job = FakeJob()
+            self.assertEqual(live.adopt(d, job), {})
+            written = os.path.getmtime(os.path.join(d, "pids.json"))
+            exe = "longshot.exe" if hs.WINDOWS else "longshot"
+            self.assertEqual(sorted(job.calls), [(11, os.path.join(d, "lane1-A", exe), written),
+                                                 (12, os.path.join(d, "lane1-B", exe), written),
+                                                 (13, "C:/k/coop_server.exe", written)])
+
+    def test_skipped_pid_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            session_dir(d, {"A": 11}, 13)
+            self.assertEqual(live.adopt(d, FakeJob(refuse={11})), {11: "image other.exe, not %s"
+                                                                   % os.path.join(d, "lane1-A", "longshot.exe"
+                                                                                  if hs.WINDOWS else "longshot")})
+
+    def test_game_without_folder_never_added(self):
+        with tempfile.TemporaryDirectory() as d:
+            session_dir(d, {"A": 11}, None)
             with open(os.path.join(d, "pids.json"), "w") as f:
-                json.dump({"games": {"A": 11, "B": 12}, "server": 13}, f)
-            job = types.SimpleNamespace(pids=[])
-            job.add = job.pids.append
+                json.dump({"games": {"A": 11, "B": 99}, "server": None}, f)
+            job = FakeJob()
             live.adopt(d, job)
-            self.assertEqual(sorted(job.pids), [11, 12, 13])
+            self.assertIn((99, None, os.path.getmtime(os.path.join(d, "pids.json"))), job.calls)
 
     def test_watch_adopts_each_look(self):
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "session.json"), "w") as f:
-                json.dump({"started": 0, "max_s": 0, "booted": False}, f)
-            with open(os.path.join(d, "pids.json"), "w") as f:
-                json.dump({"games": {"A": 21}, "server": 22}, f)
-            job = types.SimpleNamespace(pids=[])
-            job.add = job.pids.append
+            session_dir(d, {"A": 21}, 22)
+            job = FakeJob()
             looks = []
 
             def sleep(s):
@@ -199,12 +235,11 @@ class Adopt(unittest.TestCase):
                 if len(looks) == 2:
                     open(live.stop_file(d), "w").close()
             self.assertEqual(live.watch(d, sleep=sleep, job=job), "stop asked")
-            self.assertEqual(sorted(job.pids), [21, 21, 21, 22, 22, 22])
+            self.assertEqual(sorted(c[0] for c in job.calls), [21, 21, 21, 22, 22, 22])
 
     def test_watch_without_job_adopts_nothing(self):
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "session.json"), "w") as f:
-                json.dump({"started": 0, "max_s": 0, "booted": False}, f)
+            session_dir(d, {"A": 21}, 22)
             open(live.stop_file(d), "w").close()
             self.assertEqual(live.watch(d, sleep=lambda s: None), "stop asked")
 
@@ -215,7 +250,7 @@ sys.path.insert(0, sys.argv[1])
 import hs
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
 job = hs.KillOnCloseJob()
-print(child.pid, job.add(child.pid), flush=True)
+print(child.pid, job.add(child.pid, sys.executable, time.time()), flush=True)
 time.sleep(120)
 '''
 
@@ -244,7 +279,35 @@ class KillOnClose(unittest.TestCase):
         job = hs.KillOnCloseJob()
         p = subprocess.Popen([sys.executable, "-c", "pass"])
         p.wait()
-        self.assertFalse(job.add(p.pid))
+        self.assertFalse(job.add(p.pid, sys.executable, time.time()))
+
+    def child(self):
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (p.kill(), p.wait()))
+        return p
+
+    def test_wrong_image_not_added(self):
+        # (a reused pid: some other program now has the number pids.json kept)
+        job = hs.KillOnCloseJob()
+        p = self.child()
+        other = os.path.join(tempfile.gettempdir(), "lane1-A", "longshot.exe")
+        self.assertFalse(job.add(p.pid, other, time.time() + 5))
+        self.assertIn("not %s" % other, job.skipped[p.pid])
+        self.assertNotIn(p.pid, job.added)
+
+    def test_made_after_pids_write_not_added(self):
+        # (the same exe, but started after pids.json named this pid: not the process it named)
+        job = hs.KillOnCloseJob()
+        before = time.time() - 30
+        p = self.child()
+        self.assertFalse(job.add(p.pid, sys.executable, before))
+        self.assertIn("after its pids.json write", job.skipped[p.pid])
+
+    def test_matching_process_added(self):
+        job = hs.KillOnCloseJob()
+        p = self.child()
+        time.sleep(0.2)
+        self.assertTrue(job.add(p.pid, sys.executable, time.time()), job.skipped)
 
 
 if __name__ == "__main__":

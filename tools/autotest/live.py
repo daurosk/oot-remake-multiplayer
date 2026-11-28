@@ -846,11 +846,30 @@ def close(d, s, alive=None, quit=quit_game, killer=kill, release=release_lock, w
 def adopt(d, job):
     """The session's games and server (pids.json) put in the watchdog's kill-on-close job (hs.KillOnCloseJob), each once:
     a watchdog killed outright then takes them with it (gate-host170-182cd53b's coop_server outlived its tree-killed
-    watchdog by 6 h, 11-28). A relaunched game or restarted server is a new pid, put in at the next look."""
+    watchdog by 6 h, 11-28). A relaunched game or restarted server is a new pid, put in at the next look.
+    Each pid goes in only while it is still the one named (KillOnCloseJob.add): its image is this session's game exe
+    (the game's folder, hookshot.exe_dir) or its server exe, and it was made no later than the pids.json write.
+    Returns {pid: why skipped} for the pids left out (watchdog.json 'not adopted')."""
+    s = load(d)
+    try:
+        written = os.path.getmtime(os.path.join(d, "pids.json"))
+    except OSError:
+        return {}
     games, server = game_pids(d)
-    for p in list(games.values()) + [server]:
-        if p:
-            job.add(p)
+    want = {}
+    for x, p in games.items():
+        folder = ((s.get("games") or {}).get(x) or {}).get("folder")
+        if p and folder:
+            want[p] = os.path.join(hookshot.exe_dir(folder), "longshot.exe" if lanes.hs.WINDOWS else "longshot")
+        elif p:
+            want[p] = None   # (no folder known: never put in)
+    if server:
+        want[server] = (s.get("runner") or {}).get("server")
+    skipped = {}
+    for p, image in want.items():
+        if not job.add(p, image, written):
+            skipped[p] = (getattr(job, "skipped", None) or {}).get(p, "not added")
+    return skipped
 
 
 def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY, job=None):
@@ -858,6 +877,7 @@ def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY, j
     session's processes in it (adopt)."""
     alive = alive or lanes.hs.pid_alive
     s = load(d)
+    noted = set()
     while True:
         try:
             s = load(d)
@@ -865,7 +885,10 @@ def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY, j
             pass   # (being replaced this moment: the last one read)
         if job is not None:
             try:
-                adopt(d, job)
+                for p, why in sorted(adopt(d, job).items()):
+                    if p not in noted:   # (watchdog.txt: once per pid)
+                        noted.add(p)
+                        print("not adopted into the kill-on-close job: pid %s: %s" % (p, why), flush=True)
             except (OSError, ValueError):
                 pass   # (pids.json being written this moment: the next look)
         now = clock()

@@ -39,7 +39,7 @@ sys.path.insert(0, HERE)
 import huecheck     # noqa: E402  (the shared colour check: solid_count)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
 from test_gear_link import face_each_other   # noqa: E402  (the shared set-up helpers)
-from test_hair_link import shots             # noqa: E402  (lit shots + each wearer's screen box: one helper)
+from test_hair_link import count, hides, shots   # noqa: E402  (lit shots, each wearer's box, the other Link left out: one helper)
 from test_rows import need_child_in_play   # noqa: E402
 
 YELLOW, GREEN = 0xFFD000, 0x20C020
@@ -93,18 +93,29 @@ def note(pair, line):
     pair.notes.append(line)
 
 
-def count(shot, colour):
-    return huecheck.solid_count(shot["path"], shot["box"], colour)
+# A vest (its Link's box's middle third) more than this share under the other Link cannot be judged on that game:
+# NO-REF, never FAIL or PASS (test_hair_link.HIDDEN_MAX's rule; hair-check-0121 fe81d04d1: the other Link stands in
+# front of the puppet on its own game and is left out of every count).
+HIDDEN_MAX = 0.5
+VEST_BAND = (1, 2)   # (the middle third of the box: the fake draws the vest there, the hair is the top third)
 
 
-def gained(pair, before, after, colour, what, low):
-    """Each game's solid `colour` count in the wearer's box, before -> after: nothing added is a FAIL (the vest was not
-    repainted); less than GAIN goes to `low` (judged only once MEASURED). Returns {x: gain}."""
-    out = {}
+def gained(pair, before, after, colour, what, low, blind):
+    """Each game's solid `colour` count in the wearer's box (the other Link's boxes of both shots left out), before ->
+    after: nothing added is a FAIL (the vest was not repainted); less than GAIN goes to `low` (judged only once
+    MEASURED); a vest mostly under the other Link goes to `blind` (NO-REF). Returns {x: gain} (None: not seen)."""
+    out, hide = {}, hides(before, after)
     for x in ("A", "B"):
-        n0, n1 = count(before[x], colour), count(after[x], colour)
-        note(pair, "huecheck %s %s #%06X before=%d after=%d gain=%d box=%s" % (
-            x, what, colour, n0, n1, n1 - n0, list(after[x]["box"])))
+        hx = hide.get(x, [])
+        n0, n1 = count(before[x], colour, hide=hx), count(after[x], colour, hide=hx)
+        cov = max(huecheck.covered(before[x]["box"], hx, VEST_BAND), huecheck.covered(after[x]["box"], hx, VEST_BAND))
+        note(pair, "huecheck %s %s #%06X before=%d after=%d gain=%d box=%s hide=%s covered=%.2f" % (
+            x, what, colour, n0, n1, n1 - n0, list(after[x]["box"]), [list(b) for b in hx], cov))
+        if cov > HIDDEN_MAX:
+            blind.append("%s %s: the Link's vest is %.0f%% under the other Link (want <= %.0f%%)" % (
+                x, what, cov * 100, HIDDEN_MAX * 100))
+            out[x] = None
+            continue
         assert n1 - n0 > 0, "%s %s: no #%06X added on the Link: the vest was not repainted (before %d, after %d)" % (
             x, what, colour, n0, n1)
         if n1 - n0 < GAIN[colour]:
@@ -114,16 +125,22 @@ def gained(pair, before, after, colour, what, low):
 
 
 def left(pair, before, after, colour, gain, what):
-    """Of the `colour` a wear added (`gain`, from `before`), how much is still in the wearer's box at `after`: at or over
-    LEFT_VEST is a FAIL (the vest kept the colour)."""
+    """Of the `colour` a wear added (`gain`, from `before`), how much is still in the wearer's box at `after` (the other
+    Link left out as in gained): at or over LEFT_VEST is a FAIL (the vest kept the colour). A game whose gain was not
+    seen (None: under the other Link) is skipped (gained already made the test NO-REF)."""
+    hide = hides(before, after)
     for x in ("A", "B"):
-        n0, n1 = count(before[x], colour), count(after[x], colour)
+        if gain[x] is None:
+            continue
+        n0, n1 = count(before[x], colour, hide=hide.get(x, [])), count(after[x], colour, hide=hide.get(x, []))
         share = (n1 - n0) / float(max(1, gain[x]))
         note(pair, "huecheck %s %s #%06X left=%d of %d share=%.3f" % (x, what, colour, n1 - n0, gain[x], share))
         assert share < LEFT_VEST, "%s: yellow left on the vest %s (%d of %d)" % (x, what, n1 - n0, gain[x])
 
 
-def judged(pair, low):
+def judged(pair, low, blind=()):
+    if blind:   # (a vest the check could not see proves nothing: never PASS)
+        pair.unproven("; ".join(blind))
     if not MEASURED:
         pair.unproven("the vest colour thresholds are not measured yet (MEASURED: the huecheck lines of a lane run)%s"
                       % ("; low: " + "; ".join(low) if low else ""))
@@ -157,20 +174,20 @@ def test_vest_own_and_puppet(pair):
         need_child_in_play(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "vest-link-unset")
         wear(pair, "A", YELLOW)
         yellow = shots(pair, "vest-link-yellow")
-        gain = gained(pair, before, yellow, YELLOW, "unset->yellow", low)
+        gain = gained(pair, before, yellow, YELLOW, "unset->yellow", low, blind)
         wear(pair, "A", GREEN)
         green = shots(pair, "vest-link-green")
-        gained(pair, yellow, green, GREEN, "yellow->green", low)
+        gained(pair, yellow, green, GREEN, "yellow->green", low, blind)
         left(pair, before, green, YELLOW, gain, "after green")
         done = True
     finally:
         put_back(pair, done)
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 @pytest.mark.budget(240)   # ESTIMATED
@@ -181,12 +198,12 @@ def test_vest_unset_is_tunic(pair):
         need_child_in_play(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "vest-link-unset-before")   # (own name: test_vest_own_and_puppet's -unset is another ref)
         wear(pair, "A", YELLOW)
         coloured = shots(pair, "vest-link-unset-yellow")
-        gain = gained(pair, before, coloured, YELLOW, "unset->yellow", low)
+        gain = gained(pair, before, coloured, YELLOW, "unset->yellow", low, blind)
         wear(pair, "A", None)
         back = shots(pair, "vest-link-unset-again")
         # (only the yellow in the wearer's box: the whole-frame count took the torch flames as yellow left, B #148)
@@ -199,7 +216,7 @@ def test_vest_unset_is_tunic(pair):
         done = True
     finally:
         put_back(pair, done)
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 def imagecheck_ssim(a, b):
@@ -217,20 +234,20 @@ def test_vest_without_character_select(pair):
         no_cs.prove(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "vest-link-no-cs-unset")
         wear(pair, "A", YELLOW)   # A (with the mod) -> its puppet in the CS-less B
         a_yellow = shots(pair, "vest-link-no-cs-a-yellow")
-        gain = gained(pair, before, a_yellow, YELLOW, "A unset->yellow", low)
+        gain = gained(pair, before, a_yellow, YELLOW, "A unset->yellow", low, blind)
         wear(pair, "A", None)
         unset = shots(pair, "vest-link-no-cs-unset-again")
         left(pair, before, unset, YELLOW, gain, "after A's unset")
         b_before = shots(pair, "vest-link-no-cs-b-unset", who="B")   # (B's own Link on B, its puppet on A)
         wear(pair, "B", GREEN)    # B's own Link without the mod -> its puppet in A (same places: A faces B already)
         b_green = shots(pair, "vest-link-no-cs-b-green", who="B")
-        gained(pair, b_before, b_green, GREEN, "B unset->green", low)
+        gained(pair, b_before, b_green, GREEN, "B unset->green", low, blind)
         done = True
     finally:
         put_back(pair, done)
-    judged(pair, low)
+    judged(pair, low, blind)

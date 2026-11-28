@@ -147,11 +147,13 @@ def outside(path, boxes):
     return keep
 
 
-def covered(box, boxes):
-    """Share (0..1) of `box`'s top third (where a Link's hair is) that lies inside any of `boxes`."""
+def covered(box, boxes, band=(0, 1)):
+    """Share (0..1) of a band of `box` that lies inside any of `boxes`. `band` = (first, last) third of the box's
+    height: (0, 1) the top third (where a Link's hair is), (1, 2) the middle third (the vest, test_vest_link.py)."""
     import numpy as np
     x0, y0, x1, y1 = box
-    y1 = y0 + max(1, (y1 - y0) // 3)
+    third = max(1, (y1 - y0) // 3)
+    y0, y1 = y0 + band[0] * third, y0 + band[1] * third
     area = np.zeros((y1 - y0, x1 - x0), dtype=bool)
     for b in boxes:
         if b:

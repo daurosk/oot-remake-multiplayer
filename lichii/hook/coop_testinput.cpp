@@ -1032,7 +1032,8 @@ namespace CoopTestInput {
 const std::vector<Kind>& ActKinds() {
     static const std::vector<Kind> kinds = {Kind::kill, Kind::hit,  Kind::hurt,    Kind::place, Kind::face,
                                             Kind::aim,  Kind::wear, Kind::dress,   Kind::assign, Kind::chat,
-                                            Kind::menu, Kind::setflag, Kind::setenum, Kind::verb};
+                                            Kind::menu, Kind::setflag, Kind::setenum, Kind::verb,
+                                            Kind::event};   // a boss stage's boot event after a warp (boss-hit-react-138)
     return kinds;
 }
 

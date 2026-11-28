@@ -11,12 +11,16 @@ BT_FAKE_BROKEN values (selftests):
   bhr-nolife     A's bomb never stuns him: no slash takes life (run ef002962's K = 0)
   bhr-nosync     B never logs its copy's sync line (the row's roles not there)
   bhr-nocount    the took-life line comes, the counts lines stay at K = 0
+  bhr-asleep     his appear event is handed but he never appears: A logs the owner's stall note for 'Wait' 1500 frames
+                 after the warp (run boss-hit-react-53d40ab3-2, 2026-11-28, where no appear event was asked)
+With no 'event Get_StoneOfFire_AppearBoss' act after the warp, A logs that stall note too (the game: no boot event).
 """
 import os
 
 STAGE = "DodongoStage"
 BOSS = "Enemy_DungeonBoss_Dodongo"
 STUN_FRAMES, SYNC_AFTER, COUNT_AFTER = 900, 600, 120
+STALL_AFTER = 1500                             # coop_boss_native.h kStallSteps
 
 
 def broken():
@@ -50,6 +54,23 @@ def after(game, m, r):
     role = "ours" if game.tag == "A" else "a copy"
     if not (broken() == "bhr-nosync" and game.tag == "B"):
         game.later(SYNC_AFTER, lambda: game.say("coop: bosses: %s: native boss sync on (BSA 0x1a2b, %s)" % (BOSS, role)))
+    if game.tag == "A":                        # no appear event asked (or bhr-asleep): he stalls in 'Wait' (the VOID run)
+        game.later(STALL_AFTER, lambda: None if game.bhr_shared.get("appeared") else game.say(
+            "coop: bosses: %s: ours held 'Wait' (brain 62, action 0, life 24) 25 s with no hit: stuck, its AI chooses "
+            "again (1 of 3)" % BOSS))
+
+
+def act(game, w):
+    """'event Get_StoneOfFire_AppearBoss' (the bridge's act, lichii/hook/coop_testinput.cpp Kind::event): the handed
+    line; his appear (no stall) unless bhr-asleep."""
+    if w[:1] != ["event"] or len(w) != 2 or not game.bhr:
+        return False
+    game.later(1, lambda: game.say("coop: test event %s: handed to the live-event requester" % w[1]))
+    if w[1] == "Get_StoneOfFire_AppearBoss" and broken() != "bhr-asleep":
+        game.bhr_shared["appeared"] = True
+        game.later(30, lambda: game.say("coop: objects: anim %s 0x1a2b '%s'%s" % (
+            BOSS, "Appear", " (ours)" if game.tag == "A" else "")))
+    return True
 
 
 def press(game, buttons):

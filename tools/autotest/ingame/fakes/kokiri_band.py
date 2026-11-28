@@ -4,7 +4,8 @@ Only with the test's switch LICHII_COOP_LOOK=cap_trim:yellow (+ LICHII_COOP_COLO
 adult Kakariko, a camera (view.clip) and on each shot both Links in blue with the hood band yellow.
 Selftest variables: BT_FAKE_CAP_BLOCKS (43600 = look_cap_old's pack before the fix, 43228 an older one), BT_FAKE_BAND=blue (the row's bug: the
 puppet's band in the tunic's blue), BT_FAKE_KOKIRI_ON_LINE=1 (a camera with A on B's line of sight: boxes overlap), BT_FAKE_KOKIRI_HIDDEN=1 (the
-puppet never drawn on B's shot: behind a wall, as run kokiri-look-182cd53b's Kakariko gate; sight.prove must SETUP-FAIL).
+puppet never drawn on B's shot: behind a wall, as run kokiri-look-182cd53b's Kakariko gate; sight.prove must SETUP-FAIL), BT_FAKE_KOKIRI_STUCK=1 (a
+place to a spot off the camera's shot refused: sight.prove's away place leaves A in view = SETUP-FAIL 'did not leave').
 """
 import os
 
@@ -48,6 +49,14 @@ def state(game, st):
         for a in st["world"]["actors"]:
             if a.get("name") == "CoopPuppet_Child_Green":
                 a["name"] = "CoopPuppet_Adult_Green"
+
+
+def act(game, w):
+    """BT_FAKE_KOKIRI_STUCK: a place to a spot the fake camera does not show is refused (the game keeps Link)."""
+    if not (_on(game) and os.environ.get("BT_FAKE_KOKIRI_STUCK") and w[:1] == ["place"] and len(w) >= 4):
+        return False
+    import bandcheck
+    return bandcheck.box(_view(), [float(v) for v in w[1:4]], 320, 180) is None
 
 
 def after(game, m, r):

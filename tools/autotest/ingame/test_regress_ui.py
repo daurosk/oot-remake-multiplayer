@@ -20,7 +20,7 @@ import game_names
 import pair as P
 from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
-from test_tunic import stand_apart
+from test_tunic import prove_apart, stand_apart
 
 # The old step's NOT pattern (regress-01113-steps/s6-ui.ps1 -Not 'exception 0x'), with test_look.py's CRASH forms.
 CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
@@ -275,6 +275,7 @@ def test_sword_handle(pair):
         ok, why = other_in_view(pair, "B", "A", behind=False)   # (B's shot is of A's puppet: proven on B's state)
         if not ok:
             raise P.SetupFail("B: A's puppet not in B's view after stand_apart's ZL: %s" % why)
+    prove_apart(pair, ("B",), "regress-hilt")   # (B's shots are of A's puppet: in sight, not only in view)
     seen_once(pair, "A", A_SENT, max_frames=300)
     seen_once(pair, "B", B_GOT, max_frames=300)
     seen_not(pair, "B", B_PAINTED, B_NOT_PAINTED, max_frames=300)

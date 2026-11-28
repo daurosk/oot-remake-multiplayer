@@ -102,6 +102,16 @@ class KokiriBand(unittest.TestCase):
         self.assertNotIn("bandcheck 14.0", p.stdout)
         self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
 
+    def test_away_place_refused_is_setup_fail(self):
+        """sight.prove's away place refused or clamped (pair.act does not raise on ok False): A still in view, so the
+        proof says 'did not leave' (SETUP-FAIL), never 'NOT in sight' on a guess; the lane's next test still sets up."""
+        s, p = self.run_it("stuck", self.ENV, env={"BT_FAKE_KOKIRI_STUCK": "1"})
+        self.assertEqual(results(s)["test_kokiri_hood_band"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertIn("did not leave", p.stdout)
+        self.assertNotIn("NOT in sight", p.stdout)
+        self.assertNotIn("bandcheck 14.0", p.stdout)
+        self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
+
 
 if __name__ == "__main__":
     unittest.main()

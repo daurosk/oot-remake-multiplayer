@@ -7,7 +7,8 @@ check called that a FAIL of the band. The projection (bandcheck.box) cannot see 
 
 The proof: the viewer's shot with the target where it stands, then the target moved AWAY_M behind the viewer (behind
 its camera: the away spot must project off the shot, checked on the same view), a second shot, the target put back
-(place + face + ZL + settle). Pixels changed by more than DIFF in the target's box, less the share changed in the
+(place + face + ZL + settle). The target's own state must show it gone (more than AWAY_M/2 from its spot and
+off the shot) before the second shot, else SetupFail 'did not leave' (a refused or clamped place). Pixels changed by more than DIFF in the target's box, less the share changed in the
 same-size box beside it (people, birds, flames move too), must reach MIN_SEEN; else the target is not in sight
 (behind a wall, or not drawn) = SetupFail, never a FAIL of the row. Both shots are copied to <out>/sight/.
 
@@ -77,6 +78,13 @@ def prove(pair, viewer, target, name):
         raise P.SetupFail("sight %s: the away spot %s is still on %s's shot: cannot prove sight" % (name, away, viewer))
     pair.act(target, "place %.2f %.2f %.2f" % away)
     pair.step_both(SETTLE)
+    # (pair.act does not raise on a refused act: a place the game refused or clamped (a wall, a collision) leaves the
+    # target in view, both shots alike, seen ~0 = a false 'not in sight'. The target's own state must show it left.)
+    gone = pair.state(target).get("pos")
+    if (not gone or math.hypot(gone[0] - tpos[0], gone[2] - tpos[2]) <= AWAY_M / 2.0
+            or bandcheck.box(view, gone, w, h)):
+        raise P.SetupFail("sight %s: %s did not leave (pos %s after place %s, was %s): cannot prove sight" % (
+            name, target, gone, tuple(round(v, 2) for v in away), tpos))
     without = _shot(pair, viewer, "%s-sight-without-%s" % (name, viewer))
     pair.act(target, "place %.2f %.2f %.2f" % tuple(tpos))
     f = math.radians(tface)

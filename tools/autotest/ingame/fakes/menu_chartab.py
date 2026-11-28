@@ -1,7 +1,8 @@
 """Fake-game reactions for test_chartab.py (chartab-0121's file): Character Select's Customize screen and its keys.
 
-Named menu_chartab.py so its state hook runs AFTER fakes/f1_event.py's (file-name order, fakegame.load_fakes), which
-replaces st["menu"] on every state: as chartab.py (before it) the screen was wiped from every state, CI 45929853982.
+Named menu_chartab.py so its state hook ran AFTER fakes/f1_event.py's (file-name order, fakegame.load_fakes), which
+replaced st["menu"] on every state: as chartab.py (before it) the screen was wiped from every state, CI 45929853982.
+Since f1-fake-scope (B #164) f1_event sets only st["menu"]["coop"], and only while its F1 opened Longshot's menu.
 
 - press: MINUS opens / shuts the - menu (on Map); L three times on it reaches the Characters page (test_charpage.py's
   path, coop_pause_tab.h GameMinusCategory: Map, Threads of Time, Key Items, Characters); X there opens his Customize

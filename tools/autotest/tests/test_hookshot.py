@@ -176,7 +176,10 @@ class FakeGame:
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
                 reply = self.answer(json.loads(line), sock)
-                sock.sendall((json.dumps(reply) + "\n").encode())
+                try:
+                    sock.sendall((json.dumps(reply) + "\n").encode())
+                except OSError:   # (close() shut this end while a reply was due: CI 46084613753's Errno 9 traceback)
+                    return
 
     def connect(self):
         a, b = socket.socketpair()
@@ -1004,20 +1007,32 @@ class RunTest(unittest.TestCase):
             def __init__(self, args, **kw):
                 self.env = kw["env"]
                 if "stdout" in kw:   # the game's log: its renderer is ready (run waits for this line)
+                    # (flushed: a real game writes to the fd itself. Unflushed, these bytes sat in run's 'wb' handle
+                    # and its close wrote them at offset 0, over a file line read() had appended first: CI
+                    # 46084613753 'A: no coop: test commands file line in 0 s', a slow runner's thread order)
                     kw["stdout"].write(RendererWaitTest.READY.encode())
+                    kw["stdout"].flush()
                 started.append(self)
                 if module:   # (the module reads its commands file: empties it, as coop_test_commands does)
                     import threading
                     path = self.env["LICHII_COOP_TEST_COMMANDS"]
                     out = getattr(kw.get("stdout"), "name", None)   # (the game's log by path: run closes its handle)
 
-                    def read():
-                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
-                        if reader_after and done.wait(reader_after):
-                            return
+                    def file_line():
                         if isinstance(out, str):
                             with open(out, "ab") as f:
                                 f.write(("[hos Presentation Thread] coop: test commands file %s\n" % path).encode())
+                    if not reader_after:
+                        # (a reader on time says its line before Popen returns, so before run closes its handle:
+                        # the order a slow runner gave by chance, every time now)
+                        file_line()
+
+                    def read():
+                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
+                        if reader_after:
+                            if done.wait(reader_after):
+                                return
+                            file_line()
                         while not done.is_set():
                             try:
                                 if os.path.getsize(path):

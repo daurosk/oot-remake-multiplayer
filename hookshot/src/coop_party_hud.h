@@ -44,6 +44,9 @@ inline constexpr std::uint64_t kPaneAlpha = 0x2d8ac0;      // (pane, s0 alpha 0.
 inline constexpr std::uint64_t kPaneMarkA = 0x815457d0 - 0x80020000;  // what the game's pane mover calls after a move
 inline constexpr std::uint64_t kPaneMarkB = 0x8154d540 - 0x80020000;
 inline constexpr std::uint64_t kPaneXY = 0x6c;             // pane+: f32 x, y
+// pane+: its global matrix, 3 x 4 by column, as moved for the screen's shape (coop_map_page.h kPaneMatrix, which
+// GameHudBottom reads the game's HUD by; Longshot host/hos_wide_ui.c PANE_XX 0x28, the translation at PANE_X 0x4c)
+inline constexpr std::uint64_t kPaneMatrix = 0x28;
 inline constexpr std::uint64_t kPaneFlags = 0xa8;          // pane+: u32; bit 8 placed elsewhere, bit 20 tell the layout
 // A text pane inside one of our part copies ("Pa_CoopName_0/T_Text_00"), set as the game's path text call sets each pane
 // it matches (coop_pause_tab.h, the same calls run in the game for the pause pages' copies): f_8045b970 (kSetPaneText)
@@ -113,6 +116,27 @@ inline constexpr float kBlockGap = 45.0f;   // between blocks: a name sits on it
                                             // above it (14 before: a name was as near the last block's hearts)
 inline constexpr float kDefaultTop = -330.0f;              // under two rows of hearts and the magic bar
 inline constexpr float kLayoutHeight = 2160.0f;
+inline constexpr float kLayoutWidth = 3840.0f;
+
+// Row 326 (owner 2026-11-28, split screen halves 8:9 with patch 0047): on a picture narrower than 16:9 Longshot draws
+// the HUD's 3840 x 2160 canvas smaller (host/hos_wide_ui.c hos_wide_ui_tick: the projection's rows times k < 1) and
+// moves the HUD's corner panes out to the picture's corners, up by 1080 (1/k - 1) and in at the sides; N_ScaleL_00
+// moves with them. The game's HUD bottom (GameHudBottom) is a fraction of the canvas's 2160 from its 16:9 top (+1080);
+// read as if N_ScaleL_00 still sat there, our blocks went up by that move, into the game's own hearts. So both are
+// taken in N_ScaleL_00's frame as it is now: its global matrix's top-left (tx, ty) and scale (sx, sy), in the canvas's
+// units, y up from its middle. The 16:9 picture (and a wider one: the HUD keeps the middle 16:9) has it at (-1920, 1080)
+// scale 1, which gives the values before row 326 exactly.
+struct ParentFrame {
+    float left = -kLayoutWidth / 2, top = kLayoutHeight / 2;   // the parent's origin on the canvas (y up)
+    float scale_x = 1.0f, scale_y = 1.0f;
+};
+// The frame from N_ScaleL_00's global matrix (m[0] sx, m[4] sy, m[9] tx, m[10] ty); the 16:9 one when the matrix is
+// not believable (not finite, a scale outside 0.25..4, or an origin not in the canvas's top-left quarter or beyond it).
+ParentFrame FrameFrom(const float m[12]);
+// The picture's height and width in the parent's units: the parent sits at the picture's top-left corner (the HUD's
+// corner panes are moved to it), and the picture is centred on the canvas's middle.
+float PictureHeight(const ParentFrame& f);
+float PictureWidth(const ParentFrame& f);
 inline constexpr float kDimAlpha = 150.0f / 255.0f;        // a player not connected: as the drawn blocks (coop_draw)
 
 // The module's game: the chat's, and a call with a float in s0.
@@ -165,20 +189,23 @@ inline constexpr float kGlowState = 3.0f;         // GlowState while glowing (f_
 // Where a heart of a block goes, and a block's height, in the parent's frame; `top` is the block's top edge.
 std::array<float, 2> HeartAt(float top, int index);
 float BlockHeight(int hearts);
-// The first block's top from the bottom of the game's own HUD (a fraction of the picture height), kDefaultTop none.
+// The first block's top from the bottom of the game's own HUD (GameHudBottom: a fraction of the canvas's 2160 down
+// from its 16:9 top), in the parent's frame `frame` as it is now (row 326); kDefaultTop none or not on the picture.
 // `own`: our own line ("You" and our voice state) goes first, so the blocks start one line lower.
-float TopFrom(std::optional<double> game_hud_bottom, bool own = false);
+float TopFrom(std::optional<double> game_hud_bottom, bool own = false, const ParentFrame& frame = {});
 
-// A line as it shows: cut at its end with "..." to kLabelRoom (CoopNativeUi::Width, the game's font), so every line is
-// on the picture whatever the name, voice words, place and language; at least "...".
-std::string FitLabel(const std::string& text);
+// A line as it shows: cut at its end with "..." to `room` (CoopNativeUi::Width, the game's font), so every line is
+// on the picture whatever the name, voice words, place and language; at least "...". kLabelRoom on the 16:9 picture;
+// LabelRoom(frame) 30% of the picture's width as it is now (row 326).
+std::string FitLabel(const std::string& text, float room = kLabelRoom);
+float LabelRoom(const ParentFrame& frame);
 // Where a line's pane goes so its (fitted) text starts at kLabelLeft: the pane's middle, in the parent's units.
 float LabelX(const std::string& fitted);
 // "+N" for the players not shown (no slot or no room left on the picture); "" none.
 std::string MoreText(std::size_t hidden);
 // How many of the blocks (their heart counts, in order) are shown from `top` down: at most `slots`, every one on the
 // picture, and when some are left out the "+N" line under them too (0.11.12's rule, CoopHudLayout::BlocksThatFit).
-std::size_t BlocksThatFit(float top, const std::vector<int>& hearts, std::size_t slots);
+std::size_t BlocksThatFit(float top, const std::vector<int>& hearts, std::size_t slots, const ParentFrame& frame = {});
 
 class Hud {
 public:
@@ -288,6 +315,11 @@ private:
     void Drop(Game& game);
     std::uint64_t gauge_part_ = 0;   // the HUD's Pa_HeartGauge_00 part layout (0: no run-time gauges)
     std::uint64_t parent_ = 0;       // N_ScaleL_00
+    std::uint64_t frame_pane_ = 0;   // N_ScaleL_00 whether run-time clones are on or not: its frame (row 326)
+    ParentFrame frame_{};            // its frame this frame (the 16:9 one until read)
+    ParentFrame said_frame_{};       // the frame last logged
+    bool frame_said_ = false;
+    int frame_says_ = 0;
     bool ignore_pack_ = false;
     bool clones_ = false;          // AllowRunTimeClones
     std::uint64_t name_part_ = 0;    // the pack's line of the game's text (PaEnemyLocation_00), else the game's (kBarePart)

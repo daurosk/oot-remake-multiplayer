@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -499,6 +500,90 @@ TEST_CASE("party hud: the test players go through every fill") {
     CHECK(b[2].hearts == std::vector<int>{4, 4, 1});
     CHECK(party::TestBlocks(party::kTestStepMs * 12)[2].hearts == std::vector<int>{0, 0, 0});
     CHECK(party::TestBlocks(party::kTestStepMs * 13)[2].hearts == std::vector<int>{4, 4, 4});
+}
+
+namespace {
+// Row 326: N_ScaleL_00 as Longshot's hos_wide_ui_tick places it on a picture narrower than 16:9 (ratio r, the HUD's
+// size k: the canvas drawn k smaller, the corner panes moved up by 1080 (1/k - 1) and in by 1920 (r / (k 16/9) - 1)).
+std::array<float, 12> NarrowMatrix(float r, float k) {
+    const float ey = 1080.0f * (1.0f / k - 1.0f), ex = 1920.0f * (r / (k * 16.0f / 9.0f) - 1.0f);
+    return {1, 0, 0, 0, 1, 0, 0, 0, 1, -1920.0f - ex, 1080.0f + ey, 0};
+}
+// GameHudBottom of a HUD whose lowest point is `below` units under N_ScaleL_00's top (coop_hud_layout.h HudBottom:
+// a fraction of 2160 down from the canvas's 16:9 top, +1080)
+double BottomOf(const std::array<float, 12>& m, float below) {
+    return (1080.0 - (m[10] - below)) / 2160.0;
+}
+}  // namespace
+
+TEST_CASE("party hud: row 326, the blocks go under the game's hearts on a narrower picture (split screen halves)") {
+    // the 16:9 frame: everything as before row 326
+    const std::array<float, 12> wide{1, 0, 0, 0, 1, 0, 0, 0, 1, -1920.0f, 1080.0f, 0};
+    const party::ParentFrame w = party::FrameFrom(wide.data());
+    CHECK(w.left == -1920.0f);
+    CHECK(w.top == 1080.0f);
+    CHECK(party::PictureHeight(w) == 2160.0f);
+    CHECK(party::PictureWidth(w) == 3840.0f);
+    CHECK(party::LabelRoom(w) == doctest::Approx(party::kLabelRoom));
+    for (const double f : {0.05, 0.2, 0.3, 0.62, 0.9}) {
+        CHECK(party::TopFrom(f, false, w) == party::TopFrom(f));
+        CHECK(party::TopFrom(f, true, w) == party::TopFrom(f, true));
+    }
+    CHECK(party::TopFrom(-0.1, false, w) == party::kDefaultTop);   // (not on the picture: as before)
+    CHECK(party::TopFrom(1.1, false, w) == party::kDefaultTop);
+    // a matrix that is not believable: the 16:9 frame
+    const std::array<float, 12> zero{};
+    CHECK(party::FrameFrom(zero.data()).top == 1080.0f);
+    std::array<float, 12> bad = wide;
+    bad[10] = std::nanf("");
+    CHECK(party::FrameFrom(bad.data()).top == 1080.0f);
+
+    // 8:9 halves (HOS_ASPECT=1920:2160, split-fill-301-2 05:31) at a few HUD sizes: the first block's top is kBlockGap
+    // under the HUD's bottom in N_ScaleL_00's frame, wherever Longshot moved it. Before row 326 it was higher by the
+    // move up (the owner's shot: the party name bar over the own hearts' second row).
+    for (const float k : {0.5f, 0.6f, 0.75f, 1.0f}) {
+        const auto m = NarrowMatrix(8.0f / 9.0f, k);
+        const party::ParentFrame f = party::FrameFrom(m.data());
+        CHECK(f.top == doctest::Approx(1080.0f / k));
+        const float below = 0.2f * 2160.0f;   // (two rows of hearts and the magic bar)
+        const double bottom = BottomOf(m, below);
+        CHECK(party::TopFrom(bottom, false, f) == doctest::Approx(-below - party::kBlockGap));
+        if (k < 1.0f) {
+            CHECK(party::TopFrom(bottom) > -below);   // (the old reading: over the game's own hearts)
+        }
+        // the picture is taller in the parent's units: as many blocks fit as on a 16:9 picture, or more
+        CHECK(party::PictureHeight(f) == doctest::Approx(2160.0f / k));
+        const float top = party::TopFrom(bottom, false, f);
+        CHECK(party::BlocksThatFit(top, std::vector<int>(party::kSlots, party::kHearts), party::kSlots, f) >=
+              party::BlocksThatFit(party::TopFrom(0.2), std::vector<int>(party::kSlots, party::kHearts), party::kSlots));
+        // a line is at most 30% of this picture's width
+        CHECK(party::LabelRoom(f) == doctest::Approx(0.3f * 3840.0f * (8.0f / 9.0f) / (k * 16.0f / 9.0f)));
+    }
+}
+
+TEST_CASE("party hud: row 326, Step places the blocks in N_ScaleL_00's frame as it is now") {
+    FakeGame game;
+    game.Hud();
+    game.game_gauge = true;   // (N_ScaleL_00 found)
+    party::Hud hud;
+    std::vector<std::string> log;
+    const std::vector<party::Block> blocks = {{"Saria", Quarters(11, 20)}};
+    REQUIRE(hud.Step(game, blocks, 0.15, &log, 0));
+    CHECK(game.Where(HeartName(0, 0)) == party::HeartAt(party::TopFrom(0.15), 0));   // (no matrix yet: 16:9)
+    REQUIRE(game.panes.count("N_ScaleL_00"));
+    const auto m = NarrowMatrix(8.0f / 9.0f, 0.6f);
+    game.Write(game.panes["N_ScaleL_00"] + party::addr::kPaneMatrix, m.data(), sizeof m);
+    const double bottom = BottomOf(m, 0.2f * 2160.0f);
+    log.clear();
+    REQUIRE(hud.Step(game, blocks, bottom, &log, 0));
+    const party::ParentFrame f = party::FrameFrom(m.data());
+    const auto want = party::HeartAt(-0.2f * 2160.0f - party::kBlockGap, 0);
+    CHECK(game.Where(HeartName(0, 0))[0] == doctest::Approx(want[0]));
+    CHECK(game.Where(HeartName(0, 0))[1] == doctest::Approx(want[1]));
+    CHECK(game.Where(HeartName(0, 0)) == party::HeartAt(party::TopFrom(bottom, false, f), 0));
+    bool said = false;
+    for (const auto& l : log) said = said || l.find("frame: N_ScaleL_00 at (") != std::string::npos;
+    CHECK(said);
 }
 
 TEST_CASE("party hud: our own voice line goes first on the game's text part, the blocks one line lower") {

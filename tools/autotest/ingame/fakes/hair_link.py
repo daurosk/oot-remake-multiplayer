@@ -70,8 +70,12 @@ def act(game, w):
 def state(game, st):
     if st.get("age") and str(game.scene or "").endswith("_Adult"):
         st["age"] = "adult"
-    if game.hair_link_seen and st.get("pos") is not None:
-        st.setdefault("view", _view())   # (never over another fake's camera: B #149, a fake acts for its own row only)
+    # (never over another fake's camera: B #149, a fake acts for its own row only). After a ZL the game's camera is
+    # behind its Link (fakes/regress_ui.py's camera, `rg_cam`, loaded after this file): ours, a fixed one, would win
+    # the setdefault and leave A looking at B's side (test_rows.face_each_other's camera_behind_each SETUP-FAIL,
+    # face-link-0121 CI 46094393365), so it is given only to a game whose camera no ZL has moved.
+    if game.hair_link_seen and st.get("pos") is not None and getattr(game, "rg_cam", None) is None:
+        st.setdefault("view", _view())
 
 
 def after(game, m, r):

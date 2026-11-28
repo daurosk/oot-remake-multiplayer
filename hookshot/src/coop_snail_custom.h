@@ -50,7 +50,15 @@ std::string Capitalised(std::string s);
 inline constexpr std::uint64_t kA = 1ull << 0, kB = 1ull << 1, kY = 1ull << 3, kZL = 1ull << 8, kZR = 1ull << 9,
                                kMinus = 1ull << 11, kLeft = 1ull << 12, kUp = 1ull << 13, kRight = 1ull << 14,
                                kDown = 1ull << 15, kStickLeft = 1ull << 16, kStickUp = 1ull << 17,
-                               kStickRight = 1ull << 18, kStickDown = 1ull << 19;
+                               kStickRight = 1ull << 18, kStickDown = 1ull << 19, kPlus = 1ull << 10;
+
+// The keys his screen gets at one read of the pad while co-op drives it (coop_pause_tab_module.cpp SnailPad): the
+// moves, B, - and +, held as `in` holds them, less every B or - co-op took for itself. `down`: this read's fresh
+// presses; `his`: what Driver::Pad gave him of them; `mixer`: co-op's mixer open after the press. A B or - pressed and
+// not given him stays co-op's in `kept` (in and out) until it is let go: he reads held keys, and a B still held at the
+// next read would reach him as a fresh press. (Lane run chartab-fix-53d40ab3-2: B out of the mixer also closed his
+// Customize screen; the mask was read after the driver had left the mixer.)
+std::uint64_t GameKeys(std::uint64_t in, std::uint64_t down, std::uint64_t his, bool mixer, std::uint64_t* kept);
 
 // The two key parts the kit puts in his layout (tools/puppet_pack/merge_tables.py SNAIL_KEYS, Y then A) and each one's
 // text panes (the game's PaGuideKey_00: the button letter, then the words), whose labels are "<part>-<pane>" in his

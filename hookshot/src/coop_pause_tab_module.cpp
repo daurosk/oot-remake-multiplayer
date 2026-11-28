@@ -542,6 +542,7 @@ std::string g_snail_failed_said;   // (the panes last named as not set: said onc
 bool g_snail_wait = false;   // his screen open, his panes not found in its layout: co-op waits (keys kept from his rows)
 CoopMenuNav::Repeat g_snail_repeat;     // his screen's held Up / Down (SnailPad)
 std::uint64_t g_snail_repress = 0;     // a repeat let go at the last read, pressed again at this one (SnailPad)
+std::uint64_t g_snail_kept = 0;        // a B or - co-op took (its mixer), held back from him until let go (GameKeys)
 std::atomic<bool> g_snail_driven{false};   // (CharacterCustomizeOpen: any thread)
 // menu-customize-01113: his screen's keys as the game's guide keys (the pack's Pa_CoopKeyY_00 / Pa_CoopKeyA_00 in his
 // layout, stored hidden: merge_tables.py add_snail_keys), looked up at each opening (0: not in this layout, a kit not
@@ -800,6 +801,7 @@ bool SnailPad(std::uint64_t in, std::uint64_t* out) {
     const bool driving = g_snail_open && seen == CoopPauseTab::SnailPadState::kDrive;
     if (!driving) {
         g_snail_repress = 0;   // (none left over for his screen's next opening)
+        g_snail_kept = 0;
     } else if (g_snail_repress != 0) {
         down |= g_snail_repress & in;   // (pressed again now: his step and the driver's)
         g_snail_repress = 0;
@@ -813,8 +815,11 @@ bool SnailPad(std::uint64_t in, std::uint64_t* out) {
     constexpr std::uint64_t kDirs = kUp | kDown | kLeft | kRight | kStickUp | kStickDown | kStickLeft | kStickRight;
     std::uint64_t pass = kDirs | kB | kMinus | kPadPlus;
     if (g_snail.Active()) {
-        g_snail.Pad(down);
-        if (g_snail.Editing()) pass &= ~(kB | kMinus);   // (B leaves co-op's mixer, not his screen)
+        // (the driver's own word on what he gets: B out of the mixer is co-op's, at its press and while held)
+        const std::uint64_t his = g_snail.Pad(down);
+        pass = GameKeys(in, down, his, g_snail.Editing(), &g_snail_kept);
+    } else {
+        g_snail_kept = 0;
     }
     *out = in & pass & ~let_go;
     return true;

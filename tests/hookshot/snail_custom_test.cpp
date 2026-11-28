@@ -96,6 +96,46 @@ TEST_CASE("snail customize: A opens co-op's any-colour mixer in his six places, 
     CHECK_FALSE(d.Editing());
 }
 
+TEST_CASE("snail customize: B out of the mixer never reaches his screen, at its press or while held") {
+    // (lane run chartab-fix-53d40ab3-2: B out of the mixer also closed his Customize screen)
+    Driver d;
+    d.Open(Look{}, 0);
+    std::uint64_t kept = 0;
+    std::uint64_t his = d.Pad(kA);
+    REQUIRE(d.Editing());
+    CHECK(GameKeys(kA, kA, his, d.Editing(), &kept) == 0);
+    CHECK(GameKeys(0, 0, 0, d.Editing(), &kept) == 0);
+    his = d.Pad(kB);   // (pressed: the mixer closes at this very read)
+    CHECK(his == 0);
+    CHECK_FALSE(d.Editing());
+    CHECK(GameKeys(kB, kB, his, d.Editing(), &kept) == 0);
+    CHECK(GameKeys(kB, 0, 0, d.Editing(), &kept) == 0);   // (still held: still co-op's)
+    CHECK(GameKeys(kB | kDown, kDown, kDown, d.Editing(), &kept) == kDown);
+    CHECK(GameKeys(0, 0, 0, d.Editing(), &kept) == 0);   // (let go)
+    CHECK(kept == 0);
+    his = d.Pad(kB);   // (a new B on the parts: his, back to his picker, and held as held)
+    CHECK(his == kB);
+    CHECK(GameKeys(kB, kB, his, d.Editing(), &kept) == kB);
+    CHECK(GameKeys(kB, 0, 0, d.Editing(), &kept) == kB);
+    CHECK(GameKeys(kPlus | kA | kY, 0, 0, d.Editing(), &kept) == kPlus);   // (A, Y: co-op's; +: his)
+}
+
+TEST_CASE("snail customize: - in the mixer is held back from his screen until let go") {
+    Driver d;
+    d.Open(Look{}, 0);
+    std::uint64_t kept = 0;
+    d.Pad(kA);
+    REQUIRE(d.Editing());
+    std::uint64_t his = d.Pad(kMinus);
+    CHECK(GameKeys(kMinus, kMinus, his, d.Editing(), &kept) == 0);
+    d.Pad(kB);
+    REQUIRE_FALSE(d.Editing());
+    CHECK(GameKeys(kMinus | kB, kB, 0, d.Editing(), &kept) == 0);   // (- still held from the mixer, B taken)
+    CHECK(GameKeys(0, 0, 0, d.Editing(), &kept) == 0);
+    his = d.Pad(kMinus);
+    CHECK(GameKeys(kMinus, kMinus, his, d.Editing(), &kept) == kMinus);
+}
+
 TEST_CASE("snail customize (npc-customize): a character's screen shows its model's own rows, and they change its parts") {
     Driver d;
     d.Open(Look{}, 9);

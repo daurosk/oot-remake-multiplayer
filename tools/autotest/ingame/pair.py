@@ -1090,10 +1090,16 @@ class Pair:
         for y in self.c:
             if y != x and ran:
                 self.step_other(y, ran)
-        if r.get("ok"):
-            # (arrived in free play: the warp ends only when x's play UI is up again; an arrival answered 'timeout' in
-            # its event (arrive_in_event) is left in the event, as the test asked)
+        if r.get("ok") and arrive_in_event is not True:
+            # (arrived in free play: the warp ends only when x's play UI is up again. arrive_in_event=True asked for a
+            # stage whose arrival starts an event (a boss intro): that event holds the play UI down, so x is left in it,
+            # as the test asked, whether the bridge answered 'timeout' in the event or ok in the gap before it
+            # (row-215-confirm-4: probe-intro-53d40ab3-2 A, 'Dm_SY_BancChangeArrive' ended, then 'SageOfSpirit_BossStart'
+            # took the event: 600 frames with the UI down, SETUP-FAIL before the probe ran))
             self._until_play_ui(x, scene, log_at)
+        elif r.get("ok"):
+            self.notes.append("%s: warp %s: arrive_in_event, no play UI wait (the arrival's event holds it down)"
+                              % (x, scene))
         return self.state(x)
 
     def _until_play_ui(self, x, scene, pos):

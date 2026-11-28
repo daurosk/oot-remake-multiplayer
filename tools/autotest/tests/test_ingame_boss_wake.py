@@ -55,6 +55,25 @@ class BossWake(unittest.TestCase):
         self.assertNotEqual(r["test_twinrova_wake_together"], "FAIL", p.stdout[-2000:])
         self.assertIn("the owner's verbs came", p.stdout)
 
+    def test_a_long_intro_is_waited_out(self):
+        """A stepped real intro is thousands of frames (pair.py BOOT_EVENT_FRAMES, row215-309d7180): with a 2700-frame
+        intro (fight lines only after it) both tests wait it out by state and pass the log/state judge (NO-REF: no
+        refs here). The old fixed 900-frame wait judged inside the intro: 'the owner's verbs came' not seen -> FAIL."""
+        p, s = self.run_wake("long", env={"BT_FAKE_BOSS_INTRO": "2700"}, more=self.ENV + self.BOOT)
+        self.assertEqual(results(s), {t: "NO-REF" for t in TESTS}, p.stdout[-3000:])
+        notes = " ".join(n for r in s["tests"] for n in r.get("notes", []))
+        self.assertIn("together: A+B in play", notes)
+        self.assertIn("late A: A in play", notes)
+
+    def test_late_case_is_late_with_a_long_intro(self):
+        """With a 2700-frame intro B must still come in AFTER A's intro (the late path): the late bug FAILs late.
+        (The old 900-frame gap sent B in during A's intro: it was the together path, not the late one.)"""
+        p, s = self.run_wake("long-late", env={"BT_FAKE_BOSS_INTRO": "2700", "BT_FAKE_BOSS_WAKE": "late"},
+                             more=self.ENV + self.BOOT)
+        r = results(s)
+        self.assertEqual(r["test_twinrova_wake_late"], "FAIL", p.stdout[-3000:])
+        self.assertNotEqual(r["test_twinrova_wake_together"], "FAIL", p.stdout[-3000:])
+
     def test_fail_when_no_copy_wakes(self):
         p, s = self.run_wake("copy", env={"BT_FAKE_BOSS_WAKE": "copy"}, more=self.ENV + self.BOOT)
         self.assertEqual(set(results(s).values()), {"FAIL"}, p.stdout[-2000:])

@@ -8,7 +8,7 @@ Twinrova's finish (the merged root at life 0) on the live-twinrova-room boot.
 | Step | How | Source |
 |---|---|---|
 | set-up | both games in play, both warped into TwinrovaStage (its intro starts on arrival) | test_boss_wake.py |
-| the fight | INTRO_FIGHT frames, then both games in play (past the intro) | test_boss_wake.py, test_ux_sweep.py |
+| the fight | both games stepped until in play (past the intro, by state: until_intro_over) | test_boss_wake.py |
 | the merge | the owner game kills Koume and Kotake (bridge `kill ID NAME`, cheats on), then Twinrova (merged, phase 2) is in its world list alive | docs/dungeons-boss.md "Twinrova merged ... phase 2", "At the merge both games remove the manager and the sisters" |
 | the finish | the owner game kills her (life 0: Session::boss_finishing) | server/session.cpp boss_finishing |
 | the stabs | the copy game's Link is placed at her (x, z) and the copy strikes her (`hit ID NAME 1`) STABS times | row 215's cause: a copy's hit asks her over to its hitter (session.cpp Damage, ask_handover) |
@@ -36,13 +36,11 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import pair as P               # noqa: E402
-from test_boss_wake import (AWAY, BOOT, CRASH, INTRO_FIGHT, SISTERS, STAGE, SWITCHES,   # noqa: E402
-                            need_in_play, own_number)
+from test_boss_wake import (AWAY, BOOT, CRASH, SISTERS, STAGE, SWITCHES,   # noqa: E402
+                            need_in_play, own_number, until_intro_over)
 
 ROOT = "Enemy_DungeonBoss_Twinrova"   # docs/dungeons-boss.md:66 (Twinrova's body actors), :718 (merged, phase 2)
 NAMES = (ROOT,) + SISTERS
-INTRO_WAIT = P.BOOT_EVENT_FRAMES   # frames: both games past the intro (was 3600: with INTRO_FIGHT 4500, under the free
-#                                   run's latest end +5048; pair.py BOOT_EVENT_FRAMES cites it, the same intro)
 STRIKE_WAIT = 120       # frames for a strike's answer in state.strike (test_ux_sweep.py: max_frames=120)
 MERGE_WAIT = 1800       # frames for the merged Twinrova after the sisters' kills (ESTIMATED: the merge event; no run yet)
 OWNER_WAIT = 300        # frames for both lists to name one owner after the merge (10 s; ESTIMATED, the share's first owner)
@@ -121,7 +119,7 @@ def back_after(pair):
 
 
 @pytest.mark.needs_boot(BOOT)
-@pytest.mark.budget(960)        # 900 + 6000 max + 1800 max + 900 frames at the boot proof's 11.9 a second (pair.BOOT_STEP_FPS) = 807 s + warps, reads
+@pytest.mark.budget(960)        # 6000 max (until_intro_over) + 1800 max + 900 frames at the boot proof's 11.9 a second (pair.BOOT_STEP_FPS) = 807 s + warps, reads
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#215 a boss in its finish (Twinrova at life 0) stays with its owner's game: no hand-over")
 def test_twinrova_finish_stays_with_its_owner(pair, back_after):
@@ -134,8 +132,7 @@ def test_twinrova_finish_stays_with_its_owner(pair, back_after):
         for x, s in st.items():
             assert (s.get("scene") or "").lower() == STAGE.lower() and not s.get("loading"), "%s after the warp: %s" % (
                 x, s.get("scene"))
-    pair.step_both(INTRO_FIGHT)
-    pair.until_in_play("both games past Twinrova's intro", max_frames=INTRO_WAIT)
+    until_intro_over(pair, "row 215")    # (was INTRO_FIGHT 900 fixed frames first, then this same wait: one wait, by state)
 
     # The merge: the sisters' owner kills both (one strike at a time: state.strike keeps only the last).
     st = {x: pair.state(x) for x in ("A", "B")}

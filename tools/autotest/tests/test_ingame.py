@@ -1580,6 +1580,16 @@ class WarpPlayUi(unittest.TestCase):
             pair.warp_both("KakarikoVillage_Child")
         self.assertEqual(len(self.up_lines(pair, "A")), 1)
 
+    def test_arrive_in_event_has_no_play_ui_wait(self):
+        # (row-215-confirm-4, probe-intro-53d40ab3-2: a boss stage's intro holds the play UI down after the bridge's ok;
+        # arrive_in_event=True leaves the game in its event, never a SETUP-FAIL on the UI)
+        pair = self.lane(BT_FAKE_UI_NEVER="A")
+        pair.warp_one("A", "KakarikoVillage_Child", arrive_in_event=True)
+        self.assertIn("A: warp KakarikoVillage_Child: arrive_in_event, no play UI wait (the arrival's event holds it "
+                      "down)", pair.notes)
+        with self.assertRaisesRegex(P.SetupFail, r"^A: warp KakarikoVillage_Child: the game's play UI not up"):
+            pair.warp_one("A", "KakarikoVillage_Child")      # (free play: the wait stays)
+
     def test_no_play_ui_line_is_no_wait(self):
         pair = self.lane()
         before = pair.c["A"].last_frame

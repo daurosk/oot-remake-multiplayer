@@ -100,6 +100,11 @@ def wait_page_drawn(pair, x, page):
         st = pair.state(x)
         raise SetupFail("%s: the - menu's %s page not drawn: %s (menu.map_page %s, page %s)"
                         % (x, page, e, ((st.get("menu") or {}).get("map_page")), page_shown(st)))
+    # (which way it passed, kept with the result (review-tests-153-7): the Map's content hidden under the page (up, panes
+    # > 0, shown 0) or no Map page up at all (none drawn under it: missing or not up))
+    mp = (pair.state(x).get("menu") or {}).get("map_page")
+    pair.notes.append("%s %s page drawn: %s" % (x, page, "Map content hidden %s" % mp if mp and mp.get("up")
+                                                       else "no Map page up (%s)" % mp))
 
 
 def close_menu(pair, x):

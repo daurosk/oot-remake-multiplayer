@@ -105,6 +105,53 @@ class NativeBodyFake(unittest.TestCase):
         self.assertIn("the game had the copy 0.250 m", why)
 
 
+class NativeBodyProbeFake(unittest.TestCase):
+    """ingame/test_native_body_probe.py on the fake games (fakes/native_body.py): NO-REF with both walks measured; the
+    guard stops A where the two touch, the copy too; npcthrough: neither stops him (A goes past both)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.packs, self.tpl = os.path.join(self.tmp, "packs"), os.path.join(self.tmp, "tpl")
+        os.makedirs(self.packs)
+        os.makedirs(self.tpl)
+        with open(os.path.join(self.packs, "native.py"), "w", encoding="utf-8") as f:
+            f.write(MAKER)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_probe(self, name, bug=None):
+        out = os.path.join(self.tmp, name)
+        env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs"), "BT_PACKS_DIR": self.packs,
+               "BT_FAKE_PACK_DIR": self.tpl}
+        if bug:
+            env["BT_FAKE_NATIVE_BUG"] = bug
+        p = pytest_run(["test_native_body_probe.py", "--fake", "--out", out, "--no-rerun", "-q", "-p",
+                        "no:cacheprovider", "--pack", "native"], env=env)
+        s = summary(out)
+        r = [(t["result"], t["why"]) for t in s["tests"] if t["test"].endswith("test_native_body_probe")]
+        self.assertEqual(len(r), 1, (p.stdout[-2000:], s))
+        return r[0]
+
+    def test_probe_measures_both(self):
+        res, why = self.run_probe("ok")
+        self.assertEqual(res, "NO-REF", why)
+        self.assertRegex(why, r"npc Npc_Hylia_Soldier_003: A moved [0-9.]+ m, closest 0\.8[0-9] m to its place, "
+                              r"0\.8[0-9] m to its body \(25/25 samples listed\), body moved 0\.00 m, A stopped short")
+        self.assertRegex(why, r"copy P2: A moved [0-9.]+ m, closest 0\.5[0-9] m .* A stopped short")
+        self.assertIn("summary: rest 240, moved 60, calls 60, waited 0, gave way 0, drift 0.000 m", why)
+
+    def test_probe_npc_through(self):
+        res, why = self.run_probe("through", bug="npcthrough")
+        self.assertEqual(res, "NO-REF", why)
+        self.assertRegex(why, r"npc Npc_Hylia_Soldier_003: .* A went past")
+        self.assertRegex(why, r"copy P2: .* A went past")
+
+    def test_probe_no_body_line_is_setup_fail(self):
+        res, why = self.run_probe("noline", bug="noline")
+        self.assertEqual(res, "SETUP-FAIL", why)
+        self.assertIn("has no body line", why)
+
 def _load_maker():
     import importlib.util
     spec = importlib.util.spec_from_file_location("native_pack", os.path.join(INGAME, "packs", "native.py"))

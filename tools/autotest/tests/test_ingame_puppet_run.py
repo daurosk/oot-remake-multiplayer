@@ -1,6 +1,6 @@
 """Row 307's selftest (ingame/test_puppet_run.py + ingame/fakes/puppet_run.py), run by test_ingame.py's load_tests:
-NO-REF on the fake (the probe run ends NO-REF, look shots have no references), FAIL when B's probe gives no line or A
-never makes Malon's puppet, deselected without the probe switch."""
+NO-REF on the fake (look shots have no references), FAIL when B's probe gives no line, A never makes Malon's puppet
+or A's Malon puppet holds 0 while B runs (before the fix), deselected without the probe switch."""
 import os
 import shutil
 import sys
@@ -52,6 +52,13 @@ class PuppetRun(unittest.TestCase):
         self.assertEqual(len(r), 1, (p.stdout, s))
         self.assertEqual(r[0][0], "FAIL", r)
         self.assertIn("made again as malon", r[0][1])
+
+    def test_puppet_not_following_fails(self):
+        p, s = self.run_fake("novars", bug="novars")
+        r = self.result(s)
+        self.assertEqual(len(r), 1, (p.stdout, s))
+        self.assertEqual(r[0][0], "FAIL", r)
+        self.assertIn("does not follow", r[0][1])
 
     def test_deselected_without_switch(self):
         p, s = self.run_fake("noenv", env=[])

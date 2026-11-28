@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop/host/as_vars.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_as_vars.h"
 #include "coop_native_player.h"
@@ -703,6 +704,7 @@ private:
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
         CoopAsVars::Writer as_vars;         // row 307: the player's AS variables on a character's AS
+        coop::host::AsVarsMemo as_vars_memo;  // the probe's 'vars' line: its AS's handles (reads only)
         // Character Select: what the colour routine was last given for this actor (Target::custom), when,
         // and what the call under way gives it.
         std::optional<std::uint64_t> dressed;
@@ -797,6 +799,12 @@ private:
     bool pose_copy_ = false;
     bool as_vars_probe_on_ = false;
     CoopAsVars::Probe as_vars_probe_;
+    // The probe's 'vars' line (AsVarsProbeFrame): our Link's handles, its pace and count.
+    static constexpr std::uint64_t kVarsEveryMs = 250;
+    static constexpr int kVarsMaxLines = 4000;
+    coop::host::AsVarsMemo as_vars_memo_ours_;
+    std::uint64_t as_vars_ms_ = 0;
+    int as_vars_lines_ = 0;
     std::uint64_t character_apply_ = 0;
     std::map<std::string, std::string, std::less<>> sound_lists_;
     std::array<std::uint8_t, 16> character_apply_head_{};

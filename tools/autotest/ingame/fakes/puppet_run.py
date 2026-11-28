@@ -5,9 +5,12 @@ test's needs_env), so no other row sees them. Lines are the module's (test_puppe
   {"3": ["Child", "Adult"]} (merged into what another fake wrote there).
 - B's CharacterMenu_SelectedCharacter set to 5: 60 frames later A logs 'P2 CoopPuppet_Child_C003 spawned after ...';
   set to 0: 'P2 CoopPuppet_Child_Green spawned after ...'.
-- Each bridge `move` of B: B logs an as-vars probe report line, A a pose-copy line and its puppet line.
+- Each bridge `move` of B: B logs an as-vars probe report line, A a pose-copy line and its puppet line, and both the
+  probe's 'vars' line (coop_puppet.cpp AsVarsProbeFrame): B's own values from the move's strength, A's puppet of B the
+  same values (the fix's Writer), and on Malon's spawn A's 'AS variable ... handle' lines (CoopAsVars::Writer::Finish).
 Selftest switch BT_FAKE_PUPPET_RUN_BUG (tests/test_ingame_puppet_run.py): noprobe -> B logs no probe line (FAIL);
-nospawn -> A never makes Malon's puppet (FAIL: the body's until()).
+nospawn -> A never makes Malon's puppet (FAIL: the body's until()); novars -> A's character puppet holds 0 (before
+the fix: FAIL).
 """
 import json
 import os
@@ -18,6 +21,8 @@ PACK = os.path.join("mods", "contents", "0400486024DEC000", "coop-puppet")   # t
 SPAWN = "coop: puppet: P2 %s spawned after 1.0 s"
 PROBE_B = "coop: puppet: as-vars probe: 40 reads, our speed now 4.10 (0.00 to 5.20), 3 words with |r| >= 0.6"
 PROBE_A = "coop: puppet: as-vars probe: P2 %s: ctl+0x58>:+0x24 0.000"
+VARS = "coop: puppet: as-vars probe: vars | %s L=%.3f V=%.3f S=%.3f bits=%d"
+HANDLE_A = "coop: puppet: P2: AS variable '%s' handle %d"
 POSE_A = "coop: pose: Player_Child 120 bones, 60 moving; 30 sent/s, 30 received/s, %d written/s, %d refused/s"
 
 
@@ -51,6 +56,9 @@ def setup(game):
 def _spawn(a, actor):
     a.pr_actor = actor
     a.say(SPAWN % actor)
+    if actor.endswith("C003"):
+        for i, name in enumerate(("LeftStickLength", "LinearVelXZ", "XZSpeed", "IsLeftStickInput", "IsDash")):
+            a.say(HANDLE_A % (name, 58 + i))
 
 
 def after(game, m, r):
@@ -65,5 +73,10 @@ def after(game, m, r):
         if _bug() != "noprobe":
             game.say(PROBE_B)
         char = a.pr_actor.endswith("C003")
+        k = float(m.get("strength") or 0.0)
+        vals = (k, 5.2 * k, 5.2 * k, (1 if k > 0 else 0) | (2 if k >= 1.0 else 0))
+        game.say(VARS % (("ours",) + vals))
+        held = (0.0, 0.0, 0.0, 0) if (char and _bug() == "novars") else vals
+        a.say(VARS % ("ours", 0.0, 0.0, 0.0, 0) + " | P2 %s L=%.3f V=%.3f S=%.3f bits=%d" % ((a.pr_actor,) + held))
         a.say(POSE_A % (0 if char else 60, 0 if char else 0))
         a.say(PROBE_A % a.pr_actor)

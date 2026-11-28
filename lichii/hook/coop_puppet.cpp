@@ -23,6 +23,7 @@
 #include <memory>
 #include <string_view>
 
+#include "coop/host/as_vars.hpp"
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
@@ -346,6 +347,42 @@ void Director::AsVarsProbeFrame(Guest& guest, std::uint64_t now_ms) {
          as_vars_probe_.Look(read, Controller(guest, player), place, now_ms, puppets)) {
         Say("as-vars probe: " + line);
     }
+    // Row 307's values as the game's own lookups give them (coop/host/as_vars.hpp, reads only), every
+    // kVarsEveryMs: our Link's, then each live puppet's: `as-vars probe: vars <who> L=.. V=.. S=.. bits=..`.
+    if (as_vars_lines_ >= kVarsMaxLines || (as_vars_ms_ != 0 && now_ms - as_vars_ms_ < kVarsEveryMs)) {
+        return;
+    }
+    as_vars_ms_ = now_ms;
+    struct GuestMemory final : coop::host::GameMemory {
+        Guest& g;
+        std::uint64_t base;
+        GuestMemory(Guest& guest_in, std::uint64_t base_in) : g(guest_in), base(base_in) {}
+        std::uint64_t main_base() const override { return base; }
+        bool read(std::uint64_t address, std::span<std::uint8_t> out) override {
+            return g.Read(address, out.data(), out.size());
+        }
+    } memory(guest, input_.main_base);
+    std::string line = "as-vars probe: vars";
+    const auto add = [&](const std::string& who, std::uint64_t actor, coop::host::AsVarsMemo& memo) {
+        const std::uint64_t as = CoopAsVars::Writer::AsOf(read, actor);
+        const auto v = coop::host::read_as_vars(memory, as, memo);
+        char buf[160];
+        if (v) {
+            std::snprintf(buf, sizeof buf, " | %s L=%.3f V=%.3f S=%.3f bits=%u", who.c_str(), v->left_stick_length,
+                          v->linear_vel_xz, v->xz_speed, static_cast<unsigned>(v->bits));
+        } else {
+            std::snprintf(buf, sizeof buf, " | %s none", who.c_str());
+        }
+        line += buf;
+    };
+    add("ours", player, as_vars_memo_ours_);
+    for (auto& slot : slots_) {
+        if (slot.phase == Phase::live && slot.actor != 0) {
+            add("P" + std::to_string(slot.number) + " " + slot.actor_name, slot.actor, slot.as_vars_memo);
+        }
+    }
+    ++as_vars_lines_;
+    Say(line);
 }
 
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {

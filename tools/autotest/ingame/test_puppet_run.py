@@ -12,7 +12,14 @@ Read from the code and the game's AS file (not yet run; coop_as_vars.h): a chara
 rate; 'Move' blends walk and run by AS variables (LeftStickLength, LinearVelXZ, XZSpeed, IsDash in AS/Player_Child.
 root.asb's variable table) that the player's own code writes each frame and nothing writes on a puppet.
 
-This test is the probe run first (LICHII_COOP_AS_VARS_PROBE=1: where those values are in the AS controller, and what
+The fix (coop_as_vars.h Writer, coop/host/as_vars.hpp): the sender's values ride in PLAYER_SAMPLE component 8 and
+are written into a character puppet's AS by the game's own setters. Judged by state: the probe's 'vars' line
+(coop_puppet.cpp AsVarsProbeFrame: our Link's and each live puppet's values as the game's own lookups give them) on
+B (ours) and on A (its puppet of B) while B runs as Malon: A's puppet's XZSpeed follows B's (>= VARS_FOLLOW of B's
+highest) and its IsDash bit is set while B's is. Link's puppets take the pose copy (no writes): their phases note
+the values only.
+
+It was the probe run first (LICHII_COOP_AS_VARS_PROBE=1: where those values are in the AS controller, and what
 each puppet holds there) plus LICHII_COOP_DEBUG_POSE=1 (A's pose copy: 'written/s' and 'refused/s' a second, coop_pose.
 cpp OnCalcFrame), for the Link puppet before and after the swap. It ends NO-REF (pair.unproven) with every line it read
 in its notes: nothing is judged yet. The fix's run judges A's puppet of B by the same phases.
@@ -48,6 +55,24 @@ CHUNK = 30                                       # frames per bridge move call (
 PROBE = "as-vars probe: "                        # coop_puppet.cpp AsVarsProbeFrame (Director::Say)
 POSE = r"coop: pose: .* written/s, .* refused/s"  # coop_pose.cpp OnCalcFrame debug line
 TOL = 0.80                                       # animated puppet (test_levitate.TOL)
+VARS = re.compile(r"\| (ours|P\d+ (CoopPuppet_\w+)) L=(-?[\d.]+) V=(-?[\d.]+) S=(-?[\d.]+) bits=(\d+)")  # AsVarsProbeFrame
+HANDLE = re.compile(r"coop: puppet: P\d+: AS variable '(\w+)' handle (-?\d+)")   # CoopAsVars::Writer::Finish
+RAN = 1.0            # m/s: B's own XZSpeed above this shows its run landed (ESTIMATED; the first real run cites it)
+VARS_FOLLOW = 0.75   # A's puppet's highest XZSpeed against B's own (ESTIMATED; the values arrive 100+ ms late)
+DASH = 2             # coop.protocol kAsVarDash (messages.hpp)
+
+
+def vars_of(lines, who):
+    """(L, V, S, bits) per 'vars' line, for 'ours' or the puppet whose actor matches `who` (a regex)."""
+    out = []
+    for ln in lines:
+        if "as-vars probe: vars" not in ln:
+            continue
+        for m in VARS.finditer(ln):
+            mine = m.group(1) == "ours" if who == "ours" else bool(m.group(2) and re.fullmatch(who, m.group(2)))
+            if mine:
+                out.append((float(m.group(3)), float(m.group(4)), float(m.group(5)), int(m.group(6))))
+    return out
 
 
 def pack_has_malon(pair):
@@ -149,11 +174,29 @@ def test_puppet_run_swap(pair):
                 pair.act("A", "face %.2f %.2f" % (b[0], b[2]))
             moves(pair, tag)
             phases.append((tag,) + collect(pair, tag, a_at, b_at))
+            if not phases[-1][1]:
+                continue   # no probe line: the check after the loop names it
+            b_vars = vars_of(pair.log["B"].since(b_at), "ours")
+            b_top = max([v[2] for v in b_vars] or [0.0])
+            pair.notes.append("%s: B vars: %d lines, highest S %.2f" % (tag, len(b_vars), b_top))
+            assert b_top > RAN, "%s: B's own XZSpeed never above %.1f (%d vars lines): B did not run" % (
+                tag, RAN, len(b_vars))
+            if tag == "malon":
+                handles = {m.group(1): int(m.group(2)) for m in map(HANDLE.search, pair.log["A"].since(a_at)) if m}
+                pair.notes.append("malon: A's handles for B's puppet: %s" % handles)
+                assert handles.get("XZSpeed", -1) >= 0, (
+                    "malon: A found no XZSpeed handle in B's character puppet's AS (%s)" % handles)
+                a_vars = vars_of(pair.log["A"].since(a_at), want)
+                a_top = max([v[2] for v in a_vars] or [0.0])
+                pair.notes.append("malon: A's puppet of B: %d vars lines, highest S %.2f (B %.2f)" % (
+                    len(a_vars), a_top, b_top))
+                assert a_top >= VARS_FOLLOW * b_top, (
+                    "malon: A's puppet of B does not follow B's run: its XZSpeed at most %.2f, B's %.2f" % (a_top, b_top))
+                if any(v[3] & DASH for v in b_vars):
+                    assert any(v[3] & DASH for v in a_vars), "malon: B dashed but A's puppet of B never had IsDash"
         for tag, b_probe, _ in phases:
             assert b_probe, "%s: B's log has no '%s' line (the probe did not run: switch missing?)" % (tag, PROBE)
         done = True
-        pair.unproven("probe run: where the AS variables are and what A's puppet of B holds there are in the notes; "
-                      "judged by the fix's run")
     finally:
         try:
             if was is not None:

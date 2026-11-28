@@ -61,6 +61,8 @@ import bt_plugin   # noqa: E402  (boot_env / env_has: which switches this boot h
 import pair as P   # noqa: E402
 sys.path.insert(0, os.path.dirname(HERE))
 import hookshot    # noqa: E402  (BOTTLE_ITEMS: the ONE nofairy list, the scripts' own)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "puppet_pack"))
+from boss_beaten import murmur3   # noqa: E402  (the game's flag hash: flag_read answers an enum as '0x%08x' of it)
 
 STAGES = ["VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage"]   # coop_start_points.inc, the old pass list
 # boss-respawn-289-6 (brief: "check every boss room with a same-scene respawn for the same cause"): the other main boss
@@ -250,7 +252,9 @@ def boss_room_fight(pair):
             for name, value in FIGHT_FLAGS:
                 pair.flag(x, name, value)     # (a refused name raises; a bridge error is this phase's SETUP-FAIL)
                 got = pair.flag_read(x, name).get("value")    # (read back: an unknown name reads no value)
-                if str(got).lower() != str(value).lower() and not (value == 0 and got is False):
+                # (an enum reads as the hash text of its value's name, coop_playtest_core.cpp:637-638; review-tests-153-6)
+                want = "0x%08x" % murmur3(value) if isinstance(value, str) else value
+                if str(got).lower() != str(want).lower() and not (value == 0 and got is False):
                     raise P.SetupFail("%s: flag %s reads %r after writing %r (unknown name or not kept)"
                                       % (x, name, got, value))
         phase = "adult"

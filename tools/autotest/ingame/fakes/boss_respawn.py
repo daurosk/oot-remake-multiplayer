@@ -22,6 +22,7 @@ After the respawn's load B stands at the stage's start (coop_start_points.inc, r
 """
 import os
 import re
+import sys
 
 FIRE = "FireTemple"                          # test_boss_respawn.FIGHT_ROOM (kRooms row 4)
 ARRIVAL, ASK = 900, 400          # (arrival: run 20261125-114351 B 48 s; shorter here, inside IN_PLAY_FRAMES)
@@ -55,6 +56,9 @@ def setup(game):
     game.br_black = False                      # (life: fakegame's link_life, 16/16 = the lane save, run 20261125-114351)
 
 
+DEFEAT_BOSS = "0xeea87aec"                   # test_boss_respawn.FIGHT_FLAGS' enum (SageOfFire quest step)
+
+
 def command(game, m):
     if m.get("cmd") == "warp" and m.get("scene") in STAGES and broken() == "no-arrival":
         game.run(40)
@@ -64,6 +68,12 @@ def command(game, m):
 
 def after(game, m, r):
     cmd = m.get("cmd")
+    if cmd == "flag_read" and m.get("name") == DEFEAT_BOSS:   # (an enum reads as its value's hash, as the bridge)
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "puppet_pack"))
+        from boss_beaten import murmur3
+        v = game.flags.get(DEFEAT_BOSS)
+        r.update(kind="enum", value=("0x%08x" % murmur3(v)) if isinstance(v, str) and not v.startswith("0x")
+                 else (v or "0x00000000"))
     if cmd == "warp" and m.get("scene") == "VolvagiaStage" and game.env_on("LICHII_COOP_DEBUG_OBJECTS=1") \
             and broken() != "rocks-" + game.tag:
         game.later(ARRIVAL + 300, lambda: game.say("coop: objects: rocks: 2 new falling rocks in our game since the last line "

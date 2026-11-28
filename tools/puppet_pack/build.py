@@ -2518,6 +2518,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                     log(f"characters: the Player_{v} puppets take {characters['mod']}'s {path} (retargeted clips)")
         return mod_anims[v]
 
+    any_body = False
     for v, color, quiet, own_skin, char, pvp_copy in jobs:
         player = f"Player_{v}"
         # A skin job, or (--test-skin) any puppet of an age the tested skin changes.
@@ -2556,11 +2557,23 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         if char is not None and cloth:
             cloth_path = character_cloth(v, char, lambda rel: os.path.isfile(
                 os.path.join(characters["dir"], "romfs", *rel.split("/"))))
+        # Row 317: the kit asks for body="auto" (`--puppet-body=auto`): a puppet whose body cannot be made (the
+        # player's files lack a piece puppet_body needs) is built without a body AND without lifting (the lift grabs
+        # the body), a note, never a failed pack; `--puppet-body` alone stays strict.
+        has_body = bool(body)
+        if body == "auto" and not pvp_copy:
+            try:
+                puppet_body(members, flatten_actor_param(members, player), actor, cloth_path=cloth_path)
+            except BuildError as e:
+                log(f"note: --puppet-body auto: {actor}: {e}: this puppet has no body and is not liftable")
+                has_body = False
+        any_body = any_body or has_body or pvp_copy
+        puppet_lift = lift_param if (has_body or body != "auto") else None
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
                                            basic_xlink=basic_xlink, perception=None if quiet else seen_by,
-                                           as_ref=wears[1][v] if wears else None, body=body,
-                                           liftable=lift_param, carry=carry_data is not None,
-                                           lift_prompt=lift_grab if not pvp_copy else None,
+                                           as_ref=wears[1][v] if wears else None, body=has_body,
+                                           liftable=puppet_lift, carry=carry_data is not None and puppet_lift is not None,
+                                           lift_prompt=lift_grab if not pvp_copy and puppet_lift is not None else None,
                                            pvp=clients if pvp_copy else None, cloth=cloth, cloth_path=cloth_path, effects=effects)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
@@ -2620,16 +2633,18 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             table.add_new(path, em_size)
             emitter = {"param": path, "size": em_size}
         body_files = None
-        if body or pvp_copy:
+        if has_body or pvp_copy:
             body_files = {}
+            # (with the character's own cloth, as add_body writes it: a Character Select puppet's ControllerSet entry
+            # is sized from the file the pack holds, never from Link's)
             for path, (data, src) in puppet_body(members, flatten_actor_param(members, player), actor,
-                                                 sensors=pvp_copy).items():
+                                                 sensors=pvp_copy, cloth_path=cloth_path).items():
                 # Sized as the player's file it is cut from and every `$parent` merged into it (chain_entry).
                 size = chain_entry(table, chain_paths(members, src), data)
                 table.add_new(path, size)
                 body_files[path] = size
         cloth_files = None
-        if cloth and not (body or pvp_copy):
+        if cloth and not (has_body or pvp_copy):
             cloth_files = {}
             base = None if quiet or not seen_by else seen_by
             for path, (data, src) in puppet_cloth(members, flatten_actor_param(members, player), actor, base,
@@ -2640,7 +2655,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 table.add_new(path, size)
                 cloth_files[path] = size
         lift_file = None
-        if lift_param and v in LIFTABLE_VARIANTS:
+        if puppet_lift and v in LIFTABLE_VARIANTS:
             path = liftable_path(actor, lift_param[0])
             # Sized as Ruto's file it is cut from and every `$parent` merged into it (chain_entry).
             size = chain_entry(table, lift_chain, byml.dumps(lift_param[1]))
@@ -2902,7 +2917,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "effects": effects,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "perception": bool(seen_by),
-        "body": bool(body),
+        "body": bool(any_body),
         "cloth": bool(cloth),
         "quiet_scenes": quiet_scenes,
         "guards": guards,
@@ -2982,9 +2997,12 @@ def main(argv=None):
     ap.add_argument("--no-cloth", action="store_true",
                     help="puppets without a cloth Physics of their own (the pack before row 313: the cap, hair and "
                          "hood of another player's Link hang as posed)")
-    ap.add_argument("--puppet-body", action="store_true",
-                    help="native puppets phase 1 test (docs/native-puppets.md): every puppet gets a body of its own "
-                         "(Link's shapes and character controller, no sensors), off by default")
+    ap.add_argument("--puppet-body", nargs="?", const=True, default=False, choices=[True, "auto"],
+                    type=lambda v: "auto" if v == "auto" else v,
+                    help="native puppets phase 1 (docs/native-puppets.md): every puppet gets a body of its own "
+                         "(Link's shapes and character controller, no sensors). '--puppet-body=auto' (the kit's pack, "
+                         "row 317): a puppet whose body cannot be made gets none and is not liftable (a note), never a "
+                         "failed pack; off by default")
     ap.add_argument("--puppet-liftable", nargs="?", const=True, default=False, choices=[True, "auto"],
                     type=lambda v: "auto" if v == "auto" else v,
                     help="native puppets phase 3 (docs/native-puppets.md): every young (child) puppet gets Ruto's "

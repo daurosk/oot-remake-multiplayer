@@ -107,7 +107,7 @@ class PuppetCloth(unittest.TestCase):
         nc = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(nc)
         tools = os.path.dirname(os.path.dirname(here))
-        self.assertEqual(nc.kit_flags(tools), ["--title-rows", "--pause-tab", "--puppet-body", "--puppet-liftable=auto"])
+        self.assertEqual(nc.kit_flags(tools), ["--title-rows", "--pause-tab", "--puppet-body=auto", "--puppet-liftable=auto"])
         fake = os.path.join(self.tmp, "tools")
         os.makedirs(os.path.dirname(os.path.join(fake, nc.KIT_PATHS)))
         with open(os.path.join(fake, nc.KIT_PATHS), "w", encoding="utf-8") as f:

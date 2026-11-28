@@ -3393,11 +3393,11 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
 # archives), larger than the game's, with their sizes in the pack's size table; merge_tables.py (every start) takes
 # them out of play when the size table the game reads cannot hold them (another mod's table wins), as that crashed the
 # game at boot in 0.11.5's test (the old pack left in mods\contents as coop-puppet.old-b26; its table won).
-# --puppet-body --puppet-liftable=auto (row 317, 0.12.1): lifting a young player as Ruto, on by default; the lift needs
-# the copy's body (docs/native-puppets.md phase 3), and 'auto' makes the pack without lifting (a note), never a failed
-# pack, when the game file lacks Ruto's pieces. Linux: build.sh's pack line has the same flags.
+# --puppet-body=auto --puppet-liftable=auto (row 317, 0.12.1): lifting a young player as Ruto, on by default; the lift needs
+# the copy's body (docs/native-puppets.md phase 3); each 'auto' makes the pack without that piece (a note; no body: no lift), never a failed
+# pack (no Ruto pieces in the game file, or a player file a body needs). Linux: build.sh's pack line has the same flags.
 function Get-KitPackArgs([string]$Tool, [string]$From, [string]$Mod) {
-    return @('-I', '-B', $Tool, '--romfs', $From, '--mod-dir', $Mod, '--title-rows', '--pause-tab', '--puppet-body', '--puppet-liftable=auto')
+    return @('-I', '-B', $Tool, '--romfs', $From, '--mod-dir', $Mod, '--title-rows', '--pause-tab', '--puppet-body=auto', '--puppet-liftable=auto')
 }
 
 # Row 235: the no-Python start. The puppet pack's menu files (coop_puppet.json "title_menu" and "pause_menu": larger copies

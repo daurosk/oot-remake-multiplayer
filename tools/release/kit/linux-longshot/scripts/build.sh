@@ -1445,7 +1445,7 @@ elif [[ -n $pack_from && -e $pack_from ]]; then
             say "  numpy could not be installed in Longshot's builder Python: Character Select's characters stay silent"
     fi
     [[ -n ${OOT_COOP_PACK_FRESH-} ]] || pack_save   # (kept: switching Character Select back puts it back in seconds)
-    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows --pause-tab --puppet-body --puppet-liftable=auto 2>&1 | sed 's/^/    /'; then
+    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows --pause-tab --puppet-body=auto --puppet-liftable=auto 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
         rm -f "$pack_asked"
     else

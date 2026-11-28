@@ -2501,6 +2501,20 @@ class FullBuildTest(unittest.TestCase):
         self.assertFalse(d["body"])
         self.assertFalse([a for a in d["actors"] if a["body"]])
 
+    def test_build_body_auto(self):
+        # Row 317: the kit asks for body="auto" (--puppet-body=auto): a player file without the body's pieces (this
+        # romfs: no PhysicsRef) makes the pack with no body and no lift on that puppet (a note), never a failed pack;
+        # --puppet-body alone stays strict.
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_body_auto"), log=said.append, look_slots=0, body="auto")
+        self.assertFalse(m["body"])
+        self.assertFalse([a for a in m["actors"] if a["body"]])
+        self.assertNotIn("liftable", m)
+        self.assertTrue(any("--puppet-body auto" in s and "no body and is not liftable" in s for s in said), said)
+        with self.assertRaises(build.BuildError):
+            build.build(self.romfs, os.path.join(self.dir, "mod_body_strict"), log=lambda *_: None, look_slots=0,
+                        body=True)
+
     def test_build_pvp(self):
         # --puppet-pvp: every puppet (and its quiet copy) has a _Pvp twin, each of its files in the size table.
         zsdic = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(self.dicts_raw))
@@ -3322,6 +3336,37 @@ class FullBuildTest(unittest.TestCase):
             self.assertEqual(sorted(own), sorted(build.CLOTH_KEYS))
             self.assertEqual(own["ClothList"], [{"Name": "Default", "Path": path or "Work/Phive/Cloth/Player_Child.phcl"}])
             self.assertIn("Phive/ClothReaction/Linl_Hat.phive__ClothReaction.bgyml", files)   # what the cloth names
+        # Row 317 (review-rows-c130-13): with --puppet-body the character's own cloth goes into the body's ControllerSet
+        # (add_body), so its size-table entry is sized from that file (puppet_body with cloth_path), never Link's.
+        zsdic = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(self.dicts_raw))
+        zc = zstandard.ZstdCompressor(dict_data=zstandard.ZstdCompressionDict(zsdic["pack.zsdic"]))
+        for v in ("Child", "Adult"):
+            self.write(f"Pack/Actor/Player_{v}.pack.zs", zc.compress(sarc.write(with_body(fake_player_pack(v)))))
+        bmod = os.path.join(mods, "pack_body")
+        seen = []
+        real = build.puppet_body
+
+        def spy(members, comps, actor, sensors=False, cloth_path=None):
+            seen.append((actor, cloth_path))
+            return real(members, comps, actor, sensors, cloth_path)
+        with mock.patch.object(build, "puppet_body", spy):
+            bm = build.build(self.romfs, bmod, log=lambda *_: None, look_slots=0, body=True,
+                             characters=build.find_characters(bmod, log=lambda *_: None))
+        # Every body made or sized for the character names its own cloth (the sizing call too, not only add_body).
+        c005 = [c for a, c in seen if a == "CoopPuppet_Adult_C005"]
+        self.assertTrue(c005)
+        self.assertEqual(set(c005), {"Work/Phive/Cloth/Player_Adult_CAF.phcl"})
+        brs = [n for n in os.listdir(os.path.join(bmod, "romfs", "System", "Resource")) if n.endswith(".rsizetable.zs")]
+        btable = rstb.Rstb.loads(d.decompress(build.read(os.path.join(bmod, "romfs", "System", "Resource", brs[0]))))
+        bmade = {a["actor"]: a for a in bm["actors"]}["CoopPuppet_Adult_C005"]
+        bfiles = sarc.read(d.decompress(build.read(os.path.join(bmod, "romfs", bmade["pack"]))))
+        cset = [f for f in bmade["body"] if "ControllerSetParam" in f]
+        self.assertTrue(cset, bmade["body"])
+        for f in cset:
+            self.assertEqual(byml.loads(bfiles[f])["ClothList"],
+                             [{"Name": "Default", "Path": "Work/Phive/Cloth/Player_Adult_CAF.phcl"}])
+            self.assertGreaterEqual(btable.get(f), len(bfiles[f]))
+            self.assertEqual(btable.get(f), bmade["body"][f])
         # --no-cloth: the pack before row 313 (no Physics of its own, nothing in the manifest).
         m = build.build(self.romfs, os.path.join(mods, "pack2"), log=lambda *_: None, look_slots=0, cloth=False)
         self.assertFalse(m["cloth"])

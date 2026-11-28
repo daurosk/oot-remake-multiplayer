@@ -1743,7 +1743,8 @@ static void FollowStep() {
         CoopLanNet::Announce(*announce, now);
     }
     // (a test's trigger, LICHII_COOP_TEST_TO_TITLE=1 only: a file "to-title.now" in the game's folder starts the way
-    // back to the title a join with a file loaded takes, with no host to join)
+    // back to the title a join with a file loaded takes, with no host to join; the file's text "stay" leaves the game on
+    // the title: no LoadHostSaveOnTitle auto-Continue, for a test that drives the title's own menu)
     static const bool test_to_title = [] {
         const char* v = std::getenv("LICHII_COOP_TEST_TO_TITLE");
         const bool on = v != nullptr && v[0] == '1';
@@ -1752,11 +1753,25 @@ static void FollowStep() {
         return on;
     }();
     if (test_to_title) {
+        const std::filesystem::path ask = CoopRuntime::GameDir() / "to-title.now";
         std::error_code ec;
-        if (std::filesystem::remove(CoopRuntime::GameDir() / "to-title.now", ec)) {
-            LOG_INFO(Core, "coop: multiplayer tab: test: back to the title asked (to-title.now)");
-            CoopPauseTab::ToTitle();
-            CoopTitle::LoadHostSaveOnTitle(true);
+        if (std::filesystem::exists(ask, ec)) {
+            std::string text;
+            if (std::FILE* f = std::fopen(ask.string().c_str(), "rb")) {
+                char buf[16] = {};
+                text.assign(buf, std::fread(buf, 1, sizeof(buf) - 1, f));
+                std::fclose(f);
+            }
+            const bool stay = text.rfind("stay", 0) == 0;
+            if (std::filesystem::remove(ask, ec)) {
+                LOG_INFO(Core, "coop: multiplayer tab: test: back to the title asked (to-title.now)");
+                CoopPauseTab::ToTitle();
+                if (stay) {
+                    LOG_INFO(Core, "coop: multiplayer tab: test: to-title.now 'stay': no Continue on the title");
+                } else {
+                    CoopTitle::LoadHostSaveOnTitle(true);
+                }
+            }
         }
     }
 }

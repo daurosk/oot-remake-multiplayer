@@ -144,8 +144,7 @@ def to_title(pair):
         assert pair.log[x].find(TO_TITLE_ON, pos=0), "%s: LICHII_COOP_TEST_TO_TITLE is not on" % x
     asked = {x: pair.log[x].mark() for x in games(pair)}
     for x in games(pair):
-        with open(os.path.join(pair.games[x]["folder"], "to-title.now"), "w") as f:
-            f.write("bt\n")
+        pair.trigger(x, "to-title.now")
     for x in games(pair):
         pair.expect_log(x, TO_TITLE_ASKED, max_frames=300)
 

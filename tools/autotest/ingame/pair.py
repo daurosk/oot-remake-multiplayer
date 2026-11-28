@@ -1142,6 +1142,17 @@ class Pair:
     def act(self, x, line):
         return self.call(x, "act", lines=line)
 
+    def trigger(self, x, name, text="bt\n"):
+        """A module test trigger file (e.g. to-title.now, hookshot/src/coop_pause.cpp) in game x's folder, written whole:
+        a temp file then os.replace, so the module's per-frame check never sees it empty or half written. ONE writer
+        for every trigger file."""
+        path = os.path.join(self.games[x]["folder"], name)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+        return path
+
     def give(self, x, item):
         return self._kept(x, "give", item=item)
 

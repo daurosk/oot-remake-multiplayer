@@ -106,8 +106,7 @@ def test_party_hud_title_and_load_again(pair):
     no_crash(pair)
     asked = {x: pair.log[x].mark() for x in GAMES}
     for x in GAMES:
-        with open(os.path.join(pair.games[x]["folder"], "to-title.now"), "w") as f:
-            f.write("bt\n")
+        pair.trigger(x, "to-title.now")
     for x in GAMES:
         pair.expect_log(x, TO_TITLE_ASKED, max_frames=300)
 

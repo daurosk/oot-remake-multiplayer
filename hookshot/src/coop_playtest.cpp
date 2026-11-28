@@ -40,6 +40,7 @@
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
 #include "coop_pause_world.h"
+#include "coop_navi_probe.h"
 #include "coop_playtest_core.h"
 #include "coop_talk_text.h"
 #include "coop_teleport_game.h"
@@ -410,6 +411,7 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     }
     out += ",\"banner\":" + CoopNativeUi::StatsJson(CoopNativeUi::Stats());   // (typing-blink-0121: our banner's opens)
     out += ",\"pause_world\":" + CoopPauseWorld::StateJson();   // (row 299: the PauseMgr's holds, reads only)
+    out += ",\"navi\":" + CoopNaviProbe::StateJson();   // (row 316 probes: our Npc_Navi + the fairies, reads only)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
     {   // hud-stepped-0121: the last party HUD and name-tag steps a second or more after the one before (coop_hookshot.h)
         const auto slow = [](const CoopHookshot::SlowStep& x) {

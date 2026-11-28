@@ -278,6 +278,15 @@ banner), `holds` (`shut`, `ours` or `game`), `page` (a page of ours is up) and `
 change also logs `coop: native ui: banner: <from> -> <to> (state S, request R, ...)`. Test:
 `tools/autotest/ingame/test_typing_blink.py`.
 
+**`navi`** (the bridge adds it to `state`; row 316 probes, reads only): `null` until the fairy cave caller first read
+after a `state` asked (lichii/hook/coop_navi_probe.h; it reads nothing before, so a game without the bridge never
+does; it needs the fairies on, i.e. the puppets). Then, at most every 100 ms: `ms`, `frames` (reads made), `navi` (our
+own `Npc_Navi`, `null` while not found; kept while the actor still has her name, present or not) and `fairies` (each
+live co-op fairy). Each actor: `actor`, `number` (a fairy's player, 0 ours), `read`, `state` (+0x2c) and `present`
+(state 4), `pos` (+0x31c), `rot` (+0x328, 9 floats, rows of 3), `slot_count` (the AS controller's, -1 none read) and
+`slots` (every AS slot in slot order, up to 16: `name` the slot's command, `""` empty, and `frame`). Test:
+`tools/autotest/ingame/test_probe_navi_316.py`.
+
 **`map_native`** (the bridge adds it to `state`; `null` until the module first published it): the
 other players on the game's own map icons (hookshot/src/coop_map_icons.h `State`, #255 item 8). `up` (the pack's
 copies of `Pa_MapIcon_00` found), `why` (what is missing when not), `table` (the map layout's pane table found),

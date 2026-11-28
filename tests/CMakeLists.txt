@@ -59,6 +59,7 @@ add_executable(coop_tests
   lichii/callers_test.cpp
   lichii/hit_replay_test.cpp
   lichii/fairy_test.cpp
+  lichii/navi_probe_test.cpp
   lichii/map_refresh_test.cpp
   lichii/life_gauge_test.cpp
   lichii/rooms_test.cpp
@@ -165,6 +166,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_local_net.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_navi_probe.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_map_refresh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp

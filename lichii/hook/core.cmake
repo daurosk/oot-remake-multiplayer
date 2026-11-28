@@ -63,6 +63,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_shared_scenes.cpp"
     "${_coop_hook}/coop_scrubs.cpp"
     "${_coop_hook}/coop_fairy.cpp"
+    "${_coop_hook}/coop_navi_probe.cpp"
     "${_coop_hook}/coop_map_refresh.cpp"
     "${_coop_hook}/coop_rooms.cpp"
     "${_coop_hook}/coop_maps.cpp"

@@ -13,6 +13,7 @@ BT_FAKE_BROKEN values:
   BT_FAKE_BROKEN=no-arrival          (selftest) a warp to a boss stage never arrives (the bridge's 'timeout' answer)
   BT_FAKE_BROKEN=wipe                (selftest) A is downed in the fight too and B never respawns (a party wipe)
   BT_FAKE_INTRO=<frames>             (selftest) a warp to a boss room (BOSS_ROOMS) starts an intro event of that length
+  BT_FAKE_BROKEN=no-shot             (selftest) every bridge shot in a boss stage is refused (arrival_miss keeps its reason)
 """
 import os
 
@@ -34,6 +35,8 @@ def command(game, m):
     if m.get("cmd") == "warp" and m.get("scene") in STAGES and broken() == "no-arrival":
         game.run(40)
         return {"ok": False, "error": "timeout", "message": "fake: Link never arrived in %s" % m["scene"]}
+    if m.get("cmd") == "shot" and broken() == "no-shot" and game.scene in STAGES:
+        return {"ok": False, "error": "fake: no shot"}
     return None
 
 

@@ -3,14 +3,14 @@
 volvagia-rocks-182cd53b-3 (lane 2, 09:11 UTC 2026-11-28) SETUP-FAIL on both rounds: boss_arrival 'both in play' not
 after 2400 frames. What its game logs show (game-out-A.txt of run-182cd53b-3/lane2/session; B the same):
 - the arrival itself ends ('the arrival at VolvagiaStage of VolvagiaStage is over: its starter was emptied 2 time(s)',
-  after an 'event ended after 1.5 s'), then a SECOND event begins, 'our Link's event began: ... kind 0 (2 in the
-  session); names seen: none' (:7070; '2 in the session' is the game's own running-event count, coop_objects.cpp
+  after an 'event ended after 1.5 s', game-out-A.txt:7065), then a SECOND event begins, 'our Link's event began: ... kind 0 (2 in the
+  session); names seen: none' (game-out-A.txt:7070, game-out-B.txt:6637; '2 in the session' is the game's own running-event count, coop_objects.cpp
   EventLog / CoopEventMember::ReadRunning), with Npc_Navi, EventCamera, UISystemActor, EventRequestActor as members
   and DungeonBossVolvagia_Appear_Sign actors made right after it;
-- it is 'still in its event after 30 ... 333 s' and ends only at 363.1 s (:9791), about when the test gave up and
-  warped back;
+- it is 'still in its event after 30 ... 333 s' (game-out-A.txt:9388, game-out-B.txt:9039) and ends only at 363.1 s
+  (game-out-A.txt:9791), about when the test gave up and warped back;
 - br289-6-keep-182cd53b-2 (LICHII_COOP_ARRIVAL_STARTER=keep, no hearts given) arrived in the same stage and had no
-  second event (its game-out-A.txt :5406 on: one 'event ended after 1.7 s', then free play).
+  second event (boss-respawn-289-6/run-keep-182cd53b-2/lane2/session/game-out-A.txt:5406 on: one 'event ended after 1.7 s', then free play).
 Open: does that event end by itself (and after how many stepped frames: integrate-0121's boss_arrival waits on an
 event up to P.BOOT_EVENT_FRAMES), or does it wait for a press (a text box: Navi and the UI are members)?
 

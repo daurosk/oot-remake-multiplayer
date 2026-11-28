@@ -70,6 +70,22 @@ class BossRespawn(unittest.TestCase):
         self.assertEqual(list(r.values()), ["SETUP-FAIL"], p.stdout[-2000:])
         self.assertIn("boss arrival in GohmaStage", p.stdout, p.stdout[-2000:])
         self.assertIn("in an event at 2400 frames: waited on up to 6000", p.stdout, p.stdout[-2000:])
+        # (B #174, volvagia-rocks-182cd53b-3: the miss names each game's reason and keeps a shot: arrival_miss)
+        for x in ("A", "B"):
+            self.assertIn("%s: scene=GohmaStage loading=" % x, p.stdout, p.stdout[-2000:])
+        self.assertIn("event=True", p.stdout, p.stdout[-2000:])
+        self.assertIn("shot mean", p.stdout, p.stdout[-2000:])
+
+    def test_arrival_miss_keeps_its_reason_without_a_shot(self):
+        """A refused shot on a 'both in play' miss is named, and each game's reason stays (arrival_miss never raises)."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_room and GohmaStage"],
+                             env={"BT_FAKE_INTRO": "9000", "BT_FAKE_BROKEN": "no-shot"})
+        self.assertEqual(list(r.values()), ["SETUP-FAIL"], p.stdout[-2000:])
+        self.assertIn("in 'both in play' after", p.stdout, p.stdout[-2000:])
+        for x in ("A", "B"):
+            self.assertIn("%s: scene=GohmaStage loading=" % x, p.stdout, p.stdout[-2000:])
+        self.assertIn("no shot (", p.stdout, p.stdout[-2000:])
+        self.assertNotIn("shot mean", p.stdout, p.stdout[-2000:])
 
     def test_black_screen_fails_the_fixed_path(self):
         p, r = self.run_file(self.OBJ + ["-k", "shows"], env={"BT_FAKE_BROKEN": "starter"})

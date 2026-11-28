@@ -2202,6 +2202,16 @@ class FullBuildTest(unittest.TestCase):
             look_items.tex_name("Angin_Tile_A_Alb", 1)
         self.assertEqual(look_items.actor_name("Armor_Adult_Zora", 2), "Armor_Adult_Zora_Look2")
 
+    def test_build_liftable_auto_without_ruto(self):
+        # Row 317: the kit's pack asks for liftable="auto" (--puppet-liftable=auto): a romfs without Ruto's pack makes
+        # the pack without lifting (a note), never a failed pack; --puppet-liftable alone stays strict.
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod-auto"), log=said.append, liftable="auto")
+        self.assertNotIn("liftable", m)
+        self.assertTrue(any("--puppet-liftable auto" in s and "no lifting" in s for s in said), said)
+        with self.assertRaises(build.BuildError):
+            build.build(self.romfs, os.path.join(self.dir, "mod-strict"), log=lambda *_: None, liftable=True)
+
     def test_build(self):
         from puppet_pack import zs
         before = {}

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Native puppets phase 3: lifting another player, the hook's side (coop_lift_player.h has the rules;
-// docs/native-puppets.md "Lifting another player"). Off unless LICHII_COOP_LIFT_PLAYER=1: off, nothing here
-// runs, nothing is sent, and the director, the object walk and the input check are as before.
+// docs/native-puppets.md "Lifting another player"). On by default since row 317 (0.12.1); LICHII_COOP_LIFT_PLAYER=0: off, nothing
+// here runs, nothing is sent, and the director, the object walk and the input check are as before. Not connected
+// (solo, co-op idle): nothing is watched or sent either.
 #pragma once
 
 #include <cstdint>
@@ -21,7 +22,7 @@ struct Event;
 
 namespace CoopLiftPlayerGame {
 
-// Any thread: the switch (LICHII_COOP_LIFT_PLAYER=1, read once).
+// Any thread: the switch (on unless LICHII_COOP_LIFT_PLAYER=0, read once).
 bool On();
 
 // Network thread, from the session's on_event (the network lock is held): LIFT_ASK, LIFT_ANSWER and LIFT_PLACE.

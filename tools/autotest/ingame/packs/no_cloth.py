@@ -30,7 +30,7 @@ def kit_flags(tools):
     m = re.search(r"function Get-KitPackArgs\b[^{]*\{(.*?)\n\}", text, re.S)
     if not m:
         raise RuntimeError("no_cloth: no Get-KitPackArgs in %s" % KIT_PATHS)
-    flags = [w for w in re.findall(r"'(--[a-z0-9-]+)'", m.group(1)) if w not in ("--romfs", "--mod-dir")]
+    flags = [w for w in re.findall(r"'(--[a-z0-9-]+(?:=[a-z0-9]+)?)'", m.group(1)) if w not in ("--romfs", "--mod-dir")]
     if not flags:
         raise RuntimeError("no_cloth: Get-KitPackArgs has no pack flags (%s)" % m.group(1).strip()[:200])
     return flags

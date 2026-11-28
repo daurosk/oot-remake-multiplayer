@@ -243,6 +243,13 @@ her param, own file in the puppet pack), and on the owner game a "lifted" state 
 
 ### Phase 3 status (native-puppets-c, branch `native-puppets-lift`)
 
+**Row 317 (0.12.1): on by default.** The kit's pack command (kit-paths.ps1 `Get-KitPackArgs`, the Linux kit's
+build.sh) passes `--puppet-body --puppet-liftable=auto` (the lift needs the copy's body, UNKNOWN 1 below; `auto`:
+a game file without Ruto's pieces makes the pack without lifting, a note, never a failed pack), and the hook's
+switch is on unless `LICHII_COOP_LIFT_PLAYER=0`. Not connected (solo, co-op idle) the glue only resets: no place
+watch, nothing sent. The text below is the phase as first built (both switches off by default then); the in-game
+check is the owner's rc play.
+
 Built and host-tested, **not run in a game**. Two switches, both off by default; with either off nothing below
 runs, nothing is sent, and the solo and idle game are as before (no session: no copy exists, and the glue
 returns before anything when not connected).

@@ -1081,7 +1081,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
 
 // Native puppets phase 3 (coop_lift_player.h): lifting another player. All of it does nothing until
-// WatchGamePlaces(true) (the switch LICHII_COOP_LIFT_PLAYER=1).
+// WatchGamePlaces(true) (the lift switch on and connected: coop_lift_player_game.cpp Frame).
 // - WatchGamePlaces: the director keeps, for each copy it draws, where it drew it last and where the game had it
 //   when the director came back to it (read before its write).
 // - SetGameHolds: the copy of player `number` is left to the game (our Link lifted it): the director neither

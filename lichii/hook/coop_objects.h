@@ -109,7 +109,7 @@ void NoteOurLinkStepHit(std::uint32_t id, const std::array<std::uint32_t, 0x98 /
 // flash, sparks and sound, nothing is taken. Any thread.
 void ReplayOnCopy(std::uint64_t actor, std::int32_t amount, const std::array<float, 3>& at,
                   const std::array<std::uint32_t, kPvpKindWords>& kind);
-// Native puppets phase 3 (coop_lift_player.h; LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours.
+// Native puppets phase 3 (coop_lift_player.h; lift on unless LICHII_COOP_LIFT_PLAYER=0): another player's Link holds ours.
 // Our Link is put at `at` by the next walk, the way copies are moved: its place written, then the game's own
 // physics-aware setter (kSetMatrix, vtable slot 0x218) on it. A place older than 200 ms is not used. Any thread.
 void PlaceOurLink(const std::array<float, 3>& at);

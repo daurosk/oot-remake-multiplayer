@@ -2701,7 +2701,7 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         return 0;
     }
     if (id == CoopPlayerInput::kWrapInputOff) {
-        // Native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours, so our Link's
+        // Native puppets phase 3 (lift on, row 317): another player's Link holds ours, so our Link's
         // own input check answers "off" (both callers skip their pad read), as for an extra player without a
         // controller. Only our Link's check: the reading actor ([[[node+8]+8]+0x1f0], node in x19) is ours.
         // Row 299 the same way: a game menu in front with the world running under it (the host's "World runs in

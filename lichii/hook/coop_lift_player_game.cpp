@@ -95,9 +95,11 @@ Glue& TheGlue() {
 } // namespace
 
 bool On() {
+    // Row 317 (0.12.1): on by default (lifting a young player as Ruto); LICHII_COOP_LIFT_PLAYER=0 turns it off.
+    // Solo and co-op idle: no session, so Frame only resets (nothing is watched, asked or sent).
     static const bool on = [] {
         const char* v = std::getenv("LICHII_COOP_LIFT_PLAYER");
-        return v != nullptr && std::strcmp(v, "1") == 0;
+        return v == nullptr || std::strcmp(v, "0") != 0;
     }();
     return on;
 }
@@ -162,7 +164,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         return;
     }
     Glue& g = TheGlue();
-    CoopPuppet::WatchGamePlaces(true);
+    // (only while connected: solo and co-op idle keep the director's place watch off)
+    CoopPuppet::WatchGamePlaces(session != nullptr);
     std::deque<proto::LiftAsk> asks;
     std::deque<proto::LiftAnswer> answers;
     std::deque<proto::LiftPlace> places;

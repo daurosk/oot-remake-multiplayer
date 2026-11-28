@@ -2350,19 +2350,32 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     lift_grab_chain = None
     carry_data = None
     if liftable:
+        # Row 317 (0.12.1): the kit asks for liftable="auto" (`--puppet-liftable auto`): a romfs without Ruto's
+        # pieces makes the pack without lifting (a note), never a failed pack; `--puppet-liftable` alone stays strict.
+        def lift_missing(msg):
+            if liftable == "auto":
+                log(f"note: --puppet-liftable auto: {msg}: no lifting in this pack")
+                return None
+            raise BuildError(f"--puppet-liftable: {msg}")
         src = os.path.join(romfs, "Pack", "Actor", f"{LIFTABLE_SOURCE}.pack.zs")
-        if not os.path.isfile(src):
-            raise BuildError(f"--puppet-liftable: missing {rel(romfs, src)}")
-        ruto = sarc.read(dicts.decompress(read(src)))
-        lift_param = liftable_param(ruto)
-        if lift_param is None:
-            raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no LiftableRef in its pack")
-        lift_chain = chain_paths(ruto, lift_param[0])
-        # Row 317 (a): Ruto's Lift attention client, so the game offers its own "Lift" at a young copy.
-        lift_grab = lift_client(ruto)
-        if lift_grab is None:
-            raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no Lift client {LIFT_CLIENT_SRC} in its pack")
-        lift_grab_chain = chain_paths(ruto, LIFT_CLIENT_SRC)
+        ruto = sarc.read(dicts.decompress(read(src))) if os.path.isfile(src) else None
+        if ruto is None:
+            lift_missing(f"missing {rel(romfs, src)}")
+        else:
+            lift_param = liftable_param(ruto)
+            # Row 317 (a): Ruto's Lift attention client, so the game offers its own "Lift" at a young copy.
+            lift_grab = lift_client(ruto)
+            if lift_param is None:
+                lift_missing(f"{LIFTABLE_SOURCE} has no LiftableRef in its pack")
+            elif lift_grab is None:
+                lift_param = None
+                lift_missing(f"{LIFTABLE_SOURCE} has no Lift client {LIFT_CLIENT_SRC} in its pack")
+            else:
+                lift_chain = chain_paths(ruto, lift_param[0])
+                lift_grab_chain = chain_paths(ruto, LIFT_CLIENT_SRC)
+    if lift_param is None:
+        lift_grab = None
+    if lift_param is not None:
         # Ruto's carried pose on the young copies (asb_carry): the player's AS root with the carry clips, or the
         # game's own Eaten when it cannot be made (the fallback, logged).
         carry_src = f"AS/Player_{asb_carry.CARRY_VARIANTS[0]}.root.asb"
@@ -2972,10 +2985,12 @@ def main(argv=None):
     ap.add_argument("--puppet-body", action="store_true",
                     help="native puppets phase 1 test (docs/native-puppets.md): every puppet gets a body of its own "
                          "(Link's shapes and character controller, no sensors), off by default")
-    ap.add_argument("--puppet-liftable", action="store_true",
-                    help="native puppets phase 3 test (docs/native-puppets.md): every young (child) puppet gets Ruto's "
-                         "LiftableRef, so Link can lift and carry it as Ruto (with LICHII_COOP_LIFT_PLAYER=1); "
-                         "adult puppets never; off by default")
+    ap.add_argument("--puppet-liftable", nargs="?", const=True, default=False, choices=[True, "auto"],
+                    type=lambda v: "auto" if v == "auto" else v,
+                    help="native puppets phase 3 (docs/native-puppets.md): every young (child) puppet gets Ruto's "
+                         "LiftableRef, so Link can lift and carry it as Ruto; adult puppets never. "
+                         "'--puppet-liftable auto' (the kit's pack, row 317): the same, or no lifting (a note) when "
+                         "the romfs lacks Ruto's pieces; off by default")
     ap.add_argument("--puppet-pvp", action="store_true",
                     help="native puppets phase 4 test (docs/native-puppets.md section 5): every puppet gets a _Pvp "
                          "copy (a body with Link's Tgt sensor, his SensorHit/Life/Reaction/Target params, a LockOn "

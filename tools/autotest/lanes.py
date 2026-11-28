@@ -192,7 +192,7 @@ def setup(n, from_a, from_b, dry=False, say=print, kit=None, busy=running_in):
 # writes (fill), copies of the rest. Its own lane-server.txt (written LAST: a half-made folder never passes
 # pair.lane_check) names lane B's module, commit and server, plus nocs_of=lane<N>-B.
 SERVER_TXT = "lane-server.txt"
-PACK_TOOL_ARGS = ("--title-rows", "--pause-tab")   # (kit-paths.ps1 Get-KitPackArgs: the kit's pack command)
+PACK_TOOL_ARGS = ("--title-rows", "--pause-tab", "--puppet-body", "--puppet-liftable=auto")   # (kit-paths.ps1 Get-KitPackArgs: the kit's pack command)
 
 
 def read_fields(path):

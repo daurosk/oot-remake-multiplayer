@@ -881,7 +881,7 @@ public:
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
         CoopPartyWait::OnEvent(event, client);  // wait for the party (docs/party-wait.md)
-        CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
+        CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (on unless LICHII_COOP_LIFT_PLAYER=0)
         CoopPvpNativeGame::OnEvent(event, client);  // native puppets phase 4 (LICHII_COOP_PVP_NATIVE=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
         CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
@@ -2091,8 +2091,8 @@ public:
         for (auto& line : CoopPvp::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
-        // Native puppets phase 3, lifting another player (docs/native-puppets.md): off unless
-        // LICHII_COOP_LIFT_PLAYER=1 (then nothing runs here).
+        // Native puppets phase 3, lifting another player (docs/native-puppets.md): on unless
+        // LICHII_COOP_LIFT_PLAYER=0 (then nothing runs here); not connected, it only resets.
         CoopLiftPlayerGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
                                   report.server_now_us);
         // Native puppets phase 4, PvP on real bodies (docs/native-puppets.md section 5): off unless

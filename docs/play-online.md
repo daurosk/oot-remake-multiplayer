@@ -287,6 +287,15 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 - **Your own game decides whether you are hurt.** A hit that reached you on the other player's screen is checked by your game: nothing while you or the attacker are in a cutscene, a talk, a menu, paused or loading, nothing from a player in another area, and at most one hit every 0.8 s (Link blinks after a hit). So a player who lags cannot hurt you when you got away on your screen.
 - **How much:** a sword hit takes half a heart, a seed or the boomerang a quarter, an arrow (fire and ice too) a heart, a light arrow or a bomb two hearts; a Deku nut stuns nobody and hurts nobody. The chat says who hit whom ("Saria hit you (-1/2 heart)", "you defeated Mido").
 - **Not yet:** the sword is read where the area has the game's grass (outdoor areas); a sword swing indoors is not seen yet. A shot hits only when it ended (hit something or went off) beside the other player. Shown in the debug log as lines with `coop: pvp:`.
+## Lifting a young player (0.12.1, row 317)
+
+Any Link can pick up another player's **young** Link the way Link lifts Ruto: walk up to him and press **A** when
+the game shows **Lift**. You carry him in Ruto's pose and can walk, set him down or throw him; on his screen his Link
+rises into your hands and follows you. He breaks free by mashing the stick and buttons, as from an enemy's grab. An
+adult Link is never lifted. Nothing to set up: the kit's puppet pack makes the young copies liftable (with their own
+body), and the game has it on. To turn it off on your PC, add `LICHII_COOP_LIFT_PLAYER=0` to the game's start
+environment. Solo and co-op idle: there are no copies, so nothing of it runs.
+
 ## Down but not out
 
 On by default in co-op (the Longshot kit, whose game build has patch 0007). The host changes it while hosting with Co-op settings' **Down but not out**, **Bleed-out time**, **Revive hold** and **Revive hearts** rows (Multiplayer tab, Co-op settings; or Lobby, Host a game, Host settings), the same as `/dbno`; a guest sees the host's values there. At no hearts you are not dead: you are **down**. You crawl slowly and can use nothing (no sword, items or roll; pause and the camera still work), nothing hurts you, and a clock counts down your bleed-out time (45 s by default) in a ring at the bottom of the screen. Enemies leave you alone and go after the nearest player still standing. With nobody else standing (or nobody else in the session) you are not downed: death is the game's own.

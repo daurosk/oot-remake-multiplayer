@@ -1004,6 +1004,14 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("NOT taken", steps)
         self.assertNotIn("taken late", steps)   # (the wait came first: the marks themselves on time)
 
+    def test_commands_file_line_looked_for_even_past_the_deadline(self):
+        """Build 46126678828 (windows 3.12): A 'no coop: test commands file line in 0 s' though the line was in its
+        log: the wait checked its deadline before its first look, and a runner stall past --mark-late 0.5 meant no
+        look at all. --mark-late 0 is that stall every time: the log is still read once, at the deadline."""
+        steps = self.two_games(module=True, mark_late=0.0)
+        self.assertRegex(steps, r"A: module reads its commands file \(waited \d+\.\d s after the save load\)")
+        self.assertRegex(steps, r"B: module reads its commands file \(waited \d+\.\d s after the save load\)")
+
     def two_games(self, module, reader_after=0.0, mark_late=0.5):
         import tempfile
         import threading

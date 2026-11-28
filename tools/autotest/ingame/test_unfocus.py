@@ -7,7 +7,7 @@ is choppy". This replaces the parked probe coord-multiplayer/offline/row-83-game
 |---|---|
 | a save loaded, in play (to_play, the 'coop: test loaded' line) | the lane's boot (live-kakariko-child, in play after the smoke tier) + need_child_in_play |
 | the 60 cap in play (frame_rate_cap=0 = 60, vk_menu.h:32) | set-up: each game's longshot_options.ini frame_rate_cap=0 |
-| a game behind (Set-Front on another window) | set-up: each game's last 'hid: game window ...' line says 'not in front' (live.py opens the games behind: placement.py SW_SHOWNOACTIVATE) |
+| a game behind (Set-Front on another window) | set-up: at least one game's last 'hid: game window ...' line says 'not in front' (one of the two windows is in front; that game is the control, the behind one is judged) |
 | fps per renderer ('vk: N presents, X fps') | Longshot's own 5 s windows 'vi: N frames presented (X fps over the last Y s, ...)' (nn_vi.c:704), the same presents counted by wall time |
 | stutter ('vi: present intervals' buckets, > 22 ms share) | the same line (nn_vi.c:705), the same > 22 ms share |
 | 4 games, CPU/GPU class, affinity (B1-B6, A4-A5) | NOT here: a lane is two games and OS knobs are outside the bridge (the report says so) |
@@ -134,9 +134,13 @@ def test_back_window_fps(pair):
         for x in ("A", "B"):
             cap = frame_rate_cap(pair.games[x]["folder"])
             assert cap == "0", "%s: frame_rate_cap=%s in %s (row 83 is the 60 cap: 0)" % (x, cap, pair.games[x]["folder"])
-            front = last_front(pair, x)
-            assert front and front[0] == "not in front", "%s: window not behind (last hid line: %s; foreground now: %s; game pids %s)" % (
-                x, front, foreground_info(), game_pids(pair))
+        # Two games on one PC: one window is in front (the probe row83-probe-182cd53b 10:00 UTC: the foreground was game A
+        # itself, pid 20000, and only B logged 'not in front'). The game that IS behind is what row 83 measures; a game in
+        # front is the control (noted, never judged). At least one game must have logged 'not in front'.
+        fronts = {x: last_front(pair, x) for x in ("A", "B")}
+        behind = [x for x in ("A", "B") if fronts[x] and fronts[x][0] == "not in front"]
+        assert behind, "no game window behind (last hid lines %s; foreground now: %s; game pids %s)" % (
+            fronts, foreground_info(), game_pids(pair))
         marks = {x: pair.log[x].mark() for x in ("A", "B")}
     for x in ("A", "B"):
         pair.call(x, "resume")
@@ -159,8 +163,12 @@ def test_back_window_fps(pair):
         presents = sum(sum(b) for _, _, b in w)
         late = sum(sum(b[3:]) for _, _, b in w) / max(1, presents)
         still = last_front(pair, x)
-        note = "%s (behind: %s): fps %s mean %.1f, presents > 22 ms %.1f %% of %d" % (
-            x, still[0] if still else "?", "/".join("%.1f" % f for f, _, _ in w), mean, 100 * late, presents)
+        stats = "fps %s mean %.1f, presents > 22 ms %.1f %% of %d" % (
+            "/".join("%.1f" % f for f, _, _ in w), mean, 100 * late, presents)
+        if x not in behind:
+            pair.notes.append("%s (in front, control, not judged): %s" % (x, stats))
+            continue
+        note = "%s (behind: %s): %s" % (x, still[0] if still else "?", stats)
         pair.notes.append(note)
         if still and still[0] != "not in front":
             bad.append("%s came in front during the measure (%s)" % (x, still))

@@ -223,3 +223,51 @@ def test_arms_adult_solo(pair, tag, number, file):
     finally:
         way_back(pair, was, done)
     pair.unproven("row 314 probe: judge the own character's arms in the shots (co-op idle) before any fix")
+
+
+TELEPORT_LINE = r"coop: teleport"   # lichii/hook/coop_teleport_game.cpp: Glue() 'coop: teleport on|off ...' and MapChange's lines
+GAP_FRAMES = 540                    # > Longshot's one teleport per 8 s per game (docs/playtest.md `warp`), at 60 fps
+
+
+def _short(s):
+    keep = ("scene", "age", "event", "loading", "body", "pos", "snapshot_stale", "not_ready")
+    return {k: s.get(k) for k in keep} if isinstance(s, dict) else s
+
+
+@pytest.mark.budget(240)   # ESTIMATED: two 20 s warps, one 540-frame gap, the way back
+@solo.MARK
+@pytest.mark.row("#314 probe: why the co-op-idle adult warp (with entrance) stays in the child scene (solo SETUP-FAIL 04:45)")
+def test_solo_adult_warp_probe(pair):
+    """The solo SETUP-FAIL of arms-314-182cd53b-solo: after the age flag + 60 frames, warp KakarikoVillage_Adult with
+    entrance Kakariko_WellSide timed out with Link still in KakarikoVillage_Child, and game A's log had NO 'coop:
+    teleport' line at all (the pair run's A had 'coop: teleport on (...)' at boot), so CoopTeleport::MapChange (which
+    builds TheGlue and logs) looks never called: PlanWarp's route is unknown. This probe records, on a co-op-idle game,
+    the state the bridge plans from (event, age), each warp reply (ok/error/via/map) and the teleport lines after it:
+    1) the same warp as the SETUP-FAIL (entrance given), 2) after Longshot's gap, the same scene with no entrance."""
+    done = False
+    try:
+        with pair.setup():
+            solo.prove(pair)
+            pair.need_boot_place("child")
+        pair.notes.append("before the flag: %s" % json.dumps(_short(pair.state("A"))))
+        pair.flag("A", AGE_FLAG, 0)
+        pair.step_both(AGE_WAIT)
+        pair.notes.append("after the flag + %d frames: %s" % (AGE_WAIT, json.dumps(_short(pair.state("A")))))
+        for n, extra in ((1, {"entrance": GATE}), (2, {})):
+            if n == 2:
+                pair.step_both(GAP_FRAMES)
+                pair.notes.append("before warp 2: %s" % json.dumps(_short(pair.state("A"))))
+            mark = pair.log["A"].mark()
+            r = pair._request("A", "warp", pair._wait("warp", 20 + 2.0), check=False, scene=SCENE_ADULT, timeout=20, **extra)
+            reply = {k: r.get(k) for k in ("ok", "error", "via", "map", "arrived")}
+            reply["message"] = (r.get("message") or "")[:200]
+            s = pair.state("A")
+            lines = [ln for ln in pair.log["A"].since(mark) if re.search(TELEPORT_LINE, ln)]
+            pair.notes.append("warp %d (%s): reply %s; state %s; teleport lines %s" % (
+                n, "entrance " + GATE if extra else "no entrance", json.dumps(reply), json.dumps(_short(s)), lines[:6]))
+            if r.get("ok"):
+                break
+        done = True
+    finally:
+        way_back(pair, None, done)
+    pair.unproven("row 314 probe: the solo adult warp's route, read from the notes (no fix before it is read)")

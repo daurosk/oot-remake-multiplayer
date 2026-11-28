@@ -74,6 +74,9 @@ DYNAMIC = {
     ("test_key_items.py", "test_key_items_pages"): {"why": "as owned()", "names": None},
 }
 
+# What a red check asks for (review-tests-153-6 SHOULD): the table is made only from the romfs, which CI has not.
+REMAKE = ("A new name: where the game dump is, run `python tools/autotest/ingame/flag_names.py --romfs <romfs>` "
+          "(e.g. OOT REMAKE/dump/romfs) and commit flag_table.json; it prints NOT IN THE GAME for a wrong name")
 READ_TYPES = ("Int", "Bool", "Enum", "UInt", "String64")
 SET_TYPES = ("Int", "Bool")
 NUM = re.compile(r"-?\d+$")
@@ -407,8 +410,7 @@ def problems(uses, table):
     for u in uses:
         e = table.get(key_of(u.name))
         if e is None:
-            bad.append("%s: %s %r: not in flag_table.json (no such flag: run flag_names.py --romfs)" % (
-                u.where, u.op, u.name))
+            bad.append("%s: %s %r: not in flag_table.json. %s" % (u.where, u.op, u.name, REMAKE))
             continue
         t, array = e["type"], u.name.endswith("]") and not u.name.lower().startswith("key64:")
         k64 = t == "Bool64bitKey"

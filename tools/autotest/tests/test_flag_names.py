@@ -132,7 +132,7 @@ class RepoTest(unittest.TestCase):
 
     def test_table_has_only_used_names(self):
         used = {F.key_of(u.name) for u in self.uses}
-        self.assertEqual(sorted(set(self.table) - used), [], "stale rows: run flag_names.py --romfs")
+        self.assertEqual(sorted(set(self.table) - used), [], "rows no use needs any more. " + F.REMAKE)
 
     @unittest.skipUnless(os.path.isfile(os.path.join(ROMFS, F.GAME_LIST)), "no romfs here (CI): table taken as made")
     def test_table_is_the_romfs(self):

@@ -624,7 +624,7 @@ class Pair:
             return st.get("pos")
         try:
             return self.until("%s: a fresh Link position" % x, fresh, max_frames=max_frames)
-        except StaleState:
+        except (StaleState, TestTimeout):   # (the test's own deadline stays a TestTimeout: review-tests-153-6 SHOULD)
             raise
         except AssertionError as e:
             st = last[0] or {}

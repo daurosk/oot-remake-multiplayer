@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import no_cs                                               # noqa: E402  (the ONE no-Character-Select game)
 import solo                                                # noqa: E402  (the ONE solo boot: game A alone)
-from test_rows import face_each_other, need_child_in_play   # noqa: E402  (the shared set-up helpers)
+from test_rows import need_child_in_play, place_in_front   # noqa: E402  (the shared set-up helpers)
 
 HIDDEN_ON = r"characters: equipment hidden on %s \((\d+) piece\(s\)\)"
 SHOWN_ON = r"characters: equipment shown again on %s \((\d+) piece\(s\)\)"
@@ -41,6 +41,12 @@ def wears_a_sword(pair, x):
     equips.weapon is PlayerStatus.EquipWeapon (docs/playtest.md "State")."""
     e = pair.state(x).get("equips") or {}
     assert e.get("weapon"), "%s wears no sword (equips %s): Hidden would hide nothing" % (x, e)
+
+
+def face_each_other(pair):
+    place_in_front(pair, "A", of="B")
+    pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
+    pair.step_both(10)
 
 
 def set_gear(pair, value, x="A"):

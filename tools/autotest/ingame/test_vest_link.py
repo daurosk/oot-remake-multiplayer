@@ -38,7 +38,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import huecheck     # noqa: E402  (the shared colour check: solid_count)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
-from test_rows import face_each_other   # noqa: E402  (the shared set-up helpers)
+from test_gear_link import face_each_other   # noqa: E402  (the shared set-up helpers)
 from test_hair_link import shots             # noqa: E402  (lit shots + each wearer's screen box: one helper)
 from test_rows import need_child_in_play   # noqa: E402
 

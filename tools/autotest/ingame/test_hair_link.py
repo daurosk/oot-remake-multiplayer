@@ -62,7 +62,7 @@ try:
     import solo     # noqa: E402  (the ONE solo game: harness-c133 item 7, once it lands)
 except ImportError:
     solo = None
-from test_rows import face_each_other   # noqa: E402  (the shared set-up helpers)
+from test_gear_link import face_each_other   # noqa: E402  (the shared set-up helpers)
 from test_rows import need_child_in_play     # noqa: E402
 from test_tunic import puppet_at             # noqa: E402  (the puppet's place in a game's world list)
 

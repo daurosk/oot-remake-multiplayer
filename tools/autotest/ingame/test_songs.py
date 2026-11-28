@@ -30,7 +30,7 @@ import testsave                # noqa: E402
 from bt_plugin import DEFAULT_BOOT, boot_place   # noqa: E402
 import once_gifts              # noqa: E402  (the ONE gift list: coop_shop_sale.h kOnceGifts)
 from test_gifts_237 import LISTED as GIFTS_ON   # noqa: E402  (the module's session line, row 237's one pattern)
-from test_rows import face_each_other, need_child_in_play   # noqa: E402
+from test_rows import need_child_in_play, place_in_front   # noqa: E402
 
 SCENE_CHILD, GATE = boot_place(DEFAULT_BOOT)   # the lane's Kakariko boot place (the way back): the boot's own warp
 
@@ -210,7 +210,7 @@ def test_ocarina_given_saria(pair):
     with pair.setup():
         ready_child(pair)
         testsave.prove(pair, NO_OCARINA)              # neither game holds an ocarina, EquipOcarina "" (SETUP-FAIL else)
-        face_each_other(pair)                         # A sees B's Link (its puppet) with the ocarina out, B sees A's
+        place_in_front(pair, "A", of="B")             # A sees B's Link (its puppet) with the ocarina out
         pair.log["B"].mark()
         r = pair.give("A", FAIRY)                     # A gets it (hs-ocarina-given.A: 'A has it from Saria')
         assert int(value(pair, "A", FAIRY_COUNT) or 0) >= 1, "A: no Fairy Ocarina after give: %s" % r

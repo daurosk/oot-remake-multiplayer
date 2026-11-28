@@ -19,10 +19,8 @@ import pytest
 
 import game_names
 import pair as P
-from kit_move import on_screen   # noqa: F401
-from test_rows import (CAM_TRIES, CAM_WAIT, EDGE, HEAD_M, camera_behind_each, need_child_in_play,  # noqa: F401
-                       other_in_view, place_in_front)   # (the shared camera set-up: test_rows.face_each_other uses it)
-from test_tunic import stand_apart
+from kit_move import on_screen
+from test_rows import need_child_in_play, place_in_front
 
 # The old step's NOT pattern (regress-01113-steps/s6-ui.ps1 -Not 'exception 0x'), with test_look.py's CRASH forms.
 CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
@@ -52,6 +50,13 @@ def tags_open(pair, x):
     t = tags_seen(pair, x)
     assert t.get("shown", 0) >= 1, "%s: no tag of ours on the balloons: %s" % (x, t)
     return t
+# The name tag floats just over the other Link's head: lichii/hook/coop_hook.cpp:196-197 kHeadChild 1.35 / kHeadAdult 1.9
+# (m above the feet; HeadHeight by age), where the module's markers put it (tag_head) and the balloon goes.
+HEAD_M = {"child": 1.35, "adult": 1.9}
+EDGE = 0.9        # |x|, |y| <= 0.9 of the screen (-1..1, kit_move.on_screen): in view, not cut at the edge
+CAM_TRIES = 3     # ZL taps per game at most (the game's own camera reset: docs/playtest.md `shoot`, "taps ZL (the camera
+                  # goes behind him)"); c272735f8: one tap each left B's camera on A's side (rc-release-0120-5's shots)
+CAM_WAIT = 20     # frames after each tap (the camera's swing behind Link; as before)
 
 
 def seen_once(pair, x, pattern, max_frames):
@@ -71,6 +76,42 @@ def seen_not(pair, x, good, bad, max_frames):
     assert line is None, "%s log has /%s/: %s" % (x, bad, line)
 
 
+def other_in_view(pair, x, other, behind=True):
+    """Game x's camera behind its own Link, facing the other player, read from x's state (`view` = the last drawn
+    frame's camera, kit_move.on_screen): the other player's feet and tag point (HEAD_M over the feet) on x's screen,
+    and x's own Link nearer the camera than the other (clip w, the depth: the camera behind x's Link, not on the other's
+    side; behind=False: side by side, as stand_apart, only in view). The other player's place is its own game's Link
+    (x shows it as the puppet). Returns (ok, why)."""
+    st, ot = pair.state(x), pair.state(other)
+    view, own, far = st.get("view"), st.get("pos"), ot.get("pos")
+    if not view or not own or not far:
+        return False, "%s: no view or place (view %s, pos %s, %s's pos %s)" % (x, bool(view), own, other, far)
+    head = [far[0], far[1] + HEAD_M.get(ot.get("age"), HEAD_M["child"]), far[2]]
+    feet_s, head_s, own_s = on_screen(view, far), on_screen(view, head), on_screen(view, own)
+    m = view["clip"]
+
+    def depth(p):
+        return sum(m[12 + j] * v for j, v in enumerate(list(p) + [1.0]))
+    why = "%s: %s's feet %s, tag point %s on screen; own Link at depth %.2f, %s's at %.2f" % (
+        x, other, feet_s, head_s, depth(own), other, depth(far))
+    inside = all(s is not None and abs(s[0]) <= EDGE and abs(s[1]) <= EDGE for s in (feet_s, head_s))
+    return inside and (not behind or (own_s is not None and depth(own) < depth(far))), why
+
+
+def camera_behind_each(pair):
+    """Each game's camera behind its own Link facing the other, by the game's own ZL reset (CAM_TRIES taps each at
+    most), proven per game on state (other_in_view); else SetupFail naming the game and its numbers."""
+    for x, other in (("A", "B"), ("B", "A")):
+        why = ""
+        for n in range(CAM_TRIES):
+            pair.press(x, ["ZL"], frames=8)
+            pair.step_both(CAM_WAIT)
+            ok, why = other_in_view(pair, x, other)
+            if ok:
+                pair.notes.append("camera behind %s after %d ZL: %s" % (x, n + 1, why))
+                break
+        else:
+            raise P.SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
 
 
 @pytest.mark.budget(150)

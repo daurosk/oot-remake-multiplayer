@@ -38,7 +38,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import huecheck     # noqa: E402  (the shared colour check: left_after_unset)
 import no_cs        # noqa: E402  (the ONE no-Character-Select game)
-from test_rows import face_each_other, need_child_in_play   # noqa: E402  (the shared set-up helpers)
+from test_rows import need_child_in_play, place_in_front   # noqa: E402  (the shared set-up helpers)
 
 MAGENTA, GOLD = "FF00FF", "FFD700"
 OWN_GEAR = r"coop: look: your Link's gear is (gear\S*) now"
@@ -59,6 +59,12 @@ def magenta_share(path):
         px = list(im.convert("RGB").getdata())
     hits = sum(1 for r, g, b in px if r > 60 and b > 60 and g * 2 < min(r, b) and abs(r - b) < 0.35 * max(r, b))
     return hits / max(1, len(px))
+
+
+def face_each_other(pair):
+    place_in_front(pair, "A", of="B")
+    pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
+    pair.step_both(10)
 
 
 def note(pair, line):

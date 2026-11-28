@@ -7859,6 +7859,8 @@ TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries
         const bool claimed = sync.AreaClaim(0x200, 1000 * kMs);
         CHECK(claimed == sync.EventPartner(0x200, 1000 * kMs));
         CHECK(claimed == (flags && (*flags & kTargeting) != 0));
+        // Row 306: held here, said so: the server hands it over at once (Session::carry_owner).
+        CHECK(claimed == (flags && (*flags & proto::object_presence::grabbed_here) != 0));
         return claimed;
     };
     CHECK(run("Lifted", "Wait"));         // our Link carries it: ours, the owner's motion waits
@@ -7885,6 +7887,7 @@ TEST_CASE("carry claim: child Ruto our Link carries is ours, the owner's Crouch 
         const bool claimed = sync.AreaClaim(0x300, 1000 * kMs);
         CHECK(claimed == sync.EventPartner(0x300, 1000 * kMs));  // the owner's motion (#64's Crouch) waits
         CHECK(claimed == (flags && (*flags & kTargeting) != 0));  // the server hands her to us
+        CHECK(claimed == (flags && (*flags & proto::object_presence::grabbed_here) != 0));  // at once (row 306)
         return claimed;
     };
     CHECK(run("Act_LiftRest", "Crouch"));              // #64: we carry her, the owner's Crouch is not put on her

@@ -3723,6 +3723,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (grabbing.contains(o.name)) {
             flags |= proto::object_presence::grabbed_here;  // row 232: his piece holds our Link: he is wanted here
         }
+        // Row 306: our Link holds it (the carry claim above, not the owner's own carry): on a non-boss the same bit
+        // says "held here", and the server hands it to us at once (Session::carry_owner). Flagged targeting alone,
+        // it waited out the owner's fight lock (12 s after the owner's own carry or area claim) and the 5 s hand-over
+        // cooldown, and every other screen meanwhile showed the owner's Cucco falling through our Link's hands.
+        if (carried && now_seen.contains(address) && !IsBossOrPart(o.name) && !o.fish) {
+            flags |= proto::object_presence::grabbed_here;
+        }
         if (!bound_.contains(address) && OwnLogicEncounter(o.name, scene_)) {
             flags |= proto::object_presence::own_logic;  // row 212: our cell logic made it: it stays with such a game
         }

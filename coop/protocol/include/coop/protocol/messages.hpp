@@ -1163,6 +1163,9 @@ inline constexpr std::uint8_t battle_manager = 1u << 6;
 // own game (OneShotDeadHandHandSendMessage MessageAppear: he rises by the held Link), so a player grabbed in a game
 // that does not own him was held with nothing rising. The server hands the boss to that game once its owner's attack
 // has ended (Session::grab_owner), unless its owner is held too. An older server ignores the bit.
+// Row 306: on a non-boss object the same bit says "this game's own Link holds it" (the hook's carry claim: a Cucco's
+// `Lifted`, child Ruto's `Act_LiftRest`, not its owner's own carry). The server hands it to that game at once, fight
+// lock or cooldown (Session::carry_owner), unless its owner holds it too. An older server ignores it there as well.
 inline constexpr std::uint8_t grabbed_here = 1u << 7;
 }  // namespace object_presence
 

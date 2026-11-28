@@ -545,6 +545,7 @@ struct Stats {
   std::uint64_t stun_to_stunner = 0;    // a plain enemy asked over to the player who stunned it (ai-stuns)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_to_grabbed = 0;    // row 232: a boss asked over to a game whose Link its summoned piece holds
+  std::uint64_t carried_to_holder = 0;  // row 306: a non-boss asked over to the game whose Link holds it
   std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
   std::uint64_t keyed_dropped = 0;       // protocol 18: keyed values (components 25-28) not kept, list full
   std::uint64_t enemy_turns = 0;         // a plain enemy asked over to the next player's turn (enemy_turns)
@@ -1177,6 +1178,9 @@ class Session {
   // Row 232: a game whose own Link a summoned piece of this boss holds (object_presence::grabbed_here) while its
   // owner's game is not held: the boss's AI answers that grab only there. None while its owner is held too.
   std::optional<ConnectionId> grab_owner(const Object& o, ConnectionId owner, std::uint64_t now_us) const;
+  // Row 306: a game whose own Link holds this non-boss object (object_presence::grabbed_here on it: a carried Cucco
+  // or child Ruto) while its owner's does not. None while its owner holds it too.
+  std::optional<ConnectionId> carry_owner(const Object& o, ConnectionId owner) const;
   bool unfit_fight_owner(const Connection& c, std::uint64_t now_us) const;
   // A boss's owner in a cutscene of its own for fight_owner_cutscene_us while the boss plays none of its own, is in
   // no attack, holds no Link of that game and has held one move that long (its AI stands in that event).

@@ -1190,7 +1190,7 @@ def lift_client(source_members):
     if LIFT_CLIENT_SRC not in source_members:
         return None
     param = _merged_chain(source_members, LIFT_CLIENT_SRC)
-    return param if int(param.get("ActionType", 0)) == LIFT_ACTION_TYPE else None
+    return param if param.get("ActionType") == byml.UInt(LIFT_ACTION_TYPE) else None
 
 
 def lift_prompt_paths(actor):

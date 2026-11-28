@@ -400,6 +400,9 @@ def fake_ruto_pack():
         lift: byml.dumps({"$parent": "Work/" + base[:-len(".bgyml")] + ".gyml", "LiftGrade": byml.UInt(3069107721),
                           "LiftableType": byml.UInt(3056776872), "WeightForCalcThrowPower": 19.0}),
         base: byml.dumps({"LiftGrade": 1, "KeepSensorHitToParent": True}),
+        # Row 317 (a): her Lift attention client (ActionType murmur3 "Lift", CheckAffiliation murmur3 "Player")
+        build.LIFT_CLIENT_SRC: byml.dumps({"ActionType": byml.UInt(1217591945),
+                                           "CheckAffiliation": {"AffiliationType": byml.UInt(145979025)}}),
     }
 
 
@@ -697,7 +700,9 @@ class BuildPackTest(unittest.TestCase):
         client = build.lift_client(ruto)
         self.assertEqual(client, {"PriorityType": 2, "ActionType": byml.UInt(1217591945),
                                   "CheckAffiliation": {"AffiliationType": byml.UInt(145979025)}})
-        self.assertIsNone(build.lift_client(fake_ruto_pack()))   # no client: none
+        self.assertEqual(build.lift_client(fake_ruto_pack())["ActionType"], byml.UInt(1217591945))
+        no_client = {k: v for k, v in fake_ruto_pack().items() if k != build.LIFT_CLIENT_SRC}
+        self.assertIsNone(build.lift_client(no_client))          # no client: none
         ruto[build.LIFT_CLIENT_SRC] = byml.dumps({"ActionType": byml.UInt(1)})
         self.assertIsNone(build.lift_client(ruto))                # not a Lift client: none
         lift = build.liftable_param(fake_ruto_pack())
@@ -2464,6 +2469,13 @@ class FullBuildTest(unittest.TestCase):
                 comps = byml.loads(pack[build.actor_param_path(a["actor"])])["Components"]
                 self.assertEqual(comps["LiftableRef"], "?" + a["liftable"]["param"], a["actor"])
                 self.assertEqual(comps["ASRef"], "?" + asb_carry.CARRY_AS, a["actor"])
+                if a in twins:   # (row 317 a) the _Pvp twin keeps its own sender: no lift prompt
+                    self.assertNotIn("prompt", a["liftable"], a["actor"])
+                else:            # the plain young copy: its own sender with Ruto's Lift client, sized
+                    sender, client = build.lift_prompt_paths(a["actor"])
+                    self.assertEqual(a["liftable"]["prompt"]["sender"], sender, a["actor"])
+                    self.assertEqual(comps["AttentionSenderRef"], "?" + sender, a["actor"])
+                    self.assertIn(client, pack)
             elif a["from"] == "Player_Adult":
                 self.assertNotIn("liftable", a, a["actor"])
             if a in twins:

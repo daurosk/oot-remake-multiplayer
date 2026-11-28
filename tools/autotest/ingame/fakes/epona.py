@@ -20,7 +20,9 @@ HyruleField_FrontOfLostWoodBridge, S 309d7180c game-out-B 4806, and B's list had
 the rows' own entrance HyruleField_FrontOfMarket (hs-epona-sync.B.txt:24). NEAR_M models the old rows' 'place beside
 her' only; the real list's reach is measured by the probe (gate-probe-0121 test_probe_epona).
 A Get_Epona written lower than Complete comes back to Complete 30 frames on (so a --repeat round 2 finds her won).
-SCOPED (B #149 rule): the quest reactions act only with BT_FAKE_ROW150=1, which only tests/test_ingame_epona.py sets.
+SCOPED (B #149 rule): the whole module acts only with BT_FAKE_ROW150=1, which only tests/test_ingame_epona.py sets
+(review-tests-153-6 06:56: its field Epona, age and song reached row 294's runs too; their age comes from the game's
+own flag, fakegame.age, and their horse lines from fakes/epona294.py).
 Since the quest is its real Enum Step_Get_Epona, fakes/epona294.py (row 294) reacts to the same flag; unscoped, both
 answered every run (CI 46110930507: test_ingame_row294 FAIL 2 != 1, Suite desync OwnedHorseList.ActorName[0]).
 """
@@ -50,7 +52,7 @@ def _row():
 
 
 def _won(game):
-    return _row() and game.flags.get(QUEST) in ("Complete", COMPLETE_HASH)
+    return game.flags.get(QUEST) in ("Complete", COMPLETE_HASH)
 
 
 def setup(game):
@@ -80,10 +82,10 @@ def _a_sees(a, how):
 
 
 def after(game, m, r):
+    if not _row():
+        return
     cmd = m.get("cmd")
-    if not _row() and m.get("name") in (QUEST, "Get_Epona"):
-        pass                                           # (another row's quest: fakes/epona294.py)
-    elif cmd == "flag" and m.get("name") == QUEST and m.get("value") in ("Complete", COMPLETE_HASH):
+    if cmd == "flag" and m.get("name") == QUEST and m.get("value") in ("Complete", COMPLETE_HASH):
         game.other.flags[QUEST] = "Complete"          # shared by its end
     elif cmd == "flag" and m.get("name") == QUEST and r.get("was") in ("Complete", COMPLETE_HASH):
         # written lower: the group's Complete comes back (co-op never lowers it, docs/flags.md "Shared by its end")
@@ -103,6 +105,8 @@ def after(game, m, r):
 
 
 def state(game, st):
+    if not _row():
+        return
     if _field(game):
         st["age"] = "adult"
     if not game.at_title and _won(game) != game.owns_last:     # logged on each change (coop_ride.cpp:470-474)
@@ -115,6 +119,8 @@ def state(game, st):
 
 
 def actors(game):
+    if not _row():
+        return []
     far = (game.horse == FIELD_EPONA and getattr(game, "epona_entrance", None) != MARKET
            and math.dist(game.pos[::2], FIELD_EPONA[::2]) > NEAR_M)   # (the field Epona, out of B's list's reach)
     if game.tag == "B" and _field(game) and game.horse and not far:
@@ -123,6 +129,8 @@ def actors(game):
 
 
 def press(game, buttons):
+    if not _row():
+        return False
     if game.tag != "B" or not _field(game):
         return False
     a = game.other

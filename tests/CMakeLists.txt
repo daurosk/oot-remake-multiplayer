@@ -93,6 +93,7 @@ add_executable(coop_tests
   lichii/actor_events_test.cpp
   lichii/quest_test.cpp
   lichii/story_test.cpp
+  lichii/carpenters_test.cpp
   lichii/quests_test.cpp
   lichii/pose_test.cpp
   lichii/local_test.cpp

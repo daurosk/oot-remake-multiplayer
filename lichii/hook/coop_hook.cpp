@@ -104,6 +104,7 @@
 #include "coop_event_result.h"  // row 98(2): another player's gimmick event gives our room its result, no replay
 #include "coop_dungeon.h"
 #include "coop_quest.h"
+#include "coop_carpenters.h"
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_eye_switch.h"
@@ -963,6 +964,10 @@ public:
             if (sharing_ && load_mend_.ready() && CoopStory::On() &&
                 quest_catch_up_.Due(CoopEvery::NowUs())) {
                 CatchUpQuests(*memory, reading && reading->event_running.value_or(false));  // issues 173, 171
+                // Row 333: the fortress's carpenter count follows the shared rescues (only with our event state
+                // known: our own rescue adds to it inside its event, before its flags are set).
+                FollowCarpenters(*memory, !(reading && reading->event_running.has_value() &&
+                                            !*reading->event_running));
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
@@ -3376,7 +3381,40 @@ private:
             live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs,
                                  here.dungeon ? here.room : std::nullopt);
         }
+        // Row 333 (coop_carpenters.h): a save whose four carpenters are all freed but whose card scene never played
+        // (the rescues split between players before the count followed them) gets what its own 4th rescue does.
+        if (memory && sharing_ && CoopStory::On()) {
+            coop::host::GameFlags flags(*memory);
+            const CoopCarpenters::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };
+            const bool in_event = !(reading && reading->event_running.has_value() && !*reading->event_running);
+            if (carpenter_mender_.Tick(flag, here.scene, in_event, now_us)) {
+                const bool placed = coop::host::GameFlags::set_bool(*memory, CoopCarpenters::kFirstPlace, true);
+                {
+                    std::lock_guard lock(live_mutex_);
+                    live_requester_.Want(std::string(CoopCarpenters::kCardSceneName), here.scene, now_us,
+                                         CoopSharedScenes::kJoinUs);
+                }
+                LOG_INFO(Core, "coop: story: all four carpenters are freed here but the card scene never played "
+                               "(row 333): the card Gerudo at her place ({}) and {} asked",
+                         placed ? "set" : "not set", CoopCarpenters::kCardSceneName);
+            }
+        }
     }
+
+    // Row 333 (coop_carpenters.h): NumOfCarpenterHelped and its _02 follow the shared rescue flags.
+    void FollowCarpenters(EmulatorMemory& memory, bool in_event) {
+        coop::host::GameFlags flags(memory);
+        const CoopCarpenters::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };
+        const CoopCarpenters::ReadInt value = [&](std::uint32_t h) { return flags.get_int(h); };
+        const auto f = CoopCarpenters::FollowRescues(flag, value, in_event);
+        if (f.helped && coop::host::GameFlags::set_int(memory, CoopCarpenters::kHelped, *f.helped)) {
+            LOG_INFO(Core, "coop: story: carpenters freed: our count -> {} (the shared rescues; row 333)", *f.helped);
+        }
+        if (f.left && coop::host::GameFlags::set_int(memory, CoopCarpenters::kHelpedLeft, *f.left)) {
+            LOG_INFO(Core, "coop: story: carpenters left: our count -> {} (row 333)", *f.left);
+        }
+    }
+    CoopCarpenters::Mender carpenter_mender_;
 
     // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
     // DoorOfTime, Get_StoneOfFire) to what the shared story scenes say, so a

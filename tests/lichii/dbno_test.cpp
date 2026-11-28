@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/scene_place.hpp"
 #include "coop_dbno.h"
 
 namespace proto = coop::protocol;
@@ -71,9 +72,19 @@ struct Game {
     int entrance_asks = 0;
     bool enemy_near_us = false;
     bool bottled_fairy = false;
+    // Teammate::here as the glue's ShownHere gives it outside a dungeon (in
+    // the game, our place, a position); false: the test sets it itself.
+    bool auto_here = true;
 
     Output Step(bool lethal = false) {
         now += kFrame;
+        if (auto_here) {
+            for (Teammate& t : team) {
+                t.here = t.in_game && t.scene && scene && proto::same_place(*t.scene, *scene) && t.position &&
+                         std::isfinite((*t.position)[0]) && std::isfinite((*t.position)[1]) &&
+                         std::isfinite((*t.position)[2]);
+            }
+        }
         Input in;
         in.now_us = now;
         in.rules = rules;
@@ -475,9 +486,10 @@ TEST_CASE("dbno: only a teammate who is up, here and beside him revives") {
     }
     {
         Game g;
+        g.Down();  // downed beside them (row 334), then they are in another scene
         g.team = {Mate(1, {1, 0, 0}, State::up, "spot01")};
-        g.Down();
         CHECK(held(g) == 0);
+        CHECK(g.machine.Now() == State::downed);
     }
     {
         Game g;
@@ -491,9 +503,10 @@ TEST_CASE("dbno: only a teammate who is up, here and beside him revives") {
     {
         Game g;
         g.team = {Mate(1)};
-        g.team[0].position.reset();  // no puppet to measure from
         g.Down();
+        g.team[0].position.reset();  // no puppet to measure from
         CHECK(held(g) == 0);
+        CHECK(g.machine.Now() == State::downed);
         g.team = {Mate(1, {std::nanf(""), 0, 0})};
         CHECK(held(g) == 0);
     }
@@ -507,9 +520,11 @@ TEST_CASE("dbno: a teammate beside him in the other era's scene of his place rev
     CHECK(g.RunHeld(kS, 1).reviver == 1);
     Game h;
     h.scene = "Graveyard_Child";
-    h.team = {Mate(1, {1, 0, 0}, State::up, "Kakariko_Adult")};
+    h.team = {Mate(1, {1, 0, 0}, State::up, "Graveyard_Adult")};
     h.Down();
+    h.team[0].scene = "Kakariko_Adult";  // then in another place
     CHECK(h.RunHeld(kS, 1).reviver == 0);
+    CHECK(h.machine.Now() == State::downed);
 }
 
 TEST_CASE("dbno: two revivers: whoever began goes on, then the lower number") {
@@ -1043,6 +1058,7 @@ TEST_CASE("dbno spectate: the first pick is the nearest in our scene, and A goes
               Threatened(Mate(3, {1, 0, 0}, State::downed), CoopDbno::Threat::enemy)};
     Spectate(g);
     CHECK(g.Step().watching == 4);  // nearest up in our scene (3 is down, 5 elsewhere)
+    // Row 318: A goes round the nearby ones only (5 is elsewhere: never watched).
     auto next = [&g] {
         g.now += kFrame;
         Input in;
@@ -1058,8 +1074,9 @@ TEST_CASE("dbno spectate: the first pick is the nearest in our scene, and A goes
         in.next = true;
         return g.machine.Frame(in).watching;
     };
-    CHECK(next() == 5);
-    CHECK(next() == 2);  // round again, by number: 2, 4, 5
+    CHECK(next() == 2);  // round again, by number: 2, 4
+    CHECK(next() == 4);
+    CHECK(next() == 2);
     CHECK(next() == 4);
     CHECK(g.Step().watching == 4);  // no press: stays
     // The one watched goes down: the next pick.
@@ -1286,4 +1303,210 @@ TEST_CASE("dbno: the last one standing saved by a fairy is never out") {
     g.life = 0;
     g.Run(CoopDbno::kDyingUs + kFrame);
     CHECK(g.machine.Now() == State::out);
+}
+
+// --- Rows 318 + 334: downed and spectating only with a teammate nearby ---
+
+TEST_CASE("dbno row 334: a lethal hit with nobody nearby: no downed wait, the entrance at once, then up") {
+    Game g;
+    g.team = {Mate(1, {1, 0, 0}, State::up, "spot01")};  // up, but in another scene
+    CHECK(g.Step().guard == Guard::last_stand);          // still held back: the respawn, not a Game Over
+    const Output hit = g.Down();
+    CHECK(hit.state == State::spectating);
+    CHECK(hit.guard == Guard::shielded);
+    CHECK(hit.move_entrance);
+    CHECK(g.Saw(Event::alone));
+    CHECK_FALSE(g.Saw(Event::went_down));
+    const Output o = g.Step();
+    CHECK(o.state == State::up);
+    CHECK(o.by == 0);
+    CHECK(g.Saw(Event::respawned));
+    CHECK_FALSE(g.Saw(Event::bled_out));
+    CHECK(g.entrance_asks == 1);
+    CHECK(g.beside_asks == 0);
+    CHECK(g.life == CoopDbno::kRespawnLife);
+    CHECK(o.guard == Guard::shielded);  // the mercy after coming back
+    REQUIRE(g.sent.size() == 2);
+    CHECK(g.sent[0].state == State::spectating);
+    CHECK(g.sent[1] == proto::DbnoStatus{});
+    CHECK(CoopDbno::OwnLine(Event::respawned, "") == "No teammate is near: you are back at the entrance");
+    CHECK_FALSE(CoopDbno::OwnLine(Event::alone, ""));
+}
+
+TEST_CASE("dbno row 334: nearby is the game showing them (here): not here, no position or a bad one: alone") {
+    for (int i = 0; i < 3; ++i) {
+        Game g;
+        g.team = {Mate(1)};
+        if (i == 0) {
+            g.auto_here = false;  // our scene, but another dungeon room (CheckMove not ok)
+            g.team[0].here = false;
+        } else if (i == 1) {
+            g.team[0].position.reset();
+        } else {
+            g.team[0].position = Vec3{std::nanf(""), 0, 0};
+        }
+        CHECK(g.Down().state == State::spectating);
+        CHECK(g.Saw(Event::alone));
+    }
+}
+
+TEST_CASE("dbno row 334: a teammate taking a door at that frame still counts (kNearbyGraceUs, the load)") {
+    {
+        Game g;
+        g.team = {Mate(1)};
+        g.Step();
+        g.team[0].in_game = false;  // a door: their scene loads
+        g.team[0].loading = true;
+        g.Run(5 * kS);  // however long the load takes
+        CHECK(g.Down().state == State::downed);
+        CHECK(g.Saw(Event::went_down));
+        CHECK_FALSE(g.Saw(Event::alone));
+    }
+    {
+        Game g;
+        g.team = {Mate(1)};
+        g.Step();
+        g.team[0].scene = "spot01";  // gone through, now elsewhere
+        g.Run(CoopDbno::kNearbyGraceUs - 2 * kFrame);
+        CHECK(g.Down().state == State::downed);  // a moment ago: still nearby
+    }
+    {
+        Game g;
+        g.team = {Mate(1)};
+        g.Step();
+        g.team[0].scene = "spot01";
+        g.Run(CoopDbno::kNearbyGraceUs);
+        CHECK(g.Down().state == State::spectating);  // past the grace: alone
+        CHECK(g.Saw(Event::alone));
+    }
+    {
+        Game g;
+        g.team = {Mate(1, {1, 0, 0}, State::up, "spot01")};
+        g.Step();
+        g.team[0].in_game = false;  // a load that did not start beside us
+        g.team[0].loading = true;
+        CHECK(g.Down().state == State::spectating);
+    }
+}
+
+TEST_CASE("dbno row 334: three or more: any one nearby who is up is enough") {
+    {
+        Game g;
+        g.team = {Mate(2, {1, 0, 0}, State::up, "spot01"), Mate(3, {30, 0, 0})};
+        CHECK(g.Down().state == State::downed);
+    }
+    {
+        Game g;
+        g.team = {Mate(2, {1, 0, 0}, State::up, "spot01"), Mate(3, {1, 0, 0}, State::downed)};
+        CHECK(g.Down().state == State::spectating);  // the one nearby is down: cannot revive
+        CHECK(g.Saw(Event::alone));
+    }
+    {
+        Game g;
+        g.team = {Mate(2, {1, 0, 0}, State::up, "spot01"), Mate(3, {1, 0, 0}, State::spectating)};
+        CHECK(g.Down().state == State::spectating);
+        CHECK(g.Saw(Event::alone));
+    }
+}
+
+TEST_CASE("dbno row 334: everyone else down: the downed path and its wipe, unchanged") {
+    Game g;
+    g.team = {Mate(2, {1, 0, 0}, State::downed)};
+    CHECK(g.Down().state == State::downed);
+    CHECK_FALSE(g.Saw(Event::alone));
+    CHECK(g.Run(CoopDbno::kWipeGraceUs + kFrame).state == State::out);
+    CHECK(g.Saw(Event::wiped));
+    CHECK(g.entrance_asks == 0);
+}
+
+TEST_CASE("dbno row 334: solo or the mode off: nothing new") {
+    Game g;
+    g.connected = false;  // solo
+    g.team.clear();
+    CHECK(g.Step().guard == Guard::off);
+    CHECK(g.Step(true).state == State::up);
+    g.connected = true;
+    g.team = {Mate(1, {1, 0, 0}, State::up, "spot01")};
+    g.rules.on = false;
+    CHECK(g.Step(true).state == State::up);
+    CHECK(g.events.empty());
+    CHECK(g.entrance_asks == 0);
+}
+
+TEST_CASE("dbno row 318: bled out with nobody nearby: no spectating, the entrance at once, then up") {
+    Game g;
+    g.rules.bleed_s = 10;
+    g.team = {Threatened(Mate(2), CoopDbno::Threat::enemy)};
+    CHECK(g.Down().state == State::downed);
+    g.team[0].scene = "spot01";  // they leave while we bleed out
+    g.Run(10 * kS + 2 * kFrame);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.Saw(Event::alone));
+    CHECK(g.Saw(Event::respawned));
+    CHECK_FALSE(g.Saw(Event::bled_out));
+    CHECK(g.entrance_asks == 1);
+    CHECK(g.beside_asks == 0);
+    CHECK(g.life == CoopDbno::kRespawnLife);
+}
+
+TEST_CASE("dbno row 318: the one watched leaves (a door, a warp): watched through the load, then the entrance") {
+    Game g;
+    g.team = {Threatened(Mate(2, {30, 0, 0}), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.Step().watching == 2);
+    g.team[0].in_game = false;  // a door
+    g.team[0].loading = true;
+    CHECK(g.Run(5 * kS).watching == 2);
+    CHECK(g.entrance_asks == 0);
+    g.team[0].in_game = true;  // through, in another scene
+    g.team[0].loading = false;
+    g.team[0].scene = "spot01";
+    const Output still = g.Run(CoopDbno::kNearbyGraceUs);
+    CHECK(still.state == State::spectating);
+    CHECK(g.entrance_asks == 0);
+    g.events.clear();
+    const Output asked = g.Step();
+    CHECK(asked.move_entrance);
+    CHECK(asked.watching == 0);
+    CHECK(g.Saw(Event::alone));
+    const Output o = g.Step();
+    CHECK(o.state == State::up);
+    CHECK(o.by == 0);
+    CHECK(g.Saw(Event::respawned));
+    CHECK(g.beside_asks == 0);
+}
+
+TEST_CASE("dbno row 318: three or more: only a nearby one is watched, the far one never") {
+    Game g;
+    g.position = {0, 0, 0};
+    g.team = {Threatened(Mate(2, {1, 0, 0}, State::up, "spot01"), CoopDbno::Threat::enemy),
+              Threatened(Mate(4, {20, 0, 0}), CoopDbno::Threat::enemy)};
+    Spectate(g);
+    CHECK(g.Step().watching == 4);
+    CHECK_FALSE(g.Saw(Event::alone));
+    // The nearby one goes down; the far one is still up: the entrance.
+    g.team[1].state = State::downed;
+    g.events.clear();
+    const Output asked = g.Step();
+    CHECK(asked.move_entrance);
+    CHECK(g.Saw(Event::alone));
+}
+
+TEST_CASE("dbno row 318: the entrance refused with an enemy near us: tried again after kQuietUs, never every frame") {
+    Game g;
+    g.team = {Mate(2, {1, 0, 0}, State::up, "spot01")};
+    g.entrance_result = CoopDbno::Moved::failed;
+    g.enemy_near_us = true;
+    CHECK(g.Down().state == State::spectating);
+    CHECK(g.entrance_asks == 1);
+    g.Run(CoopDbno::kQuietUs - 2 * kFrame);
+    CHECK(g.entrance_asks == 1);
+    CHECK(g.machine.Now() == State::spectating);
+    CHECK(g.life == CoopDbno::kDownedLife);
+    g.Run(3 * kFrame);
+    CHECK(g.entrance_asks == 2);
+    g.enemy_near_us = false;
+    g.Run(3 * kFrame);
+    CHECK(g.machine.Now() == State::up);  // refused again, nothing near: up where he lay
+    CHECK(g.Saw(Event::respawned));
 }

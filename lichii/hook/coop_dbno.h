@@ -229,6 +229,10 @@ inline constexpr std::uint64_t kDyingUs = 8'000'000;
 // The respawn's move (the /teleport trip, then the entrance) that has not
 // answered in this long counts as failed.
 inline constexpr std::uint64_t kRespawnWaitUs = 20'000'000;
+// Rows 318 + 334: a teammate who stops being nearby (Teammate::here) still
+// counts this long, and while their scene loads (a door, a loading zone), so
+// a door's load does not flap between nearby and not.
+inline constexpr std::uint64_t kNearbyGraceUs = 1'000'000;
 
 // How the respawn's move went (coop_teleport_game.h Beside / ToEntrance).
 enum class Moved : std::uint8_t { none, done, failed };
@@ -247,6 +251,12 @@ struct Teammate {
     std::optional<std::string> scene;
     std::optional<Vec3> position;     // at the feet, as our game shows them
     Threat threat = Threat::unknown;  // their DBNO_THREAT
+    // The game can show them from where we are (the spectating camera's
+    // rule, coop_dbno_game.cpp ShownHere): in the game, our scene and, in a
+    // dungeon, a room CoopTeleport::CheckMove says ok. Rows 318 + 334: only
+    // a nearby teammate (up, here, or here within kNearbyGraceUs) keeps a
+    // downed or spectating player waiting.
+    bool here = false;
 };
 
 // Whether `them` at `at` is near enough to `self` to revive, `slack` times
@@ -281,7 +291,10 @@ enum class Event : std::uint8_t {
     died,        // the game took the life anyway (a pit, a script)
     got_up,      // the host turned the mode off
     back,        // alive again after out (a fairy, a continue)
-    respawned,   // spectating over: up again beside `Output::watching`
+    respawned,   // spectating over: up again beside `Output::watching` (0: at the entrance)
+    // Rows 318 + 334: a lethal hit or a bleed-out with no teammate nearby: no
+    // downed wait, no spectating; straight to the entrance, then respawned.
+    alone,
 };
 
 struct Output {
@@ -318,6 +331,12 @@ public:
 private:
     std::uint8_t PickReviver(const Input& in) const;
     std::uint8_t PickWatch(const Input& in) const;
+    // Rows 318 + 334: who is nearby now (Teammate::here, kNearbyGraceUs).
+    void Notice(const Input& in);
+    bool Nearby(const Teammate& t, std::uint64_t now_us) const;
+    bool AnyNearby(const Input& in) const;
+    // Nobody nearby: our Link to the entrance at once, then up (row 318).
+    void ToEntranceAlone(Output& out, std::uint64_t now_us);
     bool Quiet(const Input& in) const;
     proto::DbnoStatus Status() const;
     void Enter(State state, std::uint64_t now_us);
@@ -340,6 +359,8 @@ private:
     std::uint8_t move_to_ = 0;
     std::uint64_t move_since_us_ = 0;
     std::uint64_t dying_since_us_ = 0;  // up at no life: since when; 0 not
+    std::uint64_t alone_retry_us_ = 0;  // spectating alone: the entrance not before this
+    std::array<std::uint64_t, proto::kMaxPlayers + 1> near_us_{};  // last time each was nearby; 0 never
     std::array<std::uint64_t, proto::kMaxPlayers + 1> hold_us_{};  // last hold per player; 0 none
     std::optional<proto::DbnoStatus> sent_;
     std::uint64_t sent_us_ = 0;

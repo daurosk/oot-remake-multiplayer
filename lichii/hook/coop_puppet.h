@@ -790,6 +790,7 @@ private:
     static void ResetBody(Slot& slot);
     std::optional<CoopPuppetBody::Capsule> OwnBody(Guest& guest);
     void BodyProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
+    static bool ClothProbeOn();  // LICHII_COOP_DEBUG_CLOTH=1, read once
     void ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;

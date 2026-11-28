@@ -1106,7 +1106,19 @@ Owner, 2026-11-27: "link puppets have no cloth physics so things like his cap ar
   puppet writes once a second (`kClothProbeFrames`, 60 frames) `cloth: P<n> physics <p> set <s> holder <C> n <count>
   list <O> entries <count>` and the first entry's flags and 30 words as floats, then the same line for our own Link
   (`P<n> our own Link's`). A puppet without cloth reads holder 0; ours is not 0. With the cloth, the first entry's
-  floats change while the copy moves and settle while it stands.
+  floats change while the copy moves and settle while it stands. With the variable unset the call site does
+  nothing (`ClothProbeOn` is checked first, so no player lookup every 60 frames). That function is the game's
+  head-gear refresh: it is the routine at memory address 0x4b8240 (the file offsets above are 0x100 higher), called
+  from 0x4b7f78 in the `EquipArmor_Head` code (next to a string meaning "is it equipped") and from 0xa7a5b8, 0xa7abc0,
+  0xa7abe8 and 0x10acee4, each after it sets bit 0 of a byte at +0x13c4 or +0x3c4. What bit 0 of an entry means
+  is not proven, so the module never writes it.
+- **After a warp (no reset added).** A scene change deletes the puppet and makes it again at the player's own
+  place (`Director::Poll` live phase, `Create` with `target.position`), so its cloth starts fresh in the new scene.
+  A jump inside one scene past `CoopSnap::kWarpM` is drawn at once; the game's cloth code has its own teleport
+  handling (`sqrTeleportationThreshold`, `ClothTeleported`, `SimClothTeleported`, `VelocityResetDistance` in
+  main), which works from each cloth's own movement, ours or a puppet's. No reset of our own is added: the only
+  game routine that marks the entries is the head-gear refresh above, and writing an unproven bit on every puppet
+  risks breaking what works. Check in the rc: a void-out respawn and a Farore's Wind return in the same scene.
 - **Not run in a game yet.** Nothing here is proven in a game: the cap swinging on the puppets (child, adult, every
   character), on Epona, in water and wind, and after a warp.
 

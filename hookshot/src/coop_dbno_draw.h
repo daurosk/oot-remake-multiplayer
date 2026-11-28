@@ -15,7 +15,7 @@
 
 namespace CoopDbnoDraw {
 
-// Who and what, without the numbers: "You are down", "Saria is reviving you", "Hold A to revive Saria",
+// Who and what, without the numbers: "You are down", "Saria is reviving you", "Hold B to revive Saria",
 // "Reviving Saria", "Watching Saria  A: next player".
 std::string Caption(const CoopDbno::View& view);
 

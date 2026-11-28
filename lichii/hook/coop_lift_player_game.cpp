@@ -26,6 +26,7 @@
 #include "coop/host/event_owner.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
+#include "coop_dbno_game.h"
 #include "coop_lift_player.h"
 #include "coop_objects.h"
 #include "coop_puppet.h"
@@ -274,7 +275,12 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
                                                              reading->event_whose)) ||
                   (status & (proto::status::away & ~proto::status::dead)) != 0;
     const auto life = CoopObjects::OurLinkLife();
-    local.down = (status & proto::status::dead) != 0 || (life && *life <= 0);
+    // Row 317: a Link down but not out may be lifted (carried to safety); dead, out or watching may not. Downed, the
+    // dead status bit or a life the game left at 0 is the down itself (the guard holds it), not a death.
+    const auto dbno = CoopDbno::StateOfPlayer(self);
+    local.downed = dbno == CoopDbno::State::downed;
+    local.down = dbno == CoopDbno::State::out || dbno == CoopDbno::State::spectating ||
+                 (!local.downed && ((status & proto::status::dead) != 0 || (life && *life <= 0)));
     local.lifting = g.lifter.Held() != 0;
     local.young = reading && reading->age == proto::Age::child;
     if (reading) {
@@ -298,7 +304,9 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.victim.Place(p, now_us);
     }
     const std::uint8_t by = g.victim.By();
-    g.victim.Struggle(g.presses.exchange(0), now_us);
+    // Row 317: no struggling free while downed (a downed player wants to be carried); the presses are dropped.
+    const int presses = g.presses.exchange(0);
+    g.victim.Struggle(local.downed ? 0 : presses, now_us);
     const auto step = g.victim.Frame(local, now_us);
     if (step.put) {
         CoopObjects::PlaceOurLink(*step.put);

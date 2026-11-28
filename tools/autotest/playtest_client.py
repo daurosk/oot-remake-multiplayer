@@ -21,6 +21,9 @@ PORT_BASE = 5000          # player N: PORT_BASE + N (p1 5001 ... p4 5004); on te
 PLAYERS = ("p1", "p2", "p3", "p4")
 TAG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 BUTTONS = ("A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LS", "RS", "UP", "DOWN", "LEFT", "RIGHT")
+# Row 317: the button a player holds beside a downed teammate to revive them (lichii/hook/coop_dbno.h pad::revive and
+# kReviveButtonName; tests/test_playtest_bridge.py checks it against that file). A is the game's own Lift there.
+REVIVE_BUTTON = "B"
 MAX_FRAMES = 3600
 
 

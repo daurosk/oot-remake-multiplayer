@@ -688,7 +688,7 @@ TEST_CASE("dbno line: the caption says who, the line adds the clock and the revi
     using View = CoopDbno::View;
     CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "", 0, 0, false}) == "You are down");
     CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "Saria", 0, 0, false}) == "Saria is reviving you");
-    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, false}) == "Hold A to revive Saria");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, false}) == "Hold B to revive Saria");
     CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, true}) == "Reviving Saria");
     CHECK(CoopDbnoDraw::Progress(0.0f).empty());
     CHECK(CoopDbnoDraw::Progress(-1.0f).empty());
@@ -700,11 +700,11 @@ TEST_CASE("dbno line: the caption says who, the line adds the clock and the revi
     CHECK(CoopDbnoDraw::Line(View{View::Kind::downed, "Saria", 32'000'000, 0.25f, false}) ==
           "Saria is reviving you  0:32  25%");
     CHECK(CoopDbnoDraw::Line(View{View::Kind::reviving, "Saria", 5'000'000, 0.0f, false}) ==
-          "Hold A to revive Saria  0:05");
+          "Hold B to revive Saria  0:05");
     CHECK(CoopDbnoDraw::Line(View{View::Kind::reviving, "Saria", 5'000'000, 0.6f, true}) == "Reviving Saria  0:05  60%");
     // A share left from a let-go A is not shown while A is not held.
     CHECK(CoopDbnoDraw::Line(View{View::Kind::reviving, "Saria", 5'000'000, 0.6f, false}) ==
-          "Hold A to revive Saria  0:05");
+          "Hold B to revive Saria  0:05");
     View watch{View::Kind::spectating, "Saria", 0, 0, false};
     CHECK(CoopDbnoDraw::Line(watch) == "Watching Saria  A: next player");
 }

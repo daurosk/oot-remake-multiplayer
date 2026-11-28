@@ -183,6 +183,21 @@ TEST_CASE("lift player: freed by the lifted game, or the copy gone, ends the car
     CHECK(lifter.Held() == 0);
 }
 
+TEST_CASE("lift player: a Link down but not out is lifted and carried (row 317)") {
+    const proto::LiftAsk ask{1, 2};
+    const Vec3 close_by{10.5f, 0.0f, 10.0f};
+    Victim v;
+    Local l = Here();
+    l.downed = true;  // down but not out: not `down` (dead, out, watching)
+    CHECK(v.Ask(ask, l, close_by, 0).refusal == proto::LiftRefusal::none);
+    CHECK(v.By() == 1);
+    v.Place(proto::LiftPlace{1, 2, proto::LiftPhase::held, {10.5f, 1.0f, 10.0f}}, kFrame);
+    const auto s = v.Frame(l, kFrame);
+    CHECK_FALSE(s.freed);
+    CHECK(s.input_off);
+    CHECK(v.Carried());
+}
+
 TEST_CASE("lift player: the lifted game decides (event, down, busy, far, lifting someone)") {
     const proto::LiftAsk ask{1, 2};
     const Vec3 close_by{10.5f, 0.0f, 10.0f};

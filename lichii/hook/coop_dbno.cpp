@@ -667,7 +667,7 @@ Pad SpectatorPad(const Pad& in) {
 
 Pad ReviverPad(const Pad& in) {
     Pad out = in;
-    out.buttons &= ~pad::a;
+    out.buttons &= ~pad::revive;
     return out;
 }
 
@@ -685,7 +685,7 @@ std::string RulesLine(const Rules& rules, std::uint8_t self, std::string_view by
         line = "Down but not out is off: at no hearts you die";
     } else {
         const int tenths = rules.revive_tenths;
-        line = "Down but not out is on: " + Clock(rules.BleedUs()) + " to be revived, hold A " +
+        line = "Down but not out is on: " + Clock(rules.BleedUs()) + " to be revived, hold " + std::string(pad::kReviveButtonName) + " " +
                std::to_string(tenths / 10) + (tenths % 10 != 0 ? "." + std::to_string(tenths % 10) : "") +
                " s, back with " + CoopPvp::Hearts(rules.revive_life);
     }
@@ -728,7 +728,7 @@ std::optional<std::string> TheirLine(const std::optional<proto::DbnoStatus>& bef
     const std::string who(name.empty() ? "P" + std::to_string(now.player_number) : std::string(name));
     switch (now.state) {
     case State::downed:
-        return who + " is down: hold A beside them to revive";
+        return who + " is down: hold " + std::string(pad::kReviveButtonName) + " beside them to revive";
     case State::out:
         return who + " is out";
     case State::spectating:

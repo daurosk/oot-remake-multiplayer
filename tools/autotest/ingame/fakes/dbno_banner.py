@@ -4,7 +4,7 @@ its 'chat /dbno hold N' is answered here and every other /dbno line there).
 
 - 'chat /dbno hold N' (A): the hold for both games, said as the module says its rules (coop_dbno_game.cpp:255).
 - `text` (layout SimpleInfo_00): one set of the banner's T_Text_00 per call while a line is held: B downed ('You are
-  down' or 'P1 is reviving you  m:ss  NN%'), A beside the downed B ('Hold A to revive P2' / 'Reviving P2').
+  down' or 'P1 is reviving you  m:ss  NN%'), A beside the downed B ('Hold B to revive P2' / 'Reviving P2').
 - `shot`: the banner's white words drawn in test_revive_banner.BAND while a line is held.
 
 BT_FAKE_BANNER_BUG (selftests, tests/test_ingame_revive_banner.py):
@@ -45,7 +45,7 @@ def line(game):
             return "P1 is reviving you  %s  %d%%" % (left, min(99, 100 * d["held"] // hold))
         return "You are down  %s" % left
     if o.dbno["state"] == "down" and game.pos and o.pos and math.dist(game.pos[::2], o.pos[::2]) < 2.5 * 1.3:
-        return ("Reviving P2  %s" if o.dbno["held"] > 0 else "Hold A to revive P2  %s") % left
+        return ("Reviving P2  %s" if o.dbno["held"] > 0 else "Hold B to revive P2  %s") % left
     return None
 
 

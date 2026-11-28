@@ -310,6 +310,9 @@ public:
     Output Frame(const Input& in);
     // A DBNO_REVIVE that reached us.
     void Hold(std::uint8_t from, bool holding, std::uint64_t now_us);
+    // Row 317: our downed Link is carried by another player: every hold is let go (no getting up in someone's
+    // hands); a reviver holds again once we are down on the ground.
+    void DropHolds() { hold_us_.fill(0); }
     // Someone joined, or we are connected again: our state is told once more
     // (only a state other than up is news to them).
     void TellAgain() { tell_again_ = true; }
@@ -426,6 +429,12 @@ private:
 // Switch pad bits (nn::hid::NpadButton) the rules name.
 namespace pad {
 inline constexpr std::uint64_t a = 1ull << 0;
+inline constexpr std::uint64_t b = 1ull << 1;
+// Row 317 (0.12.1): the revive button, ONE source (OnPad, ReviverPad, the screen's words kReviveButtonName; the
+// bridge tests' playtest_client.REVIVE_BUTTON is checked against it). B, so A stays the game's: its Lift at a
+// downed young teammate. (Y is the sword; B beside a downed teammate is ours, the game never sees it then.)
+inline constexpr std::uint64_t revive = b;
+inline constexpr const char* kReviveButtonName = "B";
 inline constexpr std::uint64_t plus = 1ull << 10;
 inline constexpr std::uint64_t minus = 1ull << 11;
 inline constexpr std::uint64_t stick_l_dirs = 0xFull << 16;  // the left stick as four buttons
@@ -451,7 +460,8 @@ Pad DownedPad(const Pad& in, bool game_crawl = false);
 // What it gets from a spectating player: the pause buttons and the camera
 // stick; Link does not move (A, the switch button, is ours).
 Pad SpectatorPad(const Pad& in);
-// What it gets from a player beside a downed one: everything but A.
+// What it gets from a player beside a downed one: everything but the revive button (pad::revive); A goes to the
+// game (its Lift of a downed young teammate, row 317).
 Pad ReviverPad(const Pad& in);
 
 // --- What the screen shows ---

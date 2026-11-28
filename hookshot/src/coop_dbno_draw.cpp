@@ -10,9 +10,13 @@
 
 namespace CoopDbnoDraw {
 
+// Row 317: the words below name the revive button; they follow CoopDbno::pad::revive (B).
+static_assert(std::string_view(CoopDbno::pad::kReviveButtonName) == "B", "Caption's 'Hold B to revive' names the button");
+
 std::string Caption(const CoopDbno::View& view) {
     using Kind = CoopDbno::View::Kind;
-    // The table's words around the name (data): "You are down", "Saria is reviving you", "Hold A to revive Saria".
+    // The table's words around the name (data): "You are down", "Saria is reviving you", "Hold B to revive Saria"
+    // (row 317: the revive button is B, CoopDbno::pad::revive; A is the game's Lift).
     if (view.kind == Kind::downed) {
         return view.name.empty() ? CoopI18n::Tr("You are down") : view.name + " " + CoopI18n::Tr("is reviving you");
     }
@@ -21,7 +25,7 @@ std::string Caption(const CoopDbno::View& view) {
                (view.elsewhere ? " " + CoopI18n::Tr("(out of sight)") : std::string()) + "  " +
                CoopI18n::Tr("A: next player");
     }
-    return CoopI18n::Tr(view.holding ? "Reviving" : "Hold A to revive") + " " + view.name;
+    return CoopI18n::Tr(view.holding ? "Reviving" : "Hold B to revive") + " " + view.name;
 }
 
 std::string Progress(float progress) {

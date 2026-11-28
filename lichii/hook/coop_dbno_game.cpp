@@ -30,6 +30,7 @@
 #include "coop_objects.h"
 #include "coop_puppet.h"
 #include "coop_fairy.h"
+#include "coop_lift_player_game.h"
 #include "coop_pvp_game.h"
 #include "coop_rooms.h"
 #include "coop_teleport.h"
@@ -102,7 +103,8 @@ struct Glue {
     std::atomic<std::int32_t> life_write{-1};  // raise to this (-1: none); the objects walk writes it
     Lowering take_to;                          // lower to this; the Life step takes it
     std::atomic<PadMode> pad_mode{PadMode::game};
-    std::atomic<bool> button{false};  // A as the player holds it (before we take it)
+    std::atomic<bool> button{false};  // A as the player holds it (before we take it): spectating's next player
+    std::atomic<bool> revive_button{false};  // pad::revive (B, row 317) as the player holds it: the Reviver
     std::atomic<bool> enemies_near{false};  // the objects walk
     std::atomic<bool> bottled_fairy{false};  // the hook's frame (row 162)
 
@@ -344,6 +346,11 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     for (const auto& h : holds) {
         g.machine.Hold(h.from, h.holding, now_us);
     }
+    // Row 317: carried by another player (coop_lift_player_game.h), no revive: every hold is let go.
+    const bool carried = CoopLiftPlayerGame::Carried();
+    if (carried) {
+        g.machine.DropHolds();
+    }
     if (g.tell_again.exchange(false)) {
         g.machine.TellAgain();
     }
@@ -416,6 +423,9 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     body.lying = out.state == State::downed || out.state == State::spectating;
     body.event = reading && coop::host::our_link_in_event(reading->event_running.value_or(false),
                                                            reading->event_whose);
+    // Row 317: carried by another player, the carry drives our Link as an event does: no crawl, no CrawlAnchor, no
+    // lying pose; landed (not carried), the crawl and its anchor come back.
+    body.event = body.event || carried;
     body.emitter = g.emitter.load(std::memory_order_acquire);
     body.bsa = g.bsa.load(std::memory_order_acquire);
     body.adult = g.adult.load(std::memory_order_acquire);
@@ -453,14 +463,16 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         LOG_INFO(Core, "coop: dbno: {}", note);
     }
 
-    // Beside a downed teammate: hold A.
+    // Beside a downed teammate: hold the revive button (pad::revive, B; row 317: A stays the game's Lift).
     // G1 (coop/host/event_owner.hpp): no revive while the game's event holds our Link (ours, or the
     // free Ocarina); another player's event replayed here leaves our Link free, so it may revive.
     const bool event = reading && coop::host::event_blocks_revive(reading->event_running.value_or(false),
                                                                   reading->event_whose);
-    const bool able = connected && rules.on && out.state == State::up && reading.has_value() && !event;
+    // Row 317: not while our Link carries a player (the director left a copy to the game's lifter).
+    const bool able = connected && rules.on && out.state == State::up && reading.has_value() && !event &&
+                      CoopPuppet::GameHolds() == 0;
     const Reviver::Out rev =
-        g.reviver.Frame(now_us, able, g.button.load(), in.position, scene, fallen);
+        g.reviver.Frame(now_us, able, g.revive_button.load(), in.position, scene, fallen);
     g.pad_mode.store(out.state == State::downed       ? PadMode::downed
                      : out.state == State::spectating ? PadMode::spectating
                      : g.reviver.TakesButton()        ? PadMode::reviver
@@ -654,6 +666,7 @@ std::optional<std::int32_t> TakeLifeWrite() {
 Pad OnPad(const Pad& in) {
     Glue& g = TheGlue();
     g.button.store((in.buttons & pad::a) != 0, std::memory_order_relaxed);
+    g.revive_button.store((in.buttons & pad::revive) != 0, std::memory_order_relaxed);
     switch (g.pad_mode.load(std::memory_order_relaxed)) {
     case PadMode::downed:
         return DownedPad(in, Body::TheCrawl().GameCrawl());

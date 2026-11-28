@@ -800,7 +800,14 @@ TEST_CASE("dbno pad: a downed player keeps pause, the camera and a slow stick, a
     CHECK((down.buttons & pad::a) == 0);
 
     const Pad rev = CoopDbno::ReviverPad(in);
-    CHECK(rev.buttons == (everything & ~pad::a));
+    CHECK(rev.buttons == (everything & ~pad::revive));
+    // Row 317: the revive button is B (one source, pad::revive; the screen's word kReviveButtonName); A goes to the
+    // game beside a downed teammate (its Lift), and B does not.
+    CHECK(pad::revive == pad::b);
+    CHECK(pad::b == (1ull << 1));
+    CHECK(std::string(pad::kReviveButtonName) == "B");
+    CHECK((rev.buttons & pad::a) != 0);
+    CHECK((rev.buttons & pad::b) == 0);
     CHECK(rev.stick == in.stick);
     CHECK(CoopDbno::DownedPad(Pad{}) == Pad{});
 
@@ -878,13 +885,13 @@ TEST_CASE("dbno texts: the clock, the rules, our own notices and the others'") {
 
     CHECK(CoopDbno::RulesLine(Rules{}, 1, "") == "Down but not out is off: at no hearts you die");
     CHECK(CoopDbno::RulesLine(On(), 1, "") ==
-          "Down but not out is on: 0:45 to be revived, hold A 5 s, back with 3 hearts");
+          "Down but not out is on: 0:45 to be revived, hold B 5 s, back with 3 hearts");
     Rules r = On();
     r.revive_tenths = 25;
     r.revive_life = 2;
     r.set_by = 2;
     CHECK(CoopDbno::RulesLine(r, 1, "Saria") ==
-          "Down but not out is on: 0:45 to be revived, hold A 2.5 s, back with 1/2 heart (Saria changed it)");
+          "Down but not out is on: 0:45 to be revived, hold B 2.5 s, back with 1/2 heart (Saria changed it)");
     CHECK(CoopDbno::RulesLine(r, 2, "Saria").ends_with("(you changed it)"));
 
     CHECK(CoopDbno::OwnLine(Event::went_down, "") == "You are down. A teammate can revive you");
@@ -900,8 +907,8 @@ TEST_CASE("dbno texts: the clock, the rules, our own notices and the others'") {
     const proto::DbnoStatus held{2, State::downed, 450, 3, 200};
     const proto::DbnoStatus up{2, State::up, 0, 0, 0};
     const proto::DbnoStatus out{2, State::out, 0, 0, 0};
-    CHECK(CoopDbno::TheirLine(std::nullopt, down, "Saria", "") == "Saria is down: hold A beside them to revive");
-    CHECK(CoopDbno::TheirLine(up, down, "", "") == "P2 is down: hold A beside them to revive");
+    CHECK(CoopDbno::TheirLine(std::nullopt, down, "Saria", "") == "Saria is down: hold B beside them to revive");
+    CHECK(CoopDbno::TheirLine(up, down, "", "") == "P2 is down: hold B beside them to revive");
     CHECK_FALSE(CoopDbno::TheirLine(down, held, "Saria", "Mido"));  // still down: no news
     CHECK(CoopDbno::TheirLine(held, up, "Saria", "Mido") == "Mido revived Saria");
     CHECK(CoopDbno::TheirLine(held, up, "Saria", "") == "P3 revived Saria");

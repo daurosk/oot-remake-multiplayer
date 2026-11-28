@@ -19,6 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import hookshot   # noqa: E402  (BOTTLE_ITEMS: the one bottle list, as the test uses it)
+import playtest_client as pc   # noqa: E402  (REVIVE_BUTTON, as the test presses it)
 
 BOTTLES = hookshot.BOTTLE_ITEMS
 CHARSEL = "CharacterMenu_SelectedCharacter"
@@ -166,7 +167,7 @@ def after(game, m, r):
         game.pos = [game.pos[0] + rate * frames * math.sin(yaw), game.pos[1],
                     game.pos[2] + rate * frames * math.cos(yaw)]
     o = game.other
-    if "A" in (m.get("buttons") or []) and o.dbno["state"] == "down" and not bug("norevive") and \
+    if pc.REVIVE_BUTTON in (m.get("buttons") or []) and o.dbno["state"] == "down" and not bug("norevive") and \
             math.dist(game.pos[::2], o.pos[::2]) < 2.5 * 1.3:
         o.dbno["held"] += frames
         if o.dbno["held"] >= o.dbno_rules["hold"] * FPS // 10:

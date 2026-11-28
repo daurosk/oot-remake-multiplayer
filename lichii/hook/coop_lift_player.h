@@ -315,7 +315,9 @@ private:
 struct Local {
     std::uint8_t self = 0;
     bool event = false;     // our Link in an event, a load or a menu (PLAYER_STATUS away bits but dead)
-    bool down = false;      // dead, life 0, or down but not out
+    bool down = false;      // dead, life 0, out or watching (spectating): never lifted. Row 317: NOT a Link
+                            // down but not out (`downed`): that one may be lifted and carried to safety
+    bool downed = false;    // down but not out (row 317): lifted like any young Link, never struggles free
     bool lifting = false;   // our Link holds another player's copy (Lifter::Held)
     bool young = false;     // our Link is child now (PlayerReading::age); not read: no
     std::optional<Vec3> our_link;

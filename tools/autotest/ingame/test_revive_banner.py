@@ -111,7 +111,7 @@ def test_revive_banner_steady(pair):
         pair.step_both(10)
         apart = dc.dist(pair.state("A")["pos"], pair.state("B")["pos"])
         assert apart < dc.REACH_M, "A not beside B (%.2f m)" % apart
-        # The helper's side before the hold ('Hold A to revive P2  m:ss'), a few frames apart; B's 'You are down'.
+        # The helper's side before the hold ('Hold B to revive P2  m:ss'), a few frames apart; B's 'You are down'.
         pair.check_shot("A", "revive-banner-beside")
         pair.check_shot("B", "revive-banner-beside")
         pair.step_both(3)
@@ -127,7 +127,7 @@ def test_revive_banner_steady(pair):
         for i in range(SAMPLES):
             if pair.log["B"].find(dc.event(dc.EV_REVIVED)):
                 break
-            pair.press("A", ["A"], frames=STEP)
+            pair.press("A", [dc.pc.REVIVE_BUTTON], frames=STEP)
             r = pair.call("B", "shot", name="revive-banner-f%02d-B" % i)
             keep(pair, r.get("path"), "f%02d-B" % i)
             texts, since["B"], hooked["B"] = banner_sets(pair, "B", since["B"])
@@ -157,7 +157,7 @@ def test_revive_banner_steady(pair):
         ran = 0
         while not pair.log["B"].find(dc.event(dc.EV_REVIVED)):
             assert ran < 1800, "B not revived after A held A %d more frames" % ran
-            pair.press("A", ["A"], frames=10)
+            pair.press("A", [dc.pc.REVIVE_BUTTON], frames=10)
             ran += 10
         pair.never_log("B", dc.event(dc.EV_BLED_OUT))
         assert len(samples) >= MIN_REVIVING, "only %d of B's frames shot before the revive ended" % len(samples)

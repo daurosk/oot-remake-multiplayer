@@ -23,6 +23,7 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import hookshot   # noqa: E402  (BOTTLE_ITEMS: the ONE list of bottle Enums, as the scripts' `nofairy` uses it)
+import playtest_client as pc   # noqa: E402  (REVIVE_BUTTON: the revive button, coop_dbno.h pad::revive)
 
 # lichii/hook/coop_dbno.h:276 enum class Event: went_down 0, revived 1, bled_out 2, ..., respawned 7; logged as
 # "coop: dbno: our Link: event N (by PM)" (lichii/hook/coop_dbno_game.cpp:523).
@@ -158,8 +159,8 @@ def shots(pair, name, twice=True):
 
 
 def revive(pair, hold_tenths, max_frames=1800):
-    """A next to the lying B (BESIDE_M, inside REACH_M) holds A (coop_dbno_game.cpp:458 'Beside a downed teammate:
-    hold A'; the Reviver sends a hold every 200 ms, the downed game counts it 700 ms: coop_dbno.h kHoldSendUs /
+    """A next to the lying B (BESIDE_M, inside REACH_M) holds the revive button (pc.REVIVE_BUTTON, B; coop_dbno_game.cpp 'Beside a downed teammate:
+    hold the revive button'; the Reviver sends a hold every 200 ms, the downed game counts it 700 ms: coop_dbno.h kHoldSendUs /
     kHoldLiveUs). Held in 10-frame turns of each game (press runs A, then B the same frames) so neither game stops
     hearing the other for long. The revive takes hold_tenths of B's clock (coop_dbno.cpp Machine: held_us_)."""
     b = pair.state("B")["pos"]
@@ -171,7 +172,7 @@ def revive(pair, hold_tenths, max_frames=1800):
     ran = 0
     while not pair.log["B"].find(event(EV_REVIVED)):
         assert ran < max_frames, "B not revived after A held A %d frames (hold is %d tenths)" % (ran, hold_tenths)
-        pair.press("A", ["A"], frames=10)
+        pair.press("A", [pc.REVIVE_BUTTON], frames=10)
         ran += 10
     pair.expect_log("A", r"coop: dbno: P2 is up", max_frames=300)          # coop_dbno_game.cpp:272
     return ran

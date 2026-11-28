@@ -1813,5 +1813,22 @@ class KitThreeFixes(unittest.TestCase):
             self.assertNotRegex(text, r"live\.py (?:do|state|shot|checkpoint|stop) (?!--)[<\w]", rel)
 
 
+class ReviveButton(unittest.TestCase):
+    def test_revive_button_is_the_modules(self):
+        """Row 317: playtest_client.REVIVE_BUTTON (what the bridge tests press to revive) is the module's own
+        pad::revive (lichii/hook/coop_dbno.h: pad::revive = pad::<x>, kReviveButtonName "<X>")."""
+        import re
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+        with open(os.path.join(repo, "lichii", "hook", "coop_dbno.h"), encoding="utf-8") as f:
+            text = f.read()
+        bit = re.search(r"inline constexpr std::uint64_t revive = (\w+);", text)
+        name = re.search(r'inline constexpr const char\* kReviveButtonName = "(\w+)";', text)
+        self.assertIsNotNone(bit, "no pad::revive in coop_dbno.h")
+        self.assertIsNotNone(name, "no kReviveButtonName in coop_dbno.h")
+        self.assertEqual(bit.group(1).upper(), pc.REVIVE_BUTTON)
+        self.assertEqual(name.group(1), pc.REVIVE_BUTTON)
+        self.assertIn(pc.REVIVE_BUTTON, pc.BUTTONS)
+
+
 if __name__ == "__main__":
     unittest.main()

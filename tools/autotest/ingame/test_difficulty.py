@@ -60,6 +60,7 @@ TITLE_FOCUS = re.compile(r"coop: title: the title's focus is on button (\d+)")
 ROW_PRESSED = r"coop: title: menu: row %d pressed"
 PAGE_ON_TITLE = r"coop: multiplayer tab: its page on the title's own rows"
 PAGE_LEFT = r"coop: title: menu: the page left: Multiplayer's rows again"
+TO_TITLE_STAY = r"coop: multiplayer tab: test: to-title\.now 'stay': no Continue on the title"  # (coop_pause.cpp)
 TITLE_MULTIPLAYER, SUB_HOST = 3, 1      # (CoopTitleMenu::MenuFor: the rows with a save; Multiplayer's rows)
 DIFFICULTY = "Difficulty"
 KEPT_FILE = "coop-difficulty.ini"
@@ -192,7 +193,8 @@ def test_host_page_difficulty_kept(pair):
                        lambda: not connected(pair, "A"), max_frames=300)
         mark = pair.log["A"].mark()
         with open(os.path.join(pair.games["A"]["folder"], "to-title.now"), "w") as f:
-            f.write("bt\n")
+            f.write("stay\n")                                 # (no auto-Continue: A stays on the title's own menu)
+        pair.until("A: the 'stay' ask taken", lambda: pair.log["A"].find(TO_TITLE_STAY, pos=mark), max_frames=300)
         pair.until("A on the title", lambda: not pair.in_play(pair.state("A")), max_frames=900)
         pair.until("A: the title's own menu (%s)" % TITLE_MENU, lambda: pair.log["A"].find(TITLE_MENU, pos=mark),
                    max_frames=900)

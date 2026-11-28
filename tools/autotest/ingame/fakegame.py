@@ -185,8 +185,12 @@ class FakeGame:
             for _, fn in due:
                 fn()
             if os.path.exists(os.path.join(self.folder, "to-title.now")):
+                with open(os.path.join(self.folder, "to-title.now"), "rb") as f:
+                    stay = f.read(15).startswith(b"stay")
                 os.remove(os.path.join(self.folder, "to-title.now"))
                 self.say("coop: multiplayer tab: test: back to the title asked (to-title.now)")
+                if stay:                                      # (coop_pause.cpp: the text 'stay', no Continue on the title)
+                    self.say("coop: multiplayer tab: test: to-title.now 'stay': no Continue on the title")
                 self.title_asked = True
                 if self.tag in os.environ.get("BT_FAKE_TO_TITLE_GIVES_UP", ""):   # (the pilot's way back, both games)
                     self.later(60, lambda: self.say("coop: pause tab: back to the title: given up (the menu did not "

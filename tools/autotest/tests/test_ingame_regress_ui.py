@@ -81,6 +81,13 @@ class RegressUi(unittest.TestCase):
         p, s = self.run_fake("hilt", HILT)
         self.assertEqual(T.results(s), {HILT: "NO-REF"}, p.stdout[-1500:])
 
+    def test_hilt_back_not_to_b_is_setup_fail(self):
+        """gate-hilt-53d40ab3-2 (00:05 UTC 11-28): B's shots saw A's puppet side-on, the hilt hidden. A not turning its
+        back to B's camera is SETUP-FAIL, never NO-REF or PASS."""
+        p, s = self.run_fake("hilt-turn", HILT, bug="turn")
+        self.assertEqual(T.results(s), {HILT: "SETUP-FAIL"}, p.stdout[-1500:])
+        self.assertIn("does not turn its back to B's camera", s["tests"][0]["why"])
+
     def test_hilt_not_painted_fails(self):
         p, s = self.run_fake("hilt-bug", HILT, bug="hilt")
         self.assertEqual(T.results(s), {HILT: "FAIL"}, p.stdout[-1500:])

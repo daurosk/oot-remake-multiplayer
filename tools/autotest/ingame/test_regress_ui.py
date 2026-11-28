@@ -11,6 +11,7 @@ Not here: step 6's F1 routes (f1-event, C3-1: port-g7 owns the bridge's key inpu
 vk 0x70, coop_hookshot.cpp:3299), its minimap names (test_map_arrow.py), the tunic and Cap trim parts of step 5
 (test_tunic.py, test_hood_trim.py), and step 2 lan251 (needs a server restart and a relaunch: harness, regress-port-a).
 """
+import math
 import os
 import re
 
@@ -20,7 +21,6 @@ import game_names
 import pair as P
 from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
-from test_tunic import stand_apart
 
 # The old step's NOT pattern (regress-01113-steps/s6-ui.ps1 -Not 'exception 0x'), with test_look.py's CRASH forms.
 CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
@@ -281,6 +281,52 @@ B_PAINTED = r"coop: look: P1's gear colours painted for their puppet \(copy \d+\
 B_NOT_PAINTED = r"coop: look: P1's gear colours not painted"
 
 
+# The hilt sits on the sheath on Link's back (A's own shot, gate-hilt-53d40ab3-2 regress-hilt-1-A): B must see A's
+# puppet from behind. gate-hilt-53d40ab3-2 (00:05 UTC 11-28) used test_tunic.stand_apart (side by side, A facing B at
+# 35 deg): B's shots saw the puppet side-on, the hilt hidden by its cap and shield (NOT PROVEN on B).
+HILT_DIST = 3.0       # m ahead of B (test_rows.place_in_front's 2.5 + 0.5: B's own Link stays clear of the puppet)
+HILT_BEARING = 20.0   # deg off B's facing: A beside B's own Link on B's screen, not behind it
+BACK_MAX = 45.0       # deg: A's facing within this of B's camera direction (A's back towards B's camera)
+
+
+def turn_diff(a, b):
+    """Smallest angle between two facings in degrees (0..180)."""
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def ahead_back_turned(pair, x, of):
+    """Game x's Link HILT_DIST m ahead of game `of`'s Link (HILT_BEARING off its facing), facing the same way as `of`
+    ('place' / 'face', as test_rows.place_in_front); ZL on both (camera behind each own Link: x's camera sees its own
+    back, of's camera sees x's puppet from behind). Proven on of's state: x in view, of's own Link nearer the camera
+    (other_in_view behind=True, CAM_TRIES ZL at most), and x's facing within BACK_MAX of of's camera direction (the
+    camera's look in of's view matrix = of's own facing after ZL, compared on x's state). Else SetupFail."""
+    s = pair.state(of)
+    ox, oy, oz = s["pos"]
+    face = math.radians(s["facing"])
+    side = math.radians(s["facing"] + HILT_BEARING)
+    ax, az = ox + HILT_DIST * math.sin(side), oz + HILT_DIST * math.cos(side)
+    pair.act(x, "place %.2f %.2f %.2f" % (ax, oy, az))
+    pair.act(x, "face %.2f %.2f" % (ax + math.sin(face), az + math.cos(face)))
+    pair.press(x, ["ZL"], frames=8)
+    pair.step_both(CAM_WAIT)
+    why = ""
+    for n in range(CAM_TRIES):
+        pair.press(of, ["ZL"], frames=8)
+        pair.step_both(CAM_WAIT)
+        ok, why = other_in_view(pair, of, x, behind=True)
+        if ok:
+            break
+    else:
+        raise P.SetupFail("%s: %s's puppet not ahead in view after %d ZL: %s" % (of, x, CAM_TRIES, why))
+    fx, fo = pair.state(x).get("facing"), pair.state(of).get("facing")
+    turn = turn_diff(fx, fo)
+    pair.notes.append("hilt set-up: %s ahead of %s after %d ZL, facings %.1f / %.1f (diff %.1f): %s" % (
+        x, of, n + 1, fx, fo, turn, why))
+    if turn > BACK_MAX:
+        raise P.SetupFail("%s does not turn its back to %s's camera: facing %.1f vs %.1f (diff %.1f > %.1f)" % (
+            x, of, fx, fo, turn, BACK_MAX))
+
+
 @pytest.mark.budget(180)
 @pytest.mark.look
 @pytest.mark.needs_env(HILT)
@@ -292,10 +338,7 @@ def test_sword_handle(pair):
         assert w == game_names.KOKIRI_SWORD, "A holds %s, not the Kokiri Sword: the hilt part would not show" % w
         assert pair.log["A"].find(A_PARTS, pos=0), "A: no '%s' since the boot (the switch did not reach the look)" % A_PARTS
         assert pair.log["B"].find(B_SLOTS, pos=0), "B: other players' gear colours are not on (%s)" % B_SLOTS
-        stand_apart(pair)        # A beside B, each camera behind its own Link: A's own hilt on A, the puppet on B
-        ok, why = other_in_view(pair, "B", "A", behind=False)   # (B's shot is of A's puppet: proven on B's state)
-        if not ok:
-            raise P.SetupFail("B: A's puppet not in B's view after stand_apart's ZL: %s" % why)
+        ahead_back_turned(pair, "A", of="B")   # A ahead of B facing away: both cameras see A's back (the sheath)
     seen_once(pair, "A", A_SENT, max_frames=300)
     seen_once(pair, "B", B_GOT, max_frames=300)
     seen_not(pair, "B", B_PAINTED, B_NOT_PAINTED, max_frames=300)

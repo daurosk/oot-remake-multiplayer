@@ -12,6 +12,8 @@
 Selftest switch (tests/test_ingame_regress_ui.py): BT_FAKE_REGRESS_BUG=tags -> no tag line, the drawn-tags warning
 instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is not painted (:314);
 =camera -> B's ZL leaves B's camera in front of B (c272735f8: B's shots of its own Link's face, no A).
+=turn -> A's 'face' turns A the other way (towards B: gate-hilt-53d40ab3-2's side-on puppet, its back not to B's
+camera).
 """
 import math
 import os
@@ -54,6 +56,15 @@ def lane(fl):
                                       "cannot be read; make the puppet pack again): their puppet keeps the game's items"))
         else:
             b.later(60, lambda: b.say("coop: look: P1's gear colours painted for their puppet (copy 0)"))
+
+
+def act(game, w):
+    """=turn only: A's 'face' points A away from the point it was given (back towards B)."""
+    if not (_bug("turn") and game.tag == "A" and w[:1] == ["face"]):
+        return False
+    dx, dz = float(w[1]) - game.pos[0], float(w[2]) - game.pos[2]
+    game.facing = (math.degrees(math.atan2(dx, dz)) + 180.0) % 360
+    return True
 
 
 def _on(game):

@@ -2,6 +2,7 @@
 fakes have none; each table row finds its planted line; a planted test file is SETUP-FAIL by name at its set-up (no
 game input) and --lane-check-only prints it as SETUP-FAIL. Run by test_ingame.py's load_tests (CI) or alone."""
 import glob
+import json
 import os
 import shutil
 import sys
@@ -85,6 +86,20 @@ class StaleInARun(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0, p.stdout[-2000:])
         self.assertIn("SETUP-FAIL stale path plus-menu-multiplayer at test_planted.py:3", p.stdout)
         self.assertIn("RESULT: SETUP-FAIL", p.stdout)
+
+    def test_lane_check_only_counts_only_selected_tests(self):
+        """port-g6-rest-5 follow-up: a -k that leaves the planted file out gives SETUP-ONLY OK (the stale list is
+        the selected items' hits, not every collected file's)."""
+        with open(os.path.join(self.dir, "test_clean.py"), "w", encoding="utf-8") as f:
+            f.write("def test_clean(pair):\n    pair.act(\"A\", \"chat hi\")\n")
+        out = os.path.join(self.tmp, "chk-k")
+        p = T.pytest_run(["test_planted.py", "test_clean.py", "--fake", "--lane-check-only", "-k", "test_clean",
+                          "--out", out, "-q"], cwd=self.dir)
+        self.assertNotIn("stale path", p.stdout, p.stdout[-2000:])
+        self.assertIn("tests collected 1", p.stdout)
+        self.assertIn("RESULT: SETUP-ONLY OK", p.stdout)
+        with open(os.path.join(out, "setup.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["stale"], [])
 
 
 if __name__ == "__main__":

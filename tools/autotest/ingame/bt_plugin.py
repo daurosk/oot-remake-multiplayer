@@ -471,7 +471,10 @@ def _lane_check_only(config, items, bad=()):
             res["lanes"][str(lane)] = dict(info, ok=True)
         except P.SetupFail as e:
             res["lanes"][str(lane)] = {"ok": False, "why": str(e)}
-    res["stale"] = [stale_paths.line_of(h) for h in getattr(config, "_bt_stale", [])]
+    # (the items left after -k / -m, not config._bt_stale = every collected file's hits: a deselected test's stale path
+    # must not SETUP-FAIL a chk whose run never sets it up; items of one file share one hits list, so once per list)
+    lists = {id(h): h for h in (getattr(it, "_bt_stale", None) for it in items) if h}
+    res["stale"] = [stale_paths.line_of(h) for hits in lists.values() for h in hits]
     res["ok"] = bool(lanes) and bool(items) and not bad and all(v["ok"] for v in res["lanes"].values()) and not res["stale"]
     out = config.getoption("out") or os.path.join(os.getcwd(), "ingame-out")
     os.makedirs(out, exist_ok=True)

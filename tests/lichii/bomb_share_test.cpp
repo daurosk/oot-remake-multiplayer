@@ -51,6 +51,17 @@ TEST_CASE("bomb share: our lift is a Lifted copy its owner does not hold") {
     CHECK_FALSE(LiftedHere(std::nullopt, false));
 }
 
+TEST_CASE("bomb share: row 308: the director yields a lying bomb copy to our lift until the take or a refusal") {
+    // share on, Item_Bomb, owner does not hold it, not taking, not refused, not removed
+    CHECK(YieldsToLift(true, "Item_Bomb", false, false, false, false));
+    CHECK_FALSE(YieldsToLift(false, "Item_Bomb", false, false, false, false));  // switch off: as before
+    CHECK_FALSE(YieldsToLift(true, "NormalArrow", false, false, false, false));
+    CHECK_FALSE(YieldsToLift(true, "Item_Bomb", true, false, false, false));   // the owner holds it
+    CHECK_FALSE(YieldsToLift(true, "Item_Bomb", false, true, false, false));   // taking: place is off already
+    CHECK_FALSE(YieldsToLift(true, "Item_Bomb", false, false, true, false));   // refused: back to the owner's place
+    CHECK_FALSE(YieldsToLift(true, "Item_Bomb", false, false, false, true));   // removed
+}
+
 TEST_CASE("bomb share: one fuse: the new owner goes off when the old owner's fuse would") {
     proto::ObjectState s;
     s.time.server_time_us = 10'000'000;

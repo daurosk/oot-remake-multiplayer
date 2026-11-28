@@ -2022,6 +2022,10 @@ TEST_CASE("bomb share: a lifted copy is asked for once, made ours by the hand-ov
 
     // Its owner's animation is played on it, and it is placed: no ask.
     CHECK(Of<proto::BombTake>(run.send).empty());
+    // Row 308: but the director leaves it to our lift while its slot 0 plays Lifted.
+    REQUIRE(run.CopyOf(key) != nullptr);
+    CHECK(run.CopyOf(key)->place);
+    CHECK(run.CopyOf(key)->yields_to_lift);
     // Our Link lifts it (step 2): one BOMB_TAKE, and the copy is no longer
     // placed or animated over the lift.
     run.Tick({BombAt(0x9000, "Lifted")});
@@ -2033,6 +2037,7 @@ TEST_CASE("bomb share: a lifted copy is asked for once, made ours by the hand-ov
     CHECK_FALSE(run.CopyOf(key)->place);
     CHECK_FALSE(run.CopyOf(key)->setter);
     CHECK_FALSE(run.CopyOf(key)->animation);
+    CHECK_FALSE(run.CopyOf(key)->yields_to_lift);  // taking: placing is off already
     run.Tick({BombAt(0x9000, "Lifted")});
     CHECK(Of<proto::BombTake>(run.send).empty());  // once per lift
 

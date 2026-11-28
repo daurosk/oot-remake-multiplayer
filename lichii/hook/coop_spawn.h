@@ -128,6 +128,10 @@ struct Copy {
     // Always the game's own actor of that name, never the pack's stand-in:
     // the shootable the game makes has the effect user the key belongs to.
     bool real = false;
+    // Row 308 (CoopBombShare::YieldsToLift): while the copy's own slot 0 plays
+    // Lifted (our Link's lift), the director leaves its place, setter and
+    // animation alone, so the walk sees the lift and the take is sent.
+    bool yields_to_lift = false;
 };
 
 class Sync {

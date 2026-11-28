@@ -107,6 +107,21 @@ inline bool LiftedHere(std::optional<bool> held_by_animation, bool owner_holds) 
     return held_by_animation.value_or(false) && !owner_holds;
 }
 
+// Row 308: a copy our Link may be lifting. The director placed it at the
+// owner's place and played the owner's animation (Bomb_Wait) on it every
+// frame, on the game's own thread, so the game's Lifted on it was replaced
+// before the walk read it: no BOMB_TAKE was ever sent, the bomb stayed on the
+// floor (probe carry-304-182cd53b-3: no 'lifted the copy' note, the copy at its
+// lying place 20 frames after the press). So for such a copy the director
+// leaves the place, the setter and the animation alone while the copy's own
+// slot 0 plays Lifted, until the take (`taking`) or its refusal. Not a copy
+// its owner holds (the held stand-in, the owner's own Lifted), one being
+// taken already, a refused or a removed one.
+inline bool YieldsToLift(bool share_on, std::string_view actor, bool owner_holds, bool taking, bool refused,
+                         bool removed) {
+    return share_on && IsBomb(actor) && !owner_holds && !taking && !refused && !removed;
+}
+
 // Our own Link's side of a take: its place is known and the lifted copy is
 // within kTakeReachM of it. Our Link's place not read (a load, not yet
 // sampled) is no take: a copy something else set Lifted never asks.

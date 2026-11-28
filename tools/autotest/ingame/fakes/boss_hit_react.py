@@ -11,12 +11,15 @@ BT_FAKE_BROKEN values (selftests):
   bhr-nolife     A's bomb never stuns him: no slash takes life (run ef002962's K = 0)
   bhr-nosync     B never logs its copy's sync line (the row's roles not there)
   bhr-nocount    the took-life line comes, the counts lines stay at K = 0
+  bhr-asleep     the fight never begins: A logs the owner's stall note for 'Wait' 1500 frames after the warp
+                 (run boss-hit-react-53d40ab3-2, 2026-11-28)
 """
 import os
 
 STAGE = "DodongoStage"
 BOSS = "Enemy_DungeonBoss_Dodongo"
 STUN_FRAMES, SYNC_AFTER, COUNT_AFTER = 900, 600, 120
+STALL_AFTER = 1500                             # coop_boss_native.h kStallSteps
 
 
 def broken():
@@ -50,6 +53,9 @@ def after(game, m, r):
     role = "ours" if game.tag == "A" else "a copy"
     if not (broken() == "bhr-nosync" and game.tag == "B"):
         game.later(SYNC_AFTER, lambda: game.say("coop: bosses: %s: native boss sync on (BSA 0x1a2b, %s)" % (BOSS, role)))
+    if broken() == "bhr-asleep" and game.tag == "A":
+        game.later(STALL_AFTER, lambda: game.say("coop: bosses: %s: ours held 'Wait' (brain 62, action 0, life 24) 25 s "
+                                                 "with no hit: stuck, its AI chooses again (1 of 3)" % BOSS))
 
 
 def press(game, buttons):

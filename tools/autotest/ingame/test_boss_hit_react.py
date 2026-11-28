@@ -57,6 +57,10 @@ from test_boss_respawn import back_after   # noqa: E402,F401  (fixture: the way 
 STAGE = "DodongoStage"
 BOSS = "Enemy_DungeonBoss_Dodongo"
 SYNC_ON = r"coop: bosses: %s: native boss sync on \(BSA 0x[0-9a-fA-F]+, %s\)"     # coop_boss_native.cpp
+# The owner's stall note (coop_boss_native.cpp Note "...: ours held '<anim>' (brain B, action A, life L) N s with no hit:
+# stuck", after kStallSteps = 1500 game steps, coop_boss_native.h). Run boss-hit-react-53d40ab3-2 (2026-11-28): A logged
+# it for 'Wait' 3 times and no intro event ran after the warp: the fight never began, so no bomb could stun him.
+STALL_WAIT = r"coop: bosses: %s: ours held 'Wait' \(brain \d+, action [^,]+, life \d+\) \d+ s with no hit: stuck" % BOSS
 OWN_REACT = r"coop: bosses: %s: our own hit: the copy runs its own reaction" % BOSS   # NoteOwnHit
 TOOK_LIFE = r"coop: bosses: %s: our own hit took life: its owner's game reacts" % BOSS   # NoteOwnDamage (once)
 OWN_STUN = r"coop: bosses: %s: its own stun in our game" % BOSS                         # NoteOwnStun (allowed)
@@ -121,6 +125,14 @@ def sync_on(pair, start):
             raise P.SetupFail("boss sync: %s has no '%s: native boss sync on (..., %s)' after the intro" % (x, BOSS, role))
 
 
+def awake(pair, start):
+    """After the intro wait: A's boss must not have stalled in 'Wait' (the fight never began); a stall is SETUP-FAIL."""
+    stall = pair.log["A"].find(STALL_WAIT, start["A"])
+    if stall:
+        raise P.SetupFail("%s never woke in A: '%s' after the warp + %d frames (no fight, so no stun to slash)"
+                          % (BOSS, stall, GIVE_FRAMES + INTRO_FRAMES))
+
+
 def slashes(pair):
     """B's five slashes; per slash: B's boss life before and after its 40 frames and B's log lines in its window."""
     rows = []
@@ -162,7 +174,8 @@ def test_copy_hit_that_took_life_leaves_the_reaction_to_the_owner(pair, back_aft
     arm(pair)
     pair.step_both(INTRO_FRAMES)
     sync_on(pair, start)
-    play(pair, "A", BOMB)                     # A's bomb 1: the stun, A's own
+    awake(pair, start)
+    play(pair, "A", BOMB)                    # A's bomb 1: the stun, A's own
     pair.step_both(TO_SLASH)
     pair.press("B", ["ZL"], stick=UP, frames=LOCK_FRAMES)
     rows = slashes(pair)
@@ -183,7 +196,7 @@ def test_copy_hit_that_took_life_leaves_the_reaction_to_the_owner(pair, back_aft
     took = pair.log["B"].find(TOOK_LIFE, start["B"])
     if not took:
         pair.unproven("B never logged '%s: our own hit took life' (no slash took life: lives %s; the slashes missed A's "
-                      "stun, as run ef002962's K = 0)" % (BOSS, [(r["before"], r["after"]) for r in rows]))
+                      "stun)" % (BOSS, [(r["before"], r["after"]) for r in rows]))
     unjudged = [r["i"] for r in rows if r["own"] and not fell(r) and (r["before"] is None or r["after"] is None)]
     if unjudged:
         pair.unproven("own-reaction lines for slash(es) %s whose life B's world list did not show" % unjudged)

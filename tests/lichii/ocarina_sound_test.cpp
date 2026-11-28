@@ -285,10 +285,12 @@ TEST_CASE("what a sound user plays is read from its event list") {
     Run run;
     snd::State st;
     snd::LogPlaying(st, g, kActor, 1000, "P1", run.say());
-    REQUIRE(run.said.size() == 1);
-    CHECK(run.said[0] == "P1 sounds: Ocarina_D, Player_FootStep");
+    // Row 319: first the name the puppet's sound user was made with (its voice list), once per user.
+    REQUIRE(run.said.size() == 2);
+    CHECK(run.said[0] == "P1 sound user 0x400030000 is 'Player_Child'");  // kUser
+    CHECK(run.said[1] == "P1 sounds: Ocarina_D, Player_FootStep");
     snd::LogPlaying(st, g, kActor, 1100, "P1", run.say());  // too soon, and the same
-    CHECK(run.said.size() == 1);
+    CHECK(run.said.size() == 2);
     g.Put<std::uint64_t>(kUser + snd::addr::kUserFirstLink, kUser + snd::addr::kUserEvents);
     snd::LogPlaying(st, g, kActor, 1300, "P1", run.say());
     CHECK(run.said.back() == "P1 sounds: none");

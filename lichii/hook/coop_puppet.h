@@ -440,6 +440,11 @@ public:
     void SetPoseCopy(bool on) { pose_copy_ = on; }
     // Row 307: the AS variables probe (coop_as_vars.h, LICHII_COOP_AS_VARS_PROBE=1, reads only).
     void SetAsVarsProbe(bool on) { as_vars_probe_on_ = on; }
+    // Row 319 (LICHII_COOP_DEBUG_VOICE, reads only): each puppet's and our Link's sound user name, what the
+    // puppet plays and each of the player's sounds started on it (the lines LICHII_COOP_DEBUG_ANIM also gives).
+    void SetDebugVoice(bool on) { debug_voice_ = on; }
+    // The sound debug lines are on (LICHII_COOP_DEBUG_ANIM or LICHII_COOP_DEBUG_VOICE).
+    bool VoiceLines() const { return anim_ || debug_voice_; }
     // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
     // offset 0: none, no colours on a character's puppet.
     // The sound list each puppet's row names (PackSoundLists): added to its "spawned" line.
@@ -799,6 +804,7 @@ private:
     bool pose_copy_ = false;
     bool as_vars_probe_on_ = false;
     CoopAsVars::Probe as_vars_probe_;
+    bool debug_voice_ = false;  // SetDebugVoice
     std::uint64_t character_apply_ = 0;
     std::map<std::string, std::string, std::less<>> sound_lists_;
     std::array<std::uint8_t, 16> character_apply_head_{};
@@ -829,6 +835,7 @@ private:
     std::vector<Slot> slots_;
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     CoopLinkSound::Budget effect_budget_;  // every puppet's effect starts together (row 310)
+    std::uint64_t our_user_named_ = 0;    // debug: our Link's sound user last logged (row 319)
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
@@ -893,6 +900,7 @@ struct PlannerSettings {
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
     bool as_vars_probe = false;   // LICHII_COOP_AS_VARS_PROBE (row 307, reads only)
+    bool debug_voice = false;     // LICHII_COOP_DEBUG_VOICE (row 319, reads only)
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;

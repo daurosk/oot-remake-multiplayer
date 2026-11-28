@@ -1002,10 +1002,17 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
         // seen) the whole song; the notes must sound then too.
+        if (VoiceLines() && CoopLinkSound::OurUser() != our_user_named_) {
+            // Row 319: our own Link's sound user and the name it was made with (the mod's voice hook changes the
+            // archive list it loads, not this name: the run compares it with the puppets' lines).
+            our_user_named_ = CoopLinkSound::OurUser();
+            Say("our sound user " + Hex(our_user_named_) + " is '" +
+                (our_user_named_ != 0 ? CoopPuppetSound::UserName(guest, our_user_named_) : std::string()) + "'");
+        }
         if (t->show != Show::hide) {
             const std::string who = "P" + std::to_string(slot.number);
             const auto say = [this](const std::string& line) { Say(line); };
-            if (anim_) {
+            if (VoiceLines()) {
                 CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
             }
             if (!OcarinaSoundOn()) {
@@ -1024,7 +1031,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 if (auto c = CoopLinkSound::Next(
                         slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
                         slot.block, now_ms,
-                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, VoiceLines())) {
                     pending_ = Pending::link_sound;
                     return c;
                 }
@@ -1163,6 +1170,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.take = slot.drop = false;
     slot.anim_name.clear();
     slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    CoopPuppetSound::MadeAgain(slot.sound);     // (so may its sound user: row 319 review)
+    CoopLinkSound::MadeAgain(slot.link_sound);
     slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
@@ -3371,6 +3380,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
         g_director->SetAsVarsProbe(settings.as_vars_probe);
+        g_director->SetDebugVoice(settings.debug_voice);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);

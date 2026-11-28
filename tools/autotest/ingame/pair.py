@@ -40,6 +40,24 @@ WARP_PAIR_MEASURED_S = 31.0
 RECOVER_WARP_S = WARP_PAIR_MEASURED_S   # one game's warp in a recovery: the worst TWO-game warp = 2x one game's (margin)
 RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load, an event's end, in play (stepped)
 BOOT_READY_S = 240.0  # the boot proof's own deadline (out of a load, a warp of a game left elsewhere, an event's end)
+# A boot whose scene starts a long event on arrival (a boss stage's intro): the boot proof's in-play wait goes on past
+# BOOT_FRAMES while a game is IN AN EVENT, up to BOOT_EVENT_FRAMES (a load or a stale sample keeps BOOT_FRAMES).
+# row215-309d7180 SETUP-FAIL (live-twinrova-room, boss rush TwinrovaStage, child save): both games still in Twinrova's
+# intro at the 2400-frame ceiling. Longshot's present counter in game-out-A.txt ('texture frame N'): the same boot
+# free-running ended the intro by itself between +3994 and +5048 after the arrival (proof01112-hs-twinrova-orders2
+# 20261123-001227 :5041 began at +0 (play at 8229), :7127 12223, :7431 'ended after 76.1 s', :8046 13277); stepped,
+# Kotake's last cut came at the same frame (AS-C07: +3960 vs +3993), the proof stopped at about +4210. Those two runs
+# INDICATE a stepped intro cut off by the ceiling (not one stuck); NOT proven in one run: test_probe_boss_intro.py
+# measures the stepped end. 6000 = the free run's +5048 and ~20% (read off the free run, until the probe's N).
+BOOT_EVENT_FRAMES = 6000
+# The boot proof's stepping rate (both games, CHUNK at a time, a state read each per chunk): row215-309d7180 lane 1 ran
+# its 2400 frames in ~201.6 s (game-out-A.txt digest t= 286.0 s at the bridge's connect :9353, 487.7 s at the quit).
+# A boot that waits an event past BOOT_FRAMES gets the rest of BOOT_EVENT_FRAMES at this rate on its deadline, once.
+BOOT_STEP_FPS = 11.9
+EVENT_BEGAN = r"coop: event: our Link's event began: .*"      # coop event lines (game-out-X.txt, both runs above)
+EVENT_ENDED = r"coop: event: our Link's event ended"
+EVENT_STILL = r"coop: event: our Link is still in its event after ([0-9]+) s"
+EVENT_CUT = r"coop: objects: anim \S+ \S+ '([^']+)'"         # a boss cut's animation ('AS-C07-...', the intro's cuts)
 # A recovery whose stepped part failed relaunches each game not in play at the boot's place ONCE (Pair.recover,
 # crawl-337-11): a game left waiting for input (a pause page, tb-gate-ui-f9f3b9c2 test_pause; the ocarina UI,
 # tb-pilot-f9f3b9c2 test_ocarina_notes) never comes back by stepping. Its bound: each game's live.py quit + relaunch
@@ -72,6 +90,11 @@ SCENE_LOADED = r"coop: native ui: scene load ended"     # (seen: songs-frogs-733
 # once the game that warped shows its play UI up again (Pair._until_play_ui).
 PLAY_UI = r"coop: native ui: the game's play UI is (up|down)"
 PLAY_UI_FRAMES = 600  # frames: 2 x the 300-frame wait that let B's + through after its arrival (pause-warp-826f66cb)
+# The BOOT path too (pause-press-0121): gate-pause-309d7180 (S 309d7180c) test_pause FAIL, the first test after the boot:
+# A's boot load took its play UI down (game-out-A.txt :4323), a soldier event ran :4841-:4915, free play :4917, the
+# bridge said in play, and A's 'play UI is up' came only at :5052, after the test's +: A never paused, B (up since
+# :4596) did. So 'in play' for a set-up (Pair.ready: until_in_play, so boot_ready, need_boot_place, recover and every
+# test's set-up) also needs each game's last PLAY_UI line not 'down' (no line at all: nothing is waited for).
 OCARINA_FRAMES = 600  # 20 s of game: the mend's 30 frames + an arrival event's end (the frogs' boot event: 0.7 s)
 # D-pad Left's two module lines (probe-ocarina-2f14b333, 11-26, both games, cited by its game-out-X.txt line): the press
 # ALWAYS starts the game's free-Ocarina event (OCARINA_FREE: B :4810, A :5814; also both frogs SETUP-FAIL runs, 733c4d8f
@@ -216,9 +239,11 @@ def lane_check(kit_ls, lane, nocs=False):
         if have_p != want_p:
             raise SetupFail("lane%d-%s game patches line %s is not lane-server.txt's %s (the game was rebuilt after the "
                             "lane's install)" % (lane, x, have_p[:8] or "(none)", want_p[:8]))
-        kept_difficulty(d)
+        # (a kept difficulty and the other co-op files a run leaves are put back by the boot itself, with the save:
+        # lane_files.py, hookshot.py restore_lane_files; here only named. kept_difficulty checks it again after the boot)
+        import lane_files
         got[x] = {"server": srv, "commit": commit, "dll_sha256": want, "patches": want_p, "folder": d,
-                  "nocs_of": field("nocs_of")}
+                  "nocs_of": field("nocs_of"), "lane_files": lane_files.leftovers(d)}
     if nocs:
         nocs_check(got["B"], got["B" + NOCS], lane)
         got["B"] = got["B" + NOCS]
@@ -231,7 +256,8 @@ def lane_check(kit_ls, lane, nocs=False):
         raise SetupFail("lane%d A and B name different servers (%s / %s)" % (lane, a["server"], b["server"]))
     if not os.path.exists(a["server"]):
         raise SetupFail("no server %s (lane%d lane-server.txt)" % (a["server"], lane))
-    return dict({k: v for k, v in a.items() if k not in ("folder", "nocs_of")}, game_b=b["folder"],
+    return dict({k: v for k, v in a.items() if k not in ("folder", "nocs_of", "lane_files")}, game_b=b["folder"],
+                lane_files={"A": a["lane_files"], "B": b["lane_files"]},
                 game_b_exefs=_exefs_line(os.path.join(b["folder"], "coop-built-from.txt")))
 
 
@@ -370,6 +396,7 @@ class Pair:
         self.shots = []        # [{"game", "name", "path", "ref", "score", "ok"}] of the running test
         self.boot_scene = None # the boot's scene (bt_plugin._boot_proof): where every default-boot test starts
         self.notes = []
+        self._ui = {}          # {x: [log path, bytes read, last PLAY_UI word or None]} (Pair.play_ui)
         self.window_shooter = None   # (x, path) -> path: window shots (windowshot.Shooter; the fake lane's own)
         # 'NAME=V' / 'A:NAME=V' -> bool: does the boot give that switch (its '#! switches' + --env; bt_plugin lane_pair
         # sets it). None: not known (a Pair made outside the plugin), nothing is checked.
@@ -562,11 +589,44 @@ class Pair:
     def in_play(self, st):
         return bool(st.get("scene")) and not st.get("loading") and not st.get("event") and st.get("not_ready") is None
 
+    def play_ui(self, x):
+        """Game x's play UI from its module log: the last PLAY_UI line's word, 'up' or 'down'; None while the log has
+        none (a build without the line, a fake that does not say it). Read on from where the last call stopped (whole
+        lines only), from the log's start: a boot's 'down' came before the bridge connected (gate-pause-309d7180 A
+        :4323). A new log (Pair.rejoin) or a shorter file starts again from 0."""
+        log = self.log.get(x) if isinstance(getattr(self, "log", None), dict) else None
+        if log is None:
+            return None
+        ui = getattr(self, "_ui", None)
+        if ui is None:
+            ui = self._ui = {}
+        have = ui.get(x)
+        if have is None or have[0] is not log or log.size() < have[1]:
+            have = ui[x] = [log, 0, None]
+        try:
+            with open(log.path, "rb") as f:
+                f.seek(have[1])
+                data = f.read()
+        except OSError:
+            return have[2]
+        end = data.rfind(b"\n") + 1
+        if end:
+            for m in re.finditer(PLAY_UI, data[:end].decode("utf-8", "replace")):
+                have[2] = m.group(1)
+            have[1] += end
+        return have[2]
+
+    def ready(self, x, st=None):
+        """Game x ready for a test's presses: in play (in_play) AND its play UI not down (play_ui): until it is up the
+        game refuses + (crawl-337-12 after a warp, gate-pause-309d7180 after the boot)."""
+        st = self.state(x) if st is None else st
+        return self.in_play(st) and self.play_ui(x) != "down"
+
     def why_not(self, x, st=None):
         """Game x's state in one line: what in_play looks at (for a FAIL / SETUP-FAIL that names each game)."""
         st = self.state(x) if st is None else st
-        return "%s: scene=%s loading=%s event=%s not_ready=%s" % (x, st.get("scene"), st.get("loading"), st.get("event"),
-                                                               st.get("not_ready"))
+        return "%s: scene=%s loading=%s event=%s not_ready=%s play_ui=%s" % (
+            x, st.get("scene"), st.get("loading"), st.get("event"), st.get("not_ready"), self.play_ui(x))
 
     def why_now(self, x, seconds=AWAY_CHECK_S):
         """why_not(x) for a failure's text, read on its OWN short deadline (as away_from_boot): the test's is often
@@ -597,6 +657,8 @@ class Pair:
         """Steps both games until every one of `games` is in play (a fresh Link sample, a scene, no load, no event).
         `games` defaults to the pair's OWN games (self.c): a --solo pair has game A only, and a fixed ('A', 'B')
         read state('B') -> KeyError instead of a SETUP-FAIL (review-rows-c130-3 16:38, need_boot_place).
+        In play = Pair.ready: also the game's play UI not down (play_ui; the game refuses + until it is up, gate-pause-
+        309d7180 A after the boot); such a wait is noted ('in play with its play UI down: waited N frames ...').
         A stale sample ('Link sample older than the frame'), a load or an event is a game not ready YET: it is stepped,
         never judged from one read (pilot test-bridge-pilot-fa63e90f: test_boot / test_pause read once, failed on a
         stale sample). After max_frames: AssertionError naming each game's state. On the deadline (TestTimeout, an
@@ -604,10 +666,27 @@ class Pair:
         (why_now), so the timeout keeps its text and gains the games' states (was why_not on the spent deadline: its
         'state not sent' replaced both, crawl-337-11)."""
         games = tuple(self.c) if games is None else tuple(games)
+        held = {}     # {x: frames game x was in play with its play UI still down} (said in the notes once it is up)
+        ran = [0]
+
+        def all_ready():
+            ok = True
+            for x in games:
+                st = self.state(x)
+                if not self.ready(x, st):
+                    ok = False
+                    if self.in_play(st):
+                        held.setdefault(x, ran[0])
+            ran[0] += CHUNK
+            return ok
         try:
-            return self.until(what, lambda: all(self.in_play(self.state(x)) for x in games), max_frames)
+            v = self.until(what, all_ready, max_frames)
         except AssertionError as e:
             raise type(e)("%s; %s" % (e, "; ".join(self.why_now(x) for x in games))) from None
+        for x, since in sorted(held.items()):
+            self.notes.append("%s: in play with its play UI down: waited %d frames for '%s'"
+                              % (x, ran[0] - CHUNK - since, "the game's play UI is up"))
+        return v
 
     def boot_ready(self, scene=None, max_frames=BOOT_FRAMES):
         """The lane's boot proof (bt_plugin.lane_pair, NO REPEAT VOIDS after test-bridge-pilot-fa63e90f r1: B was left
@@ -627,7 +706,7 @@ class Pair:
                     # (arrive_in_event=None: a boss stage boot, live-twinrova-room / live-phantom-ganon, starts its intro
                     # on arrival, so the bridge answers 'timeout' with Link there; the event's end is stepped below)
                     self.warp_one(x, scene, arrive_in_event=None)
-            self.until_in_play("both games in play after the boot", tuple(self.c), max_frames)
+            self._until_boot_play(max_frames)
         except SetupFail:
             raise
         except (AssertionError, pc.BridgeError, OSError, TimeoutError) as e:
@@ -637,6 +716,62 @@ class Pair:
         if wrong:
             raise SetupFail("boot: not in the boot's scene %s: %s" % (scene, "; ".join(wrong)))
         return {x: self.state(x) for x in self.c}
+
+    def _until_boot_play(self, max_frames, event_frames=None):
+        """The boot proof's in-play wait: until_in_play (its rule of 'in play', stepping and messages) up to
+        max_frames; if a game is then IN AN EVENT, the wait goes on to event_frames in all (BOOT_EVENT_FRAMES: a boss
+        stage's intro, row215-309d7180), the deadline grown once by those frames at BOOT_STEP_FPS (one deadline, one
+        wait rule). A load or a stale sample at max_frames fails as before. A miss names, for each game in its event,
+        which event and for how long (event_note), so its first line says why."""
+        event_frames = max(max_frames, BOOT_EVENT_FRAMES if event_frames is None else event_frames)
+        games = tuple(self.c)
+        what = "both games in play after the boot"
+        try:
+            return self.until_in_play(what, games, max_frames)
+        except TestTimeout as e:
+            raise TestTimeout("%s%s" % (e, self._event_notes(games, max_frames))) from None
+        except AssertionError as e:
+            first = e
+        in_event = [x for x in games if self.state(x).get("event")]
+        if not in_event or event_frames <= max_frames:
+            raise AssertionError("%s%s" % (first, self._event_notes(games, max_frames))) from None
+        extra = (event_frames - max_frames) / BOOT_STEP_FPS
+        cap = getattr(self, "_boot_grow_cap", None)    # (Pair.recover: the enclosing deadline's end, never passed)
+        if cap is not None:
+            extra = max(0.0, min(extra, cap - self.deadline.end))
+        self.deadline.end += extra
+        self.deadline.seconds += extra
+        self.notes.append("boot: %s in an event after %d frames: waited on up to %d (deadline +%.0f s%s)"
+                          % ("+".join(in_event), max_frames, event_frames, extra,
+                             ", capped by the enclosing deadline" if cap is not None else ""))
+        try:
+            return self.until_in_play(what + " (a game in an event at %d frames: the event ceiling)" % max_frames,
+                                      games, event_frames - max_frames)
+        except AssertionError as e:            # (TestTimeout too: its own type kept)
+            raise type(e)("%s%s" % (e, self._event_notes(games, event_frames))) from None
+
+    def _event_notes(self, games, ran):
+        """'; X (in its event ...)' for each game whose log shows an event that has not ended (event_note), or ''."""
+        return "".join("; %s%s" % (x, n) for x, n in ((x, self.event_note(x, ran)) for x in games) if n)
+
+    def event_note(self, x, ran=None):
+        """'' unless game x's module log has an 'our Link's event began' line with no 'ended' after it; then
+        ' (in its event since <that line>, last "still in its event after N s", last cut <anim>, N frames stepped
+        here)': which event a miss waited on and how far it got (row215-309d7180: its SETUP-FAIL said only
+        event=True; the cause took the log's 11000 lines to find)."""
+        lines = self.log[x].since(0) if x in getattr(self, "log", {}) else []
+        began = [i for i, ln in enumerate(lines) if re.search(EVENT_BEGAN, ln)]
+        if not began:
+            return ""
+        tail = lines[began[-1]:]
+        if any(re.search(EVENT_ENDED, ln) for ln in tail[1:]):
+            return ""
+        what = re.search(EVENT_BEGAN, tail[0]).group(0)[len("coop: event: "):]
+        still = [m.group(1) for m in (re.search(EVENT_STILL, ln) for ln in tail) if m]
+        cuts = [m.group(1) for m in (re.search(EVENT_CUT, ln) for ln in tail) if m]
+        return " (in its event since '%s'%s%s%s)" % (
+            what[:120], ", 'still in its event after %s s'" % still[-1] if still else "",
+            ", last cut '%s'" % cuts[-1] if cuts else "", ", %d frames stepped here" % ran if ran is not None else "")
 
     def module_started(self, seconds=MODULE_WAIT_S, clock=time.monotonic, sleep=time.sleep):
         """Each game's log has the module's 'coop: playtest: listening on 127.0.0.1:<its port>' line
@@ -708,14 +843,21 @@ class Pair:
         clock = outer.clock
         t0 = clock()
         box = {"limit": RECOVER_BASE_S, "away": []}
+        was_cap, self._boot_grow_cap = getattr(self, "_boot_grow_cap", None), outer.end
+        # (the boot proof's event growth, _until_boot_play, stays inside the recovery's own deadline: the fixture's
+        # recovery runs outside pytest-timeout, review-rows-c130-8 S2)
         try:
             st = self._recover_stepped(scene, max_frames, outer, t0, box)
         except Exception as e:
             fail = e if isinstance(e, SetupFail) else SetupFail("recovery: %s: %s" % (type(e).__name__, e))
             self.deadline = outer
-            return self._relaunch_stuck(scene, fail, outer, t0)
+            try:
+                return self._relaunch_stuck(scene, fail, outer, t0)
+            finally:
+                self._boot_grow_cap = was_cap
         finally:
             self.deadline = outer
+            self._boot_grow_cap = was_cap
         away = box["away"]
         self.notes.append("recovery %.1f s (bound %.0f s, %d warp%s)" % (clock() - t0, box["limit"], len(away),
                                                                         "" if len(away) == 1 else "s"))

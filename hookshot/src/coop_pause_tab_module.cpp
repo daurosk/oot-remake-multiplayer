@@ -2572,6 +2572,8 @@ std::array<bool, kMapContentPanes> g_map_content_was{};
 std::array<float, kMapContentPanes> g_map_content_x{};   // their own x when a slide began
 bool g_map_sliding = false;
 bool g_map_hidden = false;                              // (the map screen's updates: one thread)
+std::atomic<int> g_map_page_panes{0}, g_map_page_shown{0};   // (MapPageNow: as its last update left them)
+std::atomic<std::uint64_t> g_map_page_ms{0}, g_map_page_present{0};   // (and at which present: CoopFresh)
 
 // The page's controller picture's ZL and ZR keys (MinusKeys), in the page's part layout `part`: found, the rest of the
 // picture and the keys' labels hidden, the keys placed beside the heading; the picture itself then shown by
@@ -2941,6 +2943,14 @@ void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
         drawn.open = true;
         drawn.tab = tab == static_cast<int>(MinusPage::kMultiplayer) ? "multiplayer" : mods ? "mods" : "lobby";
         drawn.view = ViewWord(view);
+        drawn.keys = !mods && !v.typing_lines.empty();   // (row 297: the typing keys drawn on the list)
+        if (drawn.keys) {   // (its first line's value: what is typed, as drawn; counted, never given)
+            const std::string& typed = v.typing_lines[0].value;
+            drawn.typed_chars = static_cast<int>(std::count_if(typed.begin(), typed.end(), [](char c) {
+                return (static_cast<unsigned char>(c) & 0xC0) != 0x80;   // (UTF-8: one per character)
+            }));
+        }
+        drawn.row = row_now, drawn.list = in_list;
         if (!mods && v.typing_lines.empty()) {   // (the details list drawn: DetailLines' own page rule)
             const DetailPaging paging = DetailPages(view, v);
             drawn.details_pages = paging.pages, drawn.details_page = paging.page;
@@ -3153,14 +3163,23 @@ void FollowMapUnder(void* ctx, std::uint64_t screen) {
     g_map_state = map_state;
     if (layout != g_map_layout || reopened) {
         if (g_map_hidden && !reopened) give_back();   // (an old layout's: shown back)
-        g_map_layout = layout, g_map_screen = screen, g_map_hidden = false, g_map_sliding = false;
-        int found = 0;
+        // (row 295: L from ours, native, opens the SAME Map screen again; the panes found where they were are the ones
+        // we hid or moved, so they are given back here, or the Map page stays blank, its backdrop only, until the
+        // menu is opened again. A pane at another address is a new one: never touched)
+        int found = 0, back = 0;
         for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+            const std::uint64_t was = g_map_content[i];
             g_map_content[i] = FindOwnPane(ctx, layout, kMapContent[i]);
             found += g_map_content[i] != 0 ? 1 : 0;
+            if (!reopened) continue;
+            const MapPaneBack b =
+                MapPaneOnLookAgain(was, g_map_content[i], g_map_hidden, g_map_content_was[i], g_map_sliding);
+            if (b.place) PlacePane(ctx, g_map_content[i], g_map_content_x[i]);
+            if (b.show) SetVisible(ctx, g_map_content[i], true), ++back;
         }
-        LOG_INFO(Core, "coop: pause tab: the Map page's content: {} of {} panes found (its backdrop BG_00 stays)", found,
-                 kMapContentPanes);
+        g_map_layout = layout, g_map_screen = screen, g_map_hidden = false, g_map_sliding = false;
+        LOG_INFO(Core, "coop: pause tab: the Map page's content: {} of {} panes found (its backdrop BG_00 stays){}", found,
+                 kMapContentPanes, back != 0 ? fmt::format(", {} hidden by us shown again", back) : std::string{});
     }
     // (the slide: each content pane's own x when it began, the offset added; given back when it ends)
     if (sliding != g_map_sliding) {
@@ -3181,19 +3200,30 @@ void FollowMapUnder(void* ctx, std::uint64_t screen) {
             if (g_map_content[i] != 0) PlacePane(ctx, g_map_content[i], g_map_content_x[i] + off);
         }
     }
-    if (want == g_map_hidden) return;
-    if (want) {
-        for (std::size_t i = 0; i < kMapContentPanes; ++i) {
-            const std::uint64_t q = g_map_content[i];
-            g_map_content_was[i] = q != 0 && (Read<std::uint32_t>(q + 0xa8) & 1u) != 0;
-            if (g_map_content_was[i]) SetVisible(ctx, q, false);
+    if (want != g_map_hidden) {
+        if (want) {
+            for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+                const std::uint64_t q = g_map_content[i];
+                g_map_content_was[i] = q != 0 && (Read<std::uint32_t>(q + 0xa8) & 1u) != 0;
+                if (g_map_content_was[i]) SetVisible(ctx, q, false);
+            }
+        } else {
+            give_back();
         }
-    } else {
-        give_back();
+        g_map_hidden = want;
+        LOG_INFO(Core, "coop: pause tab: the Map page's content under the - menu's page {} (backdrop kept)",
+                 want ? "hidden" : "shown again");
     }
-    g_map_hidden = want;
-    LOG_INFO(Core, "coop: pause tab: the Map page's content under the - menu's page {} (backdrop kept)",
-             want ? "hidden" : "shown again");
+    // (row 295: the play-test bridge's menu.map_page, the panes as this update leaves them)
+    int panes = 0, shown = 0;
+    for (std::size_t i = 0; i < kMapContentPanes; ++i) {
+        const std::uint64_t q = g_map_content[i];
+        if (q == 0) continue;
+        ++panes;
+        shown += (Read<std::uint32_t>(q + 0xa8) & 1u) != 0 ? 1 : 0;
+    }
+    g_map_page_panes = panes, g_map_page_shown = shown, g_map_page_ms = now;
+    g_map_page_present = CoopFresh::Presents();
 }
 
 // Native mode, the strip's update (g_mutex): R took ours but CoopMenu_00 never came (another mod's Map.module, or the
@@ -3334,8 +3364,7 @@ bool g_b_swallow = false;           // (that B, held: not the page's)
 std::uint64_t g_list_left_ms = 0;    // (the mouse's Left off the list: the last one)
 std::uint64_t g_page_since_ms = 0;
 int g_mouse_steps_logged = 0;        // (trace: the mouse's steps logged so far)
-float g_skip_mouse_x = 0, g_skip_mouse_y = 0;   // (the mouse's last place and when it moved: RowSkip waits then)
-std::uint64_t g_skip_mouse_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
+MouseHold g_mouse_hold;   // (Longshot's mouse has the game's cursor: none of our steps move it then, report 296)
 int g_slow_logged = 0;               // (trace: slow updates of ours logged so far)
 RowSkip g_row_skip;          // (the game's cursor kept off hidden buttons on the Multiplayer page)
 int g_skip_logged = 0;       // (its steps logged the first times)
@@ -4461,7 +4490,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // deletes, + is OK; the mouse presses a key it is let go on). The PC's keys go to co-op's menu itself
             // (CoopPause::Key, Char). Nothing reaches the page or the game meanwhile.
             {
-                const bool menu_typing = g_page.Shown() && g_page.Typing() < 0 && ViewShown() == View::kMenu && mv.typing;
+                const bool menu_typing = CoopPauseTab::MenuKeysOn(g_page.Shown(), g_page.MinusTab(), g_page.Typing(),
+                                                                  ViewShown() == View::kMenu, mv.typing);   // (row 297)
                 const std::uint64_t now = NowMs();
                 if (g_menu_typed_last && !menu_typing) {
                     // (the press that ended it, still held now (+, B, A on OK, Enter): not the page's or the game's.
@@ -4680,6 +4710,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             decide = g_page.TakeDecide();
             // The mouse over our rows (MouseRows): the game's cursor stepped to the row under it, and an A just after
             // a click (Longshot presses A for it) is the clicked row's, not the row the game's cursor is on.
+            bool mouse_holds = false;   // (Longshot's mouse has the game's cursor this read: MouseHold)
             if (shown && !typing && !mv.typing) {   // (co-op's menu typing: the keyboard's)
                 MouseRows::In mi;
                 mi.now_ms = NowMs();
@@ -4719,22 +4750,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // cursor on the hidden button under it, and stepping it off there went on without end as the mouse
                 // passed, a tester's "bounces between Hosting and Stop hosting", 2026-11-19. The cursor is left there
                 // then; the next step of the pad or the mouse onto a row takes it on)
-                bool mouse_over_gap = false;
-                if (mi.inside) {
-                    if (std::abs(mi.x - g_skip_mouse_x) > 2 || std::abs(mi.y - g_skip_mouse_y) > 2) {
-                        g_skip_mouse_x = mi.x, g_skip_mouse_y = mi.y, g_skip_mouse_ms = mi.now_ms;
-                    }
-                    float x0 = 1e30f, x1 = -1e30f;
-                    for (const RowBox& b : mi.boxes) {
-                        if (b.shown) x0 = std::min(x0, b.x0), x1 = std::max(x1, b.x1);
-                    }
-                    mouse_over_gap = (mi.x >= x0 && mi.x <= x1 && RowAt(mi.boxes, mi.x, mi.y) < 0) ||
-                                     mi.now_ms - g_skip_mouse_ms < 300;
-                }
+                // (the one guard of every page's steps: MouseHold, coop_pause_tab.h)
+                mouse_holds = g_mouse_hold.Step(mi.inside, mi.x, mi.y, mi.now_ms, mi.boxes);
                 // (not while the page opens: the cursor is still on System's button then, and an Up there went into
                 // the opening's own landing, a run's log)
                 if (g_page.Which() == 0 && !g_rows_moment.load() && g_slide.dir == 0 && g_rows_back_ms == 0 &&
-                    mi.now_ms - g_page_since_ms > 500 && !mouse_over_gap) {
+                    mi.now_ms - g_page_since_ms > 500 && !mouse_holds) {
                     RowSkip::In si;
                     si.now_ms = mi.now_ms;
                     si.focused = FocusedButtonRow(&si.hidden);
@@ -4752,6 +4773,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             } else {
                 g_mouse_rows.Reset();
                 g_row_skip.Reset();
+                g_mouse_hold.Reset();
             }
             // The game browser's cells (View::kLan): Right goes into them, the arrows move among them (none reaches the
             // game's cursor), Left from the left column or B gives the pad back to the rows; the mouse picks one by
@@ -4875,10 +4897,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     if (g_set_keep < 0) g_set_keep = g_set_category.load();
                     g_set_keep_until = now + 1500;
                 }
+                // (Longshot's mouse has the game's cursor (MouseHold, report 296): on the list or a gap, or just moved.
+                // A step of ours now was undone at the mouse's next move, the hover went between a category and the
+                // list's row without end; the steps wait until the mouse rests off the list)
+                const bool set_hold = mouse_holds || mouse_on_list;
                 if (const int focused = FocusedRow(); focused >= 0 && g_set_keep >= 0 && now < g_set_keep_until) {
                     if (focused == g_set_keep && !on_list_now) {
                         g_set_keep = -1, g_set_seen_row = focused;   // (back: the category as it was)
-                    } else if (!on_list_now && now - g_set_keep_step_ms >= 120) {
+                    } else if (!on_list_now && !set_hold && now - g_set_keep_step_ms >= 120) {
                         g_set_keep_step_ms = now;
                         keep_step = focused > g_set_keep ? kPadUp : kPadDown;
                     }
@@ -4990,7 +5016,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // mouse's steps toward a category went down and up the list, the category never changed, B was needed
                 // first). A Left sends it back to the categories, each 300 ms at most while it is there.
                 out |= keep_step;
-                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && now - g_list_focus_fix_ms > 300) {
+                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && !set_hold &&
+                                                           now - g_list_focus_fix_ms > 300) {
                     g_list_focus_fix_ms = now;
                     out |= kPadLeft;
                     if (g_set_keep < 0) g_set_keep = g_set_category.load();
@@ -5188,6 +5215,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             settings_shown = shown && g_page.Which() == 1;
         }
         if (stick != nullptr) g_model_spin = shown ? static_cast<float>(stick[2]) / 32767.0f : 0.0f;   // (Link's turn)
+        if (!shown && stick != nullptr &&
+            CoopPauseTab::MenuKeysOn(false, minus_tab, g_page.Typing(), ViewShown() == View::kMenu, mv.typing)) {
+            stick[0] = 0, stick[1] = 0, stick[2] = 0, stick[3] = 0;   // (row 297: the - menu's keys have the pad, not the game)
+        }
         if (shown && stick != nullptr) {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
             if (typing || g_cell.load() >= 0 || (g_page.Which() == 1 && g_set_row.load() >= 0) ||
@@ -5452,6 +5483,16 @@ std::array<MenuActor, 4> MenuActors() noexcept {
 CoopMenuState::Screen CustomizeScreen() {
     std::lock_guard lock(g_snail_mutex);
     return CoopMenuState::FromDriver(g_snail, g_snail_open, !g_snail_wait && !g_snail_fallback);
+}
+
+CoopMenuState::MapPage MapPageNow() {
+    CoopMenuState::MapPage m;
+    const std::uint64_t seen = g_map_page_ms.load(), now = NowMs();
+    // (a held or stepped game: the last update kept until 2 presents passed without one, as MenuUpFrom)
+    m.up = seen != 0 && now >= seen &&
+           !CoopFresh::Stale(now - seen, 300, g_map_page_present.load(), CoopFresh::Presents());
+    m.panes = g_map_page_panes.load(), m.shown = g_map_page_shown.load();
+    return m;
 }
 
 CoopMenuState::Minus MinusNow() {

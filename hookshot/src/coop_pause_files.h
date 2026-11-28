@@ -6,6 +6,7 @@
 // the menu moved into Hookshot's pause menu.
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -62,5 +63,11 @@ std::vector<std::string> LocalIpv4s();
 // (Windows: GetAdaptersAddresses; Linux: the interface name) and whether it has a router: what
 // CoopTitleMenu::SplitLan sorts into the Host dialog's Same network and VPN rows.
 std::vector<CoopTitleMenu::LocalCard> LocalCards();
+// fps-spike-0121: LocalCards as the Host page's Copy LAN / Copy VPN rows need it, never read in the frame: reading the
+// cards (GetAdaptersAddresses) took ~850 ms on a player's PC (row 292), and those rows run in the game's frame. Gives
+// the cards last read (none before the first read is in) and starts a new read on a thread of its own when the last
+// one is kLocalCardsEveryMs old; `prime` reads only when none was ever asked (the host page asks once at hosting).
+inline constexpr std::uint64_t kLocalCardsEveryMs = 30000;
+std::optional<std::vector<CoopTitleMenu::LocalCard>> KeptLocalCards(std::uint64_t now_ms, bool prime = false);
 
 }  // namespace CoopFiles

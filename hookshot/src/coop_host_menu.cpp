@@ -114,69 +114,97 @@ bool MemoryLineDue(std::uint64_t now_ms, std::uint64_t& next_ms) {
     return true;
 }
 
+bool MemoryHeapsOn() {
+    static const bool on = [] {
+        const char* v = std::getenv(kMemoryHeapsEnv);
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    return on;
+}
+
 #ifdef _WIN32
-std::string ProcessMemoryText() {
-    // (kernel32's K32 names and HeapSummary looked up by name: no psapi link, and builds whose headers lack them)
-    struct Counters {   // PROCESS_MEMORY_COUNTERS_EX
-        DWORD cb;
-        DWORD PageFaultCount;
-        SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
-            QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage;
-    };
-    struct Summary {   // HEAP_SUMMARY
-        DWORD cb;
-        SIZE_T cbAllocated, cbCommitted, cbReserved, cbMaxReserve;
-    };
-    using MemoryInfo = BOOL(WINAPI*)(HANDLE, Counters*, DWORD);
-    using HeapSummaryFn = BOOL(WINAPI*)(HANDLE, DWORD, Summary*);
+namespace {
+
+struct MemoryCounters {   // PROCESS_MEMORY_COUNTERS_EX
+    DWORD cb;
+    DWORD PageFaultCount;
+    SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+        QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage;
+};
+
+std::string Mb(std::uint64_t bytes) {
+    return std::to_string(bytes / (1024 * 1024)) + " MB";
+}
+
+// (kernel32's K32 names looked up by name: no psapi link, and builds whose headers lack them)
+bool ReadCounters(MemoryCounters& c) {
+    using MemoryInfo = BOOL(WINAPI*)(HANDLE, MemoryCounters*, DWORD);
     HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
     const auto info = kernel ? reinterpret_cast<MemoryInfo>(
                                    reinterpret_cast<void*>(GetProcAddress(kernel, "K32GetProcessMemoryInfo")))
                              : nullptr;
-    const auto summary = kernel ? reinterpret_cast<HeapSummaryFn>(
-                                      reinterpret_cast<void*>(GetProcAddress(kernel, "HeapSummary")))
-                                : nullptr;
-    const auto mb = [](std::uint64_t bytes) { return std::to_string(bytes / (1024 * 1024)) + " MB"; };
-    std::string out = "process:";
-    Counters c{};
+    c = MemoryCounters{};
     c.cb = sizeof c;
-    if (info != nullptr && info(GetCurrentProcess(), &c, sizeof c)) {
-        out += " private " + mb(c.PrivateUsage) + ", working set " + mb(c.WorkingSetSize);
+    return info != nullptr && info(GetCurrentProcess(), &c, sizeof c);
+}
+
+} // namespace
+
+std::string ProcessMemoryText() {
+    // fps-spike-0121: counters only. No HeapSummary here: it walks a heap (about 170 ms at the game's 1.1 GB on the
+    // gate PC) and, off the frame too, every such read froze all of the game's threads for 80-100 ms (one present over
+    // 40 ms in each 5 s window that held a read; gate-hostmenu-309d7180). The heap split is ProcessHeapsText, opt-in.
+    std::string out = "process:";
+    MemoryCounters c;
+    if (ReadCounters(c)) {
+        out += " private " + Mb(c.PrivateUsage) + ", working set " + Mb(c.WorkingSetSize);
     } else {
         out += " (memory counters not read)";
     }
-    Summary h{};
-    h.cb = sizeof h;
-    if (summary != nullptr && summary(GetProcessHeap(), 0, &h)) {
-        out += ", heap allocated " + mb(h.cbAllocated) + ", committed " + mb(h.cbCommitted);
-    }
-    // Row 271: every heap of the process (the C runtime's, which holds all of co-op's and Longshot's own allocations,
-    // and the ones the graphics driver and other DLLs made), then what private holds outside them: memory taken
-    // straight from Windows (Longshot's guest memory and Vulkan blocks, the driver's pipelines, thread stacks).
-    if (summary != nullptr) {
-        std::array<HANDLE, 256> heaps{};
-        const DWORD n = GetProcessHeaps(static_cast<DWORD>(heaps.size()), heaps.data());
-        std::uint64_t allocated = 0, committed = 0;
-        for (DWORD i = 0; i < n && i < heaps.size(); ++i) {
-            Summary s{};
-            s.cb = sizeof s;
-            if (summary(heaps[i], 0, &s)) {
-                allocated += s.cbAllocated;
-                committed += s.cbCommitted;
-            }
-        }
-        out += "; all " + std::to_string(n) + " heaps: allocated " + mb(allocated) + ", committed " + mb(committed);
-        if (c.PrivateUsage != 0) {
-            out += "; outside the heaps " + mb(c.PrivateUsage > committed ? c.PrivateUsage - committed : 0);
-        }
-    }
     using HandleCount = BOOL(WINAPI*)(HANDLE, PDWORD);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
     const auto count = kernel ? reinterpret_cast<HandleCount>(
                                     reinterpret_cast<void*>(GetProcAddress(kernel, "GetProcessHandleCount")))
                               : nullptr;
     DWORD handles = 0;
     if (count != nullptr && count(GetCurrentProcess(), &handles)) {
         out += ", handles " + std::to_string(handles);
+    }
+    return out;
+}
+
+std::string ProcessHeapsText() {
+    // Row 271: every heap of the process (the C runtime's, which holds all of co-op's and Longshot's own allocations,
+    // and the ones the graphics driver and other DLLs made), then what private holds outside them: memory taken
+    // straight from Windows (Longshot's guest memory and Vulkan blocks, the driver's pipelines, thread stacks).
+    // HeapSummary walks each heap: slow, and the game hitches while it runs (ProcessMemoryText).
+    struct Summary {   // HEAP_SUMMARY
+        DWORD cb;
+        SIZE_T cbAllocated, cbCommitted, cbReserved, cbMaxReserve;
+    };
+    using HeapSummaryFn = BOOL(WINAPI*)(HANDLE, DWORD, Summary*);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    const auto summary = kernel ? reinterpret_cast<HeapSummaryFn>(
+                                      reinterpret_cast<void*>(GetProcAddress(kernel, "HeapSummary")))
+                                : nullptr;
+    if (summary == nullptr) {
+        return "heaps: not read";
+    }
+    std::array<HANDLE, 256> heaps{};
+    const DWORD n = GetProcessHeaps(static_cast<DWORD>(heaps.size()), heaps.data());
+    std::uint64_t allocated = 0, committed = 0;
+    for (DWORD i = 0; i < n && i < heaps.size(); ++i) {
+        Summary s{};
+        s.cb = sizeof s;
+        if (summary(heaps[i], 0, &s)) {
+            allocated += s.cbAllocated;
+            committed += s.cbCommitted;
+        }
+    }
+    std::string out = "all " + std::to_string(n) + " heaps: allocated " + Mb(allocated) + ", committed " + Mb(committed);
+    MemoryCounters c;
+    if (ReadCounters(c) && c.PrivateUsage != 0) {
+        out += "; outside the heaps " + Mb(c.PrivateUsage > committed ? c.PrivateUsage - committed : 0);
     }
     return out;
 }
@@ -192,6 +220,10 @@ std::string ProcessMemoryText() {
         }
     }
     return out == "process:" ? out + " (not read)" : out;
+}
+
+std::string ProcessHeapsText() {
+    return "heaps: not read (Windows only)";
 }
 #endif
 
@@ -299,6 +331,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.upnp = COOP_HAS(o, HosCoopHostOptions, upnp) && o->upnp != 0;
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
+    job.party_wait = COOP_HAS(o, HosCoopHostOptions, party_wait) && o->party_wait != 0;
     if (COOP_HAS(o, HosCoopHostOptions, difficulty_enemies)) {   // (an older caller: automatic)
         job.difficulty = o->difficulty;
         job.difficulty_life = o->difficulty_life;
@@ -373,6 +406,7 @@ void Menu::RunHost(HostJob job) {
         config.helper_bind = coop::net::test_bind();
         config.session.join_password = job.password;
         config.session.pvp = job.pvp;
+        config.session.party_wait = job.party_wait;
         config.session.difficulty = HostDifficulty(job.difficulty, job.difficulty_life, job.difficulty_damage,
                                                    job.difficulty_enemies);
         config.session.approve_joins = job.approve_joins;
@@ -430,7 +464,7 @@ void Menu::RunHost(HostJob job) {
             }
         }
         auto memory_said = std::chrono::steady_clock::now();
-        CoopOffFrame::Slot memory_read;   // row 292: the process's memory read off the service loop (every heap summed)
+        CoopOffFrame::Slot memory_read;   // row 292: the process's memory read off the service loop (counters only)
         while (!stop_) {
             host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);

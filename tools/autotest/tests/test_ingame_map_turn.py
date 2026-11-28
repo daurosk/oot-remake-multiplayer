@@ -54,6 +54,29 @@ class MapTurnProbe(unittest.TestCase):
         self.assertEqual(results(s), {TEST: "NO-REF"}, p.stdout[-3000:])
         self.assertIn("kPaneTurn stays 0", s["tests"][0]["why"])
 
+    def test_v2_raw_place_is_fail_naming_it(self):
+        """probe v2: the turn only at an own word outside +0x60..+0x7c (+0x84): FAIL naming '+0x84', drawn turn seen."""
+        p, s, _ = self.run_("o", env={"BT_FAKE_MAP_TURN_WORD": "none", "BT_FAKE_MAP_TURN_RAW": "84"})
+        self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-3000:])
+        why = s["tests"][0]["why"]
+        self.assertIn("('template', '+0x84', 'facing'", why)
+        self.assertIn("drawn turn follows on [('template', 'facing'", why)
+
+    def test_v2_raw_0x68_is_proven(self):
+        """probe v2: +0x68 found among the raw words (the v1 words silent): the notes say PROVEN (NO-REF here only for
+        the 2 missing shot refs)."""
+        p, s, _ = self.run_("o", env={"BT_FAKE_MAP_TURN_WORD": "none", "BT_FAKE_MAP_TURN_RAW": "68"})
+        r = s["tests"][0]
+        self.assertEqual(results(s), {TEST: "NO-REF"}, p.stdout[-3000:])
+        self.assertIn(MISSING_REF, r["why"])
+        self.assertTrue(any("kPaneTurn = 0x68 PROVEN on template" in n for n in r["notes"]), r["notes"])
+
+    def test_v2_matrix_only_is_unproven_saying_drawn(self):
+        """probe v2: drawn turned (matrix follows) but no own word: NO-REF naming the matrix / animation."""
+        p, s, _ = self.run_("o", env={"BT_FAKE_MAP_TURN_WORD": "none", "BT_FAKE_MAP_TURN_RAW": "matrix"})
+        self.assertEqual(results(s), {TEST: "NO-REF"}, p.stdout[-3000:])
+        self.assertIn("drawn turned (matrix follows on [('template', 'facing'", s["tests"][0]["why"])
+
     def test_not_solo_it_is_deselected(self):
         p, s, _ = self.run_("o", extra=())
         self.assertEqual(results(s), {}, p.stdout[-2000:])

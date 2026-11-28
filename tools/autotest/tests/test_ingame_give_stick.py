@@ -23,6 +23,20 @@ def test_hearts_given_and_filled(pair):
                 pair.give(x, "PlayerStatus.MaxLife")
             r = pair.flag(x, "PlayerStatus.Life", 56)
             assert r["value"] == 56, r
+
+
+def test_twenty_gives_stop_at_the_most_hearts(pair):
+    # (volvagia-rocks-309d7180: MaxLife shared by the max took B past 20 hearts; the give stops there, no change)
+    import fakegame
+    with pair.setup():
+        for _ in range(20):
+            r = pair.give("B", "PlayerStatus.MaxLife")
+        assert r["result"] == "no change: PlayerStatus.MaxLife already %d" % fakegame.MOST_MAX_LIFE, r
+
+
+def test_a_flag_past_the_most_hearts_is_setup_fail(pair):
+    with pair.setup():
+        pair.flag("A", "PlayerStatus.MaxLife", 84)
 '''
 
 
@@ -50,11 +64,19 @@ class GiveStick(unittest.TestCase):
                            timeout=600, env=env)
         with open(os.path.join(self.out, "summary.json"), encoding="utf-8") as f:
             rows = {r["test"].split("::")[-1]: r for r in json.load(f)["tests"]}
+        self.rows = rows
         return rows["test_hearts_given_and_filled"], p.stdout[-3000:]
 
     def test_the_fixed_module_keeps_the_hearts(self):
         row, out = self.run_fake(False)
         self.assertEqual(row["result"], "PASS", out)
+
+    def test_the_game_s_most_hearts_stop_a_give_and_a_flag_past_it_is_setup_fail(self):
+        self.run_fake(False)
+        self.assertEqual(self.rows["test_twenty_gives_stop_at_the_most_hearts"]["result"], "PASS")
+        row = self.rows["test_a_flag_past_the_most_hearts_is_setup_fail"]
+        self.assertEqual(row["result"], "SETUP-FAIL")
+        self.assertIn("flag PlayerStatus.MaxLife did not stick: did not stick: PlayerStatus.MaxLife written 84, the game put back", json.dumps(row))
 
     def test_a_flag_only_give_is_setup_fail_at_once_naming_the_flag(self):
         row, out = self.run_fake(True)

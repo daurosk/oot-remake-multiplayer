@@ -42,7 +42,17 @@ class Spikes(unittest.TestCase):
 
     def test_vcores_wait_is_noted(self):
         _, note = self.T.judge_spikes([win()], ["x vcores: PreActorModelCompose waited 812 ms for a core: given by y"])
-        self.assertIn("max 812 ms", note)
+        self.assertIn("max 812.0 ms", note)
+
+    def test_vcores_wait_in_tenths_is_noted(self):
+        # (Longshot writes tenths: "waited 96.4 ms"; the whole-number pattern missed every line, gate-hostmenu-309d7180)
+        lines = ["[hos nn.npln.Shared] vcores: nn.npln.Shared (priority 16) waited 96.4 ms for a core: given by y",
+                 "[hos x] vcores: x (priority 26) waited 62.3 ms for a core: given by z"]
+        _, note = self.T.judge_spikes([win()], lines)
+        self.assertIn("max 96.4 ms", note)
+
+    def test_settle_drops_the_partial_window_and_the_holds_end(self):
+        self.assertEqual(self.T.SETTLE, 2)
 
     def test_test_host_line_matches_the_module_text(self):
         import re

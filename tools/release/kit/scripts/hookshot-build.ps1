@@ -550,6 +550,7 @@ if ($NoDlss) {
     Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
     Write-Host "  $(Get-KitNgxLicenseUrl $tools) (the build prints NVIDIA's notice too)."
     Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
+    [void](Clear-KitKeysAhead)   # (keys typed during the start are not the answer; a local co-op digit is kept)
     $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
     if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
     [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
@@ -569,6 +570,7 @@ if ($NoFsr4) {
     Write-Host 'AMD FSR 4 (AMD Radeon graphics cards, RX 6000 and newer): the build downloads AMD''s FSR runtime, under AMD''s own license:' -ForegroundColor Yellow
     Write-Host "  $(Get-KitFfxLicenseUrl $tools) (the build prints AMD's notice too)."
     Write-Host '  The game folder then holds AMD''s files (saved with AMD''s license beside them).'
+    [void](Clear-KitKeysAhead)   # (keys typed during the start are not the answer; a local co-op digit is kept)
     $answer = "$(Read-Host '  Accept AMD''s license and build with FSR 4? (y/n)')".Trim()
     if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'AMD''s license not accepted: nothing changed (the game stays as it is, without FSR 4).' }
     [System.IO.File]::WriteAllText($fsr4Note, "amd-license=accepted`n")
@@ -587,6 +589,7 @@ if ($NoXess) {
     Write-Host 'Intel XeSS (Intel Arc, and most AMD and NVIDIA graphics cards too): Intel''s library is downloaded, under Intel''s own license:' -ForegroundColor Yellow
     Write-Host "  $(Get-KitXessLicenseUrl $tools) (the download prints Intel's notice too)."
     Write-Host '  The game folder then holds Intel''s libxess.dll (saved with Intel''s license beside it). No game build is needed.'
+    [void](Clear-KitKeysAhead)   # (keys typed during the start are not the answer; a local co-op digit is kept)
     $answer = "$(Read-Host '  Accept Intel''s license and put Intel XeSS in the game? (y/n)')".Trim()
     if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'Intel''s license not accepted: nothing changed (the game stays as it is, without Intel XeSS).' }
     [System.IO.File]::WriteAllText($xessNote, "intel-license=accepted`n")

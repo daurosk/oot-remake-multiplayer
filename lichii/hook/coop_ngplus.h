@@ -31,13 +31,15 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/game_items.hpp"
+
 namespace CoopHook {
 class EmulatorMemory;
 }
 
 namespace CoopNgPlus {
 
-inline constexpr std::int32_t kMostQuarters = 80;  // 20 hearts, the most kept
+inline constexpr std::int32_t kMostQuarters = coop::host::kMostMaxLife;  // 20 hearts, the most kept (one value)
 
 // What coop-ngplus.ini keeps.
 struct Saved {

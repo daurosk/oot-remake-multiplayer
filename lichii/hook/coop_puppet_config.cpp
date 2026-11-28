@@ -21,6 +21,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     // second Link in the game (Alex's run of 2026-11-09 with the logs on).
     settings.debug = On(env("LICHII_COOP_TEST_PUPPET"));
     settings.debug_anim = On(env("LICHII_COOP_DEBUG_ANIM"));
+    settings.as_vars_probe = On(env("LICHII_COOP_AS_VARS_PROBE"));
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = std::move(actor);
     }
@@ -246,6 +247,17 @@ bool PackPerceived() {
     return false;
 }
 
+// Every pack's actors that have a body (build.py --puppet-body, and --puppet-pvp's `_Pvp` copies).
+std::vector<std::string> PackBodyActors() {
+    std::vector<std::string> out;
+    for (const auto& text : PackManifests()) {
+        for (auto& name : CoopPuppetBody::PackBodyActors(text)) {
+            out.push_back(std::move(name));
+        }
+    }
+    return out;
+}
+
 // The first manifest with blade copies.
 CoopPuppet::LookItems PackBlades() {
     for (const auto& text : PackManifests()) {
@@ -373,6 +385,7 @@ void Configure(bool perceived_safe) {
             }
             lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
         }
+        settings.body_actors = PackBodyActors();
         settings.perceived = PackPerceived();  // row 177: a hit's attacker may be the hitter's puppet
         if (!perceived_safe && PackPerceived()) {
             settings.quiet_everywhere = true;

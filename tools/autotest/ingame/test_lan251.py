@@ -86,7 +86,7 @@ def run_lan251(pair, ip, port, boot_a=BOOT_A, boot_b=BOOT_B):
     for x in ("A", "B"):
         pair.expect_log(x, WELCOMED + re.escape("%s:%d" % (ip, port)), max_frames=600)
     assert count(srv, REASON6) == 0, "R1: the LAN server refused a password: %s" % srv.find(REASON6, 0)
-    pair.until("R1: both in play", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=1800)
+    pair.until("R1: both in play", lambda: all(pair.ready(x) for x in ("A", "B")), max_frames=1800)
     for x in ("A", "B"):
         pair.check_shot(x, "lan251-joined")
 
@@ -108,7 +108,7 @@ def run_lan251(pair, ip, port, boot_a=BOOT_A, boot_b=BOOT_B):
     pair.rejoin("B", boot=boot_b)
     for x in ("A", "B"):
         pair.expect_log(x, WELCOMED, max_frames=900)
-    pair.until("back: both in play", lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=1800)
+    pair.until("back: both in play", lambda: all(pair.ready(x) for x in ("A", "B")), max_frames=1800)
     pair.notes.append("lan251 on %s:%d: R1 %s, R2 %s, back %s; settings row 'Password on this network' not read "
                       "(state.menu gives row names only)" % (ip, port, r1["out"], r2["out"], r3.get("out")))
 

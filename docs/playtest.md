@@ -252,9 +252,17 @@ taken before Longshot draws its overlays and so never has co-op's pages on it. T
   while none of them shows, else `tab` (`multiplayer`, `lobby`, `mods`), `view` (the rows' view: `main`, `session`,
   `players`, `join`, `lan`, `menu`, ...), `details_page` and `details_pages` of the list on the right of the main and
   Session views (row 223: page `0` the session's lines, page `1` the key items, turned with ZL and ZR; `details_pages`
-  is `2` while the game's key items can be read, `1` when not, `0` on a view without that list) and `key_items`: on
+  is `2` while the game's key items can be read, `1` when not, `0` on a view without that list), `keys` (row 297:
+  `true` while the list on the right is the typing keys: a field typed into, co-op's menu's rows too), `typed_chars`
+  (the characters on the keys' first line, the field as typed with its cursor mark: a count, never the text; `-1`
+  without keys), `row` (the rows' cursor on the left, `-1` none), `list` (the list on the right has the pad) and
+  `key_items`: on
   page `1` its lines (each `{"name", "value"}`, e.g. `{"name":"Songs","value":"3 of 12"}`), else `null`. The
   session's page is never given: it can hold a join code or an address.
+- `map_page` (row 295): the game's own Map page (the - menu's first tab) as its screen's last update left it: `up`
+  (that screen updated in the last 300 ms or 2 presents: a held, stepped game keeps it), `panes` (its content panes co-op found, 6 in the game) and `shown` (how many
+  of them show now; the backdrop BG_00 not counted). On the Map, menu up, `shown` is `panes`: fewer is the blank Map
+  page of row 295 (co-op's page hid them and never gave them back).
 
 The labels and values are co-op's own words in the game's language, never text read from the game. Example, a
 Character Select character with irises:
@@ -279,7 +287,8 @@ icon part's arrow `N_PlayerRotate_00`, words +0x60..+0x7c), and `shown`: per cop
 `name` and `name_set` (the game's path setter took the label's name). While the copies are not stepped (no turn
 place known, solo, nobody else on the map) it is the turn probe's instead (`Icons::ProbeArrow`, every 30 frames,
 solo too): `probe` true, nothing up or shown, `game_arrow_words` and `run_arrow_words` (the same words of up to 4 of the
-game's run-time icon copies under the map screen), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
+game's run-time icon copies under the map screen) and `arrow_raw` (probe v2: each arrow's raw words +0x28..+0xbc, its
+global matrix first; [0] the template's, [1..] the copies'), every pane looked up fresh (tools/autotest/ingame/test_map_turn_probe.py).
 Test-only: nothing here changes what is shown.
 
 **`slow_steps`** (the bridge adds it to `state`): `party_hud` and `name_tags`, each the last step of that part that ran
@@ -288,6 +297,13 @@ a second or more after the one before (a frame stepped after the game was held t
 tags on the game's balloons at that step (hookshot/src/coop_hookshot.h `SlowStep`). Before hud-fresh-0121 such a step
 showed 0 of both (its readings counted stale by the wall clock alone). Test-only: nothing here changes what is shown
 (tools/autotest/ingame/test_stepped_hud.py).
+
+**`name_tags`** (the bridge adds it to `state`, row 300): the other players' name tags as the game holds them after the
+last tag step: `shown` our tags on the game's balloons, `open` how many of those balloon parts the game holds open (a
+part only shown, never opened, is not seen: 0.12.0's missing tags), `screen_root` whether the balloon screen's root
+pane is shown. A tag is seen only with its part open and the screen root shown (hookshot/src/coop_hookshot.h
+`TagsSeen`, coop_native_tags.h `Balloons::Seen`). All 0 / false solo or with nobody near. Read only
+(tools/autotest/ingame/test_nametags_300.py).
 
 **`world`** (the bridge adds it to `state` and to a `dump`): the actors the object walk sees, nearest to our Link first,
 the kinds that matter (player, enemy, npc, chest, door, switch, item) before `other` (grass, pots, ...). The walk

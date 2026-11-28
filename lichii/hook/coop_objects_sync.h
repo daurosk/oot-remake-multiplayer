@@ -22,6 +22,7 @@
 #pragma once
 
 #include <algorithm>
+#include "coop/host/game_items.hpp"
 #include <array>
 #include <cmath>
 #include <deque>
@@ -569,6 +570,9 @@ bool IsHideAnimation(std::string_view name);
 // Issue 35 (3): an enemy waiting on the ceiling to drop on a Link (the
 // Skulltula's "CeilingWait", any LOD variant).
 bool IsCeilingWait(std::string_view name);
+// Row 303: that, or a boss in its pre-battle wait on the ceiling (Gohma's 'Pre_Battle_Ceiling_*'), whose fight its
+// own game's AI starts only for a Link it perceives: a copy's player under it claims it (the server hands it over).
+bool WaitsOnCeilingForLink(std::string_view actor, std::string_view animation);
 // Our Link at `link` stands under a ceiling enemy at `enemy`: within
 // kCeilingUnderM across (x, z) and below it by at most kCeilingDropM (y up).
 inline constexpr float kCeilingUnderM = 4.0f;
@@ -750,7 +754,7 @@ GivenFate StaleGivenFate(const GivenAsk& a);
 // not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
 // write into the component: the flag when another player raised it above
 // ours (at most 20 hearts), else nothing. Never lowers it.
-inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
+inline constexpr std::int32_t kMostLifeQuarters = coop::host::kMostMaxLife;   // (game_items.hpp: one value)
 std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
 // Rows 136/137: the host loaded an older save and its FLAG_RESET lowered MaxLife while our Link stood in a scene
 // (FlagWatcher::reset_lowered). The component keeps the replaced save's max and writes it back, which the max rule

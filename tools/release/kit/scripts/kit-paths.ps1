@@ -1781,6 +1781,29 @@ function Set-KitCharacterSelectChoice([string]$Kit, [string]$Value) {
     try { [System.IO.File]::WriteAllText((Join-Path $Kit 'hookshot\character-select-answer.txt'), "$Value`n") } catch { }
 }
 
+# Every key the kit reads or throws away while it starts (row 302): a 2, 3 or 4 is kept for local co-op's question in
+# the file Show-KitLocalPlayersHint named ($env:OOT_COOP_LOCAL_PRESSED; local-coop.ps1 Receive-KitLocalDigit takes it).
+# No hint said (a solo-only start, no console, OOT_COOP_LOCAL_PLAYERS set, or past the question): nothing kept. $true
+# when it was such a digit. It never answers a question by itself (C2-2). Never fails.
+function Save-KitLocalDigit($Key) {
+    if (-not $Key -or "$($Key.KeyChar)" -notmatch '^[2-4]$') { return $false }
+    $file = "$env:OOT_COOP_LOCAL_PRESSED"
+    if ($file) { try { [System.IO.File]::WriteAllText($file, "$($Key.KeyChar)`r`n") } catch { } }
+    return $true
+}
+
+# Keys typed ahead of a question taken out (they are not its answer), each handed to Save-KitLocalDigit first. The
+# kit's one way to empty the window's keys. $ReadKey: tests (a scriptblock giving a key object or $null). Never fails.
+function Clear-KitKeysAhead([scriptblock]$ReadKey = $null) {
+    $n = 0
+    try {
+        if ($ReadKey) { while ($n -lt 64 -and ($k = & $ReadKey)) { [void](Save-KitLocalDigit $k); $n++ }; return $n }
+        if ([Console]::IsInputRedirected) { return 0 }
+        while ([Console]::KeyAvailable) { [void](Save-KitLocalDigit ([Console]::ReadKey($true))); $n++ }
+    } catch { }
+    return $n
+}
+
 # The question at a start (owner, 0.11.9: the NPC characters are an opt-in download): Y is yes; Enter, N or no key in
 # $Seconds is no. No console (input redirected: a scripted or unattended start) is no. $ReadKey: tests (a scriptblock
 # giving a key object or $null). The Characters page itself comes with every kit either way.
@@ -1796,7 +1819,7 @@ function Read-KitCharacterSelectAnswer([int]$Seconds = 15, [scriptblock]$ReadKey
     $redirected = $true
     try { $redirected = [Console]::IsInputRedirected } catch { }
     if ($redirected -and -not $ReadKey) { Write-Host "$($q): skipped (no console)"; return $false }
-    if (-not $ReadKey) { try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { } }
+    if (-not $ReadKey) { [void](Clear-KitKeysAhead) }
     $end = (Get-Date).AddSeconds($Seconds)
     $left = -1
     while ((Get-Date) -lt $end) {
@@ -1806,6 +1829,7 @@ function Read-KitCharacterSelectAnswer([int]$Seconds = 15, [scriptblock]$ReadKey
         if ($key) {
             if ("$($key.Key)" -eq 'Y') { Write-Host 'Y'; return $true }
             if ("$($key.Key)" -eq 'N' -or "$($key.Key)" -eq 'Enter') { Write-Host 'N'; return $false }
+            [void](Save-KitLocalDigit $key)   # (not this question's key: a local co-op digit is kept)
         }
         Start-Sleep -Milliseconds 100
     }
@@ -2530,7 +2554,7 @@ function Get-KitPackCharactersKey($Json) {
 
 # Every start after the question (row 206: the NPC characters on or off without editing a file): one line, and a key
 # within $Seconds changes it. Off: N (the in-game page says "press N at the kit's start") or Y downloads them; on: N
-# takes them out. Any other key goes on at once. $true when changed. No console (a scripted start): no wait, no change.
+# takes them out. Any other key goes on at once (a local co-op digit is kept: Save-KitLocalDigit). $true when changed. No console (a scripted start): no wait, no change.
 # $ReadKey: tests.
 function Read-KitCharacterSelectToggle([string]$Choice, [int]$Seconds = 3, [scriptblock]$ReadKey = $null) {
     $now = if ($Choice -eq 'yes') { "on. To take them out press N within $Seconds s (no key: they stay)." }
@@ -2539,7 +2563,7 @@ function Read-KitCharacterSelectToggle([string]$Choice, [int]$Seconds = 3, [scri
     try { $redirected = [Console]::IsInputRedirected } catch { }
     if ($redirected -and -not $ReadKey) { return $false }
     Write-Host "NPC characters (Characters page): $now"
-    if (-not $ReadKey) { try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { } }
+    if (-not $ReadKey) { [void](Clear-KitKeysAhead) }
     $end = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $end) {
         $key = if ($ReadKey) { & $ReadKey } elseif ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null }
@@ -2549,6 +2573,7 @@ function Read-KitCharacterSelectToggle([string]$Choice, [int]$Seconds = 3, [scri
                 Write-Host $(if ($Choice -eq 'yes') { '  N: taking them out now.' } else { "  $($k): downloading them now." })
                 return $true
             }
+            [void](Save-KitLocalDigit $key)   # (row 302: a 2 pressed for local co-op goes on too, and is kept for its question)
             return $false
         }
         Start-Sleep -Milliseconds 100

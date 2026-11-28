@@ -1,4 +1,4 @@
-# live-twinrova-room B (see the A file): adult save to the Twinrova room (same boot as hs-twinrova-orders2).
+# live-twinrova-room B (see the A file): the lane's child save to the Twinrova room (same boot as hs-twinrova-orders2).
 mark start
 warp TwinrovaStage TwinrovaStage
 wait 1200

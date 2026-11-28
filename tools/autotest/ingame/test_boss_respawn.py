@@ -50,6 +50,13 @@ sys.path.insert(0, os.path.dirname(HERE))
 import hookshot    # noqa: E402  (BOTTLE_ITEMS: the ONE nofairy list, the scripts' own)
 
 STAGES = ["VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage"]   # coop_start_points.inc, the old pass list
+# boss-respawn-289-6 (brief: "check every boss room with a same-scene respawn for the same cause"): the other main boss
+# rooms, each a coop_start_points.inc row {"<S>", "<S>", x, y, z, false} (no entrance actor: the row 289 cause, the fix's
+# one code path; :4 Barinade, :5 BigOcto, :6 BongoBongo, :39 Ganondorf, :48 Gohma, :110 Morpha, :112 PhantomGanon,
+# :121 Twinrova; the selftest checks each against the table). Their own test (test_respawn_shows_the_boss_room) so a
+# job can run the old pass list and these apart.
+BOSS_ROOMS = ["GohmaStage", "BigOctoStage", "BarinadeStage", "PhantomGanonStage", "MorphaStage", "BongoBongoStage",
+              "TwinrovaStage", "GanondorfStage"]
 BOTTLES = hookshot.BOTTLE_ITEMS   # nofairy's bottles (the scripts' list; checked == coop_testinput.cpp kBottleItems)
 KEEP = "LICHII_COOP_ARRIVAL_STARTER=keep"     # coop_teleport_game.cpp:68-71
 OBJECTS = "LICHII_COOP_DEBUG_OBJECTS=1"
@@ -59,6 +66,11 @@ WARP_S = 31.0          # worst warp of one game on a lane: 26.9/28.8/31.0 s (par
 ARRIVAL_EVENT_S = 48.0  # B's boss-stage arrival event, run 20261125-114351
 IN_PLAY_FRAMES = 2400   # the old scenarios' 'wait 2400' after the load (br289-volvagia, hs-volvagia-rocks)
 BOSS_ARRIVAL_S = 2 * (2 * (WARP_S + ARRIVAL_EVENT_S) + IN_PLAY_FRAMES / P.FPS)   # = 476 s, a CEILING (2x margin)
+# A boss room's intro can outlast IN_PLAY_FRAMES stepped (pair.py BOOT_EVENT_FRAMES: Twinrova's intro, row215-309d7180):
+# a game still IN AN EVENT at IN_PLAY_FRAMES is waited on up to P.BOOT_EVENT_FRAMES, the arrival bound grown once by those
+# frames at P.BOOT_STEP_FPS (the boot proof's own rule, Pair._until_boot_play). A load or no event keeps the 2400.
+EVENT_EXTRA_S = (P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES) / P.BOOT_STEP_FPS   # = 302.5 s
+ROOM_BUDGET_S = int(900 + EVENT_EXTRA_S)      # the old '#! timeout 900' + that one growth = 1202 s
 # B #130 (09:43, via review-rows-c130): the owner's 30 s is the SET-UP CHECK (pair.setup(): in play, no fairy, gives),
 # kept first and at the default limit. The boss-stage arrival is a step after it with its own hard limit: a scene load
 # plus the stage's own arrival event, A then B, then both in play. A miss there is SETUP-FAIL 'boss arrival in <S>: ...'
@@ -124,17 +136,37 @@ def boss_arrival(pair, stage, then=None):
 
         def both_in_play():
             sts = {x: pair.state(x) for x in ("A", "B")}
-            return all(pair.in_play(v) and (v.get("scene") or "").lower() == stage.lower() for v in sts.values())
+            return all(pair.ready(x, v) and (v.get("scene") or "").lower() == stage.lower() for x, v in sts.items())
         phase = "both in play"
-        timed(phase, lambda: pair.until("both games in play in %s after its arrival event" % stage, both_in_play,
-                                        max_frames=IN_PLAY_FRAMES))
+        what = "both games in play in %s after its arrival event" % stage
+
+        def in_play():
+            try:
+                return pair.until(what, both_in_play, max_frames=IN_PLAY_FRAMES)
+            except P.TestTimeout:
+                raise
+            except AssertionError:
+                in_event = [x for x in ("A", "B") if pair.state(x).get("event")]
+                if not in_event:
+                    raise
+            # (once: the boot proof's growth, one deadline, one wait rule; capped by the test's own deadline as
+            # Pair._until_boot_play's _boot_grow_cap, so the arrival never runs past the test's end)
+            extra = max(0.0, min(EVENT_EXTRA_S, outer.end - pair.deadline.end))
+            pair.deadline.end += extra
+            pair.deadline.seconds += extra
+            took.append("%s in an event at %d frames: waited on up to %d (+%.0f s%s)" % (
+                "+".join(in_event), IN_PLAY_FRAMES, P.BOOT_EVENT_FRAMES, extra,
+                ", capped by the test's deadline" if extra < EVENT_EXTRA_S else ""))
+            return pair.until(what + " (a game in an event at %d frames: the event ceiling)" % IN_PLAY_FRAMES,
+                              both_in_play, max_frames=P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES)
+        timed(phase, in_play)
         if then:
             phase = "arrival check"
             then()                            # (a check of the arrival itself, e.g. the hearts still in)
     except Exception as e:                    # noqa: BLE001  (a timeout, a refused warp, a wrong scene, a SetupFail)
         why = str(e) if isinstance(e, P.SetupFail) else "%s: %s" % (type(e).__name__, e)
         raise P.SetupFail("boss arrival in %s: in '%s' after %.1f of %.0f s (%s): %s" % (
-            stage, phase, outer.clock() - t0, limit, "; ".join(took) or "nothing done", why)) from e
+            stage, phase, outer.clock() - t0, pair.deadline.seconds, "; ".join(took) or "nothing done", why)) from e
     finally:
         pair.deadline = outer
     pair.notes.append("boss arrival in %s %.1f s (%s)" % (stage, outer.clock() - t0, "; ".join(took)))
@@ -165,19 +197,40 @@ def back_after(pair):
         pair.notes.append("way back to %s failed: %s" % (BACK_TO, e))
 
 
+A_DOWN = r"coop: dbno: our Link: event 0 "   # (coop_dbno_game.cpp:523 Event 0 = down; the same line B's down is read by)
+
+
+def fight_result(pair, stage, step, e):
+    """review-tests-153 MUST 1: A stands idle in a live boss fight for the whole row (no one keeps it up). If A went
+    down too (a wipe: no one is left to respawn beside), B's bleed-out/respawn lines can miss for a FIGHT result, not
+    for row 289: that is NO-REF naming it (never FAIL, never PASS). A not down: the miss is the row's own FAIL."""
+    if pair.log["A"].find(A_DOWN):
+        pair.unproven("A was downed in %s's fight too (%r) before B's %s: the row 289 path is not judged on a "
+                      "fight result (%s)" % (stage, pair.log["A"].find(A_DOWN)[-120:], step, e))
+    raise e
+
+
 def bleed_out_and_respawn(pair, stage):
     """The old row's steps after both are in the stage: A (host) sets the bleed-out to 10 s, B is downed, bleeds out,
-    respawns; returns B's log lines from 'respawn at the entrance' (the row 289 path) on, and the load's end in them."""
+    respawns; returns B's log lines from 'respawn at the entrance' (the row 289 path) on, and the load's end in them.
+    A miss of B's lines while A is down too is NO-REF (fight_result), not the row's FAIL."""
     S = re.escape(stage)
     pair.act("A", "chat /dbno time 10")
     pair.expect_log("A", r"coop: test chat '/dbno time 10': sent", max_frames=300)
     pair.step_both(1800)                      # br289 a-in -> b-before: the stage's fight under way (A busy, :2)
     pair.act("B", "hurt 80")                  # br289-volvagia.B.txt: downed (16 quarters on the lane save)
-    pair.expect_log("B", r"coop: dbno: our Link: event 0 ", max_frames=600)       # down
-    pair.expect_log("B", r"coop: dbno: our Link: event 2 ", max_frames=1500)      # bled out (10 s + spectate)
-    pair.expect_log("B", r"coop: dbno: our Link: event 7 ", max_frames=1500)      # respawned
-    way = pair.until("B's respawn route line", lambda: pair.log["B"].find(
-        r"coop: teleport: (respawn at the entrance %s of %s|next to \w+|move to )" % (S, S)), max_frames=300)
+    for step, pat, frames in (("down", r"coop: dbno: our Link: event 0 ", 600),          # down
+                              ("bleed-out", r"coop: dbno: our Link: event 2 ", 1500),    # bled out (10 s + spectate)
+                              ("respawn", r"coop: dbno: our Link: event 7 ", 1500)):     # respawned
+        try:
+            pair.expect_log("B", pat, max_frames=frames)
+        except AssertionError as e:           # (TestTimeout too)
+            fight_result(pair, stage, step, e)
+    try:
+        way = pair.until("B's respawn route line", lambda: pair.log["B"].find(
+            r"coop: teleport: (respawn at the entrance %s of %s|next to \w+|move to )" % (S, S)), max_frames=300)
+    except AssertionError as e:
+        fight_result(pair, stage, "respawn route", e)
     if "respawn at the entrance" not in way:
         pair.unproven("B's respawn did not go to the entrance (A took the beside move: %r); the row 289 path "
                       "was not taken" % way[-160:])     # (NO-REF, never PASS: old row 'UNPROVEN ... not taken')
@@ -195,6 +248,20 @@ def bleed_out_and_respawn(pair, stage):
 @pytest.mark.row("#289 respawn to the entrance of a boss stage shows the stage (boss-respawn-289 volvagia/dodongo/lizalfos/ganon)")
 @pytest.mark.parametrize("stage", STAGES)
 def test_respawn_shows_the_stage(pair, back_after, stage, request):
+    respawn_shows(pair, stage, request)
+
+
+@pytest.mark.budget(ROOM_BUDGET_S)
+@pytest.mark.look
+@pytest.mark.needs_env(OBJECTS)
+@pytest.mark.row("#289 every main boss room: the respawn to its entrance shows the room (same cause, boss-respawn-289-6)")
+@pytest.mark.parametrize("stage", BOSS_ROOMS)
+def test_respawn_shows_the_boss_room(pair, back_after, stage, request):
+    respawn_shows(pair, stage, request)
+
+
+def respawn_shows(pair, stage, request):
+    """The fixed path in one stage (row 289): bleed-out, respawn to the entrance, the stage shown, control back."""
     if bt_plugin.env_has(bt_plugin.boot_env(request.config), KEEP):
         pytest.skip("this boot keeps the starter (%s): the fixed path is not on it" % KEEP)
     S = re.escape(stage)

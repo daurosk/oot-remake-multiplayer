@@ -132,6 +132,7 @@
 #include "coop_race_mode.h"
 #include "coop_switch_stand_mode.h"
 #include "coop_lift_ride.h"
+#include "coop_platform_carry.h"
 #include "coop_room_objects.h"
 #include "coop_switch_share.h"
 #include "coop_logic_probe.h"
@@ -1841,6 +1842,18 @@ std::atomic<u64>& TheLinkActorAt() {
     static std::atomic<u64> ms{0};
     return ms;
 }
+// True PvP's guard probe (docs/native-puppets.md 5.3 B, U5; reports/fable-puppet-pvp-2.md step 2): our Link's two
+// guard words as the last walk read them, packed: bits 0-7 the player part's byte +0x32 (QueryDynamicEquipmentIs
+// PlayerGuardFront's bit 4), bits 8-39 the low word at EquipmentUser +0x13a0 (QueryTargetIsGuarding's bit 5), bit 63
+// read. 0: not read (PvP native off, or no Link). Read only while the PvP glue is on; logged at each strike, never used
+// for a decision until the probe has measured both.
+std::atomic<u64>& TheLinkGuardWords() {
+    static std::atomic<u64> words{0};
+    return words;
+}
+constexpr u64 kGuardPartPlayer = 0x358;   // component table -> the player part (coop_native_player.h kPartPlayer)
+constexpr u64 kGuardPartByte = 0x32;      // its guard byte (U5 read: bit 4 = guards to the front)
+constexpr u64 kGuardEuWord = 0x13a0;      // EquipmentUser (table + kPartsEquipmentUser) -> the word (U5 read: bit 5)
 // Native puppets phase 4 (docs/native-puppets.md 5.1; review M1 of glue part 2): each live _Pvp copy's Life is
 // made invincible once, through the game's own call (CoopPvpNative::kInvincibleReacting with our key), so no hit
 // in any game (our own, an enemy's, a third game's replay) ever takes the copy's hearts. The calc thread, at the
@@ -2955,6 +2968,18 @@ public:
         // Never in race mode: each player's world is their own there, and a puppet on our lift moved it (the same
         // rule as the switch stander below; the puppets' places are public, so no message gate stops this path).
         const bool world_answers_puppets = !CoopRaceMode::InForce();
+        // N5 (coop_platform_carry.h): the same lifts' places, so a copy standing on one is drawn on it. Never in
+        // race mode: the lifts are not in step there.
+        if (puppet_carry_on_ && world_answers_puppets) {
+            std::vector<CoopPlatformCarry::Lift> carry;
+            carry.reserve(ride_lifts_.size());
+            for (const auto& l : ride_lifts_) {
+                carry.push_back({l.address, {l.position[0], l.position[1], l.position[2]}});
+            }
+            CoopPlatformCarry::TheStore().Feed(carry, SteadyNowMs());
+        } else if (puppet_carry_on_) {
+            CoopPlatformCarry::TheStore().Clear();
+        }
         if (lift_ride_on_ && world_answers_puppets) {
             auto& rider = CoopLiftRide::TheRider();
             rider.Want(CoopLiftRide::Ridden(ride_lifts_, sync_.OthersHere(server_now_us)), main_, SteadyNowMs());
@@ -3333,6 +3358,7 @@ public:
     std::size_t hit_probe_lines_ = 0;
     std::vector<CoopLiftRide::Lift> ride_lifts_;  // jabu-lifts (#65): this walk's lifts
     bool lift_ride_on_ = true;                    // LICHII_COOP_LIFT_RIDE=0 turns it off
+    bool puppet_carry_on_ = true;                 // N5: LICHII_COOP_PUPPET_CARRY=0 turns it off
     std::vector<CoopLiftRide::Lift> stand_switches_;  // ai-switches: this walk's step switches
     std::array<std::size_t, 3> stand_note_{};         // ai-switches: the footprint last said (switches, others, stood)
     bool switch_stand_on_ = true;                     // LICHII_COOP_SWITCH_STAND=0 turns it off
@@ -4724,6 +4750,21 @@ private:
                         const u64 now = SteadyNowMs();
                         TheLinkActorAt().store(now == 0 ? 1 : now);
                     }
+                    if (CoopPvpNativeGame::On()) {  // the U5 guard probe (TheLinkGuardWords)
+                        u64 words = 0;
+                        if (const auto table = r.Ptr(a + kActorComponents)) {
+                            const auto part = r.Ptr(*table + kGuardPartPlayer);
+                            const auto eu = r.Ptr(*table + CoopPuppet::addr::kPartsEquipmentUser);
+                            const auto byte = part ? r.Get<u8>(*part + kGuardPartByte) : std::nullopt;
+                            const auto word = eu ? r.Get<u32>(*eu + kGuardEuWord) : std::nullopt;
+                            if (byte && word) {
+                                words = (u64{1} << 63) | (u64{*word} << 8) | *byte;
+                            }
+                        }
+                        TheLinkGuardWords().store(words);
+                    } else {
+                        TheLinkGuardWords().store(0);  // PvP native off: no stale words (review-c123-18 nit)
+                    }
                     // Difficulty: the Life component whose hits from enemies are scaled.
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         if (const auto component = r.Ptr(*table + kComponentLife)) {
@@ -4735,6 +4776,18 @@ private:
                     const u64 xlink = parts ? r.Get<u64>(parts + CoopPuppetSound::addr::kPartsXLink).value_or(0) : 0;
                     CoopLinkSound::SetOurUser(
                         xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkSoundUser).value_or(0) : 0);
+                    // And its effect user (row 310): its effects go to the others as LINK_EFFECT; a sent key it no
+                    // longer plays (a held spin charge let go) goes again as an end, read every kTrackEveryMs.
+                    const u64 effects =
+                        xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkEffectUser).value_or(0) : 0;
+                    CoopLinkSound::SetOurEffectUser(effects);
+                    static u64 tracked_ms = 0;  // the walk's thread only
+                    const u64 now = SteadyNowMs();
+                    if (effects != 0 && now >= tracked_ms + CoopLinkSound::kTrackEveryMs) {
+                        tracked_ms = now;
+                        ReaderGuest guest(r);
+                        CoopLinkSound::TrackOurEffects(CoopPuppetSound::Playing(guest, effects), now);
+                    }
                 }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
@@ -4867,7 +4920,7 @@ private:
                 }
                 share_switches_.push_back(std::move(s));
             }
-            if (lift_ride_on_ && CoopLiftRide::IsRideLift(known.first)) {
+            if ((lift_ride_on_ || puppet_carry_on_) && CoopLiftRide::IsRideLift(known.first)) {
                 CoopLiftRide::Lift l;
                 l.address = a;
                 l.name = known.first;
@@ -7012,6 +7065,7 @@ Objects& Instance() {
         objects.hit_probe_on_ = EnvFlag("LICHII_COOP_HIT_PROBE");          // enemy-late-kill: log only
         objects.switch_stand_on_ = EnvOnUnlessZero("LICHII_COOP_SWITCH_STAND");      // ai-switches, on unless =0
         objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
+        objects.puppet_carry_on_ = EnvOnUnlessZero("LICHII_COOP_PUPPET_CARRY");      // N5 lift carry, on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
@@ -7080,6 +7134,14 @@ std::optional<std::int32_t> OurLinkLife() {
         return std::nullopt;
     }
     return life;
+}
+
+std::optional<std::uint64_t> OurLinkGuardWords() {
+    const u64 words = TheLinkGuardWords().load();
+    if (words == 0 || !OurLinkActor()) {
+        return std::nullopt;
+    }
+    return words;
 }
 
 std::optional<std::uint64_t> OurLinkActor() {

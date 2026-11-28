@@ -79,6 +79,7 @@ add_executable(coop_tests
   lichii/boundary_test.cpp
   lichii/event_member_test.cpp
   lichii/snap_test.cpp
+  lichii/puppet_body_test.cpp
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/scrub_sale_test.cpp
@@ -101,6 +102,7 @@ add_executable(coop_tests
   lichii/session_end_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
+  lichii/as_vars_test.cpp
   lichii/ocarina_sound_test.cpp
   lichii/look_share_test.cpp
   lichii/link_sound_test.cpp
@@ -128,8 +130,10 @@ add_executable(coop_tests
   lichii/pivot_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_hallway.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pivot.cpp
+  lichii/party_wait_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_party_wait.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
+  lichii/pvp_rewind_test.cpp
   lichii/dbno_test.cpp
   lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp
@@ -226,6 +230,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/skip_title_test.cpp
   hookshot/native_tags_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_native_tags.cpp
   hookshot/map_icons_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_map_icons.cpp
+  hookshot/pause_world_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_world.cpp
   hookshot/chatbox_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_chatbox.cpp
   hookshot/players_open_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_players_open.cpp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp

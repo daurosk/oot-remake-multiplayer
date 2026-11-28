@@ -112,7 +112,7 @@ def test_own_values_kept_over_rejoin(pair):
         pair.expect_log("B", KEPT, max_frames=300)
         pair.never_log("B", NONE_KEPT)
         pair.expect_log("B", COOP_FOLDER.pattern, max_frames=900)
-        pair.until("B in play after the rejoin", lambda: pair.in_play(pair.state("B")), max_frames=1800)
+        pair.until("B in play after the rejoin", lambda: pair.ready("B"), max_frames=1800)
         pair.step_both(60)
         a2, b2 = pair.state("A"), pair.state("B")
         assert b2.get("rupees") == want, "B's own rupees not kept over the rejoin: %s, had %d (A has %s)" % (

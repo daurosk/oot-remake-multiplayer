@@ -115,7 +115,7 @@ TEST_CASE("menu state: the - menu's tabs, closed and on the session's page of th
     m.open = true, m.tab = "multiplayer", m.view = "main", m.details_page = 0, m.details_pages = 2;
     m.key_items = {{"Songs", "3 of 12"}};   // (filled by mistake: page 0 never shows them)
     CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"main\",\"details_page\":0,"
-                          "\"details_pages\":2,\"key_items\":null}");
+                          "\"details_pages\":2,\"keys\":false,\"typed_chars\":-1,\"row\":-1,\"list\":false,\"key_items\":null}");
 }
 
 TEST_CASE("menu state: the key items page gives each line's name and value") {
@@ -123,8 +123,17 @@ TEST_CASE("menu state: the key items page gives each line's name and value") {
     m.open = true, m.tab = "multiplayer", m.view = "session", m.details_page = 1, m.details_pages = 2;
     m.key_items = {{"Songs", "3 of 12"}, {"Medallions", "0 of 6"}};
     CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"session\",\"details_page\":1,"
-                          "\"details_pages\":2,\"key_items\":[{\"name\":\"Songs\",\"value\":\"3 of 12\"},"
+                          "\"details_pages\":2,\"keys\":false,\"typed_chars\":-1,\"row\":-1,\"list\":false,\"key_items\":[{\"name\":\"Songs\",\"value\":\"3 of 12\"},"
                           "{\"name\":\"Medallions\",\"value\":\"0 of 6\"}]}");
+}
+
+TEST_CASE("menu state (row 295): the Map page's content goes last, as its screen's last update left it") {
+    MapPage map;
+    CHECK(MapPageJson(map) == "{\"up\":false,\"panes\":0,\"shown\":0}");
+    map.up = true, map.panes = 6, map.shown = 6;
+    const auto j = Json(Tab{}, Screen{}, Minus{}, map);
+    CHECK(Has(j, ",\"minus\":{\"open\":false},\"map_page\":{\"up\":true,\"panes\":6,\"shown\":6}}"));
+    CHECK(j.rfind("{\"coop\":", 0) == 0);
 }
 
 TEST_CASE("menu state (chartab-0121): the Customize screen says whether its keys are the game's guide keys and which show") {
@@ -136,4 +145,12 @@ TEST_CASE("menu state (chartab-0121): the Customize screen says whether its keys
     j = Json(Tab{}, FromDriver(d, true, true));
     CHECK(Has(j, "\"keys\":{\"guide\":true,\"page\":true,\"mix\":true}"));
     CHECK(Has(Json(Tab{}, FromDriver(d, false, false)), "\"customize_screen\":{\"open\":false}"));
+}
+
+TEST_CASE("menu state: the - menu says when its list is the typing keys (row 297)") {
+    Minus m;
+    m.open = true, m.tab = "multiplayer", m.view = "menu", m.keys = true, m.typed_chars = 5, m.row = 1, m.list = true;
+    CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"menu\",\"details_page\":0,"
+                          "\"details_pages\":0,\"keys\":true,\"typed_chars\":5,\"row\":1,\"list\":true,"
+                          "\"key_items\":null}");
 }

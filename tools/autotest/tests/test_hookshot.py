@@ -1700,5 +1700,130 @@ class WaitWarpsTest(unittest.TestCase):
         self.assertLess(body.index("wait_warps(players)"), body.index('say("scenario played")'))
 
 
+class LaneFilesTest(unittest.TestCase):
+    """lane_files.py (B #149, tunic-look-0121): every boot puts a lane game's co-op files back to a known set, as the
+    save (gate-tunic-309d7180: lane1-A's coop-options.ini kept look_cap_trim = blue + 10 look parts, the test waited
+    for 'tunic-3070FF now' and A said 'tunic-3070FF-cap-3070FF'; 9aef275d7: a kept coop-difficulty.ini)."""
+    KIT = "# Co-op switches\nauto_update = ask\n# color = green\npvp = off\nLICHII_COOP_PUPPET=1\n"
+
+    def setUp(self):
+        import lane_files
+        self.lf = lane_files
+        self.tmp = tempfile.mkdtemp()
+        self.game = os.path.join(self.tmp, "lane1-A")
+        os.makedirs(self.game)
+        self.kit = os.path.join(self.tmp, "kit-options.ini")
+        self.write(self.kit, self.KIT)
+        self.kept = os.path.join(self.tmp, "out", "lane-kept-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def read(self, path):
+        with open(path, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def restore(self):
+        return self.lf.restore(self.game, self.kept, kit_options=self.kit)
+
+    def test_lane1_look_leftovers_go(self):
+        """The lane1-A file of gate-tunic-309d7180 (its active lines): the kit's file in its place, the old one kept."""
+        lane = self.KIT + ("color = white\nmax_players = 4\nlook_goron_tunic = black\npublic_game = on\n"
+                           "relay_room = harbor-5865\nlook_cap_trim = blue\nlook_boots = yellow\n")
+        opt = os.path.join(self.game, "coop-options.ini")
+        self.write(opt, lane)
+        self.assertEqual(self.lf.leftovers(self.game, kit_options=self.kit)[0][:30], "coop-options.ini +7 line(s): c")
+        line = self.restore()
+        self.assertIn("coop-options.ini = the kit's (was +7 line(s): color = white, max_players = 4,", line)
+        self.assertIn("look_cap_trim = blue", line)
+        self.assertEqual(self.read(opt), self.KIT)
+        self.assertEqual(self.read(os.path.join(self.kept, "coop-options.ini")), lane)
+        self.assertEqual(self.restore(), "lane files: the known set (nothing changed)")
+        self.assertEqual(self.lf.leftovers(self.game, kit_options=self.kit), [])
+
+    def test_missing_options_file_is_made(self):
+        self.assertIn("coop-options.ini missing", self.lf.leftovers(self.game, kit_options=self.kit))
+        self.assertIn("coop-options.ini = the kit's (was missing)", self.restore())
+        self.assertEqual(self.read(os.path.join(self.game, "coop-options.ini")), self.KIT)
+
+    def test_comments_only_differ(self):
+        """An older kit's file (other comments, the same key lines: lane 2 on 11-27): replaced, said so, no leftover."""
+        self.write(os.path.join(self.game, "coop-options.ini"), self.KIT.replace("# Co-op switches", "# old"))
+        self.assertEqual(self.lf.leftovers(self.game, kit_options=self.kit), [])
+        self.assertIn("(comments only)", self.restore())
+
+    def test_coop_ini_keeps_name_and_client_id(self):
+        ini = os.path.join(self.game, "coop.ini")
+        self.write(ini, "# mine\nname = Gerudo-2058\nlast_invite = x@1.2.3.4:27530 room:pw\nlast_host = Someone\n"
+                        "client_id = 42\nserver = 1.2.3.4\nrejoin_once = 1\n")
+        self.write(os.path.join(self.game, "coop-options.ini"), self.KIT)
+        self.assertEqual(self.lf.leftovers(self.game, kit_options=self.kit),
+                         ["coop.ini keys last_invite, last_host, server, rejoin_once"])
+        self.assertIn("coop.ini without last_invite, last_host, server, rejoin_once", self.restore())
+        self.assertEqual(self.read(ini), "# mine\nname = Gerudo-2058\nclient_id = 42\n")
+        self.assertIn("last_host = Someone", self.read(os.path.join(self.kept, "coop.ini")))
+
+    def test_kept_choices_moved_aside(self):
+        self.write(os.path.join(self.game, "coop-options.ini"), self.KIT)
+        for n in ("coop-difficulty.ini", "coop-ngplus.ini", "coop-saves.ini", "coop-character.txt",
+                  "coop-character-ages.txt", "coop-bans.txt", "coop-player.ini", "coop-kit.txt", "coop-test-state.txt"):
+            self.write(os.path.join(self.game, n), n)
+        self.write(os.path.join(self.game, "gold-race", "playthroughs.txt"), "1")
+        self.write(os.path.join(self.game, "player-key.txt"), "key")     # (identity: stays)
+        line = self.restore()
+        for n in self.lf.NONE:
+            self.assertIn("%s moved aside" % n, line)
+            self.assertFalse(os.path.exists(os.path.join(self.game, n)), n)
+            self.assertTrue(os.path.exists(os.path.join(self.kept, n)), n)
+        self.assertTrue(os.path.isfile(os.path.join(self.game, "player-key.txt")))
+        self.write(os.path.join(self.game, "coop-difficulty.ini"), "again")   # (a second boot: the newer one kept)
+        self.restore()
+        self.assertEqual(self.read(os.path.join(self.kept, "coop-difficulty.ini")), "again")
+
+    def test_hard_link_is_never_written_into(self):
+        """A lane file may be a hard link (testpack.py): the other name keeps the old text."""
+        opt = os.path.join(self.game, "coop-options.ini")
+        self.write(opt, self.KIT + "color = pink\n")
+        other = os.path.join(self.tmp, "other.ini")
+        try:
+            os.link(opt, other)
+        except (OSError, AttributeError):
+            self.skipTest("no hard links here")
+        self.restore()
+        self.assertEqual(self.read(other), self.KIT + "color = pink\n")
+        self.assertEqual(self.read(opt), self.KIT)
+
+    def test_no_kit_file_stops_the_boot(self):
+        with self.assertRaises(OSError):
+            self.lf.restore(self.game, self.kept, kit_options=os.path.join(self.tmp, "none.ini"))
+
+    def test_the_repo_kit_file_has_no_look(self):
+        """The known set is the kit's shipped file: its key lines (tools/release/kit/coop-options.ini) name no look,
+        colour, host or relay choice, and keep the switches lane runs got from the lanes' files."""
+        with open(self.lf.KIT_OPTIONS, "rb") as f:
+            active = self.lf._active(f.read())
+        keys = [ln.split("=")[0].strip() for ln in active]
+        self.assertEqual(sorted(keys), sorted(["auto_update", "pvp", "LICHII_COOP_PUPPET", "LICHII_COOP_OBJECTS",
+                                               "LICHII_COOP_SPAWN"]))
+
+    def test_run_says_it_per_game(self):
+        self.write(os.path.join(self.game, "coop-options.ini"), self.KIT)
+        import lane_files
+        old = lane_files.KIT_OPTIONS
+        lane_files.KIT_OPTIONS = self.kit
+        try:
+            restore = lane_files.restore
+            lane_files.restore = lambda g, k, kit_options=self.kit: restore(g, k, kit_options)
+            line = hs.restore_lane_files(self.game, os.path.join(self.tmp, "out"), "A")
+        finally:
+            lane_files.KIT_OPTIONS, lane_files.restore = old, restore
+        self.assertEqual(line, "A: lane files: the known set (nothing changed)")
+
+
 if __name__ == "__main__":
     unittest.main()

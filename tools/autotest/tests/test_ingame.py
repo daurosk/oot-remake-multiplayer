@@ -504,6 +504,9 @@ def fake_live(args, timeout):
     if MODE == 'played':
         return {'ok': False, 'boot': 'FAILED (see steps.txt): the session is closed'}
     if MODE in ('notready', 'nomodule'):          # (started; the boot proof finds B elsewhere, or B has no module)
+        with open(os.path.join(sess, 'steps.txt'), 'w') as f:   # (as hookshot.py run: the lane files put back)
+            f.write('18:00:20 A: lane files: the known set (nothing changed)\\n'
+                    '18:00:33 B: lane files: the known set (nothing changed)\\n')
         return {'ok': True}
     return {'ok': False, 'lock': 'not taken', 'error': 'refused before the session'}
 
@@ -1584,6 +1587,81 @@ class WarpPlayUi(unittest.TestCase):
         self.assertEqual(pair.c["A"].last_frame, before)
 
 
+
+class BootPlayUi(unittest.TestCase):
+    """'In play' for a set-up also needs each game's play UI not down (Pair.ready; pause-press-0121): gate-pause-309d7180,
+    S 309d7180c, A's boot left its play UI down (game-out-A.txt :4323 down, :5052 up) after the bridge said in play;
+    test_pause's + came in between, A never paused. BT_FAKE_BOOT_UI_DOWN=A: the fake's A the same, + refused until up."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def lane(self, **env):
+        import fakegame
+        from unittest import mock
+        with mock.patch.dict(os.environ, env):
+            lane = fakegame.FakeLane(self.tmp)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=self.tmp)
+        self.addCleanup(pair.close)
+        pair.begin(120)
+        return pair
+
+    def test_until_in_play_waits_for_the_play_ui_and_says_so(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="150")
+        self.assertEqual(pair.play_ui("A"), "down")
+        self.assertTrue(pair.in_play(pair.state("A")))      # (the bridge's state alone: in play, the gate's A)
+        self.assertFalse(pair.ready("A"))
+        pair.until_in_play("both", max_frames=P.READY_FRAMES)
+        self.assertEqual(pair.play_ui("A"), "up")
+        self.assertIsNone(pair.play_ui("B"))                # (no line: nothing waited for)
+        said = [n for n in pair.notes if n.startswith("A: in play with its play UI down: waited ")]
+        self.assertEqual(len(said), 1, pair.notes)
+        self.assertFalse(any(n.startswith("B: in play with its play UI down") for n in pair.notes), pair.notes)
+
+    def test_boot_ready_waits_for_the_play_ui(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="150")
+        pair.boot_ready()
+        self.assertEqual(pair.play_ui("A"), "up")
+        pair.press("A", ["PLUS"], frames=4)
+        pair.step_both(10)
+        self.assertIsNotNone(pair.state("A").get("not_ready"))     # (paused: + taken once the UI was up)
+
+    def test_play_ui_never_up_names_it_in_the_fail(self):
+        pair = self.lane(BT_FAKE_BOOT_UI_DOWN="A", BT_FAKE_BOOT_UI_FRAMES="100000")
+        with self.assertRaisesRegex(AssertionError, r"A: scene=\S+ loading=\S+ event=\S+ not_ready=None play_ui=down"):
+            pair.until_in_play("both", max_frames=60)
+
+    def test_play_ui_reads_on_and_starts_again_on_a_new_log(self):
+        pair = self.lane()
+        self.assertIsNone(pair.play_ui("A"))
+        game_log = pair.log["A"].path
+        with open(game_log, "a", encoding="utf-8") as f:
+            f.write("[hos x] coop: native ui: the game's play UI is down (a scene load or the title): no screen\n")
+            f.write("[hos x] coop: native ui: the game's play UI is u")      # (half a line: not read yet)
+        self.assertEqual(pair.play_ui("A"), "down")
+        with open(game_log, "a", encoding="utf-8") as f:
+            f.write("p (patch 0018's HUD screen ran since the load)\n")
+        self.assertEqual(pair.play_ui("A"), "up")
+        pair.log["A"] = P.Log(game_log)                     # (Pair.rejoin's new Log: read again from 0)
+        self.assertEqual(pair.play_ui("A"), "up")
+
+    def test_suite_test_pause_passes_with_a_s_play_ui_down_after_the_boot(self):
+        """The fake suite's test_pause with A's boot play UI down (refusing +): PASS or NO-REF, and the boot proof's
+        or the set-up's note says the wait. Before the fix: FAIL 'both games paused (no fresh Link sample)', the gate's."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        out = os.path.join(tmp, "o")
+        p = pytest_run([".", "--fake", "--out", out, "-q", "-k", "test_pause", "--no-smoke-gate", "--no-rerun"],
+                       env={"BT_FAKE_BOOT_UI_DOWN": "A", "BT_FAKE_BOOT_UI_FRAMES": "1200"})
+        rows = [r for r in summary(out)["tests"] if r["test"].split("::")[-1] == "test_pause"]
+        self.assertEqual(len(rows), 1, p.stdout[-3000:])
+        self.assertIn(rows[0]["result"], ("PASS", "NO-REF"), (rows[0], p.stdout[-3000:]))
+        proof = (summary(out).get("boot_proof") or {}).get("lane1") or ""
+        self.assertIn("A: in play with its play UI down: waited ", proof)    # (the boot proof's wait, said)
+        self.assertNotIn("B: in play with its play UI down", proof)
+
 class SetupLimit(unittest.TestCase):
     """Pair.setup's 30 s limit holds for the calls inside it (review-c123-6 point 2): a hung bridge in a set-up is a
     SETUP-FAIL at the limit, not a FAIL at the test's budget. A fake clock: no real waiting."""
@@ -2032,15 +2110,20 @@ class LaneCheck(unittest.TestCase):
 
     def test_kept_difficulty_left_by_an_earlier_run(self):
         """A game folder with a coop-difficulty.ini (a kept difficulty, read once at game start, offered to every
-        automatic session): SETUP-FAIL naming the file (lane1-A/lane2-A 2026-11-26 kept Custom hp=300, B #148)."""
+        automatic session; lane1-A/lane2-A 2026-11-26 kept Custom hp=300, B #148): lane_check names it (the boot puts
+        it aside: lane_files.py, B #149 tunic-look-0121), and kept_difficulty, the check after the boot
+        (bt_plugin._lane_files_proof), still SETUP-FAILs on it."""
         for x in "AB":
             self.make(self.tmp, x, server=self.server)
         f = os.path.join(self.tmp, "lane1-A", "coop-difficulty.ini")
         with open(f, "w", encoding="utf-8") as fh:
             fh.write("# kept\nauto = 0\npreset = custom\nhp = 300\n")
+        info = P.lane_check(self.tmp, 1)
+        self.assertIn("coop-difficulty.ini present", info["lane_files"]["A"])
+        self.assertNotIn("coop-difficulty.ini present", info["lane_files"]["B"])
         with self.assertRaisesRegex(P.SetupFail, r"lane1-A.coop-difficulty\.ini holds a kept difficulty from an "
                                                  r"earlier run \(auto = 0 preset = custom hp = 300\)"):
-            P.lane_check(self.tmp, 1)
+            P.kept_difficulty(os.path.dirname(f))
         os.remove(f)
         self.assertEqual(P.lane_check(self.tmp, 1)["commit"], "ae97cc772")
 
@@ -2241,6 +2324,82 @@ class BootProof(unittest.TestCase):
         with self.assertRaisesRegex(P.SetupFail, r"^boot: BridgeError: timeout"):
             pair.boot_ready("BossStage", max_frames=100)
 
+    def test_an_intro_longer_than_the_load_ceiling_is_waited_out(self):
+        """row215-309d7180: Twinrova's intro ran on at the boot proof's 2400 frames, which bound a load, and was
+        SETUP-FAIL boot. A game IN AN EVENT gets BOOT_EVENT_FRAMES (the 300-frame intro here, past max_frames 100),
+        and the deadline grows once for those frames (BOOT_STEP_FPS)."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        before = pair.deadline.seconds
+        st = pair.boot_ready("BossStage", max_frames=100)
+        for x in ("A", "B"):
+            self.assertTrue(pair.in_play(st[x]), st[x])
+        self.assertTrue(any(n.startswith("boot: ") and "in an event after 100 frames: waited on up to %d"
+                            % P.BOOT_EVENT_FRAMES in n for n in pair.notes), pair.notes)
+        self.assertAlmostEqual(pair.deadline.seconds - before, (P.BOOT_EVENT_FRAMES - 100) / P.BOOT_STEP_FPS)
+
+    def test_the_event_growth_never_passes_an_enclosing_deadline(self):
+        """review-rows-c130-8 S2: inside Pair.recover the growth is capped at the recovery's own deadline end."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        cap = pair.deadline.end + 5.0
+        pair._boot_grow_cap = cap
+        pair.boot_ready("BossStage", max_frames=100)
+        self.assertLessEqual(pair.deadline.end, cap + 1e-6)
+        self.assertTrue(any("capped by the enclosing deadline" in n for n in pair.notes), pair.notes)
+
+    def test_recover_sets_the_cap_to_its_outer_deadline_and_resets_it(self):
+        pair = self.intro_pair(self.INTRO_FAKE)
+        seen = {}
+
+        def stepped(scene, max_frames, outer, t0, box):
+            seen["cap"], seen["end"] = pair._boot_grow_cap, outer.end
+            return {}
+        pair._recover_stepped = stepped
+        pair.recover("BossStage")
+        self.assertEqual(seen["cap"], seen["end"])
+        self.assertIsNone(pair._boot_grow_cap)
+
+    def test_a_load_keeps_the_load_ceiling(self):
+        """Only an event gets the longer wait: a stale sample past max_frames is SETUP-FAIL at max_frames."""
+        pair = self.lane(BT_FAKE_STALE_FRAMES=5000)
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: AssertionError: both games in play after the boot: not "
+                                                 r"after 100 frames \(~3 s of game\); A: scene=.*not_ready="):
+            pair.boot_ready("KakarikoVillage_Child", max_frames=100)
+
+    def test_an_event_past_its_ceiling_names_the_event_and_its_last_cut(self):
+        """The catching check: the SETUP-FAIL's first line says which event each game waited on, how long the module
+        saw it run and its last cut (row215-309d7180 said only 'event=True')."""
+        fake = self.INTRO_FAKE.replace("game.frame + 300", "10 ** 9").replace(
+            "    return {'ok': False",
+            "    game.say(\"coop: event: our Link's event began: 0x106d8c0100 kind 0 (2 in the session); names seen: "
+            "none\")\n    game.say(\"coop: event: our Link is still in its event after 211 s (0 actors claimed)\")\n"
+            "    game.say(\"coop: objects: anim Enemy_DungeonBoss_Kotake 0x1 'AS-C07-Enemy_DungeonBoss_Kotake-0' "
+            "(ours)\")\n    return {'ok': False")
+        pair = self.intro_pair(fake)
+        from unittest import mock
+        with mock.patch.object(P, "BOOT_EVENT_FRAMES", 200):
+            with self.assertRaises(P.SetupFail) as cm:
+                pair.boot_ready("BossStage", max_frames=100)
+        msg = str(cm.exception)
+        self.assertRegex(msg, r"^boot: AssertionError: both games in play after the boot \(a game in an event at 100 "
+                              r"frames: the event ceiling\): not after 100 frames \(~3 s of game\); A: scene=BossStage "
+                              r".*event=True")
+        for x in ("A", "B"):
+            self.assertRegex(msg, r"; %s \(in its event since 'our Link's event began: 0x106d8c0100 "
+                                  r"kind 0 \(2 in the session\); names seen: none', 'still in its event after 211 s', last cut "
+                                  r"'AS-C07-Enemy_DungeonBoss_Kotake-0', 200 frames stepped here\)" % x)
+
+    def test_an_event_that_ended_in_the_log_is_not_named(self):
+        pair = self.intro_pair(self.INTRO_FAKE)
+        pair.log["A"].mark()
+        with open(pair.log["A"].path, "a", encoding="utf-8") as f:
+            f.write("coop: event: our Link's event began: 0x1 kind 0 (1 in the session); names seen: none\n"
+                    "coop: event: our Link's event ended after 0.6 s\n")
+        self.assertEqual(pair.event_note("A", 10), "")
+        with open(pair.log["A"].path, "a", encoding="utf-8") as f:
+            f.write("coop: event: our Link's event began: 0x2 kind 0 (2 in the session); names seen: none\n")
+        self.assertEqual(pair.event_note("A"), " (in its event since 'our Link's event began: 0x2 kind 0 (2 in the "
+                                               "session); names seen: none')")
+
     def test_a_stale_sample_is_stepped_not_judged(self):
         pair = self.lane(BT_FAKE_STALE_FRAMES=50)
         self.assertFalse(pair.in_play(pair.state("A")))          # (the one read party-hud-bridge r1 failed on)
@@ -2348,6 +2507,111 @@ class CommitSampler(unittest.TestCase):
             self.assertGreater(b, 1 << 20)
         else:
             self.assertIsNone(b)
+
+
+class NoCs(unittest.TestCase):
+    """no_cs.has_character_select reads the boot's mod list in the game's log, not the pick Int (hair-link-7,
+    leather-nocs-309d7180: co-op's own Characters tab puts CharacterMenu_SelectedCharacter in the pack, so B without the
+    mod still had it and every no-CS test SETUP-FAILed). Lines as that run's game-out-A/B.txt wrote them."""
+    A_BOOT = ["[hos host] mods: contents/0400486024DEC000/coop-puppet: 41275 RomFS files (23 replace the game's)",
+              "[hos host] mods: OoT Character Select: ExeFS E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips: built into the game",
+              "[hos host] mods: OoT Character Select: 6903 RomFS files (20 replace the game's, 6883 added), ExeFS patches",
+              "[hos host] mods: 2 mods from %USERPROFILE%\lane1-A\mods: 48190 RomFS entries"]
+    B_BOOT = ["[hos host] mods: %USERPROFILE%\lane1-B-nocs\mods\coop-mods.list: 1 rows",
+              "[hos host] mods: 1 mods from %USERPROFILE%\lane1-B-nocs\mods: 1789 RomFS entries",
+              "[hos sead::MainThread] mods: Sequence/CharacterMenu.module.ainb <- ...\coop-puppet\romfs\Sequence\..."]
+
+    def pair_with(self, logs):
+        import no_cs
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+
+        class _P:
+            log = {}
+        for x, lines in logs.items():
+            path = os.path.join(d, "game-out-%s.txt" % x)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+            _P.log[x] = P.Log(path)
+        return no_cs, _P
+
+    def test_mod_list_not_pick_int(self):
+        no_cs, p = self.pair_with({"A": self.A_BOOT, "B": self.B_BOOT})
+        self.assertTrue(no_cs.has_character_select(p, "A"))
+        self.assertFalse(no_cs.has_character_select(p, "B"))
+        no_cs.prove(p)   # (the leather-nocs-309d7180 games: B without the mod, A with it)
+
+    def test_b_with_the_mod_fails(self):
+        no_cs, p = self.pair_with({"A": self.A_BOOT, "B": self.A_BOOT})
+        with self.assertRaisesRegex(AssertionError, "B still has Character Select"):
+            no_cs.prove(p)
+
+    def test_a_without_the_mod_fails(self):
+        no_cs, p = self.pair_with({"A": self.B_BOOT, "B": self.B_BOOT})
+        with self.assertRaisesRegex(AssertionError, "A has no Character Select"):
+            no_cs.prove(p)
+
+    def test_last_boot_counts(self):
+        # (a relaunch in the same log: only the last boot's block is read, both ways)
+        no_cs, p = self.pair_with({"A": self.B_BOOT + self.A_BOOT, "B": self.A_BOOT + self.B_BOOT})
+        self.assertTrue(no_cs.has_character_select(p, "A"))
+        self.assertFalse(no_cs.has_character_select(p, "B"))
+
+    def test_no_mod_list_is_not_a_guess(self):
+        no_cs, p = self.pair_with({"A": ["[hos host] boot: image 96 MB"], "B": self.B_BOOT})
+        with self.assertRaisesRegex(AssertionError, "its mod list is not known"):
+            no_cs.has_character_select(p, "A")
+
+
+class LaneFilesProof(unittest.TestCase):
+    """bt_plugin._lane_files_proof (B #149, tunic-look-0121): the boot's steps.txt says each game's co-op files were put
+    back (hookshot.py restore_lane_files) and no kept difficulty is left after it (pair.kept_difficulty, 9aef275d7)."""
+
+    def setUp(self):
+        import bt_plugin as B
+        self.B = B
+        self.tmp = tempfile.mkdtemp()
+        self.folders = [os.path.join(self.tmp, "lane1-%s" % x) for x in "AB"]
+        for d in self.folders:
+            os.makedirs(d)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def steps(self, *lines):
+        with open(os.path.join(self.tmp, "steps.txt"), "w", encoding="utf-8") as f:
+            f.write("".join("18:00:20 %s\n" % ln for ln in lines))
+
+    def test_both_said(self):
+        self.steps("A: save baseline restored", "A: lane files: put back: coop-options.ini = the kit's (x)",
+                   "B: save baseline restored", "B: lane files: the known set (nothing changed)")
+        got = self.B._lane_files_proof(self.tmp, self.folders, 1)
+        self.assertEqual(got["B"], "B: lane files: the known set (nothing changed)")
+        self.assertTrue(got["A"].startswith("A: lane files: put back"))
+
+    def test_a_game_not_said_is_setup_fail(self):
+        """An older harness, or a boot with --no-restore: no line, SETUP-FAIL (never a run on the lane's leftovers)."""
+        self.steps("A: save baseline restored", "A: lane files: the known set (nothing changed)",
+                   "B: save baseline restored")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: B's co-op files were not put back"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
+
+    def test_kept_by_switch_is_setup_fail(self):
+        """--keep-lane-files (an old row's run script) is never a bridge run's boot."""
+        self.steps("A: lane files: KEPT as they are (--keep-lane-files)", "B: lane files: the known set (nothing changed)")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: A's co-op files were not put back"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
+
+    def test_solo_needs_a_only(self):
+        self.steps("A: lane files: the known set (nothing changed)")
+        self.assertEqual(list(self.B._lane_files_proof(self.tmp, self.folders[:1], 1)), ["A"])
+
+    def test_kept_difficulty_after_the_boot_is_setup_fail(self):
+        self.steps("A: lane files: the known set (nothing changed)", "B: lane files: the known set (nothing changed)")
+        with open(os.path.join(self.folders[1], "coop-difficulty.ini"), "w", encoding="utf-8") as f:
+            f.write("preset = hard\n")
+        with self.assertRaisesRegex(P.SetupFail, r"lane1 boot: .*lane1-B.coop-difficulty\.ini holds a kept difficulty"):
+            self.B._lane_files_proof(self.tmp, self.folders, 1)
 
 
 if __name__ == "__main__":

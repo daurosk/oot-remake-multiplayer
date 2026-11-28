@@ -167,7 +167,7 @@ function Read-ProblemSendAnswer([int]$Seconds = $script:SendAskSeconds, [scriptb
     $redirected = $true
     try { $redirected = [Console]::IsInputRedirected } catch { }
     if ($redirected -and -not $ReadKey) { Write-Host "  n (no console: no)"; return $false }
-    if (-not $ReadKey) { try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { } }
+    if (-not $ReadKey) { [void](Clear-KitKeysAhead) }   # (kit-paths.ps1: a local co-op digit is kept, row 302)
     $end = (Get-Date).AddSeconds($Seconds)
     $left = -1
     while ((Get-Date) -lt $end) {
@@ -177,6 +177,7 @@ function Read-ProblemSendAnswer([int]$Seconds = $script:SendAskSeconds, [scriptb
         if ($key) {
             if ("$($key.Key)" -eq 'Y') { Write-Host 'y'; return $true }
             if ("$($key.Key)" -eq 'N' -or "$($key.Key)" -eq 'Enter') { Write-Host 'n'; return $false }
+            [void](Save-KitLocalDigit $key)
         }
         Start-Sleep -Milliseconds 100
     }

@@ -12,6 +12,7 @@
 #include "coop_pvp_native.h"
 #include "coop_puppet_own.h"
 #include "coop_show_delay.h"
+#include "coop_platform_carry.h"
 
 #include <algorithm>
 #include <atomic>
@@ -251,6 +252,9 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     if (!after_call) {
         NewFrame(guest, now_ms);
         PoseFrame(guest, now_ms);
+        if (as_vars_probe_on_) {
+            AsVarsProbeFrame(guest, now_ms);
+        }
     } else if (pending_ != Pending::none) {
         Finish(guest, result, now_ms);
     }
@@ -323,6 +327,28 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
     CoopPose::OnCalcFrame(guest, input_.main_base, puppets, now_ms);
 }
 
+// Row 307: once a frame while LICHII_COOP_AS_VARS_PROBE=1, our Link's AS controller and the live puppets' to
+// the probe (coop_as_vars.h); it only reads.
+void Director::AsVarsProbeFrame(Guest& guest, std::uint64_t now_ms) {
+    const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base);
+    std::array<float, 3> place{};
+    if (player == 0 || !guest.Read(player + addr::kActorPosition, place.data(), sizeof(place))) {
+        return;
+    }
+    std::vector<std::pair<std::string, std::uint64_t>> puppets;
+    for (const auto& slot : slots_) {
+        if (slot.phase == Phase::live && slot.actor != 0) {
+            puppets.emplace_back("P" + std::to_string(slot.number) + " " + slot.actor_name,
+                                 Controller(guest, slot.actor));
+        }
+    }
+    const auto read = [&guest](std::uint64_t at, void* out, std::size_t size) { return guest.Read(at, out, size); };
+    for (const std::string& line :
+         as_vars_probe_.Look(read, Controller(guest, player), place, now_ms, puppets)) {
+        Say("as-vars probe: " + line);
+    }
+}
+
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     ++frames_;
     calls_ = 0;
@@ -356,6 +382,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.sound.pending = CoopPuppetSound::State::Step::none;
         } else if (pending_ == Pending::link_sound) {
             CoopLinkSound::Dropped(slot.link_sound);
+        } else if (pending_ == Pending::link_effect) {
+            CoopLinkSound::Dropped(slot.link_effect);
         } else if (pending_ == Pending::flame) {
             CoopPuppetFlame::Dropped(slot.flame);
         }
@@ -372,6 +400,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         for (auto& slot : slots_) {
             if (slot.number == t.number && !t.sounds.empty()) {
                 for (auto& s : t.sounds) {
+                    if (s.effect) {  // LINK_EFFECT (row 310): on the puppet's effect user
+                        if (s.end) {
+                            CoopLinkSound::End(slot.link_effect, std::move(s.name));
+                        } else {
+                            slot.link_effect.heard.Push(std::move(s.name), s.at_ms);
+                        }
+                        continue;
+                    }
                     if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
                         continue;  // the OCARINA_NOTE path plays the notes: not twice
                     }
@@ -534,6 +570,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 }
                 if (t->show == Show::show || t->show == Show::hold) {
                     DrawAt(slot, guest, *t, now_ms);
+                    if (++slot.cloth_frames >= kClothProbeFrames) {
+                        slot.cloth_frames = 0;
+                        const std::string who = "P" + std::to_string(slot.number);
+                        ClothProbe(guest, slot.actor, who);
+                        if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+                            ClothProbe(guest, player, who + " our own Link's");  // the game's own cloth, beside it
+                        }
+                    }
                 } else if (t->show == Show::hide) {
                     slot.smooth.Set(t->position);  // out of sight: comes back where they are
                     slot.follow.Reset();
@@ -811,6 +855,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
         break;
+    case Pending::link_effect:
+        CoopLinkSound::Finish(slot.link_effect, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
     case Pending::head_show:
         slot.head_show = false;
         slot.head_shown = true;
@@ -941,6 +989,15 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (slot.native) {
             return std::nullopt;  // a real Player: no call of ours drives it
         }
+        // A copy with a body: the setter owed for the place written this frame goes before every other call
+        // of this slot (a sound, a piece, an animation can wait a frame; a body left a frame behind its
+        // picture is a wall where nobody is). Not while our Link holds the copy (phase 3).
+        if (slot.body_move && !(g_watch_places.load(std::memory_order_relaxed) &&
+                                g_game_holds.load(std::memory_order_relaxed) == slot.number)) {
+            if (auto c = Move(slot, guest)) {
+                return c;
+            }
+        }
         // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
@@ -969,6 +1026,17 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                         slot.block, now_ms,
                         [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
                     pending_ = Pending::link_sound;
+                    return c;
+                }
+            }
+            // The player's own effects (row 310, coop_link_sound.h): their own cells, on the puppet's ELink user.
+            {
+                const std::uint64_t user = CoopPuppetSound::EffectUser(guest, slot.actor);
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_effect, effect_budget_, guest, input_.main_base, slot.actor, user,
+                        slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_effect;
                     return c;
                 }
             }
@@ -1082,6 +1150,11 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.actor = 0;
     slot.actor_name = target.actor;
     slot.native = CoopNativePlayer::IsPlayerActor(target.actor);
+    // Decided per actor (a --puppet-pvp pack gives only its _Pvp copies a body), and all of the rule's
+    // state starts again: the new actor is warped to its place, never "at rest" by the old one's.
+    ResetBody(slot);
+    slot.body = slot.number != 0 && !slot.native &&
+                std::find(body_actors_.begin(), body_actors_.end(), target.actor) != body_actors_.end();
     slot.probe.Reset();
     slot.scene = input_.scene;
     slot.request = 0;
@@ -1660,8 +1733,13 @@ std::optional<Call> Director::Move(Slot& slot, Guest& guest) {
         return std::nullopt;
     }
     slot.moved_frame = frames_;
+    const bool owed = slot.body_move;
+    slot.body_move = false;
     if (slot.vtable != input_.main_base + addr::kActorVtable) {
-        return std::nullopt;  // not the actor class the setter is known for
+        return std::nullopt;  // not the actor class the setter is known for (a copy: said in its 'body:' line)
+    }
+    if (owed) {
+        ++slot.body_set;
     }
     Call c;
     c.function = input_.main_base + addr::kSetMatrix;
@@ -1944,6 +2022,181 @@ void Director::Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_
         WriteValue(guest, p.actor + addr::kActorPositionRequest, position);
     }
     Pose(slot, guest, position, nullptr, now_ms);
+    if (slot.body) {
+        // A copy with a body: its body is parked with it through the game's setter (a bare write would leave
+        // the body standing where the copy was, a wall nobody sees), once for each place it is parked at,
+        // and the next show starts from a warp.
+        if (!slot.body_parked || *slot.body_parked != position) {
+            slot.body_parked = position;
+            slot.body_move = true;
+        }
+        slot.body_last.reset();
+        slot.body_rotation.reset();
+        slot.body_drive.Reset();
+    }
+}
+
+// A new actor, or none: the body rule knows nothing of the last one.
+void Director::ResetBody(Slot& slot) {
+    slot.body = false;
+    slot.body_drive.Reset();
+    slot.body_move = false;
+    slot.body_said = false;
+    slot.body_rotation.reset();
+    slot.body_rest = slot.body_warp = slot.body_set = slot.body_yield = 0;
+    slot.body_moved_max = 0.0f;
+    slot.body_last.reset();
+    slot.body_parked.reset();
+}
+
+// The Link this game simulates, as a body (his actor's place and his age by his actor's name), read once a
+// frame; unset when there is none (a load, the title): nothing to give way to then.
+std::optional<CoopPuppetBody::Capsule> Director::OwnBody(Guest& guest) {
+    if (own_body_frame_ == frames_) {
+        return own_body_;
+    }
+    own_body_frame_ = frames_;
+    own_body_.reset();
+    constexpr std::uint64_t kActorName = 0x260;  // as NameFits
+    const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base);
+    Vec3 feet{};
+    std::uint64_t text = 0;
+    std::array<char, 32> name{};
+    if (player != 0 && ReadValue(guest, player + addr::kActorPosition, feet) &&
+        ReadValue(guest, player + kActorName, text) && text != 0 &&
+        guest.Read(text, name.data(), name.size() - 1)) {
+        own_body_ = CoopPuppetBody::LinkBody(feet, CoopPuppetBody::AdultName(name.data()));
+    }
+    return own_body_;
+}
+
+// Probes B1 and B2 (docs/native-puppets.md), LICHII_COOP_DEBUG_BODY=1 only: beside each 'body:' line, what
+// the game itself holds for the copy's body, read and never written. The actor's place is a field we write
+// ourselves; the controller set's request (flags at +0x228, the 3x4 at +0x1d0) and the character controller's
+// first 0x400 bytes are the game's, so a run can tell where the body really is and which field is its speed
+// (our own Link's are dumped beside the copy's: his walk is a speed we know).
+void Director::BodyProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_DEBUG_BODY");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!on) {
+        return;
+    }
+    constexpr std::uint64_t kComponents = 0x270;    // actor -> component table
+    constexpr std::uint64_t kPhysics = 0x50;        // table -> the physics component
+    constexpr std::uint64_t kSet = 0x20;            // physics -> the controller set
+    constexpr std::uint64_t kRequestPlace = 0x1d0;  // set: the 3x4 the setter queued
+    constexpr std::uint64_t kRequestFlags = 0x228;  // set: bits 0-1, a request waits
+    constexpr std::uint64_t kCharacter = 0x1c8;     // set -> its character controller
+    std::uint64_t parts = 0;
+    std::uint64_t physics = 0;
+    std::uint64_t set = 0;
+    if (!ReadValue(guest, actor + kComponents, parts) || parts == 0 ||
+        !ReadValue(guest, parts + kPhysics, physics) || physics == 0 ||
+        !ReadValue(guest, physics + kSet, set) || set == 0) {
+        Say(who + " body probe: no controller set (components " + Hex(parts) + ", physics " + Hex(physics) + ")");
+        return;
+    }
+    Vec3 place{};
+    std::array<float, 12> request{};
+    std::uint32_t flags = 0;
+    std::uint64_t character = 0;
+    ReadValue(guest, actor + addr::kActorPosition, place);
+    guest.Read(set + kRequestPlace, request.data(), sizeof(request));
+    ReadValue(guest, set + kRequestFlags, flags);
+    ReadValue(guest, set + kCharacter, character);
+    char buf[420];
+    std::snprintf(buf, sizeof(buf),
+                  " body probe: actor place %.3f %.3f %.3f; set %s flags %08x, 3x4 at +0x1d0 = %.3f %.3f %.3f %.3f | "
+                  "%.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f; character controller %s",
+                  place[0], place[1], place[2], Hex(set).c_str(), flags, request[0], request[1], request[2],
+                  request[3], request[4], request[5], request[6], request[7], request[8], request[9], request[10],
+                  request[11], Hex(character).c_str());
+    Say(who + buf);
+    std::array<std::uint8_t, 0x400> bytes{};
+    if (character == 0 || !guest.Read(character, bytes.data(), bytes.size())) {
+        return;
+    }
+    // 32 lines of 32 bytes in words of 4: two dumps (at rest, walking) differ where the speed is.
+    for (std::size_t row = 0; row < bytes.size(); row += 32) {
+        std::string line = who + " body probe: cct+" + Hex(row) + ":";
+        for (std::size_t i = 0; i < 32; ++i) {
+            char hex[4];
+            std::snprintf(hex, sizeof(hex), "%s%02x", i % 4 == 0 ? " " : "", bytes[row + i]);
+            line += hex;
+        }
+        Say(line);
+    }
+}
+
+// Row 313 probe, LICHII_COOP_DEBUG_CLOTH=1 only, read and never written: the cloth the game simulates for an
+// actor, read the way its hair code reads it (main+0x4b8438..0x4b84b4, disassembled from dump/main.plain):
+// holder C = [[[[actor+0x270]+0x50]+0x20]+0x1c8]; if C != 0 and the s32 at C+0xd0 >= 1, the list
+// O = [[[C+0xd8]]] holds an s32 count at O+0x10 and entries at [O+0x18], 0x78 bytes each; the game sets bit 0
+// of each entry's u64 at +0x18 (and clears it where bit 3 is set). A puppet built without its cloth
+// (pack --no-cloth) has C == 0 while our own Link's is set; with the cloth the first entry's floats change
+// while the copy moves and settle while it stands.
+void Director::ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_DEBUG_CLOTH");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!on || actor == 0) {
+        return;
+    }
+    constexpr std::uint64_t kComponents = 0x270;  // actor -> component table
+    constexpr std::uint64_t kPhysics = 0x50;      // table -> the physics component
+    constexpr std::uint64_t kSet = 0x20;          // physics -> the controller set
+    constexpr std::uint64_t kHolder = 0x1c8;      // set -> the cloth holder (the hair code's C)
+    constexpr std::uint64_t kHolderCount = 0xd0;  // C: s32
+    constexpr std::uint64_t kHolderList = 0xd8;   // C -> -> -> O
+    constexpr std::uint64_t kListCount = 0x10;    // O: s32 entries
+    constexpr std::uint64_t kListEntries = 0x18;  // O -> entries
+    constexpr std::uint64_t kEntrySize = 0x78;
+    constexpr std::uint64_t kEntryFlags = 0x18;   // entry: u64, bit 0 set by the hair code
+    std::uint64_t parts = 0;
+    std::uint64_t physics = 0;
+    std::uint64_t set = 0;
+    std::uint64_t holder = 0;
+    ReadValue(guest, actor + kComponents, parts);
+    if (parts != 0) {
+        ReadValue(guest, parts + kPhysics, physics);
+    }
+    if (physics != 0) {
+        ReadValue(guest, physics + kSet, set);
+    }
+    if (set != 0) {
+        ReadValue(guest, set + kHolder, holder);
+    }
+    std::int32_t count = 0;
+    std::uint64_t list = 0;
+    std::int32_t entries = 0;
+    std::uint64_t first = 0;
+    if (holder != 0 && ReadValue(guest, holder + kHolderCount, count) && count >= 1) {
+        std::uint64_t p = 0;
+        if (ReadValue(guest, holder + kHolderList, p) && p != 0 && ReadValue(guest, p, p) && p != 0 &&
+            ReadValue(guest, p, list) && list != 0) {
+            ReadValue(guest, list + kListCount, entries);
+            ReadValue(guest, list + kListEntries, first);
+        }
+    }
+    std::string line = "cloth: " + who + " physics " + Hex(physics) + " set " + Hex(set) + " holder " +
+                       Hex(holder) + " n " + std::to_string(count) + " list " + Hex(list) + " entries " +
+                       std::to_string(entries);
+    std::array<float, kEntrySize / 4> words{};
+    std::uint64_t flags = 0;
+    if (entries >= 1 && first != 0 && guest.Read(first, words.data(), sizeof(words)) &&
+        ReadValue(guest, first + kEntryFlags, flags)) {
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), " e0 flags %016llx:", static_cast<unsigned long long>(flags));
+        line += buf;
+        for (const float w : words) {
+            std::snprintf(buf, sizeof(buf), " %.4g", w);
+            line += buf;
+        }
+    }
+    Say(line);
 }
 
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
@@ -1971,6 +2224,12 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
             slot.follow.Reset();
             slot.raw_follow.Reset();
             slot.turner.Reset();
+            // The game moves the body with our Link's hands: nothing is owed, and when he lets go the copy
+            // is warped to their place (the way it went in his hands is not "the game had it ... from ours").
+            slot.body_move = false;
+            slot.body_last.reset();
+            slot.body_rotation.reset();
+            slot.body_drive.Reset();
             return;
         }
     }
@@ -2000,6 +2259,27 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     } else {
         slot.follow.Reset();
         slot.raw_follow.Reset();
+    }
+    // N5 (coop_platform_carry.h): standing on one of our lifts, the place is carried by what that lift moved
+    // over their show delay (the place is that late; our lift is where theirs is now).
+    if (!held) {
+        const auto carried =
+            CoopPlatformCarry::TheStore().Carried(place, CoopShowDelay::Us(slot.number) / 1000, now_ms);
+        if (carried.has_value() != slot.lift_carried) {
+            slot.lift_carried = carried.has_value();
+            if (carried) {
+                char buf[120];
+                std::snprintf(buf, sizeof(buf), " lift carry: on our lift, carried %.3f m (show delay %llu ms)",
+                              CoopPuppetBody::Length(CoopPuppetBody::Sub(*carried, place)),
+                              static_cast<unsigned long long>(CoopShowDelay::Us(slot.number) / 1000));
+                Say(who + buf);
+            } else {
+                Say(who + " lift carry: off our lift");
+            }
+        }
+        if (carried) {
+            place = *carried;
+        }
     }
     // jitter-3: the rotation followed the same way (coop_follow.h Turner).
     Mat3 rotation = target.rotation;
@@ -2056,7 +2336,82 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
                       cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
         Say(who + buf);
     }
-    Pose(slot, guest, drawn, &rotation, now_ms);
+    if (slot.body) {
+        // Native puppets phase 1 (coop_puppet_body.h): the copy has a body. At rest nothing is written, so
+        // the body stays a still thing our Link can lean and stand on; a move goes through the game's own
+        // setter (Director::Move, asked for by body_move), never a bare write the physics undoes.
+        slot.body_parked.reset();
+        if (!slot.body_said) {
+            slot.body_said = true;
+            Say(who + " body: " + slot.actor_name +
+                (slot.vtable == input_.main_base + addr::kActorVtable
+                     ? std::string(" has a body; it is moved through the game's setter")
+                     : " has a body but is not the actor class the setter is known for (vtable " +
+                           Hex(slot.vtable) + "): its body is NOT moved"));
+        }
+        CoopPuppetBody::Input in;
+        in.body = read;
+        // Never inside the Link this game simulates: the place gives way to him before the rule sees it
+        // (the setter is a teleport, and a body teleported into his would trap or throw him).
+        in.place = drawn;
+        if (const auto ours = OwnBody(guest)) {
+            float moved = 0.0f;
+            in.place = CoopPuppetBody::Yield(
+                CoopPuppetBody::LinkBody(drawn, CoopPuppetBody::AdultName(slot.actor_name)), *ours, &moved);
+            if (moved > 0.0f) {
+                ++slot.body_yield;
+            }
+        }
+        if (target.velocity && !held) {
+            in.velocity = *target.velocity;
+        }
+        in.dt = static_cast<float>(cadence_.PeriodMs() / 1000.0);
+        in.jump = jump > 0.0f || !slot.body_last;
+        if (slot.body_rotation) {
+            for (std::size_t i = 0; i < rotation.size(); ++i) {
+                in.turned = std::max(in.turned, std::fabs(rotation[i] - (*slot.body_rotation)[i]));
+            }
+        } else {
+            in.turned = 1.0f;
+        }
+        // No speed is handed to the body yet (which field of the character controller takes one is not
+        // known: docs/native-puppets.md, probe B2), so every move is the setter's.
+        in.speed_channel = false;
+        if (read && slot.body_last) {
+            slot.body_moved_max =
+                std::max(slot.body_moved_max, CoopPuppetBody::Length(CoopPuppetBody::Sub(*read, *slot.body_last)));
+        }
+        const CoopPuppetBody::Command cmd = slot.body_drive.Step(in);
+        if (cmd.kind == CoopPuppetBody::Kind::rest) {
+            ++slot.body_rest;
+        } else {
+            ++slot.body_warp;
+            Pose(slot, guest, cmd.place, &rotation, now_ms);
+            slot.body_last = cmd.place;
+            slot.body_rotation = rotation;
+            slot.body_move = true;
+        }
+        if (slot.body_rest + slot.body_warp >= 300) {
+            // 'waited': frames the setter could not be called (the frame's call budget, kMaxCallsPerFrame,
+            // went to other copies): the picture is right, the body is a frame behind.
+            const std::uint32_t waited = slot.body_warp > slot.body_set ? slot.body_warp - slot.body_set : 0;
+            char buf[240];
+            std::snprintf(buf, sizeof(buf),
+                          " body: %u frames at rest, %u moved (%u setter calls made, %u waited a frame for one), "
+                          "%u gave way to our Link; the game had it up to %.3f m from our place",
+                          slot.body_rest, slot.body_warp, slot.body_set, waited, slot.body_yield,
+                          slot.body_moved_max);
+            Say(who + buf);
+            BodyProbe(guest, slot.actor, who);
+            if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+                BodyProbe(guest, player, who + " our own Link's");  // B2: his speed field, against the copy's
+            }
+            slot.body_rest = slot.body_warp = slot.body_set = slot.body_yield = 0;
+            slot.body_moved_max = 0.0f;
+        }
+    } else {
+        Pose(slot, guest, drawn, &rotation, now_ms);
+    }
     if (g_watch_places.load(std::memory_order_relaxed) && slot.number != 0) {
         std::lock_guard lock(g_places_mutex);
         KeptPlace& k = g_places[slot.number];
@@ -2396,6 +2751,12 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
             t.sounds = r.sounds;  // too far, or out of sight: not heard
+        } else {
+            for (const auto& s : r.sounds) {
+                if (s.effect && s.end) {
+                    t.sounds.push_back(s);  // an effect's end always: one started while near stops
+                }
+            }
         }
         in.targets.push_back(std::move(t));
     }
@@ -2948,10 +3309,28 @@ void OnEvent(const coop::net::Event& event) {
                 .count());
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[sound->player_number];
-        if (queue.size() >= CoopLinkSound::kHeardMax) {
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
             queue.erase(queue.begin());  // the newest are kept
         }
-        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
+        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms, false, false});
+    } else if (const auto* effect = std::get_if<coop::protocol::LinkEffect>(&event.message);
+               event.kind == EventKind::message && effect != nullptr) {
+        // LINK_EFFECT (row 310): the same queue as the sounds, marked, played on the puppet's effect user.
+        if (effect->player_number == 0 || effect->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        const bool end = (effect->flags & coop::protocol::kLinkEffectEnd) != 0;
+        CoopLinkSound::NoteEffect(effect->player_number, effect->name, end, now_ms);
+        std::lock_guard lock(g_anim_mutex);
+        auto& queue = g_sounds[effect->player_number];
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
+            queue.erase(queue.begin());  // the newest are kept
+        }
+        queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end});
     } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
                event.kind == EventKind::message && emote != nullptr) {
         // EMOTE (coop_emote.h): the puppet holds the emote's animation (Collect); a call is said by its Navi (coop_emote_body.h). An id this
@@ -2991,10 +3370,12 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        g_director->SetAsVarsProbe(settings.as_vars_probe);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);
         g_director->SetPerceived(settings.perceived && !settings.quiet_everywhere);
+        g_director->SetBodyActors(settings.body_actors);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         // The model tint darkens the whole Link (reports puppet-colors-2): off
         // unless asked for; the colour is the tunic (PlannerSettings::tunics).

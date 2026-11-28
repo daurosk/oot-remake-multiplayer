@@ -1895,6 +1895,91 @@ TEST_CASE("pause tab: the mouse's steps stop for the player's own, the cursor ou
     CHECK(m.Step(At(t += 16, -1100, 650, 3)) == 0);
 }
 
+namespace {
+
+// Player report 296's page: an option up on the left (row 0), a gap (rows 1 to 3 with nothing on them, hidden), and
+// one below it (row 4).
+RowBoxes GapRows() {
+    RowBoxes b = FiveRows();
+    for (int i = 1; i <= 3; ++i) b[static_cast<std::size_t>(i)].shown = false;
+    return b;
+}
+
+// Longshot's mouse, as the game's cursor sees it: at each move, the cursor goes onto the game's button under the mouse,
+// hidden ones too (FiveRows' slots, whether shown or not).
+int LongshotFocus(float y, int was) {
+    const RowBoxes all = FiveRows();
+    for (int i = 0; i < kRows; ++i) {
+        const RowBox& r = all[static_cast<std::size_t>(i)];
+        if (y >= r.y0 && y <= r.y1) return i;
+    }
+    return was;
+}
+
+}  // namespace
+
+TEST_CASE("pause tab (report 296): the mouse over a gap of the column, between an option up on the left and one below") {
+    const RowBoxes b = GapRows();
+    CHECK(MouseOverRowsGap(b, -1100, -100));    // (row 2's slot, hidden: the gap)
+    CHECK(MouseOverRowsGap(b, -1100, 100));     // (between the slots, still the gap)
+    CHECK_FALSE(MouseOverRowsGap(b, -1100, 600));    // (on the option up on the left)
+    CHECK_FALSE(MouseOverRowsGap(b, -1100, -900));   // (on the one below)
+    CHECK_FALSE(MouseOverRowsGap(b, 0, -100));       // (right of the column: the list's side)
+    CHECK_FALSE(MouseOverRowsGap(RowBoxes{}, -1100, -100));   // (no row read: no column)
+    // Every row shown, the gaps between them are shared (RowAt): no gap left.
+    CHECK_FALSE(MouseOverRowsGap(FiveRows(), -1100, 420));
+}
+
+TEST_CASE("pause tab (report 296): the hover never bounces between the rows on either side of a gap") {
+    // The bounce: the mouse onto the option up on the left gives MouseRows a target; it went on into the gap before the
+    // cursor got there, and each step of ours toward the old target was undone by Longshot's mouse at its next move.
+    MouseRows m;
+    std::uint64_t t = 1000;
+    auto at = [&](float y, int focused) {
+        MouseRows::In in = At(t += 16, -1100, y, focused);
+        in.boxes = GapRows();
+        return in;
+    };
+    int focus = 4;
+    CHECK(m.Step(at(600, focus)) == kPadUp);   // (onto row 0 from row 4: up)
+    focus = 3;
+    m.Step(at(600, focus));                    // (let go)
+    int ours = 0, changes = 0;
+    float y = -200;   // (row 2's slot, hidden: the gap)
+    for (int i = 0; i < 60; ++i) {              // (the mouse wobbles a little over the gap, 1.2 s)
+        y += (i % 2 == 0) ? 6.0f : -6.0f;
+        const int was = focus;
+        focus = LongshotFocus(y, focus);
+        const std::uint64_t step = m.Step(at(y, focus));
+        if ((step & (kPadUp | kPadDown)) != 0) ++ours, focus += (step & kPadUp) != 0 ? -1 : 1;
+        if (focus != was) ++changes;
+    }
+    CHECK(ours == 0);       // (no step of ours while Longshot's mouse has the cursor in the gap)
+    CHECK(focus == 2);      // (where Longshot's mouse put it, row 2's slot under the mouse)
+    CHECK(changes <= 1);    // (it went there once, and stayed)
+    // Onto the option below: one way down, no way back.
+    focus = LongshotFocus(-900, focus);
+    CHECK(m.Step(at(-900, focus)) == 0);   // (Longshot's mouse already put it there)
+    CHECK(focus == 4);
+}
+
+TEST_CASE("pause tab (report 296): MouseHold, the one guard every page's cursor steps go through") {
+    MouseHold h;
+    const RowBoxes b = GapRows();
+    std::uint64_t t = 1000;
+    CHECK_FALSE(h.Step(false, -1100, 600, t, b));          // (the mouse off the game: never held)
+    CHECK(h.Step(true, -1100, 600, t += 16, b));           // (first seen: a move)
+    CHECK(h.Step(true, -1100, 600, t += 100, b));          // (still within kSettleMs of it)
+    CHECK_FALSE(h.Step(true, -1100, 601, t += MouseHold::kSettleMs, b));   // (at rest on a row: our steps may go)
+    CHECK(h.Step(true, -1100, -100, t += 1000, b));         // (moved into the gap)
+    CHECK(h.Step(true, -1100, -100, t += 5000, b));         // (at rest in the gap: still held)
+    CHECK(h.Step(true, 0, 600, t += 16, b));                // (moved onto the list on the right)
+    CHECK_FALSE(h.Step(true, 0, 600, t += 1000, b));        // (at rest there, the page names no button there)
+    CHECK(h.Step(true, 0, 600, t += 16, b, true));          // (the Settings list's Options row under it: held)
+    h.Reset();
+    CHECK(h.Step(true, 0, 600, t += 16, b));                // (after a reset the next read is a move again)
+}
+
 TEST_CASE("pause tab: our page comes and goes at once, and the menu opening on it shows it at once") {
     Page p = UsablePage();
     std::uint64_t now = 1000;
@@ -3296,6 +3381,30 @@ TEST_CASE("pause tab (tabs-overhaul-01110 step 2): the Map under CoopMenu_00 hid
     CHECK_FALSE(MapUnderHidden(false, true, false, true, 5000, 6000, 6000));   // (L: given back at once)
 }
 
+TEST_CASE("pause tab (row 295): L from co-op's - page gives the Map page's content back when the same Map screen opens again") {
+    // The player's case: R on the Map (native), co-op's Multiplayer page up, its content hidden under ours; L back:
+    // CoopMenu_00 closes and the Map sequence opens the same Map screen (2 -> 3 -> 1 at the same addresses). That
+    // opening is a look-again (LayoutLookAgain), and before row 295 it forgot "hidden" without showing a pane: the
+    // Map page stayed its backdrop only until the menu was opened again.
+    CHECK(LayoutLookAgain(true, 0x100, 3, 0x100, 1));
+    const MapPaneBack same = MapPaneOnLookAgain(0x5000, 0x5000, true, true, false);
+    CHECK(same.show);
+    CHECK_FALSE(same.place);
+    // A slide cut by the opening: the pane back at its own x (else it stays off to the side, the page as blank).
+    const MapPaneBack slid = MapPaneOnLookAgain(0x5000, 0x5000, false, true, true);
+    CHECK_FALSE(slid.show);
+    CHECK(slid.place);
+    // Not hidden by us, or hidden by the game itself before ours showed: left as it is.
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0x5000, false, true, false).show);
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0x5000, true, false, false).show);
+    // A new Map screen's panes (another address, or none found): never touched.
+    const MapPaneBack other = MapPaneOnLookAgain(0x5000, 0x6000, true, true, true);
+    CHECK_FALSE(other.show);
+    CHECK_FALSE(other.place);
+    CHECK_FALSE(MapPaneOnLookAgain(0x5000, 0, true, true, true).show);
+    CHECK_FALSE(MapPaneOnLookAgain(0, 0, true, true, true).place);
+}
+
 TEST_CASE("pause tab (charsel-native-0119, run 4620f3e7): a screen layout's verdict is looked at again at every opening") {
     // No verdict yet, or another screen object at that layout: look.
     CHECK(LayoutLookAgain(false, 0, -1, 0x100, 1));
@@ -3535,4 +3644,22 @@ TEST_CASE("row 223: DetailPages is the details list's page rule (DetailLines and
     CHECK(DetailPages(View::kMain, v).page == 0);
     CHECK(DetailPages(View::kLan, v).pages == 0);
     CHECK(DetailPages(View::kPassword, v).pages == 0);
+}
+
+TEST_CASE("pause tab: co-op's menu has the on-screen keys on the - menu's tabs too (row 297)") {
+    const int none = -1, mp = static_cast<int>(MinusPage::kMultiplayer), lobby = static_cast<int>(MinusPage::kLobby);
+    const int mods = static_cast<int>(MinusPage::kMods);
+    // System's page of ours, as before
+    CHECK(MenuKeysOn(true, none, -1, true, true));
+    // row 297: the - menu's Multiplayer tab (co-op's home in free play): Room name, Your name, Port... get the keys
+    CHECK(MenuKeysOn(false, mp, -1, true, true));
+    CHECK(MenuKeysOn(false, lobby, -1, true, true));
+    // the Mods tab types through its own field; nowhere shown, no keys
+    CHECK_FALSE(MenuKeysOn(false, mods, -1, true, true));
+    CHECK_FALSE(MenuKeysOn(false, none, -1, true, true));
+    // not typing, another view, or a field of the page itself typed into (its own keys): none of co-op's menu's
+    CHECK_FALSE(MenuKeysOn(false, mp, -1, true, false));
+    CHECK_FALSE(MenuKeysOn(false, mp, -1, false, true));
+    CHECK_FALSE(MenuKeysOn(false, mp, 6, true, true));
+    CHECK_FALSE(MenuKeysOn(true, none, 0, true, true));
 }

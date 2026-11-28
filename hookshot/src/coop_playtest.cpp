@@ -39,6 +39,7 @@
 #include "coop_native_ui.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
+#include "coop_pause_world.h"
 #include "coop_playtest_core.h"
 #include "coop_talk_text.h"
 #include "coop_teleport_game.h"
@@ -400,13 +401,15 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     }
     out += "]}";
     out += ",\"coop_menu\":" + Quote(CoopPause::MenuState());
-    out += ",\"menu\":" + CoopMenuState::Json(CoopPause::MenuTab(), CoopPauseTab::CustomizeScreen(), CoopPauseTab::MinusNow());
+    out += ",\"menu\":" + CoopMenuState::Json(CoopPause::MenuTab(), CoopPauseTab::CustomizeScreen(), CoopPauseTab::MinusNow(),
+                                             CoopPauseTab::MapPageNow());
     {
         std::uint64_t presents = 0;
         const CoopMapDrawn::Frame drawn = CoopMapDrawn::Last(&presents);
         out += ",\"map_icons\":" + CoopMapDrawn::Json(drawn, presents);
     }
     out += ",\"banner\":" + CoopNativeUi::StatsJson(CoopNativeUi::Stats());   // (typing-blink-0121: our banner's opens)
+    out += ",\"pause_world\":" + CoopPauseWorld::StateJson();   // (row 299: the PauseMgr's holds, reads only)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
     {   // hud-stepped-0121: the last party HUD and name-tag steps a second or more after the one before (coop_hookshot.h)
         const auto slow = [](const CoopHookshot::SlowStep& x) {
@@ -415,6 +418,11 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         };
         out += ",\"slow_steps\":{\"party_hud\":" + slow(CoopHookshot::PartySlow()) +
                ",\"name_tags\":" + slow(CoopHookshot::TagsSlow()) + "}";
+    }
+    {   // nametags-300: our tags as the game holds them (open parts, the balloon screen's root pane shown)
+        const auto t = CoopHookshot::TagsSeen();
+        out += ",\"name_tags\":{\"shown\":" + std::to_string(t.shown) + ",\"open\":" + std::to_string(t.open) +
+               ",\"screen_root\":" + (t.screen_root ? "true" : "false") + "}";
     }
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());

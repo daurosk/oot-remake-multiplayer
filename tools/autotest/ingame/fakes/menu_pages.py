@@ -70,6 +70,8 @@ def act(game, words):
 def press(game, buttons):
     if "B" not in buttons or not game.mp_minus:
         return False
+    if getattr(game, "mt_typing", False):   # (row 297, menu_typing.py: B is the typing keys' Cancel, not a view back)
+        return False
     view, _ = game.mp_minus
     game.mp_minus = ("main", "main") if view != "main" else None
     return True

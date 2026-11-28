@@ -127,6 +127,7 @@
 #include "coop_time.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
+#include "coop_pause_world.h"
 #include "coop_longshot_settings.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
@@ -730,6 +731,7 @@ void MapIcons(void* ctx) {
 constexpr std::uint64_t kSlowStepMs = 1000;
 std::mutex g_slow_mutex;
 CoopHookshot::SlowStep g_party_slow, g_tags_slow;
+CoopHookshot::TagsNow g_tags_now;   // (g_slow_mutex)
 
 void NoteSlow(CoopHookshot::SlowStep& slot, std::uint64_t& last_ms, std::uint64_t now, int shown) {
     const std::uint64_t gap = last_ms != 0 && now > last_ms ? now - last_ms : 0;
@@ -771,9 +773,16 @@ void NativeTags(void* ctx) {
     static std::uint64_t last_tags_ms = 0;
     if (spots.empty() && g_balloons.shown() == 0) {   // solo, or nobody near: the balloons are not touched
         NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), 0);
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {};
         return;
     }
     const bool up = g_balloons.Step(game, spots, markers ? markers->width : 0.0f, markers ? markers->height : 0.0f);
+    {
+        const auto seen = g_balloons.seen();
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {static_cast<int>(seen.shown), static_cast<int>(seen.open), seen.screen_root};
+    }
     NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), up ? static_cast<int>(g_balloons.shown()) : 0);
     if (g_balloons.no_memory()) {
         g_tags_drawn.store(true);
@@ -1682,6 +1691,11 @@ SlowStep TagsSlow() {
     return g_tags_slow;
 }
 
+TagsNow TagsSeen() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_tags_now;
+}
+
 void SetMapOptions(bool players, bool names) {
     g_map_players.store(players);
     g_map_names.store(names);
@@ -2185,6 +2199,7 @@ bool Start(const HosCoopApi* api) {
     });
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
+    CoopPauseWorld::Init(api);   // row 299's PauseMgr probe (test only: the bridge asks)
     CoopLongshotSettings::Init(api);   // Longshot's own settings for the Settings tab (patch 0032; none from an older Hookshot)
     CoopPause::Init(server);
     CoopTestInput::SetMenuOpener(CoopPause::TestMenu);   // (the autotest's menu step; only a commands file asks it)
@@ -2239,11 +2254,18 @@ void Frame(void* ctx, int site) {
     }
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (site == HOS_COOP_SITE_FRAME) {  // row 271: this game's memory once a minute, solo too (coop_host_menu.h)
-        // Row 292: read on a thread of its own (it sums every heap of the process: slow), never in the frame.
+        // Row 292: read on a thread of its own, never in the frame. fps-spike-0121: counters only; the heap walk froze
+        // the whole game even off the frame, so it runs only for a memory hunt (OOT_COOP_MEMORY_HEAPS=1).
         static std::uint64_t next_memory_ms = 0;
         static CoopOffFrame::Slot memory_read;
         if (CoopHostMenu::MemoryLineDue(SteadyMs(), next_memory_ms)) {
-            memory_read.Start([] { LOG_INFO(Core, "coop: memory: {}", CoopHostMenu::ProcessMemoryText()); });
+            memory_read.Start([] {
+                std::string text = CoopHostMenu::ProcessMemoryText();
+                if (CoopHostMenu::MemoryHeapsOn()) {
+                    text += "; " + CoopHostMenu::ProcessHeapsText();
+                }
+                LOG_INFO(Core, "coop: memory: {}", text);
+            });
         }
     }
     if (!g_on) {
@@ -3541,6 +3563,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
     CoopExportGuard::Guard(site, [&] {
         if (g_on) {
             CoopPauseTab::OnScreen(ctx, screen);
+            CoopPauseWorld::OnScreen(ctx);   // (row 299: only a test's `menu hold release N`)
             try {
                 // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
                 // choose_focused would press the game's button under our page)
@@ -3674,6 +3697,11 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
             [](uint64_t b) {
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
+                // Break free (row 312, coop_lift_player.h Victim::Struggle): lifted by another player, mashing the face
+                // buttons or pushing the stick about frees our Link. (Its input check is off then, so the game reads none.)
+                namespace pt = CoopPauseTab;
+                CoopLiftPlayerGame::NotePad(b & (pt::kPadA | pt::kPadB | pt::kPadX | pt::kPadY | pt::kPadStickUp |
+                                                 pt::kPadStickDown | pt::kPadStickLeft | pt::kPadStickRight));
             },
             [] {
                 const uint64_t h = CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}

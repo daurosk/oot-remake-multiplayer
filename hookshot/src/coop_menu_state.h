@@ -49,16 +49,32 @@ struct Minus {
     std::string view;           // the rows' view ("main", "session", "players", ...: CoopPauseTab::ViewWord)
     int details_page = 0;       // 0 the session's lines, 1 the key items
     int details_pages = 0;      // 2 while the game's key items can be read, 1 when not, 0 on a view without the list
+    bool keys = false;          // row 297: the list on the right is the typing keys (a field typed into, co-op's menu's too)
+    int typed_chars = -1;       // row 297: characters on the keys' first line (the field as typed, its cursor mark too);
+                                // -1 without keys. A count only: the text is the player's own
+    int row = -1;               // the rows' cursor on the left (0 the first row), -1 none
+    bool list = false;          // the list on the right has the pad
     struct Line {
         std::string name, value;   // "Songs", "3 of 12"
     };
     std::vector<Line> key_items;   // the key items page's lines under its heading (only while details_page is 1)
 };
 
+// Row 295: the game's Map page (the - menu's first tab) as its screen's last update left it: its content panes found
+// and how many of them show (the backdrop BG_00 not counted). `up`: that screen updated within the last 300 ms or 2
+// presents (CoopFresh: a held, stepped game keeps it).
+struct MapPage {
+    bool up = false;
+    int panes = 0;
+    int shown = 0;
+};
+
 // The `menu` member's value: {"coop":{...},"customize_screen":{...}} (docs/playtest.md); with the - menu's tabs,
-// {"coop":...,"customize_screen":...,"minus":{...}}.
+// {"coop":...,"customize_screen":...,"minus":{...}}; with the Map page too, ...,"map_page":{...}.
 std::string Json(const Tab& tab, const Screen& screen);
 std::string Json(const Tab& tab, const Screen& screen, const Minus& minus);
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus, const MapPage& map);
 std::string MinusJson(const Minus& minus);
+std::string MapPageJson(const MapPage& map);
 
 }  // namespace CoopMenuState

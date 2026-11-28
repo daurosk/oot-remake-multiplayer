@@ -628,6 +628,29 @@ std::pair<float, float> LayoutPoint(int px, int py, int w, int h);
 // The row whose box holds (x, y), -1 for none. Boxes one above the other meet halfway across a gap under 240 units, and
 // the column's ends grow by as much (no dead line between two rows, as Longshot's mouse takes the game's lists).
 int RowAt(const RowBoxes& boxes, float x, float y);
+// The mouse over the rows' column (between the shown rows' left and right edges) but on no shown row: a gap, such as
+// the hidden rows between an option up on the left and one below it.
+bool MouseOverRowsGap(const RowBoxes& boxes, float x, float y);
+
+// Whether Longshot's mouse has the game's cursor now, so that no step of ours may move it (player report 296). Longshot's
+// mouse puts the game's cursor on the game's button under it at each move, hidden ones too (the rows with nothing on
+// them in a gap of the column, the Settings list's Options rows). A step of ours off that button (RowSkip, the mouse's
+// own steps toward a row, the Settings page's Left back to the categories and its step to the kept category) was undone
+// at the next move, and the hover went back and forth between the rows on either side of the gap without end. Geno's
+// fix (fb1861824) held RowSkip alone, on the Multiplayer page; this is the one guard every page's steps go through.
+// Held while the mouse is over a gap of the column, over another button of the game's the page names (`over_other`),
+// or moved in the last kSettleMs (its next move would take the cursor again).
+class MouseHold {
+public:
+    static constexpr std::uint64_t kSettleMs = 300;
+    bool Step(bool inside, float x, float y, std::uint64_t now_ms, const RowBoxes& boxes, bool over_other = false);
+    void Reset() { *this = MouseHold{}; }
+
+private:
+    bool seen_ = false;
+    float x_ = 0, y_ = 0;
+    std::uint64_t moved_ms_ = 0;
+};
 
 class MouseRows {
 public:
@@ -818,6 +841,15 @@ std::vector<std::string> RowTexts(const SessionView& v);
 // - Lobby: 0 Find a game, 1 Host a game (or Your game), 2 Join a game (or Your game, Copy answer code).
 // - Mods: the Mods tab's own page (coop_mods_tab.h), not rows of these.
 enum class MinusPage { kMultiplayer = 0, kLobby = 1, kMods = 2 };
+// Row 297 (0.12.0): co-op's menu (its Host, Join and Settings pages: Room name, Your name, Port, Relay...) is typed
+// into with the on-screen keys wherever it shows on our page: System's page of ours (`page_shown`) or the - menu's
+// Multiplayer or Lobby tab (`minus_tab`, MinusPage; the Mods tab types through CoopModsTab), while no field of the page
+// itself is typed into (`page_typing` < 0) and the view is co-op's menu. It took System's page alone, so on the - menu
+// (co-op's home in free play since 0.12.0) an A on Room name began typing with no keys, and the row was not drawn again.
+inline bool MenuKeysOn(bool page_shown, int minus_tab, int page_typing, bool view_menu, bool menu_typing) {
+    const bool on_minus = minus_tab >= 0 && minus_tab != static_cast<int>(MinusPage::kMods);
+    return (page_shown || on_minus) && page_typing < 0 && view_menu && menu_typing;
+}
 std::vector<std::string> RowTexts(MinusPage page, const SessionView& v);
 RowAction ActionFor(MinusPage page, int row, const Session& s);
 // A view's rows (kMain: RowTexts). A row with nothing on it is "": the module does not show it (but while the game's
@@ -1022,6 +1054,16 @@ bool FreePlayFresh(bool free_play, std::uint64_t made_ms, std::uint64_t now_ms, 
 inline constexpr std::uint64_t kMapUnderAfterMs = 450;
 bool MapUnderHidden(bool hide, bool up, bool sliding, bool native, std::uint64_t open_ms, std::uint64_t seen_ms,
                     std::uint64_t now_ms);
+// Row 295: what the Map page's content pane i gets back when its panes are looked up again (FollowMapUnder: the Map
+// screen opening again at the same addresses). L from co-op's page with the tabs native closes CoopMenu_00 and the
+// Map sequence opens the SAME Map screen again (state 1): its panes, hidden or moved by us, are the same ones. Found at
+// the address it had (`was_pane` == `pane`): shown again if we hid it and it was shown before (`hidden`, `was_shown`),
+// put back at its own x if a slide had moved it (`sliding`). Another address: a new pane, never ours to touch.
+struct MapPaneBack {
+    bool show = false;
+    bool place = false;
+};
+MapPaneBack MapPaneOnLookAgain(std::uint64_t was_pane, std::uint64_t pane, bool hidden, bool was_shown, bool sliding);
 
 // The - strip's game tabs shown (3, or 4 with slot 3). The game's own code fills three - tabs; a fourth (Character
 // Select's Characters, in slot 0, his others after it) is filled only by his code patch, built into the game
@@ -1276,6 +1318,8 @@ CoopMenuState::Screen CustomizeScreen();
 // Co-op's - menu tabs as MinusWords last drew them (row 223: the details list's page and its key items), for the same
 // state; closed while none of ours shows. Any thread.
 CoopMenuState::Minus MinusNow();
+// The game's Map page's content as FollowMapUnder last saw it (row 295), for the same state. Any thread.
+CoopMenuState::MapPage MapPageNow();
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).
 bool ClientCursor(float* fx, float* fy, bool* left) noexcept;

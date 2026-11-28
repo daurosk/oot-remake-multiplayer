@@ -67,6 +67,7 @@
 #include "coop_teleport_game.h"
 #include "coop_emote_game.h"
 #include "coop_pvp_game.h"
+#include "coop_party_wait_game.h"
 #include "coop_lift_player_game.h"
 #include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
@@ -878,6 +879,7 @@ public:
         CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopPartyWait::OnEvent(event, client);  // wait for the party (docs/party-wait.md)
         CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
         CoopPvpNativeGame::OnEvent(event, client);  // native puppets phase 4 (LICHII_COOP_PVP_NATIVE=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
@@ -2063,6 +2065,16 @@ public:
         for (auto& line : CoopBoss::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // Wait for the party (docs/party-wait.md), after the boss rooms (it reads whether a fight runs): notices on
+        // our banner, and one line to the others when a wait starts. Off or no session: returns before any read.
+        CoopPartyWait::Frame(view.scene, view.position, report.connected ? session_.get() : nullptr,
+                             report.server_now_us);
+        for (auto& line : CoopPartyWait::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        for (const auto& line : CoopPartyWait::TakeChatLines()) {
+            LOG_INFO(Core, "coop: party wait: said to the others: {}{}", line, SendChat(line) ? "" : " (not sent)");
+        }
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
@@ -2207,6 +2219,9 @@ public:
         }
         if (CoopPvp::OnChat(text, *session_)) {
             return true;  // /pvp: the same
+        }
+        if (CoopPartyWait::OnChat(text, *session_)) {
+            return true;  // /wait: the same (docs/party-wait.md)
         }
         if (CoopEmote::OnChat(text, *session_)) {
             return true;  // /wave, /here, /emote ...: the same (coop_emote.h)

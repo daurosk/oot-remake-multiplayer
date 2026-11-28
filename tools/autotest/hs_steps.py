@@ -623,7 +623,7 @@ class DryGames:
         self.say = say
 
     def start(self, x, password, wait=True, idle=False):
-        self.say("  would start %s (save baseline back, fresh log%s)" % (
+        self.say("  would start %s (save baseline and lane files back, fresh log%s)" % (
             x, ", no server: co-op idle" if idle else ", join password set" if password else ""))
 
     def wait_ready(self, x):
@@ -787,6 +787,8 @@ class HookshotGames:
         self.expected_exit.discard(x)
         if self.restore:
             self.say("%s: save baseline %s" % (x, "restored" if hk.restore_save(g) else "none (autotest-save missing)"))
+            self.say(hk.restore_lane_files(g, self.out, x) if not getattr(self, "keep_lane_files", False)
+                     else "%s: lane files: KEPT as they are (--keep-lane-files)" % x)
         lp = self._log_path(x)
         if os.path.isfile(lp):
             if self.runs[x]:
@@ -1043,6 +1045,7 @@ def main(argv=None):
     r.add_argument("--timeout", type=int, default=900, help="seconds for a boot and a load")
     r.add_argument("--expect-wait", type=float, default=60.0)
     r.add_argument("--no-restore", action="store_true")
+    r.add_argument("--keep-lane-files", action="store_true", help="keep the games' co-op files as they are (coop-options.ini, coop.ini, a kept difficulty...: lane_files.py); only for an old row whose run script writes them first. Every other run puts them back with the save")
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--display", help="the monitor the game windows go to, by device name (default "
                                      "$OOT_TEST_DISPLAY, else DISPLAY2): tools/autotest/placement.py")
@@ -1109,6 +1112,7 @@ def main(argv=None):
     games = HookshotGames(hk, {"A": os.path.abspath(a.game_a), "B": os.path.abspath(a.game_b)}, a.out, a.server,
                           a.port, a.pipe, a.env, head["timeout"] or a.timeout, head, restore=not a.no_restore, say=say)
     games.display = a.display
+    games.keep_lane_files = a.keep_lane_files
     try:
         mon = hk.placement.check_display(a.display) if WINDOWS else None
     except hk.placement.PlacementError as e:   # (before any game window can open anywhere else)

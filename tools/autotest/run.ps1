@@ -59,6 +59,9 @@ param(
     [switch]$TakeBaseline,
     # Leave the saves as they are (the game continues from whatever it saved last).
     [switch]$NoRestore,
+    # Keep the games' co-op files (coop-options.ini, coop.ini, a kept difficulty...) as they are: only for an old row
+    # whose run script writes them first (look rows). Every other run puts them back with the save (lane_files.py).
+    [switch]$KeepLaneFiles,
     # Co-op off: no server, and coop.ini names none (the log says "coop: off"), so nothing is
     # shared and the game is not patched for co-op unless a switch asks for it. The test script,
     # the object walk (LICHII_COOP_DEBUG_OBJECTS) and the objects cheat still run. Default
@@ -274,6 +277,7 @@ if ($Runtime -eq 'hookshot') {
             '--game-a', (Resolve $HookshotA), '--game-b', (Resolve $HookshotB), '--out', $out,
             '--timeout', "$([Math]::Max($Timeout, 900))", '--expect-wait', "$ExpectWait")
         if ($NoRestore) { $a += '--no-restore' }
+        if ($KeepLaneFiles) { $a += '--keep-lane-files' }
         if ($DryRun) { $a += '--dry-run' }
     } else {
         $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
@@ -283,6 +287,7 @@ if ($Runtime -eq 'hookshot') {
         if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
         if ($noLoadGames.Count -and -not $NoLoad) { $a += @('--no-load-games', ($noLoadGames -join ',')) }
         if ($NoRestore) { $a += '--no-restore' }
+        if ($KeepLaneFiles) { $a += '--keep-lane-files' }
         if ($KeepOpen) { $a += '--keep-open' }
         if ($ServerPassword -and (Select-String -Quiet -SimpleMatch -Path "$here\hookshot.py" -Pattern '"--password"')) {
             $a += @('--password', $ServerPassword)

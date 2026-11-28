@@ -19,6 +19,7 @@ function Stop-Start([string[]]$Lines) {
     exit 1
 }
 function Read-Yes([string]$Question) {
+    [void](Clear-KitKeysAhead)   # (kit-paths.ps1: keys typed during the start are not the answer; a local co-op digit is kept)
     $line = Read-Host "$Question [Y/n]"
     return -not ($line -and $line.Trim() -match '^(?i)(n|no)$')
 }
@@ -37,7 +38,8 @@ if (-not $lock) { Stop-Start @('Squadala is already starting in another window (
 # Start-KitStartLog; play.ps1 and update.ps1 add theirs; collect-logs.ps1 zips both)
 [void](Start-KitStartLog $kit -Fresh)
 # Players on this PC (local co-op, local-coop.ps1): said now, so a digit 2 to 4 pressed while the start goes on makes play.ps1
-# ask the question before the game starts (C2-2: only its answer starts more games). A solo start waits for nothing.
+# ask the question before the game starts (C2-2: only its answer starts more games). Every key read of the start keeps
+# such a digit (kit-paths.ps1 Save-KitLocalDigit, row 302); a quick start keeps the hint up 3 s (local-coop.ps1).
 $localCoop = Join-Path $PSScriptRoot 'local-coop.ps1'
 if (Test-Path -LiteralPath $localCoop) { try { . $localCoop; Show-KitLocalPlayersHint $kit } catch { } }
 

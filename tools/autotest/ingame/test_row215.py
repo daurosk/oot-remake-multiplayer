@@ -41,7 +41,8 @@ from test_boss_wake import (AWAY, BOOT, CRASH, INTRO_FIGHT, SISTERS, STAGE, SWIT
 
 ROOT = "Enemy_DungeonBoss_Twinrova"   # docs/dungeons-boss.md:66 (Twinrova's body actors), :718 (merged, phase 2)
 NAMES = (ROOT,) + SISTERS
-INTRO_WAIT = 3600       # frames: both games past the intro (test_ux_sweep.py test_boss_final_blow_frames' until)
+INTRO_WAIT = P.BOOT_EVENT_FRAMES   # frames: both games past the intro (was 3600: with INTRO_FIGHT 4500, under the free
+#                                   run's latest end +5048; pair.py BOOT_EVENT_FRAMES cites it, the same intro)
 STRIKE_WAIT = 120       # frames for a strike's answer in state.strike (test_ux_sweep.py: max_frames=120)
 MERGE_WAIT = 1800       # frames for the merged Twinrova after the sisters' kills (ESTIMATED: the merge event; no run yet)
 OWNER_WAIT = 300        # frames for both lists to name one owner after the merge (10 s; ESTIMATED, the share's first owner)
@@ -120,7 +121,7 @@ def back_after(pair):
 
 
 @pytest.mark.needs_boot(BOOT)
-@pytest.mark.budget(480)        # ESTIMATED, no run yet: ~900 + 3600 max + 1800 max + 900 frames + strikes, warps, reads
+@pytest.mark.budget(960)        # 900 + 6000 max + 1800 max + 900 frames at the boot proof's 11.9 a second (pair.BOOT_STEP_FPS) = 807 s + warps, reads
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#215 a boss in its finish (Twinrova at life 0) stays with its owner's game: no hand-over")
 def test_twinrova_finish_stays_with_its_owner(pair, back_after):

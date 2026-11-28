@@ -21,6 +21,13 @@
 // puppet, so the game itself makes it positional and fades it with distance.
 // A name the puppet already plays (its own animation made it) is not started
 // again. A Budget caps the starts per second for the whole game (16 players).
+//
+// Effects (row 310, docs/puppet.md "Link effects"): the same path for our
+// Link's ELink user ([[[link + 0x270] + 0x68] + 0x70], SetOurEffectUser): each
+// key the game starts there goes out as LINK_EFFECT (501), and a sent key the
+// user no longer plays (TrackOurEffects, every kTrackEveryMs) goes out again as
+// an end. The receiver plays it on the puppet's own ELink user through a second
+// Player with the effect cells (EffectCells), and kills it on the end.
 #pragma once
 
 #include <cstddef>
@@ -56,6 +63,14 @@ inline constexpr std::uint64_t kResourceAccessor = 0x18;
 namespace block {
 inline constexpr std::uint64_t kHandle = 0x6f8;  // kHandleSlots handles of 8 bytes, after the notes' text
 inline constexpr std::size_t kHandleSlots = 8;   // sounds that may still play per puppet
+// The sound cells (= CoopPuppetSound::block::kAsset / kText, checked in the .cpp).
+inline constexpr std::uint64_t kSoundAsset = 0x6b8;
+inline constexpr std::uint64_t kSoundText = 0x6c0;
+// The effects' own cells (row 310), after CoopPuppet::block::kDress's 0x100.
+inline constexpr std::uint64_t kEffectAsset = 0x880;   // 8 bytes
+inline constexpr std::uint64_t kEffectText = 0x888;    // kNameMax + 1 bytes
+inline constexpr std::uint64_t kEffectHandle = 0x8c0;  // kHandleSlots handles of 8 bytes
+inline constexpr std::uint64_t kEffectEnd = 0x900;
 }  // namespace block
 
 // Limits (one place, so the tests and docs/puppet.md say the same).
@@ -68,6 +83,11 @@ inline constexpr std::size_t kHeardMax = 6;            // waiting per player; th
 inline constexpr std::uint64_t kHeardStaleMs = 400;    // older than this when it could play: dropped
 inline constexpr std::uint64_t kLongestMs = 3000;      // a started sound is stopped after this (loops)
 inline constexpr std::uint32_t kPlayPerSecond = 24;    // started per second, all puppets together
+inline constexpr std::uint64_t kEffectLongestMs = 30000;  // an effect whose end never came is stopped after this
+inline constexpr std::uint64_t kTrackEveryMs = 100;       // our effects user's playing list read this often
+inline constexpr std::uint64_t kEndAfterMs = 300;         // a sent key is ended only once it was started this long ago
+inline constexpr std::size_t kTrackedMax = 32;            // sent keys watched for their end
+inline constexpr std::size_t kEndedMax = 8;               // ends waiting per player
 
 // --- Sending ------------------------------------------------------------------
 
@@ -86,6 +106,9 @@ bool OwnOnly(std::string_view name);
 // Our Link's sound user (0: none, nothing is caught). The calc thread, each walk.
 void SetOurUser(std::uint64_t user);
 std::uint64_t OurUser();
+// Our Link's effect (ELink) user, the same way (row 310).
+void SetOurEffectUser(std::uint64_t user);
+std::uint64_t OurEffectUser();
 
 // Reads guest memory; false when it cannot.
 using Read = std::function<bool(std::uint64_t address, void* out, std::size_t size)>;
@@ -96,6 +119,29 @@ using Read = std::function<bool(std::uint64_t address, void* out, std::size_t si
 bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read);
 // The names kept since the last call, oldest first.
 std::vector<std::string> TakeCaught();
+// An effect key to send: a start, or with `end` the end of one sent before.
+struct EffectOut {
+    std::string name;
+    bool end = false;
+    bool operator==(const EffectOut&) const = default;
+};
+// The effect keys kept (and the ends found) since the last call, oldest first.
+std::vector<EffectOut> TakeCaughtEffects();
+// The calc thread, every kTrackEveryMs while our Link is known: `playing` is
+// what our effect user plays now (CoopPuppetSound::Playing). A key caught and
+// sent at least kEndAfterMs ago that is no longer in it gets an end.
+void TrackOurEffects(std::string_view playing, std::uint64_t now_ms);
+// The tracker itself (one per sender; TrackOurEffects uses the module's).
+class EffectEnds {
+public:
+    void Started(std::string_view name, std::uint64_t now_ms);
+    // The keys that ended (each once), given what the user plays now.
+    std::vector<std::string> Check(std::string_view playing, std::uint64_t now_ms);
+    std::size_t Size() const { return started_.size(); }
+
+private:
+    std::map<std::string, std::uint64_t, std::less<>> started_;
+};
 // Debug (LICHII_COOP_DEBUG_SOUND=1): every emit is counted by user and name,
 // ours or not, and the first sighting of each pair is logged by the frame.
 void SetProbe(bool on);
@@ -130,6 +176,8 @@ bool InHearing(const std::optional<std::array<float, 3>>& at, const std::array<f
 struct Sound {
     std::string name;
     std::uint64_t at_ms = 0;  // received (steady ms)
+    bool effect = false;      // a LINK_EFFECT key (row 310), not a sound
+    bool end = false;         // with effect: its end
 };
 
 // One player's sounds waiting to be played on their puppet.
@@ -139,6 +187,7 @@ public:
     void PushFront(Sound sound);  // one taken out that must wait (its age kept)
     // The next one still fresh, dropping stale ones.
     std::optional<Sound> Pop(std::uint64_t now_ms);
+    void Remove(std::string_view name);  // every waiting one of that name
     bool Empty() const { return queue_.empty(); }
     void Clear() { queue_.clear(); }
     std::size_t Size() const { return queue_.size(); }
@@ -159,6 +208,18 @@ private:
 // One puppet's player: the search/emit steps and the assets found so far.
 struct Player {
     enum class Step : std::uint8_t { none, search, emit, kill };
+    // Where in the puppet's block this player's calls keep their asset, the
+    // name's text and the handles; how long a start may play before it is stopped.
+    struct Cells {
+        std::uint64_t asset = block::kSoundAsset;
+        std::uint64_t text = block::kSoundText;
+        std::uint64_t handle = block::kHandle;
+        std::uint64_t longest_ms = kLongestMs;
+        const char* what = "sound";
+    };
+    Cells cells;
+    // Ends received (effects): the slot still playing that name is stopped first.
+    std::deque<std::string> ended;
     // A sound started on the puppet: its handle cell is block::kHandle + 8 * slot.
     // The sender's loop end is not sent, so a looped asset (spin charge, swim)
     // is stopped by the game's own handle kill after kLongestMs, or when the
@@ -180,6 +241,23 @@ struct Player {
 };
 
 using Say = std::function<void(const std::string&)>;
+
+// What each player's game plays on its Link now, from the LINK_EFFECTs received
+// (row 310; the hand-over to puppet-pvp: its fallback area test reads it). Any
+// thread. A key without an end is dropped after kEffectLongestMs.
+struct Cast {
+    std::string name;
+    std::uint64_t at_ms = 0;  // its start was received (steady ms)
+};
+void NoteEffect(std::uint8_t player, std::string_view name, bool end, std::uint64_t now_ms);
+std::vector<Cast> Casting(std::uint8_t player, std::uint64_t now_ms);
+
+// The effect Player's cells (row 310).
+Player::Cells EffectCells();
+// A Player with them.
+Player EffectPlayer();
+// An end for `name` (effects): stops it if it still plays, and drops it from the queue.
+void End(Player& player, std::string name);
 
 // The next call for this puppet's sounds, if any (one at a time). `playing`
 // is what the puppet's user plays now (CoopPuppetSound::Playing), read only

@@ -92,7 +92,9 @@ std::string MinusJson(const Minus& m) {
     if (!m.open) return "{\"open\":false}";
     std::string out = "{\"open\":true,\"tab\":" + Quote(m.tab) + ",\"view\":" + Quote(m.view) +
                       ",\"details_page\":" + std::to_string(m.details_page) +
-                      ",\"details_pages\":" + std::to_string(m.details_pages) + ",\"key_items\":";
+                      ",\"details_pages\":" + std::to_string(m.details_pages) + ",\"keys\":" + Bool(m.keys) +
+                      ",\"typed_chars\":" + std::to_string(m.typed_chars) + ",\"row\":" + std::to_string(m.row) +
+                      ",\"list\":" + Bool(m.list) + ",\"key_items\":";
     if (m.details_page != 1) return out + "null}";
     out += "[";
     for (std::size_t i = 0; i < m.key_items.size(); ++i) {
@@ -105,6 +107,17 @@ std::string MinusJson(const Minus& m) {
 std::string Json(const Tab& tab, const Screen& screen, const Minus& minus) {
     return "{\"coop\":" + TabJson(tab) + ",\"customize_screen\":" + ScreenJson(screen) + ",\"minus\":" +
            MinusJson(minus) + "}";
+}
+
+std::string MapPageJson(const MapPage& map) {
+    return std::string("{\"up\":") + Bool(map.up) + ",\"panes\":" + std::to_string(map.panes) +
+           ",\"shown\":" + std::to_string(map.shown) + "}";
+}
+
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus, const MapPage& map) {
+    std::string out = Json(tab, screen, minus);
+    out.pop_back();   // (the closing brace: map_page goes in last)
+    return out + ",\"map_page\":" + MapPageJson(map) + "}";
 }
 
 }  // namespace CoopMenuState

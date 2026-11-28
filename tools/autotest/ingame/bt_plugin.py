@@ -429,6 +429,8 @@ def _lane_check_only(config, items):
     tr = config.pluginmanager.get_plugin("terminalreporter")
     say = tr.write_line if tr else print
     for lane, v in res["lanes"].items():
+        for x, left in sorted((v.get("lane_files") or {}).items()):   # (the boot puts them back: lane_files.py)
+            say("lane%s-%s lane files the boot puts back: %s" % (lane, x, "; ".join(left) if left else "none"))
         say("lane%s %s %s" % (lane, "SETUP-OK" if v["ok"] else "SETUP-FAIL",
                               ("commit %s dll %s" % (v.get("commit"), (v.get("dll_sha256") or "")[:16])) if v["ok"]
                               and not v.get("fake") else v.get("why", "fake")))
@@ -720,8 +722,10 @@ def lane_pair(request):
             why = "lane%d boot: %s%s" % (lane, started.get("error") or started.get("boot"), crash)
             raise GameCrash(why) if crash else P.SetupFail(why)
         config._bt_session = session            # (games_closed watches its pids from here on)
+        put_back = _lane_files_proof(session, folders, lane)
         pair = P.Pair(P.read_session(session), out_dir=out, refs_dir=refs)
         pair.lane, pair.info, pair.session = lane, dict(info, boot_s=round(time.monotonic() - t0, 1)), session
+        pair.info["lane_files"] = put_back
         pair.live = _live                       # (Pair.rejoin: live.py quit + relaunch in this session)
         pair.boot = dict(zip(("A", "B"), boot_paths(config.getoption("boot"))))   # (rejoin: the lane's own boot)
         if config.getoption("boot") in HOST_IN_GAME_BOOTS:
@@ -750,6 +754,30 @@ def lane_pair(request):
         config._bt_lane_closed = _stop_own_session(session, began)
         _pack_out(config, folders)              # (after the games are closed: they hold the pack's files open)
         config._bt_commit = dict(getattr(config, "_bt_commit", None) or {}, **{"lane%d" % lane: mem.stop()})
+
+
+def _lane_files_proof(session, folders, lane):
+    """The boot put each game's co-op files back (steps.txt 'X: lane files: ...', hookshot.py restore_lane_files, as
+    'X: save baseline restored'), and no kept difficulty is there after it (pair.kept_difficulty: the module reads it
+    once at start); else SetupFail 'lane N boot: ...'. Returns {X: the line}. gate-tunic-309d7180 (0.12.0): lane1-A's
+    look leftovers in coop-options.ini; harness-kept-difficulty 9aef275d7: a kept coop-difficulty.ini."""
+    try:
+        with open(os.path.join(session, "steps.txt"), encoding="utf-8", errors="replace") as f:
+            steps = f.read().splitlines()
+    except OSError as e:
+        raise P.SetupFail("lane%d boot: no steps.txt (%s)" % (lane, e))
+    got = {}
+    for x, folder in zip(("A", "B"), folders):
+        line = next((ln.split(" ", 1)[1] for ln in reversed(steps) if (" %s: lane files: " % x) in " " + ln), None)
+        if line is None or " lane files: KEPT" in " " + line:
+            raise P.SetupFail("lane%d boot: %s's co-op files were not put back (no '%s: lane files:' line in steps.txt: "
+                              "a harness before lane_files.py, or --no-restore)" % (lane, x, x))
+        try:
+            P.kept_difficulty(folder)
+        except P.SetupFail as e:
+            raise P.SetupFail("lane%d boot: %s" % (lane, e)) from e
+        got[x] = line
+    return got
 
 
 def _module_proof(pair, lane):
@@ -783,6 +811,10 @@ def _boot_proof(config, pair, lane):
     except P.SetupFail as e:
         raise P.SetupFail("lane%d %s" % (lane, e)) from e
     pair.info = dict(pair.info, boot_proof="; ".join(pair.notes) or "both in play, no event, in the boot scene")
+    # (in summary.json 'boot_proof' too: its waits, e.g. 'A: in play with its play UI down: waited N frames', were
+    # nowhere a run's reader could see them; pause-press-0121, gate-pause-309d7180)
+    config._bt_boot_proof = dict(getattr(config, "_bt_boot_proof", None) or {},
+                                 **{"lane%d" % lane: pair.info["boot_proof"]})
 
 
 BASE_ENV = ["LICHII_COOP_PUPPET=1", "LICHII_COOP_TEST_TO_TITLE=1"]   # every boot (lane_pair's live.py start)
@@ -1014,6 +1046,8 @@ def pytest_testnodedown(node, error):
     config = node.config
     config._bt_commit = dict(getattr(config, "_bt_commit", None) or {},
                              **((getattr(node, "workeroutput", None) or {}).get("bt_commit") or {}))
+    config._bt_boot_proof = dict(getattr(config, "_bt_boot_proof", None) or {},
+                                 **((getattr(node, "workeroutput", None) or {}).get("bt_boot_proof") or {}))
     seen = {d["test"] for d in config._bt_deselected}
     tr = config.pluginmanager.get_plugin("terminalreporter")
     wo = getattr(node, "workeroutput", None) or {}
@@ -1050,6 +1084,7 @@ def pytest_sessionfinish(session, exitstatus):
         config.workeroutput["bt_game_b"] = dict(config._bt_game_b)
         config.workeroutput["bt_pack_out"] = list(getattr(config, "_bt_pack_out", None) or [])   # (merged by the controller, below)
         config.workeroutput["bt_commit"] = getattr(config, "_bt_commit", None) or {}
+        config.workeroutput["bt_boot_proof"] = getattr(config, "_bt_boot_proof", None) or {}
         return     # (xdist: the controller writes the one summary)
     rows = config._bt_rows
     counts = {k: sum(1 for r in rows if r["result"] == k) for k in RESULTS}
@@ -1067,6 +1102,7 @@ def pytest_sessionfinish(session, exitstatus):
                "stopped": getattr(config, "_bt_stopped", None),
                "lane_closed": getattr(config, "_bt_lane_closed", None),
                "commit": getattr(config, "_bt_commit", None),
+               "boot_proof": getattr(config, "_bt_boot_proof", None),
                "verdict": "PASS" if rows and counts["PASS"] == len(rows) else "NOT PASS"}
     with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)

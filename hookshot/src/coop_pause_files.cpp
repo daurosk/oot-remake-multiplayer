@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_files.h"
 #include "coop_title.h"
+#include "coop_off_frame.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -443,6 +444,23 @@ std::vector<CoopTitleMenu::LocalCard> LocalCards() {
     }
 #endif
     return out;
+}
+
+std::optional<std::vector<CoopTitleMenu::LocalCard>> KeptLocalCards(std::uint64_t now_ms, bool prime) {
+    static std::mutex mutex;
+    static std::optional<std::vector<CoopTitleMenu::LocalCard>> kept;
+    static std::uint64_t asked_ms = 0;
+    static CoopOffFrame::Slot slot;   // (after the others: its end waits for a read still running, which uses them)
+    std::lock_guard lock(mutex);
+    const bool due = asked_ms == 0 || (!prime && now_ms - asked_ms >= kLocalCardsEveryMs);
+    if (due && slot.Start([] {
+            std::vector<CoopTitleMenu::LocalCard> got = LocalCards();
+            std::lock_guard done(mutex);
+            kept = std::move(got);
+        })) {
+        asked_ms = now_ms == 0 ? 1 : now_ms;
+    }
+    return kept;
 }
 
 }  // namespace CoopFiles

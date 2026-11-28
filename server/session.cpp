@@ -92,7 +92,8 @@ std::uint64_t Stats::dropped() const {
   return total;
 }
 
-Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
+Session::Session(SessionConfig config)
+    : config_(std::move(config)), pvp_(config_.pvp), party_wait_(config_.party_wait), dbno_(config_.dbno) {
   dbno_.set_by = 0;
   difficulty_ = lobby_difficulty();
   for (const std::string& id : config_.kept_bans) {
@@ -511,6 +512,8 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // Wait for the party on: the same (docs/party-wait.md); off is every game's start.
+  if (party_wait_) send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
   // Down but not out: told at join, on or off (a game starts with it off).
   send(id, kChannelSession, dbno_);
   // The difficulty in force, always: with this player in, and the others
@@ -794,6 +797,10 @@ void Session::dispatch_player_message(ConnectionId id, Connection& c, std::uint8
     on_pvp_mode(id, c, *mode);
     return;
   }
+  if (const auto* mode = std::get_if<PartyWaitMode>(&message)) {
+    on_party_wait_mode(id, c, *mode);
+    return;
+  }
   if (const auto* wish = std::get_if<Difficulty>(&message)) {
     on_difficulty(id, c, *wish);
     return;
@@ -1000,6 +1007,27 @@ void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
   send(id, kChannelSession, now);
   send_to_others(id, kChannelSession, now);
   log(std::string("PvP turned ") + (pvp_ ? "on" : "off") + " by player " +
+      std::to_string(c.number));
+}
+
+// The host turns wait for the party on or off for everyone (docs/party-wait.md), as PvP above: anyone else's ask
+// is answered with the session's value and changes nothing.
+void Session::on_party_wait_mode(ConnectionId id, Connection& c, const PartyWaitMode& m) {
+  if (!hosts_rules(id)) {
+    ++stats_.party_wait_mode_refused;
+    send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
+    return;
+  }
+  if (m.on == party_wait_) {
+    send(id, kChannelSession, PartyWaitMode{party_wait_set_by_, party_wait_});
+    return;
+  }
+  party_wait_ = m.on;
+  party_wait_set_by_ = c.number;
+  const PartyWaitMode now{party_wait_set_by_, party_wait_};
+  send(id, kChannelSession, now);
+  send_to_others(id, kChannelSession, now);
+  log(std::string("Wait for the party turned ") + (party_wait_ ? "on" : "off") + " by player " +
       std::to_string(c.number));
 }
 
@@ -2754,6 +2782,12 @@ bool Session::boss_finishing(const Object& o) {
   return a && coop::protocol::anim::IsDeath(a->name);
 }
 
+bool Session::pre_battle(const Object& o) {
+  if (!o.last_state || !o.last_state->animation) return false;
+  if (o.last_state->life && o.last_state->life->life <= 0) return false;
+  return coop::protocol::anim::IsPreBattle(o.last_state->animation->name);
+}
+
 // Row 215 (owner's playtest, 0.11.8): Ganon at life 0 went P2 -> P1 -> P4 -> P2 -> P1 in his finish (each hit on a
 // copy asked him over to its hitter), and each new owner's verbs drove the others' copies out of their own finish:
 // nobody could stab him. Every rule that moves an object asks here (or answers in finish_handover), so this one check
@@ -3175,6 +3209,22 @@ void Session::run_ownership(std::uint64_t now_us) {
       if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
         if (ask_handover(oid, o, *next, now_us, "its owner's game has not begun the fight (unready: intro or event)")) {
           ++stats_.boss_to_ready;
+        }
+        continue;
+      }
+    }
+
+    // Row 303 (owner 0.12.0: "gohma getting stuck"): a boss still in its pre-battle wait in its owner's game
+    // (Gohma on the ceiling, 'Pre_Battle_*') starts its fight only for a Link that game's AI perceives: its owner's.
+    // Another player under it looked up at a copy that never dropped, for good (lane1 hs-gohma-downed
+    // 20261120-085401: 'ours held Pre_Battle_Ceiling_Wait' 3 x 25 s), and no rule below moved it: that game's claim
+    // (targeting, the hook's WaitsOnCeilingForLink) marks a fight, and a chase is heard only out of one. The player
+    // whose copy claims it in that wait (held handover_chased_us, chased_by: never a game whose own intro has not
+    // played) gets it, its game's AI finds its own Link and the fight begins there, as for a solo player.
+    if (o.boss && pre_battle(o)) {
+      if (auto finder = chased_by(o, owner, now_us); finder && !hands_back_soon(o, *finder, now_us)) {
+        if (ask_handover(oid, o, *finder, now_us, "its pre-battle wait: another player found it (row 303)")) {
+          ++stats_.boss_to_finder;
         }
         continue;
       }
@@ -3837,6 +3887,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    party_wait_ = config_.party_wait;
+    party_wait_set_by_ = 0;
     dbno_ = config_.dbno;
     dbno_.set_by = 0;
     difficulty_ = lobby_difficulty();

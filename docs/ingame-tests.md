@@ -197,9 +197,17 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
   log's last line). `hookshot.py run` counts a game ready only at Longshot's `rx: renderer: Vulkan (` line, not the
   precompile summary that comes before the start-up ends; a mark or test command the module never read fails the
   run, so `live.py start` cannot answer ok for a game with no module (party-hud-bridge-85e3b255).
-- Kept difficulty: a lane game folder with a `coop-difficulty.ini` (a player's kept next-lobby difficulty, left by an
-  earlier run) is SETUP-FAIL in `lane_check`, naming the file. The game reads it once at start and plays every
-  automatic session at it (2026-11-26: lane1-A and lane2-A kept a Custom life 300%). Move it aside; a lane has none.
+- Lane files: every boot puts each game's co-op files back to a known set with its save (`tools/autotest/lane_files.py`,
+  `hookshot.py restore_lane_files`; the same `--no-restore` keeps both): `coop-options.ini` = the kit's own
+  (`tools/release/kit/coop-options.ini`), `coop.ini` keeps only `name` and `client_id`, and a kept difficulty, NG+,
+  saves choice, Character Select pick, bans, Nucleus files, Gold race and a stale `coop-test-state.txt` are moved
+  aside to `<session>/lane-kept-<X>/`. The module reads them once at start, so a choice made in one run (a test's menu
+  step, a player on the lane) was worn by every later run: gate-tunic-309d7180 (0.12.0) waited for
+  `tunic-3070FF now` while lane1-A's file had `look_cap_trim = blue` and 10 more look parts; 2026-11-26 lane1-A and
+  lane2-A kept a Custom life 300% difficulty. `lane_check` names what the boot will put back; after the boot, a game
+  whose steps.txt has no `X: lane files:` line (or `KEPT`), or a `coop-difficulty.ini` still there, is SETUP-FAIL.
+  A test that needs a look sets it with `LICHII_COOP_LOOK` / `LICHII_COOP_COLOR` (test_look.py, test_tunic.py).
+  `--keep-lane-files` (run.ps1 `-KeepLaneFiles`) keeps them: only for an old row whose run script writes them first.
 - A test that PASSES but leaves a game away from the boot's place (not in play, or not in the boot's scene: a
   forgotten put-back) is caught after it: one state read per game (`Pair.away_from_boot`). The test's notes name it
   ("left the boot's place"), and the next test starts with the recovery, so it never runs in the wrong map (row 285).
@@ -210,6 +218,12 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
 - A warp with `arrive_in_event` (a boss intro) is stepped until the game is in the scene, not loading, in the event
   once the bridge's own 12 s wait is over; a warp takes longer than that under load. A boot whose scene starts an
   event on arrival (a boss stage boot) is taken the same way by the boot proof, then stepped until the event ends.
+  A load or a stale sample has `BOOT_FRAMES` (2400); a game still in an event then gets up to `BOOT_EVENT_FRAMES`
+  (6000) in all, and the deadline grows once for those frames (`BOOT_STEP_FPS`). Twinrova's intro on
+  `live-twinrova-room` runs past 2400 frames (row215-309d7180 SETUP-FAIL; the free-running boot ended it between
+  +3994 and +5048). A miss names each game's running event, its last 'still in its event after N s' and last cut.
+  `test_probe_boss_intro.py` (`--env BT_PROBE_BOSS_INTRO=1`, default boot, NO-REF) measures that intro under stepping.
+  `live-twinrova-room` is the lane's child save (as every boot), not an adult one.
 - No game runs free (boss-respawn-bridge-e3e6e253): a call is never sent with less reply wait than it needs
   (`REPLY_MIN_S` 2 s, plus its frames at 20 a second); when the deadline cannot give that, the test FAILs
   `timeout ... not sent` with the connection and the hold kept. A reply that is lost anyway (a dropped connection,

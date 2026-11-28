@@ -343,6 +343,12 @@ std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor) {
     return xlink != 0 ? Pointer(guest, xlink + addr::kXLinkSoundUser) : 0;
 }
 
+std::uint64_t EffectUser(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    const std::uint64_t parts = Pointer(guest, actor + addr::kActorParts);
+    const std::uint64_t xlink = parts != 0 ? Pointer(guest, parts + addr::kPartsXLink) : 0;
+    return xlink != 0 ? Pointer(guest, xlink + addr::kXLinkEffectUser) : 0;
+}
+
 void Reset(State& state) {
     state.sounding = 0;
     state.step = State::Step::none;

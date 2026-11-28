@@ -27,9 +27,11 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_as_vars.h"
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_follow.h"
+#include "coop_puppet_body.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
 #include "coop_puppet_flame.h"
@@ -296,7 +298,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 
 namespace block {
-inline constexpr std::uint64_t kSize = 0x880;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress
+inline constexpr std::uint64_t kSize = 0x900;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress; 0x880 to 0x900: coop_link_sound.h's effect cells (row 310)
 // Character Select's colours on the puppet (coop_char_colours.h: names and arguments of its calls).
 inline constexpr std::uint64_t kDress = 0x780;      // CoopCharColours::kCellBytes
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
@@ -436,6 +438,8 @@ public:
     // The Link puppets' director runs the pose copy (coop_pose.h); others, such
     // as the fairies', do not.
     void SetPoseCopy(bool on) { pose_copy_ = on; }
+    // Row 307: the AS variables probe (coop_as_vars.h, LICHII_COOP_AS_VARS_PROBE=1, reads only).
+    void SetAsVarsProbe(bool on) { as_vars_probe_on_ = on; }
     // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
     // offset 0: none, no colours on a character's puppet.
     // The sound list each puppet's row names (PackSoundLists): added to its "spawned" line.
@@ -530,6 +534,10 @@ public:
     }
     // The pack's puppets carry a PerceptionEmitter (PlannerSettings::perceived).
     void SetPerceived(bool on) { perceived_.store(on); }
+    // The pack's actors that have a body of their own (PlannerSettings::body_actors; build.py --puppet-body,
+    // and the `_Pvp` copies of --puppet-pvp): a player's copy made from one of them is moved by
+    // CoopPuppetBody::Drive. None (the default): every copy is placed as before.
+    void SetBodyActors(std::vector<std::string> actors) { body_actors_ = std::move(actors); }
     static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
@@ -561,6 +569,7 @@ public:
     static constexpr int kBackstopMisses = 2;
     // A hidden puppet is moved this far down, under the floor.
     static constexpr float kHideDrop = 500.0f;
+    static constexpr std::uint32_t kClothProbeFrames = 60;  // LICHII_COOP_DEBUG_CLOTH: one cloth line a second per copy
     // A worn piece this far from its shown puppet was left behind (made while
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
@@ -674,8 +683,26 @@ private:
         bool head_shown = false;        // the show call was made for the head piece worn
         bool head_hair_back = false;
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        // An actor with a body (SetBodyActors; coop_puppet_body.h): the rule that moves this copy's body.
+        // All of it starts again with each new actor (ResetBody).
+        bool body = false;                  // this slot's actor has a body and is a player's copy
+        CoopPuppetBody::Drive body_drive;
+        bool body_move = false;             // the game's setter is owed for the place last written
+        bool body_said = false;             // the copy's first 'body:' line (its class) was written
+        std::optional<Mat3> body_rotation;  // the rotation last handed to the physics
+        std::uint32_t cloth_frames = 0;     // frames since the last 'cloth:' line (LICHII_COOP_DEBUG_CLOTH)
+        std::uint32_t body_rest = 0;        // frames of each kind since the last 'body:' line
+        std::uint32_t body_warp = 0;        // frames a place was written and the setter owed
+        std::uint32_t body_set = 0;         // setter calls really made
+        std::uint32_t body_yield = 0;       // frames the place gave way to our own Link
+        bool lift_carried = false;          // N5: last frame's place was carried by one of our lifts
+        float body_moved_max = 0.0f;        // the furthest the game had the body from our last place
+        std::optional<Vec3> body_last;      // the place last written
+        std::optional<Vec3> body_parked;    // where the body was last parked (hidden); unset: shown
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
+        // the player's own effects on it (row 310: spin charge, trail, Din's Fire), on its ELink user
+        CoopLinkSound::Player link_effect = CoopLinkSound::EffectPlayer();
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
         // Character Select: what the colour routine was last given for this actor (Target::custom), when,
         // and what the call under way gives it.
@@ -695,7 +722,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame, dress
+        hold_check, move, sound, link_sound, link_effect, stray, own_state, head_show, head_hair, flame, dress
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -709,6 +736,7 @@ private:
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
+    void AsVarsProbeFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
     std::optional<Call> Next(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
@@ -753,6 +781,11 @@ private:
     };
     std::vector<PieceActor> Pieces(Slot& slot, Guest& guest) const;
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
+    // Native puppets phase 1 (coop_puppet_body.h).
+    static void ResetBody(Slot& slot);
+    std::optional<CoopPuppetBody::Capsule> OwnBody(Guest& guest);
+    void BodyProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
+    void ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const;
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     bool Drawn(const Slot& slot, std::uint64_t now_ms) const;
@@ -764,6 +797,8 @@ private:
     bool verbose_;
     bool anim_;
     bool pose_copy_ = false;
+    bool as_vars_probe_on_ = false;
+    CoopAsVars::Probe as_vars_probe_;
     std::uint64_t character_apply_ = 0;
     std::map<std::string, std::string, std::less<>> sound_lists_;
     std::array<std::uint8_t, 16> character_apply_head_{};
@@ -773,6 +808,10 @@ private:
     int dress_not_made_ = 0;
     static constexpr int kDressNotMade = 2;
     bool matrix_call_ = false;
+    std::vector<std::string> body_actors_;  // SetBodyActors
+    // Our own Link this frame, for CoopPuppetBody::Yield: read once a frame, when a copy with a body is drawn.
+    std::uint64_t own_body_frame_ = 0;
+    std::optional<CoopPuppetBody::Capsule> own_body_;
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};
     mutable std::mutex tunic_mutex_;
@@ -789,6 +828,7 @@ private:
     CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even (coop_follow.h)
     std::vector<Slot> slots_;
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
+    CoopLinkSound::Budget effect_budget_;  // every puppet's effect starts together (row 310)
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
@@ -852,6 +892,7 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
+    bool as_vars_probe = false;   // LICHII_COOP_AS_VARS_PROBE (row 307, reads only)
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;
@@ -914,6 +955,8 @@ struct PlannerSettings {
     std::array<std::uint8_t, 16> character_apply_head{};
     // The pack was built with perception (PackPerception): its plain (not quiet) puppets are seen by enemies.
     bool perceived = false;
+    // The pack's actors with a body (CoopPuppetBody::PackBodyActors): native puppets phase 1.
+    std::vector<std::string> body_actors;
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there

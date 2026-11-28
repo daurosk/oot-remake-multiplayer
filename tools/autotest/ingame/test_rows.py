@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 import game_names              # noqa: E402  (the ONE item name table)
 import ocarina_notes as ON     # noqa: E402  (the ONE key -> note table)
 import playtest_client as pc   # noqa: E402
-from pair import READY_FRAMES   # noqa: E402
+from kit_move import on_screen  # noqa: E402  (a point on a game's screen from its state `view`)
+from pair import READY_FRAMES, SetupFail   # noqa: E402
 
 
 def need_child_in_play(pair):
@@ -41,6 +42,105 @@ def place_in_front(pair, x, of, dist=2.5):
     pair.act(x, "place %.2f %.2f %.2f" % (tx, py, tz))
     pair.act(x, "face %.2f %.2f" % (px, pz))
     pair.step_both(10)
+
+
+# The name tag floats just over the other Link's head: lichii/hook/coop_hook.cpp:196-197 kHeadChild 1.35 / kHeadAdult 1.9
+# (m above the feet; HeadHeight by age), where the module's markers put it (tag_head) and the balloon goes.
+HEAD_M = {"child": 1.35, "adult": 1.9}
+EDGE = 0.9        # |x|, |y| <= 0.9 of the screen (-1..1, kit_move.on_screen): in view, not cut at the edge
+CAM_TRIES = 3     # ZL taps per game at most (the game's own camera reset: docs/playtest.md `shoot`, "taps ZL (the camera
+                  # goes behind him)"); c272735f8: one tap each left B's camera on A's side (rc-release-0120-5's shots)
+CAM_WAIT = 20     # frames after each tap (the camera's swing behind Link; as before)
+
+
+def other_in_view(pair, x, other, behind=True):
+    """Game x's camera behind its own Link, facing the other player, read from x's state (`view` = the last drawn
+    frame's camera, kit_move.on_screen): the other player's feet and tag point (HEAD_M over the feet) on x's screen,
+    and x's own Link nearer the camera than the other (clip w, the depth: the camera behind x's Link, not on the other's
+    side; behind=False: side by side, as stand_apart, only in view). The other player's place is its own game's Link
+    (x shows it as the puppet). Returns (ok, why)."""
+    st, ot = pair.state(x), pair.state(other)
+    view, own, far = st.get("view"), st.get("pos"), ot.get("pos")
+    if not view or not own or not far:
+        return False, "%s: no view or place (view %s, pos %s, %s's pos %s)" % (x, bool(view), own, other, far)
+    head = [far[0], far[1] + HEAD_M.get(ot.get("age"), HEAD_M["child"]), far[2]]
+    feet_s, head_s, own_s = on_screen(view, far), on_screen(view, head), on_screen(view, own)
+    m = view["clip"]
+
+    def depth(p):
+        return sum(m[12 + j] * v for j, v in enumerate(list(p) + [1.0]))
+    why = "%s: %s's feet %s, tag point %s on screen; own Link at depth %.2f, %s's at %.2f" % (
+        x, other, feet_s, head_s, depth(own), other, depth(far))
+    inside = all(s is not None and abs(s[0]) <= EDGE and abs(s[1]) <= EDGE for s in (feet_s, head_s))
+    return inside and (not behind or (own_s is not None and depth(own) < depth(far))), why
+
+
+def camera_behind_each(pair):
+    """Each game's camera behind its own Link facing the other, by the game's own ZL reset (CAM_TRIES taps each at
+    most), proven per game on state (other_in_view); else SetupFail naming the game and its numbers."""
+    for x, other in (("A", "B"), ("B", "A")):
+        why = ""
+        for n in range(CAM_TRIES):
+            pair.press(x, ["ZL"], frames=8)
+            pair.step_both(CAM_WAIT)
+            ok, why = other_in_view(pair, x, other)
+            if ok:
+                pair.notes.append("camera behind %s after %d ZL: %s" % (x, n + 1, why))
+                break
+        else:
+            raise SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
+
+
+# face_each_other's two Links stand on two parallel lines SIDE m apart (each SIDE/2 off B's boot line), facing each
+# other's way: with the camera behind its own Link, the other Link is then BESIDE it on the screen, never behind it.
+# On one line (B straight ahead of A) the ZL camera behind A had B wholly inside A's box: 'huecheck B ... covered=1.00',
+# B blind, every hair/vest set-up NO-REF (integrate-0120-8 report: face-link-0121 + hair-check-0121).
+# The size: bandcheck.box makes a Link HALF_W = 0.35 * bandcheck.HEAD (1.9) = 0.665 m wide each side of its feet; with
+# the camera c m behind the own Link and the other D = 2.5 m further (place_in_front's default), the boxes part when
+# (SIDE - HALF_W) / (c + D) > HALF_W / c, i.e. SIDE > 1.66 m at the game's c ~ 5 m (nocs4-182cd53b
+# hair-link-no-cs-unset-B.png: own Link ~200 px tall, the other 2.5 m further ~138 px: (c + 2.5) / c = 1.45) and
+# SIDE > 1.88 m at the fake's c = 3 m (fakes/regress_ui.py CAM_BACK). 2.2 m leaves room for both; the other's feet
+# stay at screen x ~0.3-0.45 (EDGE 0.9). apart_on_screen proves it on each game's state after the cameras move.
+SIDE = 2.2
+SHOT_W, SHOT_H = 1280, 720     # the bridge framebuffer shot's size (nocs4-182cd53b lane1/new/*.png)
+
+
+def apart_on_screen(pair):
+    """Each game's own Link box and the other Link's box (bandcheck.box from that game's state `view`, as the look
+    checks find them) both on the screen and not overlapping; else SetupFail with both boxes."""
+    import bandcheck
+    for x, other in (("A", "B"), ("B", "A")):
+        view = pair.state(x).get("view")
+        own = bandcheck.box(view, pair.state(x)["pos"], SHOT_W, SHOT_H) if view else None
+        far = bandcheck.box(view, pair.state(other)["pos"], SHOT_W, SHOT_H) if view else None
+        why = "%s: own Link box %s, %s's box %s" % (x, own, other, far)
+        if not own or not far or (own[0] < far[2] and far[0] < own[2] and own[1] < far[3] and far[1] < own[3]):
+            raise SetupFail("%s's shot would not show %s's Link clear of its own: %s" % (x, other, why))
+        pair.notes.append("apart on %s's screen: %s" % (x, why))
+
+
+def face_each_other(pair):
+    """THE set-up for a check that needs each game to see the other's Link (its puppet): B steps SIDE/2 to its left
+    keeping its facing, A is put 2.5 m in front of B's boot place and SIDE/2 to its right facing back the other way
+    (parallel lines, see SIDE), then each camera goes behind its own Link (camera_behind_each: the game's own ZL
+    reset, proven on each game's state) and apart_on_screen proves the two boxes do not overlap. place/face move a
+    Link, never its camera: before the ZL, A's camera stayed behind B and B's puppet was cut off at the bottom of every
+    A shot (nocs4-182cd53b 01:36, gear/hair/leather/vest no-CS)."""
+    s = pair.state("B")
+    px, py, pz = s["pos"]
+    yaw = math.radians(s["facing"])
+    fx, fz = math.sin(yaw), math.cos(yaw)          # B's facing (0 = +z, 90 = +x: docs/playtest.md "State")
+    rx, rz = fz, -fx                                # B's right (fakes/regress_ui.py state(): the same right)
+    h, d = SIDE / 2, 2.5
+    bx, bz = px - h * rx, pz - h * rz               # B: SIDE/2 to its left
+    ax, az = px + d * fx + h * rx, pz + d * fz + h * rz    # A: d ahead, SIDE/2 to B's right
+    pair.act("B", "place %.2f %.2f %.2f" % (bx, py, bz))
+    pair.act("B", "face %.2f %.2f" % (bx + d * fx, bz + d * fz))     # along its own line (facing kept)
+    pair.act("A", "place %.2f %.2f %.2f" % (ax, py, az))
+    pair.act("A", "face %.2f %.2f" % (ax - d * fx, az - d * fz))     # back along its own line, towards B's side
+    pair.step_both(10)
+    camera_behind_each(pair)
+    apart_on_screen(pair)
 
 
 @pytest.mark.budget(120)
@@ -67,9 +167,7 @@ def test_masks_on_puppet(pair):
     with pair.setup():
         need_child_in_play(pair)
         pair.give("A", "PouchData.%s.StockNum" % skull)
-        place_in_front(pair, "A", of="B")
-        pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
-        pair.step_both(10)
+        face_each_other(pair)
     # 'wear' writes PlayerStatus.EquipHeadArmor at once (coop_testinput.cpp WearFlag head); 'dress head' is the
     # game's own equip call (queued: frames run). equips.head is that flag's text (coop_playtest.cpp state).
     pair.act("A", "wear head %s" % skull)

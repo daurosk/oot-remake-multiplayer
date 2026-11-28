@@ -13,7 +13,7 @@ Results (one summary per run, DIR/summary.json + summary.md, and pytest's --juni
   NO-REF      a look check has no stored reference yet (its shot is kept under DIR/new/); not a pass
   VOID        a FAIL/SETUP-FAIL caused by an NVIDIA driver reset of the whole GPU (gpu_reset.py: System nvlddmkm 14/153 in
               the session window AND the game's log has VK_ERROR_DEVICE_LOST after it); never a pass, not rerun in the
-              run (the games are gone): the job is rerun once, a second VOID stays NOT PASS
+              run (the games are gone): the job is rerun once; a second gpu-reset of that rerun (same test + commit) is FAIL
 Smoke gate: a smoke test (marker `smoke`) that FAILs or SETUP-FAILs stops the run there (the rc is broken), unless
 --no-smoke-gate.
 """
@@ -637,16 +637,24 @@ def games_closed(session, alive=None):
         ", ".join(gone), ", ".join(str(pids[x]) for x in gone))
 
 
-def _void_why(config, kind):
-    """gpu_reset.judge's 'VOID gpu-reset: ...' for a FAIL / SETUP-FAIL of this lane's session, else None (B #161 guards:
-    only those two results, only with the driver event AND the game's DEVICE_LOST; see gpu_reset.py)."""
+def _void_why(config, kind, test):
+    """(result, why) for a FAIL / SETUP-FAIL of this lane's session that a GPU reset caused, else None (B #161 guards:
+    only those two results, only with the driver event AND the game's DEVICE_LOST right after it; see gpu_reset.py):
+    ("VOID", 'VOID gpu-reset: ...') the first time, ("FAIL", 'gpu-reset twice: maybe ours ...') when this test on this
+    commit was VOID gpu-reset in an earlier run (the job's rerun)."""
     if kind not in ("FAIL", "SETUP-FAIL"):
         return None
     session = getattr(config, "_bt_session", None) or getattr(config, "_bt_boot_session", None)
     try:
-        return gpu_reset.judge(session, time.time())
+        why = gpu_reset.judge(session, time.time())
+        if not why:
+            return None
+        old = gpu_reset.second_reset(test, config.getoption("expect_commit"), getattr(config, "_bt_started", None), why)
     except Exception:            # noqa: BLE001 (the check itself failing never hides the result: it stays as it was)
         return None
+    if old:
+        return "FAIL", "gpu-reset twice: maybe ours (first VOID %s) | %s" % (old.get("when"), why)
+    return "VOID", why
 
 
 def _stop_why(config):
@@ -964,8 +972,8 @@ def _stop_run(item, why):
     item.ihook.pytest_runtest_logstart(nodeid=item.nodeid, location=item.location)
     if first:
         from _pytest.reports import TestReport
-        void = _void_why(config, "SETUP-FAIL")
-        result, row_why = ("VOID", "%s | was SETUP-FAIL: %s" % (void, why)) if void else ("SETUP-FAIL", why)
+        void = _void_why(config, "SETUP-FAIL", item.nodeid)
+        result, row_why = (void[0], "%s | was SETUP-FAIL: %s" % (void[1], why)) if void else ("SETUP-FAIL", why)
         rep = TestReport(item.nodeid, item.location, {}, "failed", row_why, "teardown",
                          user_properties=[("result", result), ("seconds", 0), ("why", row_why)])
         item.ihook.pytest_runtest_logreport(report=rep)
@@ -1005,7 +1013,7 @@ def pytest_runtest_protocol(item, nextitem):
     t0 = time.monotonic()
     reports = runtestprotocol(item, nextitem=nextitem, log=False)
     kind, first = _kind(reports), None
-    void = _void_why(item.config, kind)      # (a GPU reset: no rerun, the lane's games are gone)
+    void = _void_why(item.config, kind, item.nodeid)      # (a GPU reset: no rerun, the lane's games are gone)
     # a FAIL reruns once, but never one from set-up (the lane's boot: a GameCrash): that would boot the lane again
     in_setup = any(r.when == "setup" and r.failed for r in reports)
     if kind == "FAIL" and not void and not in_setup and not item.config.getoption("no_rerun") and not _past_deadline(item.config):
@@ -1031,7 +1039,7 @@ def pytest_runtest_protocol(item, nextitem):
             why = " ".join((crash.message if crash else str(r.longrepr)).split())[:400]
             break
     if void:
-        kind, why = "VOID", ("%s | was %s: %s" % (void, kind, why))[:700]
+        kind, why = void[0], ("%s | was %s: %s" % (void[1], kind, why))[:700]
     for r in reports:
         r.user_properties.append(("result", kind))
         r.user_properties.append(("seconds", secs))
@@ -1155,6 +1163,6 @@ def result_line(summary):
         return "RESULT: SETUP-FAIL %s" % bad["why"]
     if c.get("VOID") and all(r["result"] in ("PASS", "VOID", "NOT-RUN") for r in rows):
         void = next(r for r in rows if r["result"] == "VOID")
-        return "RESULT: VOID (%s); first: %s %s; rerun the job once (a second VOID stays NOT PASS)" % (
+        return "RESULT: VOID (%s); first: %s %s; rerun the job once (a second gpu-reset of the rerun is FAIL: maybe ours)" % (
             counts, void["test"], void["why"][:300])
     return "RESULT: NOT PASS (%s); first: %s %s %s" % (counts, bad["test"], bad["result"], bad["why"][:300])

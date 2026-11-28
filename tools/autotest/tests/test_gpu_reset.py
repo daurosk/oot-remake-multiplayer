@@ -44,21 +44,27 @@ class Session:
             json.dump([{"t": t, "id": i} for t, i in events], f)
 
     def __enter__(self):
-        self._old = os.environ.get(gpu_reset.FAKE_ENV)
+        self._old = {k: os.environ.get(k) for k in (gpu_reset.FAKE_ENV, gpu_reset.LEDGER_ENV)}
         os.environ[gpu_reset.FAKE_ENV] = self.events      # (scoped: only inside this with-block)
+        os.environ[gpu_reset.LEDGER_ENV] = os.path.join(self.dir, "ledger", "gpu-voids.json")
         return self
 
     def __exit__(self, *a):
-        if self._old is None:
-            os.environ.pop(gpu_reset.FAKE_ENV, None)
-        else:
-            os.environ[gpu_reset.FAKE_ENV] = self._old
+        for k, v in self._old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
 class Cfg:
-    def __init__(self, session):
-        self._bt_session = session
+    def __init__(self, session, run=1.0, commit="53d40ab3e"):
+        self._bt_session, self._bt_started, self._commit = session, run, commit
+
+    def getoption(self, name):
+        assert name == "expect_commit", name
+        return self._commit
 
 
 NOW = T0 + 400
@@ -69,7 +75,7 @@ class JudgeTest(unittest.TestCase):
         with Session(events=[(T0 + 332, 14), (T0 + 332, 153)]) as s:
             why = gpu_reset.judge(s.dir, NOW)
         self.assertIsNotNone(why)
-        self.assertTrue(why.startswith("VOID gpu-reset: System log nvlddmkm event 14"), why)
+        self.assertTrue(why.startswith("VOID gpu-reset: System log nvlddmkm event 153"), why)
         self.assertIn("game-out-A.txt has VK_ERROR_DEVICE_LOST", why)
 
     def test_device_lost_without_event_stays(self):
@@ -89,6 +95,17 @@ class JudgeTest(unittest.TestCase):
         with Session(log_at=T0 + 300, events=[(T0 + 360, 153)]) as s:
             self.assertIsNone(gpu_reset.judge(s.dir, NOW))
 
+    def test_event_long_before_the_device_lost_stays(self):
+        # (review-tests-153-3 00:37: a reset early in the session that the games survived never VOIDs a later crash)
+        with Session(log_at=T0 + 340, events=[(T0 + 10, 14), (T0 + 10, 153), (T0 + 340 - gpu_reset.MAX_GAP_S - 1, 153)]) as s:
+            self.assertIsNone(gpu_reset.judge(s.dir, NOW))
+
+    def test_gap_bound_covers_the_real_cases(self):
+        # (the longest gap of the three real cases: B 11-28, last 153 00:14:49.467 -> log mtime 00:14:51.4)
+        with Session(log_at=T0 + 340, events=[(T0 + 300, 153), (T0 + 340 - 1.95, 153)]) as s:
+            self.assertIsNotNone(gpu_reset.judge(s.dir, NOW))
+        self.assertGreaterEqual(gpu_reset.MAX_GAP_S, 2.0 + gpu_reset.SLACK_S)
+
     def test_other_event_id_stays(self):
         with Session(events=[(T0 + 332, 13)]) as s:
             self.assertIsNone(gpu_reset.judge(s.dir, NOW))
@@ -103,14 +120,28 @@ class PluginTest(unittest.TestCase):
         with Session(events=[(T0 + 332, 153)]) as s:
             cfg = Cfg(s.dir)
             for kind in ("PASS", "NO-REF", "FLAKY", "SKIP", "NOT-RUN"):
-                self.assertIsNone(bt_plugin._void_why(cfg, kind), kind)
-            for kind in ("FAIL", "SETUP-FAIL"):
-                self.assertTrue((bt_plugin._void_why(cfg, kind) or "").startswith("VOID gpu-reset"), kind)
+                self.assertIsNone(bt_plugin._void_why(cfg, kind, "t::x"), kind)
+            for kind, test in (("FAIL", "t::a"), ("SETUP-FAIL", "t::b")):
+                res, why = bt_plugin._void_why(cfg, kind, test)
+                self.assertEqual(res, "VOID", why)
+                self.assertTrue(why.startswith("VOID gpu-reset"), why)
 
     def test_fail_without_event_stays_fail(self):
         with Session(events=[]) as s:
-            self.assertIsNone(bt_plugin._void_why(Cfg(s.dir), "FAIL"))
-            self.assertIsNone(bt_plugin._void_why(Cfg(s.dir), "SETUP-FAIL"))
+            self.assertIsNone(bt_plugin._void_why(Cfg(s.dir), "FAIL", "t::a"))
+            self.assertIsNone(bt_plugin._void_why(Cfg(s.dir), "SETUP-FAIL", "t::a"))
+
+    def test_second_reset_of_the_rerun_is_fail(self):
+        # (review-tests-153-3 / B #161: the job's rerun on the same commit resets the GPU again -> FAIL, never VOID twice)
+        with Session(events=[(T0 + 339, 153)]) as s:
+            self.assertEqual(bt_plugin._void_why(Cfg(s.dir, run=1.0), "FAIL", "t::a")[0], "VOID")
+            self.assertEqual(bt_plugin._void_why(Cfg(s.dir, run=1.0), "FAIL", "t::a")[0], "VOID")   # same run: once
+            res, why = bt_plugin._void_why(Cfg(s.dir, run=2.0), "FAIL", "t::a")
+            self.assertEqual(res, "FAIL")
+            self.assertTrue(why.startswith("gpu-reset twice: maybe ours"), why)
+            # (another commit is another job: VOID again; another test of the first run: VOID)
+            self.assertEqual(bt_plugin._void_why(Cfg(s.dir, run=3.0, commit="182cd53b5"), "FAIL", "t::a")[0], "VOID")
+            self.assertEqual(bt_plugin._void_why(Cfg(s.dir, run=1.0), "SETUP-FAIL", "t::b")[0], "VOID")
 
     def test_void_is_never_pass(self):
         rows = [{"test": "t::a", "result": "PASS", "why": ""},

@@ -32,7 +32,14 @@ AWAY = crawl.BOOT                                 # A's other place: the default
 # other row sets it, so the fake games know this row by it: fakes/alone_318.py).
 BLEED_S = 12
 SPECTATE_BACK_S = 6       # coop_dbno.h kQuietUs 3 s + kSpectateMinUs 3 s: the soonest a watcher goes beside
-EARLY_FRAMES = 150         # 5 s of game: the 1 s grace + a margin, well under BLEED_S (12 s = 360 frames)
+# Test 2 (downed, A leaves: early, not the bleed-out). The Machine's bleed clock is WALL time: Machine::Frame takes
+# step = now_us - last_us_ (SteadyUs), capped at kMaxStepUs per frame, off left_us_ = Rules::BleedUs() (coop_dbno.cpp,
+# coop_dbno.h); a capped step only makes it slower than the wall, never faster. So with LONG_BLEED_S (200 s, inside
+# kDbnoMinBleedS 10 .. kDbnoMaxBleedS 240, coop/protocol messages.hpp; no other row sets it) an event 8 less than
+# LONG_BLEED_S wall seconds after the down began can only be the nearby rule, never the bleed-out
+# (review-tests-153-7 / B #171 MUST: a frames bound false-PASSes on a slow lane).
+LONG_BLEED_S = 200
+EARLY_FRAMES = 1800        # the frame bound of the wait (fake games: their bleed is LONG_BLEED_S * 30 = 6000 frames)
 RESPAWN_LIFE = 12          # coop_dbno.h kRespawnLife (capped at the player's own max)
 ENTRANCE = r"coop: teleport: respawn at the entrance \S+ of %s"   # coop_teleport_game.cpp, the want_entrance branch
 BESIDE = r"coop: dbno: respawn: moving beside P"                  # coop_dbno_game.cpp (move_beside)
@@ -107,10 +114,10 @@ def restored(pair):
     _restore(pair)
 
 
-def set_up(pair):
+def set_up(pair, bleed_s=BLEED_S):
     pair.need_boot_place("child")
     crawl.to_place(pair, "child", *FIELD)
-    crawl.rules(pair, BLEED_S)
+    crawl.rules(pair, bleed_s)
     crawl.no_fairy(pair, "B")
 
 
@@ -137,13 +144,18 @@ def test_lethal_hit_with_nobody_nearby_goes_to_the_entrance(pair):
 def test_downed_teammate_leaves_goes_to_the_entrance(pair):
     with restored(pair):
         with pair.setup():
-            set_up(pair)
+            set_up(pair, LONG_BLEED_S)
+        t_down = time.monotonic()   # taken BEFORE the hits: the wall seconds below are at least the clock's
         crawl.down(pair)       # A beside (same place): downed as before (event 0, A says 'P2 is down')
         pair.never_log("B", crawl.event(EV_ALONE))
         apart(pair)
         # Downed only with someone nearby (B #171 07:4x): once A is gone (kNearbyGraceUs 1 s, coop_dbno.h) B goes to
-        # the entrance, long before its BLEED_S clock ends (EARLY_FRAMES < BLEED_S * pair.FPS 30).
+        # the entrance, long before its LONG_BLEED_S wall-clock bleed-out could end.
         pair.expect_log("B", crawl.event(EV_ALONE), max_frames=EARLY_FRAMES)
+        took = time.monotonic() - t_down
+        pair.notes.append("down began -> event 8: %.1f s wall (bleed-out %d s)" % (took, LONG_BLEED_S))
+        assert took < LONG_BLEED_S, "event 8 came %.1f s after the down: not before the %d s bleed-out" % (
+            took, LONG_BLEED_S)
         pair.never_log("B", crawl.event(crawl.EV_BLED_OUT))
         back_at_our_entrance(pair, "downed, A left")
         crawl.shots(pair, "alone-318-bled-out", twice=False)
@@ -158,11 +170,11 @@ def test_watched_teammate_leaves_and_the_spectator_goes_to_the_entrance(pair):
             set_up(pair)
         crawl.down(pair)
         pair.expect_log("B", crawl.event(crawl.EV_BLED_OUT), max_frames=BLEED_S * 30 + 900)
+        t0 = time.monotonic()       # the bled_out sighting: from here B may go beside A after SPECTATE_BACK_S
         pair.expect_log("A", r"coop: dbno: P2 is spectating", max_frames=300)
         # At once: the respawn beside A waits kQuietUs + kSpectateMinUs (3 s each, coop_dbno.h); A leaves before it.
         # (review-tests-153-7: B's Machine runs on the real clock; a lane warp slower than that lets B go beside A
         # before A is away: then the run proves nothing, NO-REF, never a FAIL on BESIDE.)
-        t0 = time.monotonic()
         apart(pair)
         took = time.monotonic() - t0
         pair.notes.append("bled_out seen -> A in play away: %.1f s" % took)

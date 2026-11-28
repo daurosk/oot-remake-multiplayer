@@ -1,7 +1,8 @@
 """Fake-game reactions for test_alone_318.py (rows 318 + 334, dbno-alone-318's file). They prove the test's logic, not
 the game: each line said is the module's own text (cited in test_alone_318.py's patterns).
 
-Only where this row is: A said 'chat /dbno time 12' (test_alone_318.py BLEED_S, which no other row sets) since the
+Only where this row is: A said 'chat /dbno time 12' or '... time 200' (test_alone_318.py BLEED_S / LONG_BLEED_S,
+which no other row sets) since the
 boot; any other '/dbno time' (the restore's 45) ends it. Then this module, before fakes/dbno_crawl.py (file-name
 order), takes the LETHAL hit only (the others, and a bottled fairy, stay dbno_crawl's) and plays rows 318 + 334 on
 the same game.dbno dict dbno_crawl keeps (its 'state' hook writes the life; its '/dbno off' stands everyone up).
@@ -14,7 +15,7 @@ BT_FAKE_ALONE_BUG (selftests, tests/test_ingame_alone_318.py):
 """
 import os
 
-ROW_BLEED_S = 12   # test_alone_318.py BLEED_S
+ROW_BLEED_S = (12, 200)   # test_alone_318.py BLEED_S, LONG_BLEED_S
 FPS = 30           # (pair.FPS)
 
 
@@ -99,7 +100,7 @@ def go_down(game):
 
 def act(game, words):
     if words[:3] == ["chat", "/dbno", "time"] and game.tag == "A":
-        mark = words[3:] == [str(ROW_BLEED_S)]
+        mark = words[3:] in ([str(s)] for s in ROW_BLEED_S)
         for g in (game, game.other):
             g.alone318 = mark
         return False          # (the rules themselves: dbno_crawl's act)

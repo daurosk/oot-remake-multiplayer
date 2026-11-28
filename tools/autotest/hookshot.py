@@ -1909,16 +1909,20 @@ def run(a):
                 continue
             t0, rx, log_x = time.monotonic(), re.compile(r"coop: test commands file "), game_log(x)
             seen = False
-            while time.monotonic() - t0 < a.mark_late:
+            # (look first, then the deadline: the log is read at least once, and once more AT the deadline. The
+            # deadline-first loop read nothing when the thread lost the CPU past mark_late before its first look:
+            # Build 46126678828 windows 3.12, test_two_games at --mark-late 0.5, A 'no ... line in 0 s' though the
+            # line was in game-out-A.txt and B, read right after, 'waited 0.0 s')
+            while True:
                 try:
                     if rx.search(log_x() or ""):
                         seen = True
                         break
                 except OSError:
                     pass
-                if procs[x].poll() is not None:
+                if time.monotonic() - t0 >= a.mark_late or procs[x].poll() is not None:
                     break
-                time.sleep(0.25)
+                time.sleep(min(0.25, max(0.0, a.mark_late - (time.monotonic() - t0))))
             say("%s: module reads its commands file (waited %.1f s after the save load)" % (x, time.monotonic() - t0) if seen
                 else "%s: no 'coop: test commands file' line in %.0f s (the module may not read its commands)"
                 % (x, a.mark_late))

@@ -90,7 +90,7 @@ def horse_pos(pair, x="B"):
 
 def face_rider(pair):
     """A faces B, camera behind A (hs-epona-*.A.txt 'face' + 'press ZL'), so A's shot holds B and the horse."""
-    b = pair.state("B")["pos"]
+    b = pair.pos("B")   # (fresh: right after a place the snapshot may be old; gate-epona-182cd53b 05:03)
     pair.act("A", "face %.2f %.2f" % (b[0], b[2]))
     pair.press("A", ["ZL"], frames=8)
 

@@ -133,6 +133,36 @@ class TestTimeout(AssertionError):
     """The test ran past its own deadline: FAIL 'timeout' (never retried as a pass)."""
 
 
+class StaleState(AssertionError):
+    """A Link member of a state read while the state says it does not know it (`not_ready` set, the member null:
+    docs/playtest.md, the state's Link snapshot). gate-epona-182cd53b 05:03: test_epona.face_rider read
+    pair.state("B")["pos"] right after a place and got None -> "TypeError: 'NoneType' object is not subscriptable".
+    Inside `with pair.setup()` it is a SETUP-FAIL naming the game, the member and the reason; outside a FAIL."""
+
+
+# The state's members from Longshot's Link snapshot: null while `not_ready` says why (docs/playtest.md 'state').
+LINK_MEMBERS = ("pos", "facing", "camera", "life", "max_life", "rupees", "age", "event", "loading", "prompt")
+
+
+class State(dict):
+    """Pair.state's reply: a dict, except that indexing a Link member the game does not know now (null while
+    `not_ready` is set) raises StaleState with the reason, instead of handing None on to a subscript or a sum.
+    .get() is unchanged (None = do not know), so code that checks for None keeps doing so."""
+
+    def __init__(self, x, d):
+        super().__init__(d)
+        self.x = x
+
+    def __getitem__(self, k):
+        v = dict.__getitem__(self, k)
+        if v is None and k in LINK_MEMBERS and dict.get(self, "not_ready") is not None:
+            raise StaleState("%s: state[%r] is null: no fresh Link snapshot (not_ready %r, scene %r, loading %r); "
+                             "read it with pair.pos(%r) or after pair.until_in_play" % (
+                                 self.x, k, dict.get(self, "not_ready"), dict.get(self, "scene"),
+                                 dict.get(self, "loading"), self.x))
+        return v
+
+
 class Deadline:
     def __init__(self, seconds, clock=time.monotonic):
         self.clock = clock
@@ -515,7 +545,28 @@ class Pair:
         return r
 
     def state(self, x):
-        return self.call(x, "state")
+        r = self.call(x, "state")
+        return State(x, r) if isinstance(r, dict) else r
+
+    def pos(self, x, max_frames=READY_FRAMES):
+        """Game x's Link position now, a fresh one: a state whose `pos` is null (not_ready: a place, a warp or a held
+        game's old snapshot) is stepped CHUNK frames at a time until it is known; StaleState naming the reason after
+        max_frames (gate-epona-182cd53b 05:03). For a read right after a place/face before a turn or a shot; a test
+        that measures a move from one read to the next keeps its own reads (a step here would move the game)."""
+        last = [None]
+
+        def fresh():
+            st = self.state(x)
+            last[0] = st
+            return st.get("pos")
+        try:
+            return self.until("%s: a fresh Link position" % x, fresh, max_frames=max_frames)
+        except StaleState:
+            raise
+        except AssertionError as e:
+            st = last[0] or {}
+            raise StaleState("%s; %s: pos still null (not_ready %r, scene %r, loading %r)" % (
+                e, x, st.get("not_ready"), st.get("scene"), st.get("loading"))) from None
 
     def until(self, what, pred, max_frames=600):
         """Steps both games CHUNK frames at a time until pred() is true (checked before the first step too).

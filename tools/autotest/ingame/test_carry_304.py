@@ -23,9 +23,13 @@ Sources (worker-rules "no guessed values"):
   lifted it with 'press A 12' after 'wait 20'); the scene and entrance: coop_start_points.inc {"Graveyard_Child",
   "GraveYard_KakarikoSide", -36.50, 98.01, 8.48}.
 - Ruto: Npc_Zora_Ruto_Child_001/_002 (docs/objects.md "Followers", InsideJabuJabuBelly); the scene and entrance:
-  coop_start_points.inc {"InsideJabuJabuBelly", "InsideJabuJabuBelly_FromZoraFountain", -0.16, 91.67, -0.78}. Her place
-  is NOT cited anywhere: the test finds her in A's world list (dump) and SETUP-FAILs naming the npcs it saw if she is not
-  there (that answers where she is for the next run).
+  coop_start_points.inc {"InsideJabuJabuBelly", "InsideJabuJabuBelly_FromZoraFountain", -0.16, 91.67, -0.78}. Her place:
+  romfs Banc/InsideJabuJabuBelly/InsideJabuJabuBelly_Static.bcett.byml.zs (read with tools/puppet_pack byml + zs), the
+  placement Npc_Zora_Ruto_Child_001 Name 'Step1', Dynamic.DefaultDungeonRoomIndex 2, no Presence flag, Translate
+  (1.63, 91.25, -77.98), its Reference link AnchorAction1 at (2.61, 90.98, -73.41) (RUTO_AT, RUTO_STAND). (_002 is
+  Room 15's, Presence Get_StoneOfWater_IsAfter_Step13_01_Exp: after the stone.) Probe carry-304-182cd53b-3: she is not
+  in A's world list at the entrance, 77 m from her room, so both Links are placed at RUTO_STAND first and A's world
+  list is read every RUTO_POLL frames for up to RUTO_LOAD_FRAMES until she is there (SETUP-FAIL naming the npcs seen).
 - The world list: docs/playtest.md "world": a dump lists every actor the objects walk sees (<= 200) with id, name, kind,
   pos [x, y, z] (y = height); the dump's state.pos is our own Link.
 - Lift: 'place X Y Z' then 'face X Z' (coop_testinput.cpp PLACE/FACE; test_enemies.py), then A held LIFT_FRAMES (rock.A.txt 'press A 12';
@@ -52,6 +56,9 @@ ROCK_AT = (-34.12, 14.94)                     # rock.A.txt (x, z)
 ROCK = "Obj_LiftRock_"
 RUTO_SCENE, RUTO_ENTRANCE = "InsideJabuJabuBelly", "InsideJabuJabuBelly_FromZoraFountain"
 RUTO = "Npc_Zora_Ruto_Child"
+RUTO_AT = (1.63, 91.25, -77.98)               # Banc Jabu _Static: Npc_Zora_Ruto_Child_001 'Step1', room 2 (header)
+RUTO_STAND = (2.61, 90.98, -73.41)            # the same placement's AnchorAction1 link (header)
+RUTO_POLL, RUTO_LOAD_FRAMES = 30, 300         # read A's world list every 30 frames, at most 300 (5 s at 60 fps)
 NEAR_M = 0.8                                  # A placed this far from the object (catch-cucco-near-gate)
 B_FROM_M = 4.0                                # B stands this far from A, looking at A (in view, not in reach)
 LIFT_SETTLE, LIFT_FRAMES, HOLD_WAIT = 20, 12, 50   # rock.A.txt
@@ -147,6 +154,27 @@ def lift(pair, prefix, at, tag, within=FIND_M):
     return obj.get("id"), copy.get("id") if copy else None, o
 
 
+def to_ruto(pair):
+    """Both Links placed at RUTO_STAND (her room, header); A's world list read every RUTO_POLL frames until she is in it,
+    at most RUTO_LOAD_FRAMES. SETUP-FAIL naming the npcs A saw if she never is."""
+    for x in ("A", "B"):
+        pair.log[x].mark()
+        pair.act(x, "place %.2f %.2f %.2f" % RUTO_STAND)   # coop_testinput.cpp PLACE: X Y Z only
+        pair.step_both(2)
+        pair.expect_log(x, r"coop: test place .*: done", max_frames=30)
+    waited, actors = 0, []
+    while waited <= RUTO_LOAD_FRAMES:
+        _, actors, _ = dump(pair, "A", "ruto-load")
+        if nearest(actors, RUTO, RUTO_AT) is not None:
+            pair.notes.append("ruto: in A's world list %d frames after the place at %s" % (waited, RUTO_STAND))
+            return
+        pair.step_both(RUTO_POLL)
+        waited += RUTO_POLL
+    seen = sorted({str(a.get("name")) for a in actors if a.get("kind") in ("npc", "other", "enemy")})[:40]
+    raise P.SetupFail("no %s within %.0f m of her banc place %s %d frames after A was placed in her room at %s "
+                      "(saw: %s)" % (RUTO, FIND_M, RUTO_AT, RUTO_LOAD_FRAMES, RUTO_STAND, seen))
+
+
 def follow(pair, a_id, b_id, prefix, rest, tag):
     """A holds it still, then walks WALK_FRAMES; every SAMPLE_EVERY frames: A's object vs A's Link, B's copy vs A's
     Link (A's own place: the puppet shows it ~100 ms late, inside HANDS_XZ when standing). Returns the rows."""
@@ -234,7 +262,8 @@ def test_carry_rock(pair, back_after):
 def test_carry_ruto(pair, back_after):
     with pair.setup():
         BR.start_check(pair)
-        start = pair.warp_both(RUTO_SCENE, RUTO_ENTRANCE)
+        pair.warp_both(RUTO_SCENE, RUTO_ENTRANCE)
         pair.until_in_play("both in %s" % RUTO_SCENE)
-        a_id, b_id, rest = lift(pair, RUTO, start["A"]["pos"], "ruto", within=500.0)
+        to_ruto(pair)
+        a_id, b_id, rest = lift(pair, RUTO, RUTO_AT, "ruto")
     judge(pair, follow(pair, a_id, b_id, RUTO, rest, "ruto"), "ruto", rest)

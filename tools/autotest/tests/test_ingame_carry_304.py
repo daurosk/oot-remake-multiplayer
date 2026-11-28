@@ -1,7 +1,7 @@
 """Rows 304-306's probe selftest (ingame/test_carry_304.py + ingame/fakes/carry_304.py; owner carry-sync-304), run by
 test_ingame.py's load_tests: the set-up (place X Y Z, face X Z, lift) holds on the fake; B's copy in A's hands is
 NO-REF (hands box not measured, never PASS); a copy beyond MISS_M is NO-REF (not measured); a copy left at its rest
-place or missing on B is FAIL; deselected without the row's switch."""
+place or missing on B is FAIL; Ruto never loaded in her room is SETUP-FAIL; deselected without the row's switch."""
 import os
 import shutil
 import sys
@@ -48,6 +48,11 @@ class Carry304(unittest.TestCase):
         p, s = self.run_fake("absent", "absent")
         self.assertEqual(T.results(s)["test_carry_ruto"], "FAIL", p.stdout[-2000:])
         self.assertIn("B has NO copy in 15 of 15", self.why(s, "test_carry_ruto"))
+
+    def test_ruto_not_loaded_is_setup_fail(self):
+        p, s = self.run_fake("unloaded", "unloaded")
+        self.assertEqual(T.results(s)["test_carry_ruto"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertIn("of her banc place", self.why(s, "test_carry_ruto"))
 
     def test_far_copy_is_no_ref(self):
         p, s = self.run_fake("far", "far")

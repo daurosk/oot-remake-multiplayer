@@ -572,6 +572,11 @@ public:
     static constexpr std::uint64_t kRestUs = 400'000;        // still this long: at rest
     static constexpr std::uint64_t kRemoteHoldUs = 600'000;  // no move this long: the mover stopped
     static constexpr std::uint64_t kSettleUs = 500'000;      // a rest place is held this long
+    // Row 305: a move stamped later than this before we got the mover's rest place was sent after that place (the
+    // mover sends its place only kRestUs after its last move; kClockSlackUs covers the two games' server clocks):
+    // it took the object again, so that old place is dropped and our copy follows its moves.
+    static constexpr std::uint64_t kClockSlackUs = 100'000;
+    static constexpr std::uint64_t kPlaceStaleUs = kRestUs - kClockSlackUs;
     static constexpr std::uint64_t kQuietUs = 1'500'000;     // after following: no claim while it settles
     static constexpr float kAtBlockM = 2.0f;                  // push diagnostics: our Link this near a block
     static constexpr std::uint64_t kAtBlockNoteUs = 10'000'000;

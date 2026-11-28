@@ -731,6 +731,14 @@ void WorldSync::Drain(std::uint64_t now_us) {
                     r.samples.pop_front();
                 }
             }
+            // Row 305 (a lifted rock stayed at the lift spot in the other game while its carrier walked): the carrier
+            // held it still, so its rest place came, then it walked on with it. A move sent after that place is the
+            // newer pose; the old place would win in PoseAt whenever the moves are a little apart and pull our copy
+            // back to it. A late move from before the place (moves are unreliable, places reliable) is stamped at
+            // least kRestUs before the place was sent, so it leaves the place alone.
+            if (r.place && v->time_us + kPlaceStaleUs > r.place->time_us) {
+                r.place.reset();
+            }
         } else if (const auto* h = std::get_if<proto::WorldHit>(&m)) {
             auto& waiting = hits_[h->hash];
             if (waiting.size() < proto::kMaxWorldHitsPerObject) {

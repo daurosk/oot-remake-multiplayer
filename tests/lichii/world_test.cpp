@@ -1462,6 +1462,53 @@ TEST_CASE("world: a carried pot is moved for the others and breaks where it land
     CHECK(poses.empty());  // it is breaking: not placed any more
 }
 
+TEST_CASE("world: a rock lifted, held still, then carried on follows the carrier, not its old rest place (row 305)") {
+    // Seen in game (carry-304-182cd53b-3): the carrier held the rock still after the lift (its rest place came), then
+    // walked on with it; the other game's copy stayed at the lift spot.
+    const char* const rock = "Obj_LiftRock_A_03";
+    const auto at = [](float x) { return proto::Vec3{x, 2.0f, 3.0f}; };
+    WorldSync b;  // the watcher
+    Walk(b, 1000 * kMs, {Thing(0x900, 0x12, 1, rock)});
+    b.Receive(MoveOf(0x12, 2000 * kMs, 1.0f));
+    b.Receive(MoveOf(0x12, 2050 * kMs, 1.2f));
+    Walk(b, 2050 * kMs, {Thing(0x900, 0x12, 1, rock, at(1.0f))});
+    b.Receive(PlaceOf(0x12, 1.2f));  // held still kRestUs: the carrier's place
+    Walk(b, 2500 * kMs, {Thing(0x900, 0x12, 1, rock, at(1.2f))});
+    // A late move from before the place (unreliable vs reliable channel) leaves the place alone.
+    b.Receive(MoveOf(0x12, 2090 * kMs, 1.1f));
+    Walk(b, 2550 * kMs, {Thing(0x900, 0x12, 1, rock, at(1.2f))});
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(2600 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(1.2f));
+    // It walks on with it: moves sent after the place.
+    b.Receive(MoveOf(0x12, 2600 * kMs, 2.0f));
+    b.Receive(MoveOf(0x12, 2650 * kMs, 3.0f));
+    Walk(b, 2650 * kMs, {Thing(0x900, 0x12, 1, rock, at(1.2f))});
+    poses.clear();
+    b.Poses(2725 * kMs, poses);  // shows 2625: between the two moves
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(2.5f));
+    // A gap in the moves longer than the show delay: the copy holds the carrier's newest pose (the old place pulled
+    // it back to the lift spot here).
+    poses.clear();
+    b.Poses(2900 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(3.0f));
+    // A gap past kRemoteHoldUs ends the following where the copy is; it is not put back at the old place.
+    Walk(b, 3400 * kMs, {Thing(0x900, 0x12, 1, rock, at(3.0f))});
+    poses.clear();
+    b.Poses(3450 * kMs, poses);
+    CHECK(poses.empty());
+    // Its new rest place comes: the copy goes there.
+    b.Receive(PlaceOf(0x12, 3.5f));
+    Walk(b, 3500 * kMs, {Thing(0x900, 0x12, 1, rock, at(3.0f))});
+    poses.clear();
+    b.Poses(3550 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(3.5f));
+}
+
 TEST_CASE("world: Reset and a reused address start clean") {
     WorldSync w;
     Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});

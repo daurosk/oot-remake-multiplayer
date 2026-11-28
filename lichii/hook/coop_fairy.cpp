@@ -214,8 +214,8 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
             const auto was = sampled_logged_.find(p.number);
             if (was == sampled_logged_.end() || was->second != sampled) {
                 log_(sampled ? "P" + std::to_string(p.number) + "'s Navi placed from their game (NAVI_SAMPLE)"
-                             : "no NAVI_SAMPLE from P" + std::to_string(p.number) +
-                                   ": their Navi hovers by the shoulder (an older build or server)");
+                             : "no fresh NAVI_SAMPLE from P" + std::to_string(p.number) +
+                                   " (0.6 s): their Navi hovers by the shoulder (older build or server, or lost)");
                 sampled_logged_[p.number] = sampled;
             }
         }

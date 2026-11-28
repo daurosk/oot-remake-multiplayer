@@ -540,7 +540,7 @@ TEST_CASE("navi sample: no sample (an older build) is the shoulder place, logged
     CHECK(out.targets[0].position[0] == doctest::Approx(10 + Still().offset[0]));
     f.Follow(Puppets(2, {10, 0, 5}), 1033);
     REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("no NAVI_SAMPLE from P2") != std::string::npos);
+    CHECK(lines[0].find("no fresh NAVI_SAMPLE from P2") != std::string::npos);
     f.Follow(Puppets(2, {10, 0, 5}), 1066, ~0u, std::nullopt, {{2, Sampled(2, {0, 1, 0})}});
     REQUIRE(lines.size() == 2);
     CHECK(lines[1].find("P2's Navi placed from their game") != std::string::npos);

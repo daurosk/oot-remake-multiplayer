@@ -201,9 +201,8 @@ def pytest_collection_modifyitems(config, items):
     _deselect_needs_env(config, items)
     bad = _source_problems(items)
     _mark_stale(config, items)
-    if config.getoption("lane_check_only"):
-        _lane_check_only(config, items, bad)
-    elif bad:
+    config._bt_bad = bad      # (--lane-check-only reads it in pytest_collection_finish, once -k / -m have run)
+    if bad and not config.getoption("lane_check_only"):
         raise pytest.UsageError("SETUP-FAIL source: " + "; ".join(bad))
 
 
@@ -236,6 +235,16 @@ def pytest_runtest_setup(item):
     hits = getattr(item, "_bt_stale", None)
     if hits:          # (before any fixture: no lane boot, no game input for a test that reads a path the module lacks)
         raise P.SetupFail("; ".join(stale_paths.line_of(h) for h in hits))
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session):
+    """--lane-check-only once collection is done (after EVERY plugin's modifyitems), so its 'tests collected N' is what
+    the run gets: pytest's own -k / -m deselection (the mark plugin's modifyitems) ran after ours before, and the chk
+    line counted the tests -k/-m leaves out (B #158: gate-hilt 23:09 'collected 49', pause-press 23:27 'collected 6
+    not 2'). (Not a renamed modifyitems impl: pytest registers only functions named pytest_*, CI 46086753563.)"""
+    if session.config.getoption("lane_check_only"):
+        _lane_check_only(session.config, session.items, getattr(session.config, "_bt_bad", ()))
 
 
 def _deselect_line(d):

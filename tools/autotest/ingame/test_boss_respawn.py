@@ -108,6 +108,27 @@ def start_check(pair):
             pair.act(x, "setenum %s Empty" % h)
 
 
+def arrival_miss(pair):
+    """Each game's reason on a 'both in play' miss (B #174, volvagia-rocks-182cd53b-3: the SETUP-FAIL said only 'not
+    after 2400 frames'; the cause, a second game event in the stage, took the game logs to find): why_now (scene,
+    loading, event, not_ready, play UI), event_note (which event, how long, its last cut) and a bridge framebuffer shot
+    of each game kept with the result (a text box or a held intro shows there). Read on its own short deadlines, so a
+    spent test deadline never replaces the reason; never raises."""
+    out = []
+    for x in ("A", "B"):
+        shot = ""
+        outer = pair.deadline
+        pair.deadline = P.Deadline(P.AWAY_CHECK_S, clock=outer.clock)
+        try:
+            shot = ", shot mean %.1f" % screen(pair, x, "arrival-miss")
+        except Exception as e:                # noqa: BLE001  (a failed shot names itself, the reason stays)
+            shot = ", no shot (%s: %s)" % (type(e).__name__, e)
+        finally:
+            pair.deadline = outer
+        out.append(pair.why_now(x) + pair.event_note(x) + shot)
+    return "; ".join(out)
+
+
 def boss_arrival(pair, stage, then=None):
     """Both games to `stage` at its own start, in play: a bounded step after the set-up check (BOSS_ARRIVAL_S); any
     miss is SETUP-FAIL 'boss arrival in <stage>: ...' (the row's own check never ran).
@@ -165,6 +186,8 @@ def boss_arrival(pair, stage, then=None):
             then()                            # (a check of the arrival itself, e.g. the hearts still in)
     except Exception as e:                    # noqa: BLE001  (a timeout, a refused warp, a wrong scene, a SetupFail)
         why = str(e) if isinstance(e, P.SetupFail) else "%s: %s" % (type(e).__name__, e)
+        if phase == "both in play":
+            why += " | " + arrival_miss(pair)
         raise P.SetupFail("boss arrival in %s: in '%s' after %.1f of %.0f s (%s): %s" % (
             stage, phase, outer.clock() - t0, pair.deadline.seconds, "; ".join(took) or "nothing done", why)) from e
     finally:

@@ -67,6 +67,13 @@ class PhantomGanonRow(unittest.TestCase):
         self.assertIn("below his fight start", json.dumps(s["tests"]))
         self.assertNotEqual(p.returncode, 0)
 
+    def test_knock_down_not_landed_is_setup_fail(self):
+        """NO REPEAT VOIDS (pganon-287-182cd53b): no ask of k1..k5 starts the knock-down on its owner's game ->
+        SETUP-FAIL naming it, never the fix-line FAIL."""
+        p, s = self.run_row({"BT_FAKE_PG_NO_LAND": "1"})
+        self.assertEqual(T.results(s), {TEST: "SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertIn("knock-down did not land: verb 139 not started (CCT stayed 2)", json.dumps(s["tests"]))
+
     def test_default_boot_deselects_it(self):
         out = os.path.join(self.tmp, "d")
         p = T.pytest_run([".", "--fake", "--out", out, "-q", "-k", TEST])

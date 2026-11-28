@@ -13,15 +13,19 @@ its intro (the bug of row 244 (a)); taken -> B also logs 'Enemy_DungeonBoss_Gohm
 nointro -> B's game plays no intro (no event, no not-ready line); noowner -> A never owns her.
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import boss_lines as BL   # noqa: E402  (the native boss table's lines: one table, tests/test_ingame_boss_lines.py)
 
 SCENE, GOHMA, SEEN = "InsideTheDekuTree", "Enemy_DungeonBoss_Gohma", "HavePlayedEvent.Dm_Deku_BossIn"
 SPOT = {"A": [-14.5, 79.6, -6.5], "B": [-20.0, 48.5, 60.0]}
 INTRO_FRAMES = 900
-SYNC = "coop: boss: Enemy_DungeonBoss_Gohma: native boss sync on (BSA 0x7f3a10, %s)"
+SYNC = BL.sync_line(GOHMA, "%s", 0x7f3a10)   # boss_lines.py: the module's one form
 NOT_READY = "coop: boss: not ready to own the boss: our game plays its intro now (Dm_Deku_BossIn)"
 READY = "coop: boss: ready to own the boss (Dm_Deku_BossIn)"
-VERBS = "coop: boss: Enemy_DungeonBoss_Gohma: the owner's verbs came (brain 3, action 1)"
-NOW_OURS = "coop: boss: Enemy_DungeonBoss_Gohma: now ours: our game runs it (sends its verbs)"
+VERBS = BL.verbs_line(GOHMA, 3)
+NOW_OURS = BL.now_ours_line(GOHMA)
 
 
 def _bug():

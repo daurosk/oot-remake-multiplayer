@@ -572,6 +572,17 @@ public:
     static constexpr std::uint64_t kRestUs = 400'000;        // still this long: at rest
     static constexpr std::uint64_t kRemoteHoldUs = 600'000;  // no move this long: the mover stopped
     static constexpr std::uint64_t kSettleUs = 500'000;      // a rest place is held this long
+    // Row 305: a move stamped later than this before we got the mover's rest place was sent after that place (the
+    // mover sends its place only kRestUs after its last move; kClockSlackUs covers the two games' server clocks):
+    // it took the object again, so that old place is dropped and our copy follows its moves.
+    static constexpr std::uint64_t kClockSlackUs = 100'000;
+    static constexpr std::uint64_t kPlaceStaleUs = kRestUs - kClockSlackUs;
+    // Row 305 part 2 (a late re-claim, a one-way delay over 300 ms): the same in the mover's own clock. Its place
+    // follows its last move by kRestUs when it stood still (stirred, coop_world.cpp Tick), so a move stamped more than
+    // kRestUs - kStampSlackUs after the newest move we had from it when the place came was sent after that place,
+    // whatever the delay. kStampSlackUs: one send period (its server-time estimate may step a little).
+    static constexpr std::uint64_t kStampSlackUs = kMoveEveryUs;
+    static constexpr std::uint64_t kPlaceAfterUs = kRestUs - kStampSlackUs;
     static constexpr std::uint64_t kQuietUs = 1'500'000;     // after following: no claim while it settles
     static constexpr float kAtBlockM = 2.0f;                  // push diagnostics: our Link this near a block
     static constexpr std::uint64_t kAtBlockNoteUs = 10'000'000;
@@ -791,6 +802,12 @@ private:
         std::deque<Sample> samples;
         std::optional<Sample> place;  // its rest place (time_us: when we got it)
         std::uint32_t place_serial = 0;  // counts the rest places
+        // Row 305 part 2: the newest move's time we had (its mover's clock, kept when the samples are cleared), and
+        // from the place on, the mover's time after which a move is a new claim (unset: no move of the placer was
+        // had before its place, e.g. the server's replay on entering; then only kPlaceStaleUs counts).
+        std::uint64_t newest_move_us = 0;
+        std::uint8_t newest_mover = 0;
+        std::optional<std::uint64_t> place_after_us;
     };
     struct Object {
         std::uint64_t address = 0;

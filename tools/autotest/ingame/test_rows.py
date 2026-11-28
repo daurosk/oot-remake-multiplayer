@@ -97,7 +97,7 @@ def face_each_other(pair):
     each game's state). place/face move a Link, never its camera: before this, A's camera stayed behind B and B's
     puppet was cut off at the bottom of every A shot (nocs4-182cd53b 01:36, gear/hair/leather/vest no-CS)."""
     place_in_front(pair, "A", of="B")
-    pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
+    pair.act("B", "face %.2f %.2f" % tuple(pair.pos("A")[::2]))
     pair.step_both(10)
     camera_behind_each(pair)
 

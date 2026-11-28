@@ -59,6 +59,30 @@ class BossLinesTest(unittest.TestCase):
         self.assertTrue(re.search(IS.VERBS, BL.verbs_line(GOHMA)))
         self.assertTrue(re.search(IS.NOW_OURS, BL.now_ours_line(GOHMA)))
 
+    def test_her_stuck_and_owner_lines_reach_test_boss_stuck(self):
+        """test_boss_stuck kept only lines with 'coop: boss: <boss>', so its stuck lines could never be seen."""
+        native = source("coop_boss_native.cpp")
+        for text in ('": ours held \'" + b.animation + "\' (brain "', '" s with no hit: stuck, its AI chooses again ("',
+                     'Note(b.name + ": fell " + std::to_string(static_cast<int>(below)) +',
+                     '" m below its fight start (row 178): put back at its fight start, its AI chooses again");',
+                     'Note(b.name + ": its AI did not run its body as a copy: it chooses again");',
+                     '"a copy: it takes the owner\'s verbs"'):
+            self.assertIn(text, native)
+        import test_boss_stuck as BS
+        lines = [BL.line(GOHMA, "ours held 'Wait' (brain 3, action 1, life 21) 25 s with no hit: stuck, its AI chooses "
+                                "again (1 of 3)"),
+                 BL.line(GOHMA, "fell 12 m below its fight start (row 178): put back at its fight start, its AI "
+                                "chooses again"),
+                 BL.line(GOHMA, "its AI did not run its body as a copy: it chooses again")]
+        for ln in lines:
+            self.assertTrue(any(k in ln for k in BS.BOSS_LINES), ln)
+            self.assertTrue(any(re.search(p, ln) for p in BS.STUCK_LINES), ln)
+        for role in ("ours: our game runs it (sends its verbs)", "a copy: it takes the owner's verbs"):
+            ln = BL.line(GOHMA, "now " + role)
+            self.assertTrue(any(k in ln for k in BS.BOSS_LINES) and re.search(BS.OWNER_LINE, ln), ln)
+        probe = BL.PREFIX + "probe 323: Gohma 0x104fd96a00 role owner owner 1 (changed)"
+        self.assertTrue(any(k in probe for k in BS.BOSS_LINES))
+
     def test_no_test_or_fake_writes_these_notes_with_the_rooms_prefix(self):
         # 'coop: boss: <Actor>: native boss sync on' / ': the owner's verbs came' / ': now ours' anywhere in ingame/
         bad = re.compile(r"coop: boss: [A-Za-z_%{]")

@@ -3,7 +3,7 @@
 | Test | Row | Kind |
 |---|---|---|
 | test_lethal_hit_with_nobody_nearby_goes_to_the_entrance | 334: A in another place, B's lethal hit: no downed wait | log + scene + life + LOOK |
-| test_bled_out_after_the_teammate_left_goes_to_the_entrance | 334 control (A beside: downed) + 318: A leaves, bled out | log + scene + LOOK |
+| test_downed_teammate_leaves_goes_to_the_entrance | 334 control (A beside: downed), then A leaves: the entrance early | log + scene + LOOK |
 | test_watched_teammate_leaves_and_the_spectator_goes_to_the_entrance | 318: B watches A, A warps away | log + scene + LOOK |
 
 The fix under test: lichii/hook/coop_dbno.cpp Machine (Notice / Nearby / ToEntranceAlone, kNearbyGraceUs) and
@@ -15,6 +15,7 @@ Test names avoid the word 'dbno': tests/test_ingame_dbno_crawl.py selects its ro
 import contextlib
 import os
 import sys
+import time
 
 import pytest
 
@@ -30,6 +31,8 @@ AWAY = crawl.BOOT                                 # A's other place: the default
 # The bleed-out this row plays with: kDbnoMinBleedS is 10 (test_dbno_crawl.py adult row); 12 is this row's own (no
 # other row sets it, so the fake games know this row by it: fakes/alone_318.py).
 BLEED_S = 12
+SPECTATE_BACK_S = 6       # coop_dbno.h kQuietUs 3 s + kSpectateMinUs 3 s: the soonest a watcher goes beside
+EARLY_FRAMES = 150         # 5 s of game: the 1 s grace + a margin, well under BLEED_S (12 s = 360 frames)
 RESPAWN_LIFE = 12          # coop_dbno.h kRespawnLife (capped at the player's own max)
 ENTRANCE = r"coop: teleport: respawn at the entrance \S+ of %s"   # coop_teleport_game.cpp, the want_entrance branch
 BESIDE = r"coop: dbno: respawn: moving beside P"                  # coop_dbno_game.cpp (move_beside)
@@ -130,17 +133,19 @@ def test_lethal_hit_with_nobody_nearby_goes_to_the_entrance(pair):
 
 @pytest.mark.budget(480)
 @pytest.mark.look
-@pytest.mark.row("334 control + 318 downed beside A, A leaves, bled out: the entrance, no watching a far player")
-def test_bled_out_after_the_teammate_left_goes_to_the_entrance(pair):
+@pytest.mark.row("334 control + 318/334 downed beside A, A leaves: the entrance at once, not at the bleed-out")
+def test_downed_teammate_leaves_goes_to_the_entrance(pair):
     with restored(pair):
         with pair.setup():
             set_up(pair)
         crawl.down(pair)       # A beside (same place): downed as before (event 0, A says 'P2 is down')
         pair.never_log("B", crawl.event(EV_ALONE))
         apart(pair)
-        pair.expect_log("B", crawl.event(EV_ALONE), max_frames=BLEED_S * 30 + 900)   # (pair.FPS 30) the bleed-out
+        # Downed only with someone nearby (B #171 07:4x): once A is gone (kNearbyGraceUs 1 s, coop_dbno.h) B goes to
+        # the entrance, long before its BLEED_S clock ends (EARLY_FRAMES < BLEED_S * pair.FPS 30).
+        pair.expect_log("B", crawl.event(EV_ALONE), max_frames=EARLY_FRAMES)
         pair.never_log("B", crawl.event(crawl.EV_BLED_OUT))
-        back_at_our_entrance(pair, "bled out alone")
+        back_at_our_entrance(pair, "downed, A left")
         crawl.shots(pair, "alone-318-bled-out", twice=False)
 
 
@@ -155,7 +160,15 @@ def test_watched_teammate_leaves_and_the_spectator_goes_to_the_entrance(pair):
         pair.expect_log("B", crawl.event(crawl.EV_BLED_OUT), max_frames=BLEED_S * 30 + 900)
         pair.expect_log("A", r"coop: dbno: P2 is spectating", max_frames=300)
         # At once: the respawn beside A waits kQuietUs + kSpectateMinUs (3 s each, coop_dbno.h); A leaves before it.
+        # (review-tests-153-7: B's Machine runs on the real clock; a lane warp slower than that lets B go beside A
+        # before A is away: then the run proves nothing, NO-REF, never a FAIL on BESIDE.)
+        t0 = time.monotonic()
         apart(pair)
+        took = time.monotonic() - t0
+        pair.notes.append("bled_out seen -> A in play away: %.1f s" % took)
+        if pair.log["B"].find(BESIDE) and took > SPECTATE_BACK_S:
+            pair.unproven("A's warp took %.1f s (> %d s: kQuietUs + kSpectateMinUs), B went beside A first" % (
+                took, SPECTATE_BACK_S))
         pair.expect_log("B", crawl.event(EV_ALONE), max_frames=600)
         back_at_our_entrance(pair, "watched one left")
         crawl.shots(pair, "alone-318-watched-left", twice=False)

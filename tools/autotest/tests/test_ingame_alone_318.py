@@ -13,7 +13,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 INGAME = os.path.join(os.path.dirname(HERE), "ingame")
 LETHAL = "test_lethal_hit_with_nobody_nearby_goes_to_the_entrance"
-BLED = "test_bled_out_after_the_teammate_left_goes_to_the_entrance"
+BLED = "test_downed_teammate_leaves_goes_to_the_entrance"
 WATCHED = "test_watched_teammate_leaves_and_the_spectator_goes_to_the_entrance"
 
 
@@ -67,6 +67,10 @@ class Alone318(unittest.TestCase):
     def test_downed_with_nobody_nearby_fails_row_334(self):
         p, res = run(self.out("bug-down"), LETHAL, refs=self.refs, bug="down")
         self.assertEqual(res[LETHAL]["result"], "FAIL", p.stdout[-2000:])
+
+    def test_staying_downed_after_the_teammate_left_fails(self):
+        p, res = run(self.out("bug-stay"), BLED, refs=self.refs, bug="stay")
+        self.assertEqual(res[BLED]["result"], "FAIL", p.stdout[-2000:])
 
     def test_watching_a_far_player_fails_row_318(self):
         for t in (BLED, WATCHED):

@@ -488,7 +488,8 @@ TEST_CASE("dbno: only a teammate who is up, here and beside him revives") {
         Game g;
         g.Down();  // downed beside them (row 334), then they are in another scene
         g.team = {Mate(1, {1, 0, 0}, State::up, "spot01")};
-        CHECK(held(g) == 0);
+        // (within kNearbyGraceUs: still downed, no revive from there; past it the entrance, rows 318 + 334)
+        CHECK(g.RunHeld(CoopDbno::kNearbyGraceUs / 2, 1).reviver == 0);
         CHECK(g.machine.Now() == State::downed);
     }
     {
@@ -505,10 +506,11 @@ TEST_CASE("dbno: only a teammate who is up, here and beside him revives") {
         g.team = {Mate(1)};
         g.Down();
         g.team[0].position.reset();  // no puppet to measure from
-        CHECK(held(g) == 0);
+        CHECK(g.RunHeld(CoopDbno::kNearbyGraceUs / 2, 1).reviver == 0);
         CHECK(g.machine.Now() == State::downed);
         g.team = {Mate(1, {std::nanf(""), 0, 0})};
-        CHECK(held(g) == 0);
+        CHECK(g.RunHeld(CoopDbno::kNearbyGraceUs / 4, 1).reviver == 0);
+        CHECK(g.machine.Now() == State::downed);
     }
 }
 
@@ -522,8 +524,8 @@ TEST_CASE("dbno: a teammate beside him in the other era's scene of his place rev
     h.scene = "Graveyard_Child";
     h.team = {Mate(1, {1, 0, 0}, State::up, "Graveyard_Adult")};
     h.Down();
-    h.team[0].scene = "Kakariko_Adult";  // then in another place
-    CHECK(h.RunHeld(kS, 1).reviver == 0);
+    h.team[0].scene = "Kakariko_Adult";  // then in another place (within kNearbyGraceUs: still downed)
+    CHECK(h.RunHeld(CoopDbno::kNearbyGraceUs / 2, 1).reviver == 0);
     CHECK(h.machine.Now() == State::downed);
 }
 
@@ -1409,6 +1411,31 @@ TEST_CASE("dbno row 334: three or more: any one nearby who is up is enough") {
     }
 }
 
+TEST_CASE("dbno rows 318 + 334: downed, the one nearby takes a door: still downed through the load") {
+    Game g;
+    g.team = {Mate(2)};
+    CHECK(g.Down().state == State::downed);
+    g.team[0].in_game = false;
+    g.team[0].loading = true;
+    CHECK(g.Run(5 * kS).state == State::downed);
+    g.team[0].in_game = true;  // back in our scene after the load: still nearby
+    g.team[0].loading = false;
+    CHECK(g.Run(3 * kS).state == State::downed);
+    CHECK_FALSE(g.Saw(Event::alone));
+    // Our own load (no Link to read, the glue sees nobody here): nobody judged gone meanwhile.
+    g.life.reset();
+    g.auto_here = false;
+    g.team[0].here = false;
+    CHECK(g.Run(5 * kS).state == State::downed);
+    g.life = CoopDbno::kDownedLife;
+    g.auto_here = true;
+    CHECK(g.Run(kS).state == State::downed);
+    CHECK_FALSE(g.Saw(Event::alone));
+    // A revive goes on as before.
+    CHECK(g.RunHeld(g.rules.ReviveUs() + kS, 2).state == State::up);
+    CHECK(g.Saw(Event::revived));
+}
+
 TEST_CASE("dbno row 334: everyone else down: the downed path and its wipe, unchanged") {
     Game g;
     g.team = {Mate(2, {1, 0, 0}, State::downed)};
@@ -1433,14 +1460,20 @@ TEST_CASE("dbno row 334: solo or the mode off: nothing new") {
     CHECK(g.entrance_asks == 0);
 }
 
-TEST_CASE("dbno row 318: bled out with nobody nearby: no spectating, the entrance at once, then up") {
+TEST_CASE("dbno rows 318 + 334: downed, the last one nearby leaves: the entrance once kNearbyGraceUs is past") {
     Game g;
     g.rules.bleed_s = 10;
-    g.team = {Threatened(Mate(2), CoopDbno::Threat::enemy)};
+    g.team = {Threatened(Mate(2), CoopDbno::Threat::enemy), Mate(3, {1, 0, 0}, State::up, "spot01")};
     CHECK(g.Down().state == State::downed);
-    g.team[0].scene = "spot01";  // they leave while we bleed out
-    g.Run(10 * kS + 2 * kFrame);
-    CHECK(g.machine.Now() == State::up);
+    g.team[0].scene = "spot01";  // they leave while we are down (3 is up, far)
+    CHECK(g.Run(CoopDbno::kNearbyGraceUs).state == State::downed);
+    CHECK(g.entrance_asks == 0);
+    const Output asked = g.Step();
+    CHECK(asked.state == State::spectating);
+    CHECK(asked.move_entrance);
+    CHECK(asked.left_us == 0);
+    g.Step();
+    CHECK(g.machine.Now() == State::up);  // long before the 10 s clock ran out
     CHECK(g.Saw(Event::alone));
     CHECK(g.Saw(Event::respawned));
     CHECK_FALSE(g.Saw(Event::bled_out));

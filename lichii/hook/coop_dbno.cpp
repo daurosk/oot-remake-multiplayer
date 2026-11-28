@@ -199,6 +199,9 @@ void Machine::Enter(State state, std::uint64_t now_us) {
 }
 
 void Machine::Notice(const Input& in) {
+    // No Link of ours to read (our own load, a hitch): nobody is judged
+    // gone; who was nearby stays so until we can see again.
+    const bool blind = !in.life;
     for (const Teammate& t : in.team) {
         if (!ValidPlayer(t.number) || t.state != State::up) {
             continue;
@@ -206,7 +209,7 @@ void Machine::Notice(const Input& in) {
         std::uint64_t& at = near_us_[t.number];
         // Here now; or loading (a door, a loading zone) after being here: a
         // load counts as still here, however long it takes.
-        if (t.here || (t.loading && at != 0 && in.now_us <= at + kNearbyGraceUs)) {
+        if (t.here || ((t.loading || blind) && at != 0 && in.now_us <= at + kNearbyGraceUs)) {
             at = std::max<std::uint64_t>(in.now_us, 1);
         }
     }
@@ -398,6 +401,14 @@ Output Machine::Frame(const Input& in) {
         // the wipe waits, the bleed-out runs on.
         alone_us_ = someone_up || !in.connected ? 0 : alone_us_ + step;
         reviver_ = PickReviver(in);
+        if (reviver_ == 0 && someone_up && !AnyNearby(in)) {
+            // Rows 318 + 334: downed only with someone nearby. The last one
+            // nearby left (past kNearbyGraceUs; a door's load from beside us
+            // still counts): the entrance at once, as when the one watched leaves.
+            Enter(State::spectating, in.now_us);
+            ToEntranceAlone(out, in.now_us);
+            break;
+        }
         if (reviver_ != 0) {
             held_us_ += step;  // the bleed-out stands still meanwhile
         } else {

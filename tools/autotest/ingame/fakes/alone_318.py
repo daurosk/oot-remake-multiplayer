@@ -10,6 +10,7 @@ the same game.dbno dict dbno_crawl keeps (its 'state' hook writes the life; its 
 BT_FAKE_ALONE_BUG (selftests, tests/test_ingame_alone_318.py):
   down    before the fix: a lethal hit always downs (row 334 not done); the bleed-out then still goes as below
   watch   before the fix: bled out, B watches A wherever A is and comes back beside A (row 318 not done)
+  stay    before B #171 07:4x: a downed B whose teammate left stays downed until its clock runs out
 """
 import os
 
@@ -85,6 +86,15 @@ def go_down(game):
         else:
             alone(game)
     game.later(game.dbno_rules["bleed"] * FPS, bleed)
+
+    def gone():
+        if d["state"] != "down" or not game.alone318:
+            return
+        if not nearby(game) and not bug("stay") and not bug("watch"):
+            alone(game)
+        else:
+            game.later(10, gone)
+    game.later(10, gone)
 
 
 def act(game, words):

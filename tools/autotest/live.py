@@ -865,9 +865,13 @@ def adopt(d, job):
             want[p] = None   # (no folder known: never put in)
     if server:
         want[server] = (s.get("runner") or {}).get("server")
+    # (each pid keeps the pids.json write it was FIRST named in: a later rewrite, e.g. a game relaunch, must not let a
+    # reused pid of a dead server pass the time check as the other lane's server, same exe: review-tests-153-7 nit)
+    if getattr(job, "named", None) is None:
+        job.named = {}
     skipped = {}
     for p, image in want.items():
-        if not job.add(p, image, written):
+        if not job.add(p, image, job.named.setdefault(p, written)):
             skipped[p] = (getattr(job, "skipped", None) or {}).get(p, "not added")
     return skipped
 

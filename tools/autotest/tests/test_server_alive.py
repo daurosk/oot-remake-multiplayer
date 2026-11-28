@@ -215,6 +215,22 @@ class Adopt(unittest.TestCase):
                                                                    % os.path.join(d, "lane1-A", "longshot.exe"
                                                                                   if hs.WINDOWS else "longshot")})
 
+    def test_pid_keeps_its_first_named_time(self):
+        # (server 13 died; a game relaunch rewrote pids.json later with 13 still in it: a new process with pid 13 made
+        # after the FIRST write must still fail the time check)
+        with tempfile.TemporaryDirectory() as d:
+            session_dir(d, {"A": 11}, 13)
+            path = os.path.join(d, "pids.json")
+            os.utime(path, (1000.0, 1000.0))
+            job = FakeJob()
+            live.adopt(d, job)
+            with open(path, "w") as f:
+                json.dump({"games": {"A": 31}, "server": 13}, f)
+            os.utime(path, (2000.0, 2000.0))
+            live.adopt(d, job)
+            self.assertEqual([c[2] for c in job.calls if c[0] == 13], [1000.0, 1000.0])
+            self.assertEqual([c[2] for c in job.calls if c[0] == 31], [2000.0])
+
     def test_game_without_folder_never_added(self):
         with tempfile.TemporaryDirectory() as d:
             session_dir(d, {"A": 11}, None)

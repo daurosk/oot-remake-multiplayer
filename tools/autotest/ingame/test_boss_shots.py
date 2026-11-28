@@ -88,13 +88,28 @@ INTRO_MARGIN = 1.25                 # 25% over the longest measured (one run of 
 # fixed wait before it (Twinrova's fr(1800)). A ceiling, not a timing: the wait ends at the first read with the play UI
 # up and no event, and every frame counts in the test's own budget.
 FIGHT_UI_FRAMES = int(INTRO_MEASURED_MAX * INTRO_MARGIN) - fr(1800)       # = 4200
-# Budgets from the frames each test steps at the bridge's measured pace: test_phantom_ganon_shots ran ~8700 frames in
-# 562.1 s (run twinrova-222-a2e69946 summary.md) = 15.5 frames/s; +25%. Twinrova: ~11400 frames + FIGHT_UI_FRAMES.
-STEP_FPS = 15.5
-TWINROVA_FRAMES = 11400 + FIGHT_UI_FRAMES
-TWINROVA_BUDGET_S = int(TWINROVA_FRAMES / STEP_FPS * 1.25)                # = 1258 (the old row's 900 s did not fit)
-PG_FRAMES = 8700 + FIGHT_UI_FRAMES  # (its fight_ready may wait the same ceiling after its own intro wait)
-PG_BUDGET_S = int(PG_FRAMES / STEP_FPS * 1.25)                            # = 1040
+# Budgets: each test's MOST frames, counted from its own steps below (every wait at its ceiling), at the slowest valid
+# measured lane pace, the shared pair.BOOT_STEP_FPS (11.9 frames/s, row215-309d7180; not a copy), +25%, plus its set-up
+# and its two-game warp in seconds (pair.SETUP_LIMIT_S, pair.WARP_PAIR_MEASURED_S). Review-tests-153-8 08:15: the first
+# sizing (15.5 frames/s from one run, the old ~11400 / ~8700 frame estimates) left 2.6% margin at 11.9.
+SHOT_FRAMES = 5                     # Shots.both: a shot runs its game up to 5 frames (docs/playtest.md 'shot')
+SYNC_MAX = 2 * fr(1200)             # an expect_log(sync_on(..)) per game, each up to fr(1200)
+JUDGE_MAX = fr(600) + 600           # judge_shots: its 'wait 600' + the counts line wait (max_frames=600)
+TWINROVA_FRAMES = (fr(1800) + SYNC_MAX + FIGHT_UI_FRAMES + fr(240)                       # intro, sync, fight_ready
+                   + 10 * (fr(90) + SHOT_FRAMES) + 9 * fr(510)                           # phase 1: a-p1-01..10
+                   + fr(60) + fr(600) + fr(2400) + SYNC_MAX + fr(240)                    # kills, merge, sync
+                   + 24 * (fr(90) + SHOT_FRAMES + fr(60)) + JUDGE_MAX + SHOT_FRAMES)     # fused: f-01..24, judge, end
+PG_FRAMES = (fr(3900) + SYNC_MAX + FIGHT_UI_FRAMES + 2 * fr(10) + fr(600)               # intro, sync, lock-on
+             + fr(2700)                                                                  # phase 1 hit plan to t4b
+             + 24 * (fr(90) + SHOT_FRAMES + fr(210)) + JUDGE_MAX + SHOT_FRAMES)          # phase 2: p2-01..24, judge
+
+
+def budget_s(frames):
+    return int(frames / P.BOOT_STEP_FPS * 1.25 + P.SETUP_LIMIT_S + P.WARP_PAIR_MEASURED_S) + 1
+
+
+TWINROVA_BUDGET_S = budget_s(TWINROVA_FRAMES)
+PG_BUDGET_S = budget_s(PG_FRAMES)
 
 
 def fight_ready(pair, stage):

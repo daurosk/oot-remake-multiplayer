@@ -148,7 +148,12 @@ class FightReady(unittest.TestCase):
                                    (BS.test_phantom_ganon_shots, BS.PG_FRAMES, BS.PG_BUDGET_S)):
             marks = {m.name: m.args for m in fn.pytestmark}
             self.assertEqual(marks["budget"], (budget,), fn.__name__)
-            self.assertGreaterEqual(budget, frames / BS.STEP_FPS, fn.__name__)
+            self.assertGreaterEqual(budget, frames / P.BOOT_STEP_FPS * 1.25 + P.SETUP_LIMIT_S + P.WARP_PAIR_MEASURED_S,
+                                    fn.__name__)
+        # (the worst-case frame counts, summed by hand from each test's own steps: review-tests-153-8 08:15)
+        self.assertEqual(BS.TWINROVA_FRAMES, 14890)
+        self.assertEqual(BS.PG_FRAMES, 13635)
+        self.assertIs(BS.P.BOOT_STEP_FPS, P.BOOT_STEP_FPS)                  # (the shared pace, not a copy)
 
     def test_the_first_zl_comes_after_fight_ready_in_both_tests(self):
         # (source order: each test's first ZL press/hold after its fight_ready call, review-tests-153-3)

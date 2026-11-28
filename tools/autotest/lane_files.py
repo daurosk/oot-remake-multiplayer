@@ -18,8 +18,8 @@ The known set, per file (in the game folder: on Hookshot ConfigDir = GameDir, ho
 - none (moved aside, never deleted): coop-player.ini + coop-kit.txt (a Nucleus instance: other options file,
   coop_title.cpp:1381-1417, coop_local_start_os.cpp:55), coop-difficulty.ini (coop_difficulty_game.cpp:58),
   coop-ngplus.ini (coop_ngplus.cpp:69), coop-saves.ini (saves = multiplayer bypasses the restored save,
-  coop_save.cpp:108), coop-character.txt + coop-character-ages.txt (a kept Character Select pick, coop_hook.cpp:1980,
-  3989), coop-bans.txt (coop_pause.cpp:789), coop-test-state.txt (a stale state file test_regress_ui reads; the module
+  coop_save.cpp:108), coop-character.txt + coop-character-ages.txt (a kept Character Select pick; the first is
+  only left by 0.12.0 and older kits since row 327, the second coop_hook.cpp CharAgesFile), coop-bans.txt (coop_pause.cpp:789), coop-test-state.txt (a stale state file test_regress_ui reads; the module
   writes it again with LICHII_COOP_TEST_STATE=1), gold-race\\ (a host's kept Gold Skulltula race, coop_gold_mode.h:92).
 Not here, each with its own owner: mods\\ (coop-mods.list, coop-mods.settings.json, coop-one-time-keys.txt, the pack:
 hookshot.py pack_start/seed_layout, lane-mods-check.ps1, testpack.py), the save (restore_save, testsave.py),

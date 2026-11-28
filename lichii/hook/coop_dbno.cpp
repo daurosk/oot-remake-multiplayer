@@ -196,6 +196,9 @@ void Machine::Enter(State state, std::uint64_t now_us) {
     move_since_us_ = 0;
     dying_since_us_ = 0;
     alone_retry_us_ = 0;
+    give_up_us_ = 0;
+    give_up_armed_ = false;
+    out_alone_ = false;
 }
 
 void Machine::Notice(const Input& in) {
@@ -274,6 +277,30 @@ std::uint8_t Machine::PickWatch(const Input& in) const {
         }
     }
     return (best != nullptr ? best : up.front())->number;
+}
+
+std::uint8_t Machine::PickBeside(const Input& in) const {
+    const Teammate* best = nullptr;
+    float best_m = 0.0f;
+    const Teammate* lowest = nullptr;
+    for (const Teammate& t : in.team) {
+        if (!ValidPlayer(t.number) || t.state != State::up || !t.in_game) {
+            continue;
+        }
+        if (lowest == nullptr || t.number < lowest->number) {
+            lowest = &t;
+        }
+        if (!t.scene || !in.scene || !coop::protocol::same_place(*t.scene, *in.scene) || !t.position ||
+            !Finite(*t.position)) {
+            continue;
+        }
+        const float m = Level(in.position, *t.position);
+        if (best == nullptr || m < best_m) {
+            best = &t;
+            best_m = m;
+        }
+    }
+    return best != nullptr ? best->number : lowest != nullptr ? lowest->number : 0;
 }
 
 bool Machine::Quiet(const Input& in) const {
@@ -370,6 +397,7 @@ Output Machine::Frame(const Input& in) {
             // Link, or the life stayed 0). Out, so the others know nobody is up.
             Enter(State::out, in.now_us);
             out_seen_dead_ = true;
+            out_alone_ = someone_up;  // row 330: the others play on; back beside one of them
             out.events.push_back(Event::died);
         } else if (active && in.life && *in.life <= 0) {
             if (dying_since_us_ == 0) {
@@ -384,6 +412,7 @@ Output Machine::Frame(const Input& in) {
             // The game took the life anyway: its death runs.
             Enter(State::out, in.now_us);
             out_seen_dead_ = true;
+            out_alone_ = someone_up;  // row 330
             out.events.push_back(Event::died);
             break;
         }
@@ -407,6 +436,35 @@ Output Machine::Frame(const Input& in) {
             // still counts): the entrance at once, as when the one watched leaves.
             Enter(State::spectating, in.now_us);
             ToEntranceAlone(out, in.now_us);
+            break;
+        }
+        // Row 330: give up (hold A kGiveUpUs, a fresh press; not while a
+        // teammate revives us, and only with one up: alone, the wipe stands).
+        if (!in.give_up) {
+            give_up_armed_ = true;
+        }
+        give_up_us_ = give_up_armed_ && in.give_up && reviver_ == 0 && someone_up ? give_up_us_ + step : 0;
+        if (give_up_us_ >= kGiveUpUs) {
+            // The bleed-out's co-op death, now: watch the one nearby, back
+            // beside them once no enemy is near (never the Game Over's last save).
+            Enter(State::spectating, in.now_us);
+            watch_ = PickWatch(in);
+            if (watch_ == 0) {
+                // Nobody nearby to watch (a moment's gap): beside whoever is up.
+                move_to_ = PickBeside(in);
+                if (move_to_ != 0) {
+                    move_ = Move::beside;
+                    move_since_us_ = in.now_us;
+                    out.move_beside = move_to_;
+                } else {
+                    ToEntranceAlone(out, in.now_us);
+                }
+            }
+            out.by = watch_ != 0 ? watch_ : move_to_;
+            out.events.push_back(Event::gave_up);
+            if (in.life && *in.life != kDownedLife) {
+                out.write_life = kDownedLife;
+            }
             break;
         }
         if (reviver_ != 0) {
@@ -446,6 +504,7 @@ Output Machine::Frame(const Input& in) {
         if (in.life && *in.life <= 0) {
             Enter(State::out, in.now_us);
             out_seen_dead_ = true;
+            out_alone_ = someone_up;  // row 330
             out.events.push_back(Event::died);
             break;
         }
@@ -520,7 +579,14 @@ Output Machine::Frame(const Input& in) {
         if (!in.life || *in.life <= 0) {
             out_seen_dead_ = true;  // dead, or no Link (the game over screen, a reload)
         } else if (out_seen_dead_) {
+            // Row 330: died while the others played on (not the wipe): the
+            // Game Over's Try Again put us at our last save, maybe far away.
+            const bool rejoin = out_alone_ && in.connected && in.rules.on && someone_up;
             Enter(State::up, in.now_us);
+            if (rejoin) {
+                out.move_beside = PickBeside(in);
+                out.by = out.move_beside;
+            }
             out.events.push_back(Event::back);
         } else if (in.now_us >= out_written_us_ + kOutAgainUs) {
             out.write_life = 0;  // the first write did not hold
@@ -542,6 +608,8 @@ Output Machine::Frame(const Input& in) {
         out.guard = Guard::shielded;
         out.left_us = left_us_;
         out.reviver = reviver_;
+        out.can_give_up = reviver_ == 0 && someone_up;
+        out.give_up = std::min(1.0f, static_cast<float>(give_up_us_) / static_cast<float>(kGiveUpUs));
         out.progress = in.rules.ReviveUs() == 0
                            ? 0.0f
                            : std::min(1.0f, static_cast<float>(held_us_) /
@@ -780,8 +848,17 @@ std::optional<std::string> OwnLine(Event event, std::string_view by_name) {
         return "Nobody is left standing";
     case Event::got_up:
         return "Down but not out was turned off: you are up again";
-    case Event::died:
+    case Event::gave_up:
+        if (by_name.empty()) {
+            return std::string("You gave up");
+        }
+        return "You gave up: you watch " + std::string(by_name) + " and come back beside them once no enemy is near";
     case Event::back:
+        if (!by_name.empty()) {
+            return "You are back: you go to " + std::string(by_name);  // row 330: not left at the last save
+        }
+        break;
+    case Event::died:
     case Event::alone:  // the respawned line that follows says it
         break;
     }

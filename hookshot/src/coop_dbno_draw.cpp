@@ -32,6 +32,19 @@ std::string Progress(float progress) {
     return std::to_string(share) + "%";
 }
 
+namespace {
+
+// Row 330, downed with nobody reviving: "Hold A: give up", then the hold's share ("Giving up 50%"); "" otherwise.
+std::string GiveUp(const CoopDbno::View& view) {
+    if (view.kind != CoopDbno::View::Kind::downed || !view.name.empty() || !view.can_give_up) {
+        return {};
+    }
+    const std::string p = Progress(view.give_up);
+    return p.empty() ? CoopI18n::Tr("Hold A: give up") : CoopI18n::Tr("Giving up") + " " + p;
+}
+
+}  // namespace
+
 std::string Line(const CoopDbno::View& view) {
     std::string line = Caption(view);
     if (view.kind == CoopDbno::View::Kind::spectating) {
@@ -41,6 +54,9 @@ std::string Line(const CoopDbno::View& view) {
     const bool reviving = view.kind == CoopDbno::View::Kind::downed ? !view.name.empty() : view.holding;
     if (const std::string p = Progress(view.progress); reviving && !p.empty()) {
         line += "  " + p;
+    }
+    if (const std::string g = GiveUp(view); !g.empty()) {
+        line += "  " + g;
     }
     return line;
 }
@@ -67,6 +83,9 @@ std::string Tail(const CoopDbno::View& view) {
     const bool reviving = view.kind == CoopDbno::View::Kind::downed ? !view.name.empty() : view.holding;
     if (const std::string p = Progress(view.progress); reviving && !p.empty()) {
         tail += "  " + p;
+    }
+    if (const std::string g = GiveUp(view); !g.empty()) {
+        tail += "  " + g;
     }
     return tail;
 }

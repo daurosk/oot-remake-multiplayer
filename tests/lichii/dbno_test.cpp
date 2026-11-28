@@ -72,6 +72,7 @@ struct Game {
     int entrance_asks = 0;
     bool enemy_near_us = false;
     bool bottled_fairy = false;
+    bool give_up = false;  // row 330: A held (downed)
     // Teammate::here as the glue's ShownHere gives it outside a dungeon (in
     // the game, our place, a position); false: the test sets it itself.
     bool auto_here = true;
@@ -99,6 +100,7 @@ struct Game {
         in.moved = std::exchange(pending, CoopDbno::Moved::none);
         in.enemy_near_us = enemy_near_us;
         in.bottled_fairy = bottled_fairy;
+        in.give_up = give_up;
         Output out = machine.Frame(in);
         if (out.move_beside != 0) {
             ++beside_asks;
@@ -1542,4 +1544,107 @@ TEST_CASE("dbno row 318: the entrance refused with an enemy near us: tried again
     g.Run(3 * kFrame);
     CHECK(g.machine.Now() == State::up);  // refused again, nothing near: up where he lay
     CHECK(g.Saw(Event::respawned));
+}
+
+TEST_CASE("dbno row 330: downed, A held kGiveUpUs: the co-op death at once, then back beside the teammate") {
+    Game g;
+    CHECK(g.Down().state == State::downed);
+    Output o = g.Step();
+    CHECK(o.can_give_up);
+    CHECK(o.give_up == 0.0f);
+    g.give_up = true;
+    o = g.Run(CoopDbno::kGiveUpUs / 2);
+    CHECK(o.state == State::downed);
+    CHECK(o.give_up > 0.4f);
+    CHECK(o.give_up < 0.6f);
+    o = g.Run(CoopDbno::kGiveUpUs / 2 + kFrame);
+    CHECK(o.state == State::spectating);
+    CHECK(g.Saw(Event::gave_up));
+    CHECK_FALSE(g.Saw(Event::bled_out));
+    CHECK_FALSE(g.Saw(Event::wiped));
+    CHECK(o.watching == 1);
+    CHECK(g.life == CoopDbno::kDownedLife);  // never the game's death: no Game Over, no last save
+    CHECK(g.sent.back().state == State::spectating);
+    g.give_up = false;
+    // No enemy near the one watched: beside them, then up (no entrance, no Try Again).
+    o = g.Run(CoopDbno::kSpectateMinUs + CoopDbno::kQuietUs + 4 * kFrame);
+    CHECK(g.beside_asks == 1);
+    CHECK(g.entrance_asks == 0);
+    CHECK(g.machine.Now() == State::up);
+    CHECK(g.Saw(Event::respawned));
+}
+
+TEST_CASE("dbno row 330: A held as he went down counts only once let go, a short hold does nothing") {
+    Game g;
+    g.give_up = true;  // mashing A in the fight
+    g.Down();
+    CHECK(g.Run(CoopDbno::kGiveUpUs + kS).state == State::downed);
+    CHECK_FALSE(g.Saw(Event::gave_up));
+    g.give_up = false;
+    g.Step();
+    g.give_up = true;
+    g.Run(CoopDbno::kGiveUpUs / 2);
+    g.give_up = false;  // let go early: the hold starts over
+    CHECK(g.Step().give_up == 0.0f);
+    g.give_up = true;
+    CHECK(g.Run(CoopDbno::kGiveUpUs - 2 * kFrame).state == State::downed);
+    CHECK(g.Run(3 * kFrame).state == State::spectating);
+    CHECK(g.Saw(Event::gave_up));
+}
+
+TEST_CASE("dbno row 330: no give up while a teammate revives us: the revive wins") {
+    Game g;
+    g.Down();
+    g.Step();
+    g.give_up = true;
+    const Output o = g.RunHeld(g.rules.ReviveUs() + kS);
+    CHECK_FALSE(g.Saw(Event::gave_up));
+    CHECK_FALSE(o.can_give_up);
+    CHECK(g.Saw(Event::revived));
+}
+
+TEST_CASE("dbno row 330: nobody else up (solo-like): no give up, the wipe and its Game Over unchanged") {
+    Game g;
+    g.team = {Mate(2, {1, 0, 0}, State::downed)};
+    g.Down();
+    g.Step();
+    g.give_up = true;
+    const Output o = g.Step();
+    CHECK_FALSE(o.can_give_up);
+    CHECK(g.Run(CoopDbno::kWipeGraceUs + kFrame).state == State::out);
+    CHECK(g.Saw(Event::wiped));
+    CHECK_FALSE(g.Saw(Event::gave_up));
+    // Back from that Game Over: nobody to go to, nothing moved.
+    g.life.reset();
+    g.Run(kS);
+    g.life = 12;
+    g.team = {Mate(2)};
+    CHECK(g.Step().state == State::up);
+    CHECK(g.beside_asks == 0);
+}
+
+TEST_CASE("dbno row 330: the game's own death while a teammate stands: back from its Try Again, beside them") {
+    Game g;
+    g.team = {Mate(1, {1, 0, 0}), Mate(3, {9, 0, 0}, State::up, "spot01")};
+    g.Down();
+    g.life = 0;  // a script took the life anyway
+    CHECK(g.Step().state == State::out);
+    CHECK(g.Saw(Event::died));
+    g.life.reset();  // its Game Over, then Try Again: the last save, far away
+    g.Run(2 * kS);
+    g.scene = "spot20";
+    g.life = 12;
+    const Output o = g.Step();
+    CHECK(o.state == State::up);
+    CHECK(g.Saw(Event::back));
+    CHECK(g.beside_asks == 1);
+    CHECK(o.move_beside == 1);  // nobody in our scene now: the lowest number up
+    CHECK(o.by == 1);
+}
+
+TEST_CASE("dbno row 330: its own lines") {
+    CHECK(CoopDbno::OwnLine(Event::gave_up, "Mido")->find("you watch Mido") != std::string::npos);
+    CHECK(CoopDbno::OwnLine(Event::gave_up, "") == "You gave up");
+    CHECK(CoopDbno::OwnLine(Event::back, "Mido") == "You are back: you go to Mido");
+    CHECK_FALSE(CoopDbno::OwnLine(Event::back, ""));
 }

@@ -23,7 +23,8 @@ std::string Caption(const CoopDbno::View& view);
 std::string Progress(float progress);
 
 // The whole line: the caption, then the clock while a clock runs (downed, reviving), then the progress while a revive
-// is held. Spectating: the caption only.
+// is held; downed with nobody reviving and a teammate up (row 330), "Hold A: give up" (held: "Giving up 50%").
+// Spectating: the caption only.
 std::string Line(const CoopDbno::View& view);
 
 // The line for the game's banner (SimpleInfo_00, one line at most `width` wide, CoopNativeUi::Width: the game's font,

@@ -84,6 +84,8 @@ struct View {
     float progress = 0.0f;     // 0 to 1; the ring
     bool holding = false;      // reviving: A is held
     bool elsewhere = false;    // spectating: the one watched is where our camera cannot follow (another scene or room)
+    bool can_give_up = false;  // downed (row 330): a teammate is up and nobody revives us: holding A gives up
+    float give_up = 0.0f;      // downed: how far that hold is, 0 to 1
 };
 
 // What to draw now; nothing when there is nothing. Any thread.

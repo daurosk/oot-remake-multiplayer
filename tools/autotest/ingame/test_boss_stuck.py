@@ -79,7 +79,8 @@ WARP_WAIT = 600                      # test_boss_away ROOM_WAIT
 # Her lines: the native boss table's notes of her (boss_lines.py: 'coop: bosses: <boss>: ...'; 'coop: boss: <boss>' matched
 # none, so the stuck lines below were never seen) and the row 323 probe's (coop_brain_state.cpp 'probe 323: Gohma ...').
 BOSS_LINES = (BL.PREFIX + GOHMA + ": ", BL.PREFIX + "probe 323: Gohma ")
-STUCK_LINES = [r"%s: ours held '.*' stuck" % GOHMA, r"%s: fell \d+ m below its fight start" % GOHMA,
+# 'ours held' pattern: the real line is lichii/hook/coop_boss_native.cpp:666-669 ("ours held 'X' (brain .. life ..) 25 s with no hit: stuck, ...")
+STUCK_LINES = [r"%s: ours held '.*' \(brain .* s with no hit: stuck" % GOHMA, r"%s: fell \d+ m below its fight start" % GOHMA,
                r"%s: its AI did not run its body as a copy" % GOHMA]
 OWNER_LINE = r"%s: now (ours|a copy)" % GOHMA
 

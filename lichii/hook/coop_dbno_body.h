@@ -356,6 +356,7 @@ public:
         std::uint64_t child_poses = 0; // kChildLyingPose played on our child Link (again: slot 0 showed another)
         std::uint64_t ground_moves = 0;   // the game's Walk / Wait let through for a Link held in a lying pose
         std::uint64_t kept_crawling = 0;  // the game's "room to stand up" answered "no room" (NoRoom, patch 0046)
+        std::uint64_t plays_skipped = 0;  // the game's own slot-0 plays skipped on a Link held in a pose (SkipPlay, 0049)
         std::vector<std::int32_t> skipped_verbs;  // the first distinct ones (the log)
     };
     Counts Totals() const;
@@ -371,6 +372,18 @@ public:
     // once, and the downed child lay still in kChildLyingPose with no movement and no crawl camera). Up again
     // (revived, bled out, rules off) or any other actor: the game's own check.
     bool NoRoom(std::uint64_t actor);
+    // A game thread (patch 0049's wrap of the game's AS play request main+0x2022a0, hos_coop_pose_play.h; 0.12.1
+    // downed-move root fix): the game asks to play `command` on `slot` of `actor`. True here = skip it as played
+    // (the request's own "already playing" answer): `actor` is our Link held in a lying pose (an adult's kLyingPose,
+    // a child's kChildLyingPose: held_actor_), the slot is 0 and the command is not the held pose itself
+    // (DamageLStand for an adult, Crouch for a child) nor a horse's.
+    // The game's ground verbs (kWalk 1 / kWait 40, let through by Skip so they read the stick) then move him without
+    // playing their Wait / Walk / Run over the pose: before, StepPose played the pose again every frame the game had
+    // played its own (3385x in run-182cd53b), and the game's Wait won on screen (he stood, flickering).
+    // Any other actor, slot or time: the game's own play. Lock-free unless `actor` is the held one.
+    bool SkipPlay(std::uint64_t actor, std::int32_t slot, std::string_view command);
+    // The Link whose slot-0 plays SkipPlay skips now (0: none). For tests and the log.
+    std::uint64_t HeldActor() const noexcept { return held_actor_.load(std::memory_order_acquire); }
 
     // Ask again at most this often while lying and not known to crawl.
     static constexpr std::uint64_t kAskEveryMs = 500;
@@ -419,6 +432,8 @@ private:
     mutable std::mutex mutex_;
     Wanted want_;
     std::atomic<std::uint64_t> bsa_{0};  // want_.bsa, read without the lock by Skip
+    std::atomic<std::uint64_t> held_actor_{0};  // our Link while held in a lying pose (StepPose; 0 when up): SkipPlay
+    bool play_noted_ = false;                   // SkipPlay's first skip of this hold noted
     // Learnt from our Link's own scheduler requests (Walk / Wait: its main slot).
     std::uint64_t node_ = 0;
     std::int32_t slot_ = 0;

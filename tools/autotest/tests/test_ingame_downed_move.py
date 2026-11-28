@@ -91,6 +91,12 @@ class DownedMove(unittest.TestCase):
         self.assertEqual({t: r["result"] for t, r in res.items()}, {CHILD: "FAIL", ADULT: "FAIL"}, p.stdout[-3000:])
         self.assertIn("flickers", json.dumps(res))
 
+    def test_no_play_skipped_fails_the_adult(self):
+        # patch 0049's root fix: no skip line = the game's Wait still replaces the pose (the 89133f1ee flicker)
+        p, res = run(self.out("noskip"), ADULT, refs=self.refs, bug="noskip")
+        self.assertEqual(res[ADULT]["result"], "FAIL", p.stdout[-3000:])
+        self.assertIn("skipped", json.dumps(res[ADULT]))
+
     def test_no_crawl_camera_fails_the_child(self):
         p, res = run(self.out("farcam"), CHILD, refs=self.refs, bug="farcam")
         self.assertEqual(res[CHILD]["result"], "FAIL", p.stdout[-3000:])

@@ -34,6 +34,7 @@
 #include "hos_coop_boss_orders.h"
 #include "hos_coop_boss_shooter.h"
 #include "hos_coop_crawl.h"
+#include "hos_coop_pose_play.h"
 #include "coop_boss_orders.h"
 #include "coop_shooter_probe.h"
 #include "coop_svc.h"
@@ -1164,13 +1165,40 @@ TEST_CASE("hookshot: the crawl's room check (patch 0046, 0.12.1 downed-move) is 
     // Phase 0 only; "no room" (x0 = 0, the game's function skipped) only when the dbno body says so; else the game's.
     const std::size_t from = module.find("if (id == HOS_COOP_WRAP_CRAWL_ROOM && phase == 0) {");
     REQUIRE(from != std::string::npos);
-    // (it sits before the shooter branch: the shooter test reads that branch up to the action verb's)
-    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_SHOOTER_PREPARE ||", from);
+    // (it sits before 0049's pose-play branch, which sits before the shooter branch: the shooter test reads that
+    // branch up to the action verb's)
+    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_POSE_PLAY && phase == 0) {", from);
     REQUIRE(to != std::string::npos);
     const std::string branch = module.substr(from, to - from);
     CHECK(branch.find("if (CoopDbno::Body::TheCrawl().NoRoom(x[0])) {") != std::string::npos);
     CHECK(branch.find("x[0] = 0;") != std::string::npos);
     CHECK(branch.find("Write(") == std::string::npos);  // no guest memory written
+}
+
+TEST_CASE("hookshot: the game's AS play request (patch 0049, 0.12.1 downed-move root fix) is one row after 0046's, skipped only on our held Link's slot 0") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0049-coop-pose-play.patch");
+    CHECK(NewFile(patch, "host/hos_coop_pose_play.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_pose_play.h"));
+    // The row, with the function's first words (read from the game's main, main+0x2022a0: pacibsp; sub sp, sp, #0x80;
+    // stp x29, x30, [sp, #0x40]; str x23, [sp, #0x50]; stp x22, x21, [sp, #0x60]; stp x20, x19, [sp, #0x70]), right
+    // after 0046's row. The same function the puppets play through (CoopPuppet::addr::kPlayAs).
+    CHECK(patch.find("+    (32, 0x2022a0, (0xd503237f, 0xd10203ff, 0xa9047bfd, 0xf9002bf7, 0xa90657f6, 0xa9074ff4)),") !=
+          std::string::npos);
+    CHECK(patch.find("     (31, 0x301ac50,") != std::string::npos);
+    CHECK(CoopPuppet::addr::kPlayAs == 0x2022a0);
+    CHECK(HOS_COOP_WRAP_POSE_PLAY == 32);  // the next id after 0046's 31; in the hello's 64 bits
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const std::size_t from = module.find("if (id == HOS_COOP_WRAP_POSE_PLAY && phase == 0) {");
+    REQUIRE(from != std::string::npos);
+    const std::size_t to = module.find("if (id == HOS_COOP_WRAP_SHOOTER_PREPARE ||", from);
+    REQUIRE(to != std::string::npos);
+    const std::string branch = module.substr(from, to - from);
+    // Every other actor: one read and the game's play (the held actor first, before any name read).
+    CHECK(branch.find("HeldActor()") < branch.find("x[0] + 8"));
+    CHECK(branch.find("slot != 0") != std::string::npos);
+    CHECK(branch.find("TheCrawl().SkipPlay(actor, slot, std::string_view(name))") != std::string::npos);
+    CHECK(branch.find("x[0] = 1;") != std::string::npos);  // the request's own "already playing" answer
+    CHECK(branch.find("Write(") == std::string::npos);     // no guest memory written
+    CHECK(module.find("WrapIn(HOS_COOP_WRAP_POSE_PLAY)") != std::string::npos);  // the hello's log line
 }
 
 TEST_CASE("hookshot: the shooter wraps (patch 0045, row 286's probe) are three rows at the table's end, the probe reads only, rows 222/286's table answers a copy's own call") {

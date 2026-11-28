@@ -1375,6 +1375,14 @@ TEST_CASE("dbno body: issue 337 part 2, a taken Crawl that never crawls kMaxFals
     CHECK(ReadSlot0(g, kActor)->name == "Crouch");
     CHECK_FALSE(c.Skip(kBsa, Req(verb::kWalk), false));  // 0.12.1 downed-move: he moves lying
     CHECK(c.Skip(kBsa, Req(134), false));
+    // Root fix (patch 0049): laid down in kChildLyingPose, the game's Walk's own plays never replace it on slot 0.
+    RunFrame(c, g, t += 16);
+    CHECK(c.HeldActor() == kActor);
+    CHECK(c.SkipPlay(kActor, 0, "Walk"));
+    CHECK(c.SkipPlay(kActor, 0, "Wait"));
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "Crouch"));  // the pose
+    c.Want(Want(false, false, false, kActor));
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "Wait"));  // up again
     SetAnchor(std::nullopt);
 }
 
@@ -1457,6 +1465,58 @@ TEST_CASE("dbno body (0.12.1 downed-move): a downed adult held lying moves with 
     CHECK(Verbs(f).empty());  // no Crawl asked again
     CHECK_FALSE(c.NoRoom(kActor));  // the adult has no game crawl to keep
     CHECK_FALSE(c.GameCrawl());     // the pad's slow stick
+}
+
+TEST_CASE("dbno body (0.12.1 downed-move root fix): a Link held in a lying pose: the game's own slot-0 plays are skipped (patch 0049)") {
+    // run-182cd53b: with Walk / Wait let through, the game played 'Wait' on slot 0 every frame and StepPose played the
+    // pose again after it (3385x): the game's Wait won on screen, B stood and flickered. SkipPlay answers the game's
+    // play request (main+0x2022a0) "played" for our held Link, so the pose is never replaced.
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    CHECK(c.HeldActor() == 0);
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "Wait"));  // standing: the game's own
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    REQUIRE(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
+    SetAs(g, "Crouch", 1.0f);
+    REQUIRE(Plays(RunFrame(c, g, 1100)).size() == 1);  // DamageLStand held
+    CHECK(c.HeldActor() == kActor);
+    c.TakeNotes();
+    // The ground verbs run (they read the stick) and their plays never reach slot 0.
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    for (const char* command : {"Wait", "Walk", "Run", "Crouch"}) {
+        CHECK(c.SkipPlay(kActor, 0, command));
+    }
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "DamageLStand"));  // the pose itself (our own play)
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "HorseRideOn"));   // a horse's: StepPose reads riding from slot 0
+    CHECK_FALSE(c.SkipPlay(kActor, 1, "Wait"));          // another slot
+    CHECK_FALSE(c.SkipPlay(kActor2, 0, "Wait"));         // another Link (a puppet)
+    CHECK_FALSE(c.SkipPlay(0, 0, "Wait"));
+    CHECK(c.Totals().plays_skipped == 4);
+    int lines = 0;
+    for (const auto& n : c.TakeNotes()) {
+        lines += n.find("' on slot 0 skipped (the lying pose is held") != std::string::npos ? 1 : 0;
+    }
+    CHECK(lines == 1);  // the probe line, once a hold
+    // The pose stays in slot 0: no play again (v0.12.1 before the fix: one every frame the game played its Wait).
+    SetAs(g, "DamageLStand", 0.0f);
+    CHECK(Plays(RunFrame(c, g, 1200)).empty());
+    CHECK(c.HeldActor() == kActor);
+    // In an event: the event's plays run at once (no StepPose needed first).
+    c.Want(Want(true, true, true, kActor));
+    CHECK(c.HeldActor() == 0);
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "Demo"));
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 1300);
+    CHECK(c.HeldActor() == kActor);
+    // Up again (revived): the game's get-up plays at once, before any StepPose of the frame.
+    c.Want(Want(false, false, true, kActor));
+    CHECK(c.HeldActor() == 0);
+    CHECK_FALSE(c.SkipPlay(kActor, 0, "Wait"));
 }
 
 TEST_CASE("dbno body: issue 337 part 2, no offer (or no live anchor) in kOfferWaitReads frames: the child is laid down") {

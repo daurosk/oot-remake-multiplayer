@@ -11,7 +11,7 @@ How (the kit's own code on the test display, through split_layout.ps1; nothing o
 | Check | Judged by |
 |---|---|
 | the kit's layout of the test display: 2 halves, each the whole work-area height | split_layout.ps1 -Mode layout (Get-KitLocalLayout) |
-| each game started with its window's switches | Pair.rejoin(x, env=the layout's switches): live.py relaunch --env, the same session |
+| each game started with its window's switches | Pair.rejoin(x, env=the layout's switches + RX_VK_SHOT_W/H = HOS_OUTPUT_RES, so the bridge shot is the game's own pixels, not Longshot's fixed 1280x720): live.py relaunch --env, the same session |
 | the game took the shape | its new log: "oe: output resolution WxH" = HOS_OUTPUT_RES and "boot: widescreen: picture WxH" (host/hos_main.c, patch 0047), the picture's ratio within 1 % of the window's client |
 | the window is where the kit put it | split_layout.ps1 -Mode place (Set-KitLocalWindowPlace) answers GetWindowRect = the rect asked, client = the layout's client (+-2 px) |
 | the picture fills the window (user-facing) | the bridge's framebuffer shot of each game: its shape = the client's (1 %), no black bar at any side (each 2 % strip has picture), compared to refs/split-fill-half-<x>.png (NO-REF until the owner approves one) |
@@ -79,6 +79,16 @@ def bars(path):
     return out
 
 
+def relaunch_env(shape):
+    """A game's relaunch switches: the kit's shape switches, and its bridge shots at the game's own output size.
+    The bridge's shot is scaled to a fixed RX_VK_SHOT_W x RX_VK_SHOT_H (1280x720 when unset: Longshot
+    gpu/vk/vk_replay.cpp kShotW/kShotH, shot_ask_record), whatever the window's shape (run 0f93b38b 09:38: "shot
+    1280x720" on a 944x1041 client whose game drew 944x1040). At the output size the shot is the game's own pixels:
+    a 16:9 picture in a narrow window then shows as bars, not as a squeeze."""
+    ow, oh = shape["HOS_OUTPUT_RES"].split("x")
+    return ["%s=%s" % (k, v) for k, v in sorted(shape.items())] + ["RX_VK_SHOT_W=" + ow, "RX_VK_SHOT_H=" + oh]
+
+
 @pytest.mark.row("#301 local co-op windows fill their half, each picture of its window's shape (patch 0047 + kit)")
 @pytest.mark.needs_env(ONLY_HERE)
 @pytest.mark.budget(1500)   # two relaunches (quit <= 60 s + boot <= 420 s each, Pair.REJOIN_*) and the waits around them
@@ -99,7 +109,7 @@ def test_split_fill(pair):
                                                      " (narrower than 5:4: patch 0047's own range)" if narrow else ""))
 
     for i, x in enumerate(("A", "B")):
-        env = ["%s=%s" % (k, v) for k, v in sorted(shapes[i].items())]
+        env = relaunch_env(shapes[i])
         r = pair.rejoin(x, env=env)
         pid = r.get("pid")
         assert pid, "%s: live.py relaunch gave no pid: %s" % (x, r)
@@ -132,8 +142,10 @@ def test_split_fill(pair):
         s = pair.call(x, "shot", name="split-fill-probe-%s" % x)
         sw, sh = s.get("width"), s.get("height")
         want = clients[i][0] / clients[i][1]
-        assert sw and sh and abs(sw / sh - want) / want < 0.01, "%s: shot %sx%s, the window's shape %.4f" % (
-            x, sw, sh, want)
+        assert "%sx%s" % (sw, sh) == shapes[i]["HOS_OUTPUT_RES"], \
+            "%s: shot %sx%s, not the game's output size %s (RX_VK_SHOT_W/H not taken)" % (
+                x, sw, sh, shapes[i]["HOS_OUTPUT_RES"])
+        assert abs(sw / sh - want) / want < 0.01, "%s: shot %sx%s, the window's shape %.4f" % (x, sw, sh, want)
         side = bars(s.get("path"))
         assert not side, "%s: black bar(s) at %s of its picture (%sx%s)" % (x, ", ".join(side), sw, sh)
         pair.check_shot(x, "split-fill-half")

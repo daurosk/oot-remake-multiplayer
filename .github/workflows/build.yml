@@ -670,11 +670,12 @@ jobs:
       # tests/ is not in the AppImage, so the test is ours)
       - name: Patch 0039's menu pads on the patched source
         run: python3 -I -B tools/hookshot/menu_pads_behind_test.py "$KIT/data/builder/source" --cc gcc-12
-      # (patch 0023: its tests, tools/hookshot/null_guards_cases.py (ours: the AppImage ships no tests/), on the patched
+      # (patch 0023: its tests, tools/hookshot/null_guards_cases_test.py (ours: the AppImage ships no tests/), on the patched
       # source: the install, the words, a real Lifter's text, the lift's own chain (fastfp, guest locals) writing and
-      # counting the guard, and the emitted C compiled with gcc and run on fake memory)
+      # counting the guard, and the emitted C compiled with gcc and run on fake memory; with Longshot's own
+      # Python from the kit, which has what nx2/lift.py imports: capstone)
       - name: Patch 0023's null guards on the patched source
-        run: python3 -I -B tools/hookshot/null_guards_test.py "$KIT/data/builder/source" --cc gcc-12
+        run: '"$KIT/data/builder/image/usr/python/bin/python3" -I -B tools/hookshot/null_guards_test.py "$KIT/data/builder/source" --cc gcc-12'
       - name: A first start without a game stops in plain words
         run: |
           set +e

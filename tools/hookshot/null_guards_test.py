@@ -1,4 +1,4 @@
-"""Patch 0023 (coop-null-guards): its tests (tools/hookshot/null_guards_cases.py) on Longshot's source with our patches
+"""Patch 0023 (coop-null-guards): its tests (tools/hookshot/null_guards_cases_test.py) on Longshot's source with our patches
 applied. The linux-longshot job runs it on the kit's data/builder/source after build.sh --renderer-only. The tests are
 ours, not in the patch: the Linux AppImage ships no tests/, so a patch hunk there would stop the Linux kit. They import
 the source's own nx2/coop_null_guards.py, a64_lift.py, nx2/fastfp.py, nx2/chunks.py and nx2/lift.py's chain, as the
@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-CASES = Path(__file__).resolve().parent / "null_guards_cases.py"
+CASES = Path(__file__).resolve().parent / "null_guards_cases_test.py"
 
 
 def main():

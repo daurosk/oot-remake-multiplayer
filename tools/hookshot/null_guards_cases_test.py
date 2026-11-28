@@ -14,7 +14,7 @@ patch touches only what Longshot's Linux AppImage ships"). tools/hookshot/null_g
 - The C, compiled into a small program (with $CC, else clang or gcc on PATH; skipped when there is none) around a
   stand-in for the load: a null base gives 0 and a log line, a real pointer reads memory as shipped.
 
-COOP_LONGSHOT_SOURCE=<patched source> python -I -B tools/hookshot/null_guards_cases.py
+COOP_LONGSHOT_SOURCE=<patched source> python -I -B tools/hookshot/null_guards_cases_test.py
 """
 import os
 import re
@@ -27,7 +27,7 @@ import unittest
 from pathlib import Path
 
 if not os.environ.get("COOP_LONGSHOT_SOURCE"):
-    sys.exit("null_guards_cases.py: set COOP_LONGSHOT_SOURCE to Longshot's source with our patches applied "
+    sys.exit("null_guards_cases_test.py: set COOP_LONGSHOT_SOURCE to Longshot's source with our patches applied "
              "(or run tools/hookshot/null_guards_test.py <source>)")
 ROOT = Path(os.environ["COOP_LONGSHOT_SOURCE"])
 sys.path.insert(0, str(ROOT / "nx2"))

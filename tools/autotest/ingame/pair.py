@@ -114,6 +114,53 @@ OCARINA_PROBE = "LICHII_COOP_OCARINA_PROBE=1"
 OCARINA_PLAYS_FRAMES = 240
 
 
+# The game's own frame-rate line, every ~5 s (Longshot vi: 'vi: 3501 frames presented (1.6 fps over the last 11.1 s,
+# interval 1)', game-out-B.txt of downed-move-53d40ab3-2). STARVED_*: a game is slow when at least STARVED_MIN_SLOW of
+# its samples in the last STARVED_WINDOW_S of its log are under STARVED_FPS. Measured (downed-move-0121-4, same lane, same
+# sha): downed-move-53d40ab3-2 with the WSL CI VM building (12 cpu) A 3.4/0.2, B 0.4/0.1/0.2/4.3 in the last 90 s, both
+# games at once; tunic-look-53d40ab3-2 just before (no CI): A once 1.8/1.3 (alone), B never, so never both at once.
+VI_FPS = re.compile(r"vi: \d+ frames presented \(([0-9.]+) fps over the last ([0-9.]+) s")
+STARVED_FPS = 5.0
+STARVED_WINDOW_S = 90.0
+STARVED_MIN_SLOW = 2
+
+
+def slow_samples(lines, window_s=STARVED_WINDOW_S, fps_under=STARVED_FPS):
+    """(slow fps values, samples read) of one game's log lines: its vi samples covering the last `window_s` seconds of
+    the log, newest last; the slow ones are those under `fps_under`."""
+    got, span = [], 0.0
+    for ln in reversed(lines):
+        m = VI_FPS.search(ln)
+        if not m:
+            continue
+        got.append(float(m.group(1)))
+        span += float(m.group(2))
+        if span >= window_s:
+            break
+    got.reverse()
+    return [f for f in got if f < fps_under], len(got)
+
+
+def starved_note(logs):
+    """What the games' own frame rates say about a frame timeout: `logs` = {game: log lines}. Both (all) games slow at
+    the same time = 'host starved' (a load outside the test: another job, a CI VM; downed-move-53d40ab3-2: the WSL
+    runners); one game slow alone = that game stalled. None when no game is slow or no game logged vi lines."""
+    slow = {}
+    for x in sorted(logs):
+        s, n = slow_samples(logs[x])
+        if n and len(s) >= STARVED_MIN_SLOW:
+            slow[x] = s
+    if not slow:
+        return None
+    fps = ", ".join("%s %s fps" % (x, "/".join("%g" % f for f in slow[x])) for x in sorted(slow))
+    if len(slow) == len(logs) and len(logs) > 1:
+        return ("host starved: every game's frame rate fell under %g fps in its last %.0f s at once (%s): a load "
+                "outside the test (another job, a CI VM) most likely, not the test (fps evidence only: a held game "
+                "dips too)" % (STARVED_FPS, STARVED_WINDOW_S, fps))
+    return ("%s alone slow (%s in its last %.0f s): most likely that game stalled, not the host"
+            % (" and ".join(sorted(slow)), fps, STARVED_WINDOW_S))
+
+
 class SetupFail(Exception):
     """The test could not be set up (the lane, a warp, a give, the set-up took more than 30 s): SETUP-FAIL, not FAIL."""
 
@@ -402,6 +449,19 @@ class Pair:
         # sets it). None: not known (a Pair made outside the plugin), nothing is checked.
         self.has_switch = None
 
+    def starved(self, why, slow=False):
+        """`why` (a set-up or boot failure's text) with the games' frame-rate reading added when it is a frame timeout
+        (the bridge's 'did not run in time' / a reply TimeoutError), or `slow` (a set-up over its time), and the logs show
+        slow games (starved_note)."""
+        logs = getattr(self, "log", None)
+        if not isinstance(logs, dict) or not logs or not slow and not re.search(r"did not run in time|TimeoutError|timed out", why):
+            return why
+        try:
+            note = starved_note({x: lg.since(0) for x, lg in logs.items()})
+        except Exception:      # (a reading that fails never hides the failure itself)
+            note = None
+        return "%s; %s" % (why, note) if note else why
+
     # -- per test ---------------------------------------------------------------------------------------------
     def begin(self, seconds):
         """A new test: its deadline, fresh log marks, no shots yet."""
@@ -433,7 +493,7 @@ class Pair:
         except SetupFail:
             raise
         except Exception as e:
-            raise SetupFail("set-up: %s: %s" % (type(e).__name__, e)) from e
+            raise SetupFail(self.starved("set-up: %s: %s" % (type(e).__name__, e))) from e
         finally:
             self.deadline = outer
             self._setup_ctx = was
@@ -441,7 +501,7 @@ class Pair:
         bound = limit + ctx["warps"] * SETUP_WARP_S
         warps = " incl %d warp(s)" % ctx["warps"] if ctx["warps"] else ""
         if took > bound:
-            raise SetupFail("set-up took %.1f s%s (limit %.0f s)" % (took, warps, bound))
+            raise SetupFail(self.starved("set-up took %.1f s%s (limit %.0f s)" % (took, warps, bound), slow=True))
         self.notes.append("set-up %.1f s%s" % (took, warps))
 
     def _setup_warp(self):
@@ -710,7 +770,7 @@ class Pair:
         except SetupFail:
             raise
         except (AssertionError, pc.BridgeError, OSError, TimeoutError) as e:
-            raise SetupFail("boot: %s: %s" % (type(e).__name__, e)) from e
+            raise SetupFail(self.starved("boot: %s: %s" % (type(e).__name__, e))) from e
         wrong = [self.why_not(x) for x in self.c
                  if scene and (self.state(x).get("scene") or "").lower() != scene.lower()]
         if wrong:

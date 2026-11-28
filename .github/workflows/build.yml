@@ -161,6 +161,8 @@ jobs:
         run: |
           python tools/autotest/tests/test_ingame_rejoin.py -v
           python tools/autotest/tests/test_ingame_host_menu.py -v
+      - name: Host-starved reading of a set-up frame timeout selftests (no game)
+        run: python tools/autotest/tests/test_host_starved.py -v
       - name: Test game window placement tests
         run: python tools/autotest/tests/test_placement.py -v
       - name: hs.py cache, locks and game build tests

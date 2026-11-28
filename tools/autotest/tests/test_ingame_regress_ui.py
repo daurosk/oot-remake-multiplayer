@@ -80,6 +80,13 @@ class RegressUi(unittest.TestCase):
         self.assertEqual(T.results(s), {HILT: "SETUP-FAIL"}, p.stdout[-1500:])
         self.assertIn("does not turn its back to B's camera", s["tests"][0]["why"])
 
+    def test_hilt_a_not_where_placed_is_setup_fail(self):
+        """gate-hilt-182cd53b (07:13 UTC 11-28): A's feet far under B's screen after the place. A not where placed is
+        SETUP-FAIL naming the place, before any camera step."""
+        p, s = self.run_fake("hilt-fall", HILT, bug="fall")
+        self.assertEqual(T.results(s), {HILT: "SETUP-FAIL"}, p.stdout[-1500:])
+        self.assertIn("is not where placed", s["tests"][0]["why"])
+
     def test_hilt_not_painted_fails(self):
         p, s = self.run_fake("hilt-bug", HILT, bug="hilt")
         self.assertEqual(T.results(s), {HILT: "FAIL"}, p.stdout[-1500:])

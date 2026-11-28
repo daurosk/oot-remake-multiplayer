@@ -21,6 +21,7 @@ import game_names
 import pair as P
 from kit_move import on_screen
 from test_rows import need_child_in_play, place_in_front
+from test_tunic import BEARING, DIST
 
 # The old step's NOT pattern (regress-01113-steps/s6-ui.ps1 -Not 'exception 0x'), with test_look.py's CRASH forms.
 CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
@@ -261,11 +262,16 @@ B_NOT_PAINTED = r"coop: look: P1's gear colours not painted"
 
 
 # The hilt sits on the sheath on Link's back (A's own shot, gate-hilt-53d40ab3-2 regress-hilt-1-A): B must see A's
-# puppet from behind. gate-hilt-53d40ab3-2 (00:05 UTC 11-28) used test_tunic.stand_apart (side by side, A facing B at
-# 35 deg): B's shots saw the puppet side-on, the hilt hidden by its cap and shield (NOT PROVEN on B).
-HILT_DIST = 3.0       # m ahead of B (test_rows.place_in_front's 2.5 + 0.5: B's own Link stays clear of the puppet)
-HILT_BEARING = 20.0   # deg off B's facing: A beside B's own Link on B's screen, not behind it
-BACK_MAX = 45.0       # deg: A's facing within this of B's camera direction (A's back towards B's camera)
+# puppet from behind. gate-hilt-53d40ab3-2 (00:05 UTC 11-28) used test_tunic.stand_apart (A facing B): B's shots saw the
+# puppet side-on, the hilt hidden by its cap and shield (NOT PROVEN on B). Same place now, A turned away.
+# A's place is test_tunic.stand_apart's (DIST 2.5 m at BEARING 35 deg off B's facing): gate-hilt-53d40ab3-2's shots show
+# A standing there on the ground at the lane save's Kakariko gate. gate-hilt-182cd53b (07:13 UTC 11-28) placed A 3.0 m at
+# 20 deg (on the gate stairs) and B's view put A's feet far under the screen (y -4.33, depth 9.92 vs B's 3.92): A was not
+# where placed. Now the set-up reads A's place back (PLACE_TOL) before any camera step.
+HILT_DIST = DIST
+HILT_BEARING = BEARING
+PLACE_TOL = 0.5       # m (chosen): A's place read back within this of the 'place' asked, in height and on the ground
+BACK_MAX = 45.0       # deg (chosen): A's facing within this of B's camera direction (A's back towards B's camera)
 
 
 def turn_diff(a, b):
@@ -288,6 +294,10 @@ def ahead_back_turned(pair, x, of):
     pair.act(x, "face %.2f %.2f" % (ax + math.sin(face), az + math.cos(face)))
     pair.press(x, ["ZL"], frames=8)
     pair.step_both(CAM_WAIT)
+    got = pair.state(x).get("pos")
+    if not got or abs(got[1] - oy) > PLACE_TOL or math.hypot(got[0] - ax, got[2] - az) > PLACE_TOL:
+        raise P.SetupFail("%s is not where placed: asked %.2f %.2f %.2f, now at %s (%s at %.2f %.2f %.2f)" % (
+            x, ax, oy, az, got, of, ox, oy, oz))
     why = ""
     for n in range(CAM_TRIES):
         pair.press(of, ["ZL"], frames=8)

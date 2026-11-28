@@ -14,6 +14,7 @@ instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is 
 =camera -> B's ZL leaves B's camera in front of B (c272735f8: B's shots of its own Link's face, no A).
 =turn -> A's 'face' turns A the other way (towards B: gate-hilt-53d40ab3-2's side-on puppet, its back not to B's
 camera).
+=fall -> A's 'place' lands 30 m under the place asked (gate-hilt-182cd53b: A not where placed).
 """
 import math
 import os
@@ -59,7 +60,11 @@ def lane(fl):
 
 
 def act(game, w):
-    """=turn only: A's 'face' points A away from the point it was given (back towards B)."""
+    """=turn: A's 'face' points A away from the point it was given (back towards B); =fall: A's 'place' lands 30 m
+    lower."""
+    if _bug("fall") and game.tag == "A" and w[:1] == ["place"]:
+        game.pos = [float(w[1]), float(w[2]) - 30.0, float(w[3])]
+        return True
     if not (_bug("turn") and game.tag == "A" and w[:1] == ["face"]):
         return False
     dx, dz = float(w[1]) - game.pos[0], float(w[2]) - game.pos[2]

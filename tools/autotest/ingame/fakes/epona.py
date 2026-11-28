@@ -20,6 +20,9 @@ HyruleField_FrontOfLostWoodBridge, S 309d7180c game-out-B 4806, and B's list had
 the rows' own entrance HyruleField_FrontOfMarket (hs-epona-sync.B.txt:24). NEAR_M models the old rows' 'place beside
 her' only; the real list's reach is measured by the probe (gate-probe-0121 test_probe_epona).
 A Get_Epona written lower than Complete comes back to Complete 30 frames on (so a --repeat round 2 finds her won).
+SCOPED (B #149 rule): the quest reactions act only with BT_FAKE_ROW150=1, which only tests/test_ingame_epona.py sets.
+Since the quest is its real Enum Step_Get_Epona, fakes/epona294.py (row 294) reacts to the same flag; unscoped, both
+answered every run (CI 46110930507: test_ingame_row294 FAIL 2 != 1, Suite desync OwnedHorseList.ActorName[0]).
 """
 import math
 import os
@@ -42,8 +45,12 @@ def _field(game):
     return game.scene == FIELD and not game.at_title
 
 
+def _row():
+    return os.environ.get("BT_FAKE_ROW150") == "1"
+
+
 def _won(game):
-    return game.flags.get(QUEST) in ("Complete", COMPLETE_HASH)
+    return _row() and game.flags.get(QUEST) in ("Complete", COMPLETE_HASH)
 
 
 def setup(game):
@@ -74,7 +81,9 @@ def _a_sees(a, how):
 
 def after(game, m, r):
     cmd = m.get("cmd")
-    if cmd == "flag" and m.get("name") == QUEST and m.get("value") in ("Complete", COMPLETE_HASH):
+    if not _row() and m.get("name") in (QUEST, "Get_Epona"):
+        pass                                           # (another row's quest: fakes/epona294.py)
+    elif cmd == "flag" and m.get("name") == QUEST and m.get("value") in ("Complete", COMPLETE_HASH):
         game.other.flags[QUEST] = "Complete"          # shared by its end
     elif cmd == "flag" and m.get("name") == QUEST and r.get("was") in ("Complete", COMPLETE_HASH):
         # written lower: the group's Complete comes back (co-op never lowers it, docs/flags.md "Shared by its end")

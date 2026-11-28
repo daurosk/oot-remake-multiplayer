@@ -1124,9 +1124,14 @@ SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::
 // every key, co-op's page, focus and changes kept, and the next update drives it again; kGone, not updated for
 // kSnailGoneMs: closed (the look chosen worn and sent). Lane gc198-l5b: a 300 ms close here reopened the screen on page
 // 1 after each stall.
-inline constexpr std::uint64_t kSnailPauseMs = 300, kSnailGoneMs = 5000;
+// `reads`: the pad reads since that update, this one counted. Not updated means the game ran on without it: more than
+// kSnailStaleReads reads too, not the time alone. chartab-0121-5 (lane chartab-fix-1346ef34, 'Y left the page at 1'):
+// a game held still (a hitch, a play-test bridge's step) reads its pad first when it runs again, before his screen's
+// update, so the time alone made that read a pause: the driver never saw it and its fresh press (Y's page turn) was
+// lost, and a B pressed in the mixer then went to his screen and closed it.
+inline constexpr std::uint64_t kSnailPauseMs = 300, kSnailGoneMs = 5000, kSnailStaleReads = 3;
 enum class SnailPadState { kDrive, kPause, kGone };
-SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms);
+SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t reads);
 // The hop to Character Select's Characters tab (#322): with his code in the game the colours are on his Customize
 // screen, so A on co-op's Customize Link row, in the - menu, taps L for the player. The game's graph (Sequence/
 // MinusMenu) reads the pad, and its category setters (f_8342b7a0, f_8342b720, SeqOneShotSetCurrentMinusMenuCategory)

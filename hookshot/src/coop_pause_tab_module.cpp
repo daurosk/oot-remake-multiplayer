@@ -531,6 +531,7 @@ bool g_snail_open = false, g_snail_fallback = false;
 // its close applied the look, so a change made before co-op let go of it stayed a preview, never sent nor saved.
 bool g_snail_changed = false;
 std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
+std::uint64_t g_snail_reads = 0;   // pad reads since his screen's last update (SnailPadFrom)
 std::uint64_t g_snail_edge_ms = 0;   // when his screen's state was first seen open (0: not open), SnailEdgeFrom
 // Which layouts are his Customize screen's: looked at again at each opening (CoopPauseTab::ScreenPanes, row 262).
 ScreenPanes g_snail_layouts;
@@ -703,7 +704,7 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
             return;
         case SnailEdge::kOpen: break;
     }
-    g_snail_seen_ms = now;
+    g_snail_seen_ms = now, g_snail_reads = 0;
     if (!g_snail_open || screen != g_snail_screen || layout != g_snail_layout) {
         g_snail_open = true, g_snail_fallback = false;
         g_snail_screen = screen, g_snail_layout = layout, ++g_snail_gen;
@@ -786,7 +787,8 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
 // The pad while his screen is open: the buttons the game gets (or nothing to do: false).
 bool SnailPad(std::uint64_t in, std::uint64_t* out) {
     std::lock_guard lock(g_snail_mutex);
-    const CoopPauseTab::SnailPadState seen = CoopPauseTab::SnailPadFrom(g_snail_seen_ms, NowMs());
+    if (g_snail_reads < ~std::uint64_t{0}) ++g_snail_reads;
+    const CoopPauseTab::SnailPadState seen = CoopPauseTab::SnailPadFrom(g_snail_seen_ms, NowMs(), g_snail_reads);
     if (g_snail_open && seen == CoopPauseTab::SnailPadState::kGone) SnailClose("not seen");
     std::uint64_t down = in & ~g_snail_pad_last;
     g_snail_pad_last = in;

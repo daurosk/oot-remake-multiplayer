@@ -2788,13 +2788,23 @@ TEST_CASE("pause tab (cs-customize-0119, lane gc198-l5b): a stall keeps Characte
     // Not yet open: a stall opens nothing (lane 062917's rule unchanged).
     CHECK(SnailEdgeFrom(false, 1000, 2, 990, 1000 + kMenuUpMs) == SnailEdge::kWait);
     // The pad: driven while his screen updates, the game's keys (co-op's page kept) in a stall, closed when long gone.
-    CHECK(SnailPadFrom(1000, 1000) == SnailPadState::kDrive);
-    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs) == SnailPadState::kDrive);
-    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs + 1) == SnailPadState::kPause);
-    CHECK(SnailPadFrom(1000, 1645) == SnailPadState::kPause);   // (the lane's stall: paused, not closed)
-    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs) == SnailPadState::kPause);
-    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1) == SnailPadState::kGone);
-    CHECK(SnailPadFrom(2000, 1000) == SnailPadState::kDrive);   // (a clock that went back)
+    constexpr std::uint64_t kRan = kSnailStaleReads + 1;   // (the game ran on: its pad read without his update)
+    CHECK(SnailPadFrom(1000, 1000, kRan) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs, kRan) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs + 1, kRan) == SnailPadState::kPause);
+    CHECK(SnailPadFrom(1000, 1645, kRan) == SnailPadState::kPause);   // (the lane's stall: paused, not closed)
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs, kRan) == SnailPadState::kPause);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1, kRan) == SnailPadState::kGone);
+    CHECK(SnailPadFrom(2000, 1000, kRan) == SnailPadState::kDrive);   // (a clock that went back)
+    // chartab-0121-5 (lane chartab-fix-1346ef34): a game held still reads its pad first when it runs again, before his
+    // update: still driven, however long it was held (Y's page turn at that read reached the driver), until the game
+    // runs on without his screen.
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs + 1, 1) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1, 1) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1, kSnailStaleReads) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs + 1, kSnailStaleReads + 1) == SnailPadState::kPause);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1, kSnailStaleReads + 1) == SnailPadState::kGone);
+    CHECK(SnailPadFrom(1000, 1000, 1000) == SnailPadState::kDrive);   // (many reads, just seen: driven)
 }
 
 TEST_CASE("pause tab (row 288): no tab key of the game's lands on the Characters page while its layouts are missing") {

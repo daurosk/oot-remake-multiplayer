@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 27 Nov 2026 20:37:43 -0900
+Subject: [PATCH] Co-op local co-op: Field of view 150% by default
+ (HOS_FOV_DEFAULT)
+
+For oot-remake-multiplayer's local co-op (row 325): several games on one
+PC, each in a part of the screen (patch 0047: a half keeps the game's height
+at about 8:9), looked zoomed in. HOS_FOV_DEFAULT=<50..150> is the Field of
+view a run starts at where the player kept the Insert menu row's own 100%;
+the co-op kit's local co-op start sets 150 for each of its games. Through
+the menu's env_override: never saved, so a game started alone is unchanged;
+a Field of view the player chose stays theirs, and one changed in the menu
+during the run is saved as theirs.
+---
+ gpu/vk/vk_menu.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 0000000..0000000 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -4508,6 +4508,14 @@ void menu_init() {
+         player_custom_output = custom_output;   // (parse_output replaces the player's own size with the environment's)
+         env_override(&opts.output_res, parse_output(e));
+     }
++    // (HOS_FOV_DEFAULT=<50..150>: the Field of view this run starts at where the player kept the row's own 100%. Co-op's local
++    // co-op start (several games on one PC, each in a part of the screen: oot-remake-multiplayer's kit, local-coop.ps1
++    // Set-KitLocalEnvironment) sets 150, row 325. A Field of view the player chose stays theirs; the switch is never saved
++    // (env_override, saved_value), so a game started alone is unchanged, and one changed in the menu during the run is saved.)
++    if (const char* e = getenv("HOS_FOV_DEFAULT"); e && *e && opts.fov == 100) {
++        const int v = std::min(std::max((atoi(e) + 2) / 5 * 5, 50), 150);   // (the row's steps: 50 to 150 by 5)
++        if (v != 100) env_override(&opts.fov, v);
++    }
+     // (the FSR 4 model for this run: RX_VK_FSR4_MODEL over the saved row; the engine's live value follows the row)
+     const int fsr4_env = fsr4_model_env();
+     if (fsr4_env >= 0) env_override(&opts.fsr4_model, fsr4_env);
+-- 
+2.56.0.windows.4
+

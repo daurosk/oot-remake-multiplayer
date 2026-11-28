@@ -267,10 +267,15 @@ try {
     Check ($env:HOS_ASPECT -eq '1904:2048' -and $env:HOS_OUTPUT_RES -eq '1904x2048' -and $env:HOS_WINDOW_SIZE -eq '1269x1365' -and $env:HOS_WINDOW_NOACTIVATE -eq '1') 'game 2: starts with its window''s shape and size'
     Set-KitLocalEnvironment 3 27561 'pw' 0
     Check (-not $env:HOS_ASPECT -and -not $env:HOS_OUTPUT_RES -and -not $env:HOS_WINDOW_SIZE) 'the next game: the shape of the one before is not kept'
+    # (row 325: every game of the session starts its Field of view at 150%, Hookshot patch 0048's HOS_FOV_DEFAULT)
+    $fovs = @()
+    foreach ($pl in 1, 2, 4) { Set-KitLocalEnvironment $pl 27561 'pw' 0; $fovs += "$env:HOS_FOV_DEFAULT" }
+    Check (($fovs -join ',') -eq '150,150,150') "row 325: games 1, 2 and 4 start with HOS_FOV_DEFAULT=150 ($($fovs -join ','))"
     foreach ($k in $script:KitLocalRunKeys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    Check (-not $env:HOS_FOV_DEFAULT) 'row 325: HOS_FOV_DEFAULT is put back with the other run variables (a game started alone after it: none)'
     $lcText = Read-File (Join-Path $scripts 'local-coop.ps1')
     Check (-not ($lcText -match "KitLocalKeys \+ @\('OOT_COOP_LOCAL_HOST'.*\{ \`$saved")) 'the starts put back every variable of KitLocalRunKeys (one list)'
-    foreach ($k in 'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE', 'HOS_FULLSCREEN', 'OOT_COOP_LOCAL_HOST') { Check ($script:KitLocalRunKeys -contains $k) "the starts put back $k" }
+    foreach ($k in 'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE', 'HOS_FOV_DEFAULT', 'HOS_FULLSCREEN', 'OOT_COOP_LOCAL_HOST') { Check ($script:KitLocalRunKeys -contains $k) "the starts put back $k" }
 
     # --- The session's port and password ---
     $p = Get-KitLocalPort

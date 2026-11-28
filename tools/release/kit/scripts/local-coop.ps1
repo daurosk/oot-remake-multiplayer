@@ -35,7 +35,11 @@ $script:KitLocalDirsNeeded = @('romfs', 'mods')
 $script:KitLocalKeys = @('LICHII_COOP_PAD', 'LICHII_COOP_KEYBOARD', 'LICHII_COOP_COLOR')
 # Every variable a game of the session starts with (Set-KitLocalEnvironment), put back after the starts.
 $script:KitLocalRunKeys = $script:KitLocalKeys + @('OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX',
-    'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE')
+    'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE', 'HOS_FOV_DEFAULT')
+# Row 325 (owner): every game of a local co-op session starts with its Field of view at 150% (each sees a half or a quarter
+# of the screen), where the player kept the row's own 100%: Hookshot patch 0048, HOS_FOV_DEFAULT. Never saved; a game
+# started alone is unchanged, and a Field of view the player chose stays theirs.
+$script:KitLocalFov = 150
 
 # How many players on this PC: 1 (just you, as before) or 2 to 4 (local co-op). C2-2 (owner, 0.12.0): a key is never
 # the answer by itself. A solo start asks nothing and is 1 game, always. More games only after the question
@@ -476,6 +480,7 @@ function Set-KitLocalEnvironment([int]$Player, [int]$Port, [string]$Password, [i
         Remove-Item -Path "env:$k" -ErrorAction SilentlyContinue
     }
     foreach ($k in $Shape.Keys) { [Environment]::SetEnvironmentVariable($k, "$($Shape[$k])") }
+    $env:HOS_FOV_DEFAULT = "$script:KitLocalFov"   # (every player, row 325)
     if ($Player -eq 1) {
         $env:OOT_COOP_LOCAL_HOST = "${Port}:$Password"
         $env:LICHII_COOP_PAD = '1'

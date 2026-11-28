@@ -670,9 +670,9 @@ jobs:
       # tests/ is not in the AppImage, so the test is ours)
       - name: Patch 0039's menu pads on the patched source
         run: python3 -I -B tools/hookshot/menu_pads_behind_test.py "$KIT/data/builder/source" --cc gcc-12
-      # (patches 0047 and 0048: a local co-op window's own shape, HOS_ASPECT shapes and narrow HOS_OUTPUT_RES, and its Field
-      # of view; Longshot's own tests/ is not in the AppImage, so the test is ours)
-      - name: Patches 0047 and 0048, split screen shapes and fill's Field of view, on the patched source
+      # (patches 0047 and 0048: a local co-op window's own shape, HOS_ASPECT shapes and narrow HOS_OUTPUT_RES, and local
+      # co-op's Field of view, HOS_FOV_DEFAULT; Longshot's own tests/ is not in the AppImage, so the test is ours)
+      - name: Patches 0047 and 0048, split screen shapes and local co-op's Field of view, on the patched source
         run: python3 -I -B tools/hookshot/split_shapes_test.py "$KIT/data/builder/source" --cc gcc-12
       - name: A first start without a game stops in plain words
         run: |

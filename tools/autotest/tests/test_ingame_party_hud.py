@@ -41,6 +41,27 @@ class PartyHud(unittest.TestCase):
         shots = [sh for r in s["tests"] for sh in r["shots"]]
         self.assertEqual(len(shots), 4)   # (both tests, both games)
 
+    def test_fake_never_reads_repo_refs(self):
+        """B #166 (party-hud-refs-0121 57fedcee9, CI 46093151892 red): real refs in ingame/refs must not be compared to
+        fake shots. Plant mismatching refs there for every party-hud shot: with no BT_FAKE_REFS the run stays NO-REF."""
+        refs = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ingame", "refs")
+        planted = []
+        try:
+            from PIL import Image
+            for name in ("party-hud-boot", "party-hud-reload"):
+                for x in ("A", "B"):
+                    f = os.path.join(refs, "%s-%s.png" % (name, x))
+                    if os.path.exists(f):
+                        continue            # (a real ref the branch keeps: never overwritten, still must not be read)
+                    Image.new("RGB", (64, 48), (255, 0, 255)).save(f)
+                    planted.append(f)
+            p, s = self.run_suite(ENV, env={"BT_FAKE_REFS": ""})
+        finally:
+            for f in planted:
+                os.remove(f)
+        got = results(s)
+        self.assertEqual(got, {t: "NO-REF" for t in TESTS}, p.stdout[-2000:])
+
     def test_without_its_switches_deselected(self):
         p, s = self.run_suite()
         self.assertEqual(results(s), {}, p.stdout[-2000:])

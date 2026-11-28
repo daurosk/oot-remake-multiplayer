@@ -682,7 +682,11 @@ def lane_pair(request):
         games = lanefake.games()
         if config.getoption("solo"):     # (the fake A logs what the real module logs with no server: solo.IDLE)
             games = {solo.GAME: games[solo.GAME]}
-        pair = P.Pair(games, out_dir=out, refs_dir=os.environ.get("BT_FAKE_REFS", refs))
+        # (--fake never reads the repo refs: fake shots are not game shots, so a real ref the repo adds would turn a
+        #  fake selftest red (B #166, CI 46093151892 party-hud). BT_FAKE_REFS if set, else an empty dir: NO-REF.)
+        fake_refs = os.environ.get("BT_FAKE_REFS") or os.path.join(out, "fake", "no-refs")
+        os.makedirs(fake_refs, exist_ok=True)
+        pair = P.Pair(games, out_dir=out, refs_dir=fake_refs)
         pair.lane, pair.info = lane, {"fake": True}
         pair.window_shooter = _fake_window_shooter(lanefake)
         pair.has_switch = boot_switch_check(config)

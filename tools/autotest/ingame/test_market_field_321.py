@@ -16,11 +16,16 @@ Sources of every value (worker-rules "no guessed values"):
 - AGE_FLAG 0 + 60 frames before the first adult warp: test_first_night.py (test_gear.py: the age flag takes 30+ frames).
 - BOOT_SCENE / BOOT_START: the boot's Kakariko (scenarios/live-kakariko-child.A.txt; test_first_night.py way_back).
 - CRASH_LINE: bt_plugin.CRASH_LINE (the module's crash handler line).
+- MEMORY: the 0.12.0 memory line, once a minute, solo too (hookshot/src/coop_hookshot.cpp Frame, row 271: "coop: memory: "
+  + ProcessMemoryText(); "coop: memory: process: private 28448 MB, ..." in the owner's P1 log of row 329). Each crossing
+  game must have one since the test began (the crossings take minutes); its values go into the notes.
 - STAY_FRAMES 300 (~10 s at pair.FPS 30): the field loads its far terrain and grass after the arrival; a stall or a
   device loss after the arrival shows in that time as a game that no longer answers or leaves play.
 No shot: nothing new is drawn (a crash/stall check, judged by state; worker-rules TEST SYSTEM: shots only for the
 user-facing things a row changes).
 """
+import re
+
 import pytest
 
 import solo
@@ -30,6 +35,7 @@ MARKET, MARKET_START = "Market_Adult", "Market_Entrance"
 FIELD, FIELD_START = "HyruleField_Adult", "HyruleField_FrontOfMarket"
 AGE_FLAG = "Sequence_IsChildhood"
 BOOT_SCENE, BOOT_START = "KakarikoVillage_Child", "Kakariko_WellSide"
+MEMORY = r"coop: memory: process: private (\d+) MB"
 CROSSINGS = 3
 STAY_FRAMES = 300
 
@@ -68,6 +74,14 @@ def cross(pair, x, watch):
             pair.notes.append("%s: crossing %d: in play in %s" % (x, i + 1, scene))
 
 
+def memory_seen(pair, x, since):
+    """Game x's memory lines since the test began: at least one, the private MB of each into the notes."""
+    rx = re.compile(MEMORY)
+    got = [int(m.group(1)) for m in (rx.search(ln) for ln in pair.log[x].since(since)) if m]
+    assert got, "%s: no memory line (/%s/) since the test began: the 0.12.0 memory line is not active" % (x, MEMORY)
+    pair.notes.append("%s: memory private MB over the crossings: %s" % (x, ", ".join(str(v) for v in got)))
+
+
 def way_back(pair, games, done):
     """Both games child in the boot's Kakariko (the boot is shared). Raised only when the test body passed."""
     try:
@@ -87,6 +101,7 @@ def way_back(pair, games, done):
 def test_market_field_guest_crosses(pair):
     with pair.setup():
         to_adult_market(pair, ("A", "B"))
+    since = pair.log["B"].size()
     done = False
     try:
         cross(pair, "B", ("A", "B"))          # the reporter's case: the guest crosses, the host stays in the Market
@@ -98,6 +113,7 @@ def test_market_field_guest_crosses(pair):
             assert pair.in_play(s) and (s.get("scene") or "").lower() == FIELD.lower(), (
                 "%s: both in the field: not in play (%s, not_ready %s)" % (x, s.get("scene"), s.get("not_ready")))
             pair.never_log(x, CRASH_LINE)
+        memory_seen(pair, "B", since)
         done = True
     finally:
         way_back(pair, ("A", "B"), done)
@@ -110,9 +126,11 @@ def test_market_field_solo(pair):
     with pair.setup():
         solo.prove(pair)
         to_adult_market(pair, ("A",))
+    since = pair.log["A"].size()
     done = False
     try:
         cross(pair, "A", ("A",))
+        memory_seen(pair, "A", since)
         done = True
     finally:
         way_back(pair, ("A",), done)

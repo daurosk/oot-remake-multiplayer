@@ -192,8 +192,7 @@ def test_host_page_difficulty_kept(pair):
             pair.until("A left the session (no connected players listed)",
                        lambda: not connected(pair, "A"), max_frames=300)
         mark = pair.log["A"].mark()
-        with open(os.path.join(pair.games["A"]["folder"], "to-title.now"), "w") as f:
-            f.write("stay\n")                                 # (no auto-Continue: A stays on the title's own menu)
+        pair.trigger("A", "to-title.now", "stay\n")         # (no auto-Continue: A stays on the title's own menu)
         pair.until("A: the 'stay' ask taken", lambda: pair.log["A"].find(TO_TITLE_STAY, pos=mark), max_frames=300)
         pair.until("A on the title", lambda: not pair.in_play(pair.state("A")), max_frames=900)
         pair.until("A: the title's own menu (%s)" % TITLE_MENU, lambda: pair.log["A"].find(TITLE_MENU, pos=mark),

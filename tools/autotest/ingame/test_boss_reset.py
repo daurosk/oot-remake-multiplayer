@@ -67,8 +67,7 @@ def to_title(pair, x):
     (test_smoke.test_title_and_load_again's rule: 'not in play' is also an open pause menu, never pressed)."""
     assert pair.log[x].find(TO_TITLE_ON, pos=0), "%s: LICHII_COOP_TEST_TO_TITLE is not on" % x
     asked = pair.log[x].mark()
-    with open(os.path.join(pair.games[x]["folder"], "to-title.now"), "w") as f:
-        f.write("bt\n")
+    pair.trigger(x, "to-title.now")
     pair.expect_log(x, TO_TITLE_ASKED, max_frames=300)
 
     def at_title(y):

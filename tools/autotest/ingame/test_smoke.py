@@ -124,8 +124,7 @@ def test_title_and_load_again(pair):
         pair.until_in_play("both games in play before the way back", max_frames=READY_FRAMES)
     asked = {x: pair.log[x].mark() for x in ("A", "B")}
     for x in ("A", "B"):
-        with open(os.path.join(pair.games[x]["folder"], "to-title.now"), "w") as f:
-            f.write("bt\n")
+        pair.trigger(x, "to-title.now")
     for x in ("A", "B"):
         pair.expect_log(x, TO_TITLE_ASKED, max_frames=300)
 

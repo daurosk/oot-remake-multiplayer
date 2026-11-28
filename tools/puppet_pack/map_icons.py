@@ -20,8 +20,8 @@ MAP_ICONS = 15                      # one per other player (a session holds up t
 # Copy 0's z turn word (its pane record's +0x18): 1.2345678f (hookshot/src/coop_map_icons.h kTurnMarkBits, the same
 # word). The module reads it on the loaded pane at kTurnMarkAt (+0x68): seen there, the layout's turn is stored there
 # (the arrows then turn natively) and it is put back to 0 before the copy is ever shown; not seen, the copies stay down
-# and the overlay's arrows stay (map-icons-255-5, B #175). The copy is stored hidden, so a game without the module never
-# shows it turned.
+# and the overlay's arrows stay (map-icons-255-5, B #175; opt-in only, LICHII_COOP_MAP_TURN_AT=check, B #178).
+# The copy is stored hidden, so it is never shown turned (no module, or the default path).
 TURN_MARK_BITS = 0x3F9E0651
 
 

@@ -317,9 +317,9 @@ std::optional<bool> Icons::CheckTurn(CoopNativeTags::Game& game) {
 }
 
 std::uint64_t TurnPlace(const std::string& turn_env, std::optional<bool> proven) {
+    if (turn_env == kTurnCheckEnv) return proven.value_or(false) ? kTurnMarkAt : 0;
     if (!turn_env.empty()) return std::strtoull(turn_env.c_str(), nullptr, 16);
-    if (kPaneTurn != 0) return kPaneTurn;
-    return proven.value_or(false) ? kTurnMarkAt : 0;
+    return kPaneTurn;
 }
 
 bool Icons::Step(CoopNativeTags::Game& game, const Frame& frame) {

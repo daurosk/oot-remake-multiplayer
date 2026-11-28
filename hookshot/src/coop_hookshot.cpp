@@ -703,13 +703,13 @@ void MapIcons(void* ctx) {
         return;
     }
     const auto frame = CoopMapIcons::Taken();
-    // The turn place (CoopMapIcons::TurnPlace): with no trial and kPaneTurn 0, the pack's turn mark on copy 0 is read
-    // on the game's own loaded pane (CheckTurn, every 30 frames while someone is on the map and it is not decided).
-    // Mark seen: the copies turn their arrows at kTurnMarkAt. Not seen (an old pack), or TURN_AT=0: no place, the
-    // game's copies would show the others' arrows unturned, so they stay down and the overlay keeps drawing the turned
-    // arrows (the v0.12.0 path; G2a, no loss against 0.11.12).
+    // The turn place (CoopMapIcons::TurnPlace). Only with LICHII_COOP_MAP_TURN_AT=check (opt-in, B #178) is the pack's
+    // turn mark on copy 0 read on the game's own loaded pane (CheckTurn, every 30 frames while someone is on the map
+    // and it is not decided); mark seen: the copies turn their arrows at kTurnMarkAt. No env (the default), mark not
+    // seen, or TURN_AT=0: no place, the game's copies would show the others' arrows unturned, so they stay down and the
+    // overlay keeps drawing the turned arrows (the v0.12.0 path; G2a, no loss against 0.11.12).
     std::optional<bool> proven = g_map_icons.TurnProven();
-    if (turn_env.empty() && CoopMapIcons::kPaneTurn == 0 && !proven && !frame.marks.empty() && ++check_tick % 30 == 0) {
+    if (turn_env == CoopMapIcons::kTurnCheckEnv && !proven && !frame.marks.empty() && ++check_tick % 30 == 0) {
         TagsGame game(ctx);
         proven = g_map_icons.CheckTurn(game);
         if (proven) {

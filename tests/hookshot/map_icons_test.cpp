@@ -344,8 +344,9 @@ TEST_CASE("map icons: the pack's turn mark on copy 0 proves kTurnMarkAt, is put 
     CHECK(WordAt(g, CopyZero(g) + M::kTurnMarkAt) == 0);   // the copy keeps no turn of its own
     CHECK(g.shown.empty());                                // nothing shown by the check
     CHECK(g.texts.empty());
-    CHECK(M::TurnPlace("", proven) == M::kTurnMarkAt);
-    icons.TurnAt(M::TurnPlace("", proven));
+    CHECK(M::TurnPlace("check", proven) == M::kTurnMarkAt);   // (LICHII_COOP_MAP_TURN_AT=check: opt-in)
+    CHECK(M::TurnPlace("", proven) == 0);                     // no env: the v0.12.0 path even when proven
+    icons.TurnAt(M::TurnPlace("check", proven));
     M::Frame f;
     f.marks = {At(2, 2020, 980, "Saria")};
     f.marks[0].angle = 0.0f;
@@ -376,8 +377,9 @@ TEST_CASE("map icons: no turn mark (an old pack) is the v0.12.0 path: no place, 
     CHECK(g.texts.empty());
     CHECK(g.touched.empty());   // (no pane shown, hidden or marked moved)
     // no place: MapIcons does not step the copies, the overlay's turned arrows stay (as kPaneTurn 0 in v0.12.0)
-    CHECK(M::TurnPlace("", proven) == 0);
-    CHECK(M::TurnPlace("", std::nullopt) == 0);   // (not decided yet: the same)
+    CHECK(M::TurnPlace("check", proven) == 0);
+    CHECK(M::TurnPlace("check", std::nullopt) == 0);   // (not decided yet: the same)
+    CHECK(M::TurnPlace("", std::nullopt) == 0);        // (no env, the default: never checked, v0.12.0)
     // decided once for the boot: a later screen is not read again
     g.Put<std::uint32_t>(CopyZero(g) + M::kTurnMarkAt, M::kTurnMarkBits);
     CHECK(icons.CheckTurn(g) == std::optional<bool>(false));

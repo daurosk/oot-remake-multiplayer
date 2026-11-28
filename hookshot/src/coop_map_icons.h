@@ -50,11 +50,15 @@ inline constexpr std::uint64_t kPaneTurn = 0;
 // +0x18; the game's own panes keep 0 there). When the game's loaded pane holds exactly that word at kTurnMarkAt, the
 // layout's rotation is stored there (proven, per boot, by the game's own load): the word is put back to 0 and the
 // copies turn their arrows at kTurnMarkAt. Any other word (an old pack, another layout) leaves the v0.12.0 path: the
-// copies stay down and the overlay keeps drawing the turned arrows.
+// copies stay down and the overlay keeps drawing the turned arrows. OPT-IN ONLY (B #178 HOLD, review-rows-c130-13: the
+// mark proves where the word is kept, not that the map's draw reads it): the check runs only with
+// LICHII_COOP_MAP_TURN_AT=check; with no env the module is the exact v0.12.0 path (no mark read, no copy stepped).
 inline constexpr std::uint64_t kTurnMarkAt = 0x68;
+inline constexpr char kTurnCheckEnv[] = "check";   // LICHII_COOP_MAP_TURN_AT=check: the mark-proven path
 inline constexpr std::uint32_t kTurnMarkBits = 0x3F9E0651;   // 1.2345678f: an exact word, no layout turn
-// The turn place MapIcons uses: the LICHII_COOP_MAP_TURN_AT trial when set (hex, "0" = not turned), else kPaneTurn
-// when known, else kTurnMarkAt only once the mark was seen (`proven` true); 0 = the v0.12.0 path (no copies stepped).
+// The turn place MapIcons uses from LICHII_COOP_MAP_TURN_AT: "check" -> kTurnMarkAt only once the mark was seen
+// (`proven` true), else 0; another value -> that hex place (the trial, "0" = not turned); unset -> kPaneTurn (0: the
+// v0.12.0 path, no copies stepped).
 std::uint64_t TurnPlace(const std::string& turn_env, std::optional<bool> proven);
 
 // One other player on the map shown, in the layout's units (3840 x 2160, x right, y down from the top left).

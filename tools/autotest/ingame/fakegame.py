@@ -459,6 +459,8 @@ class FakeGame:
         elif w[0] == "face":
             dx, dz = float(w[1]) - self.pos[0], float(w[2]) - self.pos[2]
             self.facing = math.degrees(math.atan2(dx, dz)) % 360
+            self.say("coop: test face %.2f %.2f: Link at %.2f %.2f turned to yaw %.1f deg" % (
+                float(w[1]), float(w[2]), self.pos[0], self.pos[2], math.degrees(math.atan2(dx, dz))))
         elif w[0] == "wear" and w[1] == "head":
             self.head = None if w[2] == "none" else w[2]
         elif w[0] == "dress":

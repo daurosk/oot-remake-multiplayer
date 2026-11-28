@@ -151,12 +151,36 @@ def shots(pair, name, who="A", twice=False):
             at = pair.state(who)["pos"]
             pair.until("%s's puppet of %s" % (x, who), lambda: puppet_at(pair, x, at), max_frames=120)
         path = pair.check_shot(x, name)["path"]
-        out[x] = {"path": path, "box": link_box(pair, x, who, path)}
+        out[x] = {"path": path, "box": link_box(pair, x, who, path), "hide": other_box(pair, x, who, path)}
     if twice:
         pair.step_both(6)
         for x in games(pair):
             path = pair.check_shot(x, name + "-2")["path"]
-            out[x].update(path2=path, box2=link_box(pair, x, who, path))
+            out[x].update(path2=path, box2=link_box(pair, x, who, path), hide2=other_box(pair, x, who, path))
+    return out
+
+
+def other_box(pair, x, who, path):
+    """The OTHER Link's box on game x's shot (x's own Link when `who`'s is the puppet there, else the other's puppet),
+    left out of every count: hair-measure-0defc551 (lane 1, 53d40ab3e) B's red-tunic Link stood in front of A's puppet
+    on B's shot (and in A's adult box), its tunic and cap counted as 'red hair' (before 337-1690) and moving between
+    shots (gains -558..+104: 9 false 'not repainted' FAILs while the shots show the hair repainted). None: off the shot."""
+    other = "B" if who == "A" else "A"
+    if other not in pair.c:
+        return None   # (a --solo run: no other Link)
+    try:
+        return link_box(pair, x, other, path)
+    except AssertionError as e:
+        note(pair, "huecheck %s: no box for %s's Link to leave out (%s)" % (x, other, e))
+        return None
+
+
+def hides(*shots_):
+    """{x: [every 'hide'/'hide2' box of x in these shots]}: one area left out of all of a check's counts."""
+    out = {}
+    for s in shots_:
+        for x, v in s.items():
+            out.setdefault(x, []).extend(v.get(k) for k in ("hide", "hide2") if v.get(k))
     return out
 
 
@@ -165,29 +189,48 @@ def note(pair, line):
     pair.notes.append(line)
 
 
-def count(shot, colour, second=False, within=None):
+def count(shot, colour, second=False, within=None, hide=()):
+    """`colour`'s solid count in the shot's Link box, inside `within` (a mask) and outside the `hide` boxes."""
     k = "2" if second else ""
-    return huecheck.solid_count(shot["path" + k], shot["box" + k], colour, within)
+    m = within
+    if hide:
+        keep = huecheck.outside(shot["path" + k], hide)
+        m = keep if m is None else (m & keep)
+    return huecheck.solid_count(shot["path" + k], shot["box" + k], colour, m)
 
 
-def gained(pair, before, after, colour, what, low, games_=None, within=None):
-    """Each game's solid `colour` count in the Link's box, before -> after: nothing added is a FAIL (the hair was not
-    repainted); less than GAIN goes to `low` (judged only once MEASURED). `within`: {x: mask} (the hair patch)."""
+# A Link whose hair area (its box's top third) is more than this share under the other Link cannot be judged on that
+# game: NO-REF, never FAIL or PASS (a hidden hair adds nothing either way).
+HIDDEN_MAX = 0.5
+
+
+def gained(pair, before, after, colour, what, low, blind, games_=None, within=None, hide=None):
+    """Each game's solid `colour` count in the Link's box (the other Link's boxes of both shots, or `hide` {x: boxes},
+    left out), before -> after: nothing added is a FAIL (the hair was not repainted); less than GAIN goes to `low`
+    (judged only once MEASURED); a hair mostly under the other Link goes to `blind` (NO-REF). `within`: {x: mask}."""
     out = {}
+    hide = hide or hides(before, after)
     for x in games_ or tuple(before):
-        m = (within or {}).get(x)
-        n0, n1 = count(before[x], colour, within=m), count(after[x], colour, within=m)
-        note(pair, "huecheck %s %s #%06X before=%d after=%d gain=%d box=%s" % (
-            x, what, colour, n0, n1, n1 - n0, list(after[x]["box"])))
+        m, hx = (within or {}).get(x), hide.get(x, [])
+        n0, n1 = count(before[x], colour, within=m, hide=hx), count(after[x], colour, within=m, hide=hx)
+        cov = max(huecheck.covered(before[x]["box"], hx), huecheck.covered(after[x]["box"], hx))
+        note(pair, "huecheck %s %s #%06X before=%d after=%d gain=%d box=%s hide=%s covered=%.2f" % (
+            x, what, colour, n0, n1, n1 - n0, list(after[x]["box"]), [list(b) for b in hx], cov))
+        out[x] = (n0, n1)
+        if cov > HIDDEN_MAX:
+            blind.append("%s %s: the Link's hair is %.0f%% under the other Link (want <= %.0f%%)" % (
+                x, what, cov * 100, HIDDEN_MAX * 100))
+            continue
         assert n1 - n0 > 0, "%s %s: no #%06X added on the Link: the hair was not repainted (before %d, after %d)" % (
             x, what, colour, n0, n1)
         if n1 - n0 < GAIN[colour]:
             low.append("%s %s: #%06X gained %d (want %d)" % (x, what, colour, n1 - n0, GAIN[colour]))
-        out[x] = (n0, n1)
     return out
 
 
-def judged(pair, low):
+def judged(pair, low, blind=()):
+    if blind:   # (a hair the check could not see proves nothing: never PASS)
+        pair.unproven("; ".join(blind))
     if not MEASURED:
         pair.unproven("the hair colour thresholds are not measured yet (MEASURED: the huecheck lines of a lane run)%s"
                       % ("; low: " + "; ".join(low) if low else ""))
@@ -233,25 +276,31 @@ def test_hair_own_and_puppet(pair):
         need_child_in_play(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "hair-link-unset")
         wear(pair, "A", RED)
         red = shots(pair, "hair-link-red", twice=True)
-        n = gained(pair, before, red, RED, "unset->red", low)
-        patch = {x: huecheck.hair_patch(red[x]["path"], red[x]["box"], RED) for x in red}
+        n = gained(pair, before, red, RED, "unset->red", low, blind)
+        # (the red hair's patch, the other Link's red tunic/cap left out: else the patch is that tunic, not hair)
+        patch = {x: huecheck.hair_patch(red[x]["path"], red[x]["box"], RED) & huecheck.outside(red[x]["path"],
+                                                                                              hides(red)[x])
+                 for x in red}
         wear(pair, "A", BLUE)
         blue = shots(pair, "hair-link-blue")
-        gained(pair, red, blue, BLUE, "red->blue", low, within=patch)   # (in the red hair's patch: Navi is not hair)
+        rb = hides(red, blue)
+        gained(pair, red, blue, BLUE, "red->blue", low, blind, within=patch, hide=rb)   # (Navi is not hair)
         for x in blue:
-            gone = count(blue[x], RED)
+            if any(b.startswith(x + " ") for b in blind):
+                continue   # (that game's hair was under the other Link)
+            gone = count(blue[x], RED, hide=rb[x])
             note(pair, "huecheck %s red->blue red left=%d of %d" % (x, gone, n[x][1]))
             assert gone < LEFT_HAIR * max(1, n[x][1]), "%s: the red stayed on the hair after blue (%d of %d)" % (
                 x, gone, n[x][1])
         done = True
     finally:
         put_back(pair, done)
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 @pytest.mark.budget(240)   # ESTIMATED
@@ -262,20 +311,23 @@ def test_hair_unset_is_game(pair):
         need_child_in_play(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "hair-link-unset")
         wear(pair, "A", RED)
         coloured = shots(pair, "hair-link-unset-red", twice=True)
-        n = gained(pair, before, coloured, RED, "unset->red", low)
+        gained(pair, before, coloured, RED, "unset->red", low, blind)
         wear(pair, "A", None)
         back = shots(pair, "hair-link-unset-again")
-        blind = []
+        every = hides(before, coloured, back)   # (one area left out of all four counts of a game)
         for x in back:
-            n0, n1 = n[x]
+            if any(b.startswith(x + " ") for b in blind):
+                continue   # (that game's hair was under the other Link: nothing to judge there)
+            hx = every.get(x, [])
+            n0, n1 = count(before[x], RED, hide=hx), count(coloured[x], RED, hide=hx)
             added = max(1, n1 - n0)
-            left = (count(back[x], RED) - n0) / float(added)
-            still = (count(coloured[x], RED, second=True) - n0) / float(added)   # (the control: red 6 frames on)
+            left = (count(back[x], RED, hide=hx) - n0) / float(added)
+            still = (count(coloured[x], RED, second=True, hide=hx) - n0) / float(added)   # (the control: 6 frames on)
             score, err = imagecheck_ssim(before[x]["path"], back[x]["path"])
             note(pair, "huecheck %s unset-again #%06X added=%d left=%.3f still-red=%.3f ssim=%s" % (
                 x, RED, n1 - n0, left, still, score))
@@ -288,9 +340,7 @@ def test_hair_unset_is_game(pair):
         done = True
     finally:
         put_back(pair, done)
-    if blind:   # (a check that cannot see a stuck colour proves no unset: never PASS)
-        pair.unproven("; ".join(blind))
-    judged(pair, low)
+    judged(pair, low, blind)   # (blind: a check that cannot see a stuck colour proves no unset: never PASS)
 
 
 def imagecheck_ssim(a, b):
@@ -307,18 +357,18 @@ def test_hair_under_mask(pair):
         pair.give("A", "PouchData.%s.StockNum" % SKULL)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         mask(pair, True)
         pair.expect_log("B", r"P1 wears head '%s'" % SKULL, max_frames=300)   # (test_masks_on_puppet's expect)
         before = shots(pair, "hair-link-mask-unset")
         wear(pair, "A", RED)
         red = shots(pair, "hair-link-mask-red", twice=True)
-        gained(pair, before, red, RED, "mask unset->red", low)
+        gained(pair, before, red, RED, "mask unset->red", low, blind)
         done = True
     finally:
         put_back(pair, done, also=(lambda: mask(pair, False),))
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 @pytest.mark.budget(300)   # ESTIMATED
@@ -331,21 +381,21 @@ def test_hair_without_character_select(pair):
         no_cs.prove(pair)
         face_each_other(pair)
         unset_both(pair)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "hair-link-no-cs-unset")
         wear(pair, "A", RED)    # A (with the mod) -> its puppet in the CS-less B
         a_red = shots(pair, "hair-link-no-cs-a-red")
-        gained(pair, before, a_red, RED, "A unset->red", low)
+        gained(pair, before, a_red, RED, "A unset->red", low, blind)
         wear(pair, "A", None)
         unset = shots(pair, "hair-link-no-cs-unset-again", who="B")
         wear(pair, "B", BLUE)   # B's own Link without the mod -> its puppet in A (same places: A faces B already)
         b_blue = shots(pair, "hair-link-no-cs-b-blue", who="B")
-        gained(pair, unset, b_blue, BLUE, "B unset->blue", low)
+        gained(pair, unset, b_blue, BLUE, "B unset->blue", low, blind)
         done = True
     finally:
         put_back(pair, done)
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 def to_age(pair, scene, age):
@@ -367,7 +417,7 @@ def test_hair_adult(pair):
         unset_both(pair)
         home = pair.boot_scene
         assert home and home.endswith("_Child"), "the boot's scene %r is no child scene to come back to" % home
-    done, low = False, []
+    done, low, blind = False, [], []
 
     def child_again():
         pair.step_both(WARP_GAP)
@@ -379,11 +429,11 @@ def test_hair_adult(pair):
         before = shots(pair, "hair-link-adult-unset")
         wear(pair, "A", RED)
         red = shots(pair, "hair-link-adult-red", twice=True)
-        gained(pair, before, red, RED, "adult unset->red", low)
+        gained(pair, before, red, RED, "adult unset->red", low, blind)
         done = True
     finally:
         put_back(pair, done, also=(child_again,))
-    judged(pair, low)
+    judged(pair, low, blind)
 
 
 # Until harness-c133's solo.py lands: a switch no run gives (no game knows it), so the test is always deselected.
@@ -403,7 +453,7 @@ def test_hair_solo(pair):
         pair.need_boot_place()   # (stepped until in play, never one read; pair.c = {'A'} in a --solo run)
         set_hair(pair, "A", "none")
         pair.step_both(60)
-    done, low = False, []
+    done, low, blind = False, [], []
     try:
         before = shots(pair, "hair-link-solo-unset")   # (games(pair) = ('A',) in a --solo run)
         mark = pair.log["A"].mark()
@@ -411,7 +461,7 @@ def test_hair_solo(pair):
         wait_since(pair, "A", OWN_HAIR % RED, mark, 240)
         pair.step_both(30)
         red = shots(pair, "hair-link-solo-red")
-        gained(pair, before, red, RED, "solo unset->red", low)
+        gained(pair, before, red, RED, "solo unset->red", low, blind)
         done = True
     finally:
         try:
@@ -421,4 +471,4 @@ def test_hair_solo(pair):
             if done:
                 raise
             pair.notes.append("put back: %s" % e)
-    judged(pair, low)
+    judged(pair, low, blind)

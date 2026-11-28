@@ -781,10 +781,12 @@ TEST_CASE("objects: Business Scrubs are each game's own shop (GitHub 253)") {
     CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
 }
 
-TEST_CASE("objects: Jabu-Jabu's child Ruto is each game's own, so a carried Ruto is never put down by a copy (#64)") {
+TEST_CASE("objects: Jabu-Jabu's child Ruto is one shared Ruto, her carry the carry claim's (row 304, #64)") {
+    // Row 304: each game's own (#64) left a carried Ruto on no other screen. Shared again; #64's drop (the owner's
+    // Crouch over our carried copy) is the carry claim's case ("carry claim: ... child Ruto" below).
     for (const char* ruto : {"Npc_Zora_Ruto_Child_001", "Npc_Zora_Ruto_Child_002"}) {
-        CHECK_MESSAGE(CoopObjects::IsOwnFollower(ruto), ruto);
-        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(ruto), ruto);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(ruto), ruto);
+        CHECK_MESSAGE(CoopObjects::IsShared(ruto), ruto);
     }
     // Other Zoras, and adult Ruto, stay shared NPCs.
     CHECK(CoopObjects::IsShared("Npc_Zora_ZU_001"));
@@ -807,7 +809,8 @@ TEST_CASE("objects: every actor whose AI goes with the local Link is each game's
     for (const char* shared : {"Npc_Hylia_Zelda_Child", "Npc_Hylia_Sheik_Adult", "Animal_Horse_Wagon",
                                "Animal_Horse_Archery", "Animal_Cucco", "Npc_Pierre_CallOcarina",
                                "Npc_Goron_011_Shop_Child", "Npc_Hylia_051", "Npc_Kaepora",
-                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001"}) {
+                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001",
+                               "Npc_Zora_Ruto_Child_001"}) {  // row 304: carried, by the carry claim
         CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(shared), shared);
         CHECK_MESSAGE(CoopObjects::IsShared(shared), shared);
     }
@@ -7832,6 +7835,12 @@ TEST_CASE("sensor claim: no claim without the input, for a walk that missed him,
 TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries is not (row 138(8))") {
     CHECK(CoopSensorClaim::Carried("Lifted"));
     CHECK_FALSE(CoopSensorClaim::Carried("Wait"));
+    // Row 304: child Ruto's carry (her AS command and its states).
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest"));
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest_Wait"));
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest_Ed"));
+    CHECK_FALSE(CoopSensorClaim::Carried("Act_LiftRestX"));
+    CHECK_FALSE(CoopSensorClaim::Carried("Crouch"));
     // A Cucco owned by P2. `ours` is our copy's own AS command, `theirs` the owner's in its samples.
     auto run = [](const std::string& ours, const std::string& theirs) {
         Sync sync;
@@ -7855,6 +7864,33 @@ TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries
     CHECK(run("Lifted", "Wait"));         // our Link carries it: ours, the owner's motion waits
     CHECK_FALSE(run("Lifted", "Lifted"));  // the owner carries it: its Lifted on our copy, it stays theirs
     CHECK_FALSE(run("Wait", "Wait"));      // nobody carries it
+}
+
+TEST_CASE("carry claim: child Ruto our Link carries is ours, the owner's Crouch stays off her (row 304, #64)") {
+    // Shared Ruto owned by P2. `ours`: our copy's own AS command; `theirs`: the owner's in its samples.
+    auto run = [](const std::string& ours, const std::string& theirs) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x300, 0x33, 1, 1.0f, "Wait", "Npc_Zora_Ruto_Child_001")});
+        const proto::ObjectId id = *sync.IdOf(0x300);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t <= 1000; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 1.0f, 1, theirs));
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x300, 0x33, 1, 1.0f, ours, "Npc_Zora_Ruto_Child_001")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const bool claimed = sync.AreaClaim(0x300, 1000 * kMs);
+        CHECK(claimed == sync.EventPartner(0x300, 1000 * kMs));  // the owner's motion (#64's Crouch) waits
+        CHECK(claimed == (flags && (*flags & kTargeting) != 0));  // the server hands her to us
+        return claimed;
+    };
+    CHECK(run("Act_LiftRest", "Crouch"));              // #64: we carry her, the owner's Crouch is not put on her
+    CHECK(run("Act_LiftRest", "Wait"));
+    CHECK_FALSE(run("Act_LiftRest", "Act_LiftRest"));  // the owner carries her: she stays theirs
+    CHECK_FALSE(run("Wait", "Crouch"));                // nobody here carries her
 }
 
 TEST_CASE("objects: a Floormaster at life 0 is split, its death is its whole brood's (row 172)") {

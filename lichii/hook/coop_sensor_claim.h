@@ -77,12 +77,20 @@ inline std::optional<bool> InArea(const std::vector<CoopLogicProbe::Plug>& plugs
 // our game only: its AS plays the game's `Lifted` command there (the copy's own AS slot 0). The owner's place and
 // animation are put over a copy (Sync::Poses, the Mover), so a Cucco another player owns is pulled out of our hands. Of every AS in the
 // romfs, `cmd_Lifted` exists only in Animal_Cucco, Animal_SuperCucco and Animal_FlockCucco. The NPCs'
-// `Act_LiftRest` is their common set's, and only Ruto (each game's own, IsOwnFollower) is carried. Pots and rocks
+// `Act_LiftRest` is their common set's, and only child Ruto is carried: her AS command `Act_LiftRest` (states _St,
+// _Wait, _Ed, _LookAround, _Detect; AS/Npc_Zora_ZU_Ruto_Child.root.asb, docs/native-puppets.md), the name our copy
+// played while carried in player report #64's log. Row 304: she is shared and claimed so too (was each game's
+// own, so a carried Ruto was on no other screen). Pots and rocks
 // in Link's hands have their own path (WORLD_MOVE, docs/world.md), and bombs theirs (BOMB_TAKE). While our copy
 // plays `Lifted`, the sync claims it as it claims an area (Sync::AreaClaim): the claim keeps the owner's motion off
 // our copy, so `Lifted` holds while our Link carries it. The server hands the copy over, and our game then runs the
 // throw.
 inline constexpr std::string_view kLifted = "Lifted";
-inline bool Carried(std::string_view own_animation) { return own_animation == kLifted; }
+inline constexpr std::string_view kLiftRest = "Act_LiftRest";  // child Ruto (row 304); its clips Act_LiftRest_*
+inline bool Carried(std::string_view own_animation) {
+    return own_animation == kLifted || own_animation == kLiftRest ||
+           (own_animation.starts_with(kLiftRest) && own_animation.size() > kLiftRest.size() &&
+            own_animation[kLiftRest.size()] == '_');
+}
 
 }  // namespace CoopSensorClaim

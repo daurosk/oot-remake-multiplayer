@@ -11,7 +11,7 @@ gets the card scene asked by name (CoopCarpenters::Mender, kStuckUs 90 s).
 | B's log says so | coop_hook.cpp FollowCarpenters: 'carpenters freed: our count -> 1 (the shared rescues; row 333)' |
 | back to 0 rescues: both counts back to 0 / 4 (a count above the rescues comes down) | FollowRescues (both ways) |
 | stuck save in the fortress: the mender's log line (A or B, whichever fires first), then HavePlayedEvent.Meet_FourCarpenter_ClearEvent = 1 in both | coop_hook.cpp (Row 333 mender) LOG 'card scene never played' |
-| the card scene on that game's screen (a shot) | user-facing: the scene a player sees |
+| the card scene on each game's screen (a shot each) | user-facing: the scene a player sees |
 | each game holds the card exactly once after it (both menders may fire) | coop/host/src/game_items.cpp:38 IsGet.Item_Token_Gerudo (R::any), :333 PouchData.Item_Token_Gerudo.StockNum (R::max); the get is Dm_Gerudo_0025's own (docs/items.md:382) |
 | every mender line is counted per game (a re-ask after an expired ask: unit test carpenters_test.cpp) | coop_carpenters.h Mender (asks again every kStuckUs while unplayed) |
 
@@ -92,6 +92,7 @@ def test_carpenter_count_follows(pair):
 
 
 @pytest.mark.budget(420)
+@pytest.mark.look
 @pytest.mark.row("row 333 a save with all four carpenters freed and no card scene gets the card scene (carpenter-333)")
 def test_stuck_save_gets_card_scene(pair):
     with pair.setup():
@@ -120,7 +121,8 @@ def test_stuck_save_gets_card_scene(pair):
     pair.until("%s's card scene running or played" % first,
                lambda: is_set(pair, first, CARD_PLAYED) or pair.state(first).get("event"), CARD_FRAMES)
     pair.step_both(60)
-    pair.check_shot(first, "carpenter-card-scene")
+    for x in ("A", "B"):        # (each game: the screenshot rule; the other game joins the shared scene or plays its own)
+        pair.check_shot(x, "carpenter-card-scene")
     for x in ("A", "B"):
         pair.until("%s has %s" % (x, CARD_PLAYED), lambda x=x: is_set(pair, x, CARD_PLAYED), CARD_FRAMES)
     pair.step_both(120)   # the get's count settled and shared (FOLLOW_FRAMES covers one round trip)

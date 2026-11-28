@@ -3693,6 +3693,16 @@ TEST_CASE("objects: one-on-one fighters stay plain enemies (no boss group), Anub
     CHECK(CoopObjects::KeepsTarget("Enemy_Anubis"));
     CHECK(CoopObjects::KeepsTarget("Enemy_Anubis_MagicField"));
     CHECK_FALSE(CoopObjects::KeepsTarget("Enemy_Stalfos"));
+    // Row 287: Phantom Ganon takes no turns while he rides the paintings (phase 1), only after.
+    for (const char* a : {"Appear", "Run", "RideJumpAttack_Start", "RideJumpAttack_Loop", "RideJumpAttack_Attack",
+                          "RideJumpAttack_End"}) {
+        CAPTURE(a);
+        CHECK(CoopObjects::RidesThePaintings("Enemy_DungeonBoss_PhantomGanon", a));
+        CHECK_FALSE(CoopObjects::RidesThePaintings("Enemy_DungeonBoss_Ganondorf", a));
+    }
+    CHECK_FALSE(CoopObjects::RidesThePaintings("Enemy_DungeonBoss_PhantomGanon", "Fly"));
+    CHECK_FALSE(CoopObjects::RidesThePaintings("Enemy_DungeonBoss_PhantomGanon", "SmallDamage"));
+    CHECK_FALSE(CoopObjects::RidesThePaintings("Enemy_PhantomGanonHorse", "Run"));
 }
 
 TEST_CASE("objects: a pair or pack of one family is one group under its lowest id (pair survey)") {

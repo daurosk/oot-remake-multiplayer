@@ -643,6 +643,14 @@ std::string_view PackFamily(std::string_view name);
 inline constexpr float kPackReach = 25.0f;
 // An enemy that keeps its target (no attack read sent, so no turns): Anubis, which mirrors its target.
 bool KeepsTarget(std::string_view name);
+// Row 287: Phantom Ganon's phase 1, the ride through the paintings (his AS slot 0 'Appear', 'Run' and the ride-jump
+// attack 'RideJumpAttack_Start' / '_Loop' / '_Attack' / '_End': pganon-probe-8bf5f256 game-out-A.txt:6228-6807), is
+// one sequence of his meta AI (Table::FightsPlayerOnly) in his owner's game, with the paintings' imitations running
+// beside it. A turn handed him over at each ride-jump's end; the new owner's game took him in 'Run' and never let him
+// out of the paintings again (game-out-A.txt:7485-7491, then 'stuck' x3 at :8349/:10335/:11823, no 'Appear'). While he
+// rides, no attack read is sent (as KeepsTarget), so the server never turns him; his land battle and phase 2 take
+// turns as before. Owner-death, pause and the fight's start still move him (not turns).
+bool RidesThePaintings(std::string_view name, std::string_view animation);
 // Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):
 // attack_read whenever it was read, attacking with it while the attack runs; 0 when not read.
 std::uint8_t AttackBits(std::optional<bool> attacking);

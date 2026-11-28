@@ -1971,3 +1971,30 @@ TEST_CASE("hookshot: chartab-0121: Character Select's Customize keys get their t
     CHECK(body.find("g_snail.SetKeysShown(g_snail_key_page != 0 && g_snail_key_mix != 0);") == std::string::npos);
     CHECK(body.find("if (!texts) g_snail_key_page = g_snail_key_mix = 0;") != std::string::npos);
 }
+
+TEST_CASE("hookshot: row 325: local co-op's Field of view, one value for the kit's games and the page's game 1") {
+    // The kit's local co-op start gives each game it starts HOS_FOV_DEFAULT (local-coop.ps1 $script:KitLocalFov);
+    // the game whose Local co-op page starts the others already runs, so the module asks it for the same value through
+    // HosCoopApi::setting_set's "field_of_view_default" (patch 0048: fov_default, this run only, over the row's 100%).
+    const std::string kit = ReadFile(kRepo / "tools" / "release" / "kit" / "scripts" / "local-coop.ps1");
+    const std::string head = ReadFile(kRepo / "hookshot" / "src" / "coop_local_start.h");
+    const std::string pause = ReadFile(kRepo / "hookshot" / "src" / "coop_pause.cpp");
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0048-coop-local-fov.patch");
+    CHECK(kit.find("$script:KitLocalFov = 150") != std::string::npos);
+    CHECK(kit.find("$env:HOS_FOV_DEFAULT = \"$script:KitLocalFov\"") != std::string::npos);
+    CHECK(head.find("inline constexpr int kLocalFov = 150;") != std::string::npos);
+    CHECK(head.find("inline constexpr const char* kFovDefaultKey = \"field_of_view_default\";") != std::string::npos);
+    CHECK(patch.find("getenv(\"HOS_FOV_DEFAULT\"); e && *e) fov_default(atoi(e));") != std::string::npos);
+    CHECK(patch.find("if (key && !strcmp(key, \"field_of_view_default\")) {") != std::string::npos);
+    // (LocalAct: only once the launcher started, before the page's note is cleared)
+    const auto act = pause.find("void LocalAct(const LocalOrder& order) {");
+    REQUIRE(act != std::string::npos);
+    const std::string body = pause.substr(act, pause.find("\n}\n", act) - act);
+    const auto launched = body.find("if (note.empty()) {");
+    const auto set =
+        body.find("CoopLongshotSettings::Set(CoopLocalStart::kFovDefaultKey, CoopLocalStart::kLocalFov, &code)");
+    REQUIRE(launched != std::string::npos);
+    REQUIRE(set != std::string::npos);
+    CHECK(set > launched);
+    CHECK(set < body.find("return;", launched));
+}

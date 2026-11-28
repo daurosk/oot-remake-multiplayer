@@ -27,6 +27,11 @@ inline constexpr const char* kResultFile = "start-result.txt";
 inline constexpr std::uint16_t kFirstPort = 27560;
 // How long the page waits for the launcher's answer before it says it did not answer.
 inline constexpr std::uint64_t kAnswerMs = 60000;
+// Row 325: local co-op's Field of view, as the kit gives the games it starts (local-coop.ps1 $script:KitLocalFov through
+// HOS_FOV_DEFAULT; Hookshot patch 0048). The game whose page starts the others already runs: it asks the game for it
+// (HosCoopApi::setting_set's kFovDefaultKey, for this run only, where its player kept the row's own 100%).
+inline constexpr int kLocalFov = 150;
+inline constexpr const char* kFovDefaultKey = "field_of_view_default";
 
 // This game's player number among this PC's games: <game>\local-players\playerN gives N (2 to 9), else 1 (game 1, or
 // a game that is not one of them).

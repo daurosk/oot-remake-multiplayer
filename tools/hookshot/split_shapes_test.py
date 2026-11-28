@@ -1,5 +1,6 @@
-"""Patches 0047 (row 301): a local co-op window's own shape, and 0048 (row 325): local co-op's Field of view. Run on Longshot's source with our patches applied (the
-linux-longshot job: the kit's data/builder/source after its build.sh --renderer-only):
+"""Patches 0047 (row 301): a local co-op window's own shape, and 0048 (row 325): local co-op's Field of view. Run on
+Longshot's source with our patches applied (the linux-longshot job: the kit's data/builder/source after its build.sh
+--renderer-only):
     python -I -B split_shapes_test.py <patched source> [--cc gcc]
 Adapted from Longshot's own tests/test_widescreen_shapes.py (GPL-3.0, as this repo), which the Linux AppImage the kit
 patches does not ship. Game-free: host/hos_wide_size.h is compiled as is, and hos_main.c's widescreen block is cut out
@@ -7,8 +8,10 @@ of the source and compiled with a fake output size. Checked: HOS_ASPECT is read 
 or a number, never "8:9" as 8; a split screen window's narrow HOS_OUTPUT_RES (1:2 to 5:4) is taken from the switch
 only, while output_res= and the Insert menu keep 5:4 to 48:9; the pictures of the narrow shapes (height kept, cameras
 at the ratio, HUD at full width), and without the switches the same ratios give the game's own picture as before;
-0048: HOS_FOV_DEFAULT (the kit's local co-op start sets 150) starts the menu's Field of view there for the run only
-(env_override: never saved), only over the row's own 100%, on the row's steps (50..150 by 5).
+0048: HOS_FOV_DEFAULT (the kit's local co-op start sets 150) and, while the game runs, the module's setting_set
+"field_of_view_default" (the game whose Local co-op page starts the others) start the menu's Field of view there through
+one rule (fov_default): for the run only (env_override: never saved), only over the row's own 100%, on the row's steps
+(50..150 by 5), read at each camera update (host/oot_fov.c: no restart).
 Exit status 0 when all hold.
 """
 import argparse
@@ -148,15 +151,26 @@ def main():
         (main_c, r"float want = e \? \(float\)hos_aspect_parse\(e\) : 0\.0f;", "hos_main.c: HOS_ASPECT through hos_aspect_parse"),
         (main_c, r"const double r = split \? hos_wide_clamp_split\(want\) : hos_wide_clamp\(want\);", "hos_main.c: the split clamp"),
     )
-    # (0048: HOS_FOV_DEFAULT over the row's own 100% only, on its steps, for the run only; save() writes the player's value,
-    # saved_value, not the run's; the row reaches 150%)
+    # (0048: one rule, fov_default: over the row's own 100% only, on its steps, for the run only (env_override); its two
+    # callers, HOS_FOV_DEFAULT at the start and the module's "field_of_view_default" while the game runs (no restart:
+    # host/oot_fov.c reads the row at each camera update); save() writes the player's value, saved_value, not the run's;
+    # the row reaches 150%)
     menu = (root / "gpu/vk/vk_menu.cpp").read_text(encoding="utf-8")
     gameplay = (root / "gpu/vk/menu/gameplay.cpp").read_text(encoding="utf-8")
+    fov = (root / "host/oot_fov.c").read_text(encoding="utf-8")
     need += (
-        (menu, r'if \(const char\* e = getenv\("HOS_FOV_DEFAULT"\); e && \*e && opts\.fov == 100\) \{\s*'
-               r'const int v = std::min\(std::max\(\(atoi\(e\) \+ 2\) / 5 \* 5, 50\), 150\);[^\n]*\n\s*'
-               r'if \(v != 100\) env_override\(&opts\.fov, v\);',
-         "vk_menu.cpp: HOS_FOV_DEFAULT over the row's 100% only, for the run only"),
+        (menu, r'bool fov_default\(int want\) \{\s*'
+               r'const int v = std::min\(std::max\(\(want \+ 2\) / 5 \* 5, 50\), 150\);\s*'
+               r'if \(opts\.fov == v\) return true;[^\n]*\n\s*'
+               r'if \(opts\.fov != 100 \|\| v == 100\) return false;\s*'
+               r'env_override\(&opts\.fov, v\);\s*return true;\s*\}',
+         "vk_menu.cpp: fov_default over the row's 100% only, for the run only"),
+        (menu, r'if \(const char\* e = getenv\("HOS_FOV_DEFAULT"\); e && \*e\) fov_default\(atoi\(e\)\);',
+         "vk_menu.cpp: HOS_FOV_DEFAULT at the start through fov_default"),
+        (menu, r'int menu_setting_set\(const char\* key, int value, MkwVkSetting\* out\) \{[^}]*?'
+               r'if \(key && !strcmp\(key, "field_of_view_default"\)\) \{\s*if \(!fov_default\(value\)\) return -2;',
+         "vk_menu.cpp: setting_set's field_of_view_default through fov_default, -2 when the player's own stays"),
+        (fov, r"rx_option\(HOS_OPT_FOV, 100\)", "oot_fov.c: the Field of view read at each camera update (no restart)"),
         (menu, r'fprintf\(f, "%s=%d\\n", ini_key\(r\), saved_value\(r\.value\)\);', "vk_menu.cpp: save() writes saved_value"),
         (gameplay, r"\.value = &opts\.fov,\s*\.lo = 50, \.hi = 150,", "gameplay.cpp: the Field of view row is 50..150%"),
     )

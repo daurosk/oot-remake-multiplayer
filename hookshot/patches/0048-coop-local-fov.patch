@@ -6,35 +6,79 @@ Subject: [PATCH] Co-op local co-op: Field of view 150% by default
 
 For oot-remake-multiplayer's local co-op (row 325): several games on one
 PC, each in a part of the screen (patch 0047: a half keeps the game's height
-at about 8:9), looked zoomed in. HOS_FOV_DEFAULT=<50..150> is the Field of
-view a run starts at where the player kept the Insert menu row's own 100%;
-the co-op kit's local co-op start sets 150 for each of its games. Through
-the menu's env_override: never saved, so a game started alone is unchanged;
-a Field of view the player chose stays theirs, and one changed in the menu
-during the run is saved as theirs.
+at about 8:9), looked zoomed in. fov_default: the Field of view a run
+starts at where the player kept the Insert menu row's own 100%, through the
+menu's env_override: never saved, so a game started alone is unchanged; a
+Field of view the player chose stays theirs, and one changed in the menu
+during the run is saved as theirs. host/oot_fov.c reads the row at each
+gameplay camera update, so it takes effect without a restart.
+
+Two callers, one rule: HOS_FOV_DEFAULT=<50..150> at the start (the co-op
+kit's local co-op start sets 150 for each of its games), and the co-op
+module's setting_set("field_of_view_default", 150) while the game runs, in
+the game whose Local co-op page starts the others (it was already running,
+so it had no HOS_FOV_DEFAULT).
 ---
- gpu/vk/vk_menu.cpp | 8 ++++++++
- 1 file changed, 8 insertions(+)
+ gpu/vk/vk_menu.cpp | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
 
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
 index 0000000..0000000 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -4508,6 +4508,14 @@ void menu_init() {
+@@ -989,6 +989,20 @@ int saved_value(int* value) {
+     }
+     return *value;
+ }
++/// (oot-remake-multiplayer, patch 0048, row 325) Local co-op's Field of view: `want` (50..150, on the row's steps of 5) for
++/// this run where the player kept the row's own 100%, as an environment override (env_override): never saved, so the
++/// options file keeps the player's own; a Field of view the player chose stays theirs, and one changed in the menu during
++/// the run is saved as theirs. One rule for both callers: HOS_FOV_DEFAULT at the start (menu_init) and the co-op
++/// module's "field_of_view_default" while the game runs (menu_setting_set: a game whose Local co-op page starts the
++/// others). host/oot_fov.c reads the row at each gameplay camera update (rx_option(HOS_OPT_FOV)): no restart.
++/// True when the row holds `want` now.
++bool fov_default(int want) {
++    const int v = std::min(std::max((want + 2) / 5 * 5, 50), 150);
++    if (opts.fov == v) return true;   // (already: an earlier start, or the player's own)
++    if (opts.fov != 100 || v == 100) return false;
++    env_override(&opts.fov, v);
++    return true;
++}
+ } // namespace   // (#1633: asked by the modules too, menu_module.h's "what modules ask the renderer")
+ /// The menu set the row (the player or a preset): its value is saved from now on, even where it is the
+ /// one the environment forced
+@@ -4508,6 +4522,10 @@ void menu_init() {
          player_custom_output = custom_output;   // (parse_output replaces the player's own size with the environment's)
          env_override(&opts.output_res, parse_output(e));
      }
-+    // (HOS_FOV_DEFAULT=<50..150>: the Field of view this run starts at where the player kept the row's own 100%. Co-op's local
-+    // co-op start (several games on one PC, each in a part of the screen: oot-remake-multiplayer's kit, local-coop.ps1
-+    // Set-KitLocalEnvironment) sets 150, row 325. A Field of view the player chose stays theirs; the switch is never saved
-+    // (env_override, saved_value), so a game started alone is unchanged, and one changed in the menu during the run is saved.)
-+    if (const char* e = getenv("HOS_FOV_DEFAULT"); e && *e && opts.fov == 100) {
-+        const int v = std::min(std::max((atoi(e) + 2) / 5 * 5, 50), 150);   // (the row's steps: 50 to 150 by 5)
-+        if (v != 100) env_override(&opts.fov, v);
-+    }
++    // (HOS_FOV_DEFAULT=<50..150>: the Field of view this run starts at where the player kept the row's own 100% (fov_default).
++    // Co-op's local co-op start (several games on one PC, each in a part of the screen: oot-remake-multiplayer's kit,
++    // local-coop.ps1 Set-KitLocalEnvironment) sets 150, row 325. A game started alone gets none and is unchanged.)
++    if (const char* e = getenv("HOS_FOV_DEFAULT"); e && *e) fov_default(atoi(e));
      // (the FSR 4 model for this run: RX_VK_FSR4_MODEL over the saved row; the engine's live value follows the row)
      const int fsr4_env = fsr4_model_env();
      if (fsr4_env >= 0) env_override(&opts.fsr4_model, fsr4_env);
+@@ -4958,6 +4976,20 @@ static bool bridge_key_is(const char* row_key, const char* key) {
+ int menu_setting_set(const char* key, int value, MkwVkSetting* out) {
+     bridge_probe_first();
+     std::lock_guard lk(menu_mu);
++    // (oot-remake-multiplayer, patch 0048, row 325) "field_of_view_default": the Field of view row for this run only
++    // (fov_default: over the row's own 100% only, never saved), not a row of its own. The co-op module asks it in a game
++    // whose Local co-op page starts the other games, as HOS_FOV_DEFAULT does at a start. 1: the row holds it now (*out
++    // the Field of view row), -2: the player's own Field of view stays (left as it was).
++    if (key && !strcmp(key, "field_of_view_default")) {
++        if (!fov_default(value)) return -2;
++        menu_refresh = true;
++        for (int f = 0; f < (int)std::size(rows); f++)
++            if (rows[f].value == &opts.fov && bridge_row(f)) {
++                if (out) bridge_fill(f, out);
++                return 1;
++            }
++        return 1;
++    }
+     int i = 0;
+     while (i < (int)std::size(rows) && !(bridge_row(i) && bridge_key_is(ini_key(rows[i]), key))) i++;
+     if (i == (int)std::size(rows)) return 0;
 -- 
 2.56.0.windows.4
 

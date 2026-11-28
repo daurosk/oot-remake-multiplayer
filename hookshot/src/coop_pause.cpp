@@ -37,6 +37,7 @@
 #include "coop_lobby_game.h"
 #include "coop_lobby_tab.h"
 #include "coop_local_start.h"
+#include "coop_longshot_settings.h"
 #include "coop_menu_handoff.h"
 #include "coop_menu_tabs_rule.h"
 #include "coop_look.h"
@@ -1595,6 +1596,14 @@ void LocalAct(const LocalOrder& order) {
     if (note.empty()) {
         LOG_INFO(Core, "coop: multiplayer tab: local co-op: the launcher starts the games of players 2 to {} that do "
                        "not run (port {})", order.games, order.session.port);
+        // Row 325: this game, player 1, takes local co-op's Field of view as the games the launcher starts do (they get
+        // HOS_FOV_DEFAULT), for this run only and where its player kept the row's own 100% (patch 0048 fov_default; the
+        // game reads it at each camera update, no restart).
+        int code = 0;
+        const bool set =
+            CoopLongshotSettings::Set(CoopLocalStart::kFovDefaultKey, CoopLocalStart::kLocalFov, &code).has_value();
+        LOG_INFO(Core, "coop: multiplayer tab: local co-op: Field of view {}% for this run: {}", CoopLocalStart::kLocalFov,
+                 set ? "set" : code == -2 ? "the player's own kept" : "not set (no such setting in this game)");
         return;
     }
     MenuLock lock(__func__);

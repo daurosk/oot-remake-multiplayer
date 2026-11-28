@@ -219,11 +219,12 @@ TEST_CASE("own values: a guest keeps its rupees over rejoins, Resync and another
   GameSaves(own, "slot_00", {.rupee = 99}, -100);
   const Bytes solo_before = ReadFile(own / "slot_00" / "progress.sav");
 
-  // First join ever: nothing kept, the host's values are where the guest starts.
+  // First join ever: nothing kept, the guest starts as a new player (row 328), never with the host's rupees.
   int kept = 0;
   REQUIRE(save::write_coop_save(coop, Slot({.rupee = 5, .bomb = 3}), own, &kept) == save::WriteResult::written);
   CHECK(kept == -1);
-  CHECK(RupeesIn(coop / "slot_00") == 5);
+  CHECK(RupeesIn(coop / "slot_00") == 0);
+  CHECK(At(ReadFile(coop / "slot_00" / "progress.sav"), kBomb) == 0);
 
   // The guest plays: its game saves 250 rupees and 17 bombs into slot_03.
   GameSaves(coop, "slot_03", {.rupee = 250, .bomb = 17, .bottle = 4}, 5);
@@ -287,4 +288,61 @@ TEST_CASE("own values: slots that are not saves this build can read leave what w
   const auto kept = save::kept_own_values(coop);
   REQUIRE(kept);
   CHECK(*kept == std::vector<save::OwnValue>{{kLife, 12}, {kMP, 0}, {kBottleA, 0}, {kRupee, 42}, {kBomb, 0}});  // (item_flags order)
+}
+
+TEST_CASE("own values: a first join to a late-game host starts as a new player, not with its wallet and bags (row 328)") {
+  TempDir base("coop-own-values-first-join-test");
+  const fs::path own = base.path / "5a3c", coop = base.path / "5a3c-coop";
+  GameSaves(own, "slot_00", {.rupee = 99}, -100);  // the guest's solo save: never read for co-op, never written
+  const Bytes solo_before = ReadFile(own / "slot_00" / "progress.sav");
+  const Values host{.rupee = 999, .bomb = 40, .life = 3, .max_life = 20, .wallet = 3, .mp = 0, .mp_max = 480,
+                    .rupee_cap = 999, .bomb_cap = 40, .bottle = 6, .bottle_valid = 1};
+  const save::SaveSlot host_slot = Slot(host);
+  int kept = 0;
+  REQUIRE(save::write_coop_save(coop, host_slot, own, &kept) == save::WriteResult::written);
+  CHECK(kept == -1);
+  const std::uint32_t empty = coop::host::flag_hash("Empty");
+  CHECK(empty == 0xbe69de49u);
+  for (const char* slot : {"slot_00"}) {
+    const Bytes p = ReadFile(coop / slot / "progress.sav");
+    CHECK(At(p, kRupee, 2) == 0);
+    CHECK(At(p, kBomb) == 0);
+    CHECK(At(p, kBottleA) == empty);
+    CHECK(At(p, kLife) == 20);   // full: the save's MaxLife (shared)
+    CHECK(At(p, kMP) == 480);    // full: the save's MPMax (shared)
+    // What is shared stays the host's: the wallet, MaxLife, the capacities.
+    CHECK(At(p, kWallet) == 3);
+    CHECK(At(p, kMaxLife) == 20);
+    CHECK(At(p, kCapBomb) == 40);
+  }
+  CHECK(host_slot.files[0].bytes == FakeSave(host));  // (the host's slot itself is not changed)
+
+  // A rejoin before the guest's game ever saved: the start values were kept from the slot, not the host's.
+  CHECK(save::clear_coop_slots(coop) == 1);
+  REQUIRE(save::write_coop_save(coop, host_slot, own, &kept) == save::WriteResult::written);
+  CHECK(kept >= 1);
+  CHECK(RupeesIn(coop / "slot_00") == 0);
+  CHECK(At(ReadFile(coop / "slot_00" / "progress.sav"), kBomb) == 0);
+
+  // The guest plays and saves: from then on its own values, as row 249.
+  GameSaves(coop, "slot_02", {.rupee = 37, .bomb = 5, .life = 9, .max_life = 20, .mp_max = 480}, 5);
+  CHECK(save::clear_coop_slots(coop) == 2);
+  REQUIRE(save::write_coop_save(coop, host_slot, own, &kept) == save::WriteResult::written);
+  CHECK(RupeesIn(coop / "slot_00") == 37);
+  CHECK(At(ReadFile(coop / "slot_00" / "progress.sav"), kBomb) == 5);
+
+  CHECK(ReadFile(own / "slot_00" / "progress.sav") == solo_before);
+}
+
+TEST_CASE("own values: new_player_values: no bottle content where the save has no bottle, nothing it lacks") {
+  Bytes host = FakeSave({.rupee = 500, .bomb = 20, .life = 4, .max_life = 12, .mp_max = 0, .bottle = 6,
+                         .bottle_valid = 0});
+  const auto start = save::new_player_values(host);
+  CHECK(start.size() == 5);  // life, MP, bottle A, rupees, bombs: the per-player values this save has
+  CHECK(save::put_own_values(host, start) == 4);  // bottle A is not valid: its content left alone
+  CHECK(At(host, kBottleA) == 6);
+  CHECK(At(host, kRupee, 2) == 0);
+  CHECK(At(host, kLife) == 12);
+  CHECK(At(host, kMP) == 0);  // no magic meter: none
+  CHECK(save::new_player_values(Bytes(10, 0)).empty());
 }

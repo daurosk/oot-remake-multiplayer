@@ -563,8 +563,8 @@ save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot_in
         LOG_INFO(Core, "coop: save: the host's save written to {}", dir.string());
         // (row 249: rupees, ammo, bottles, life and magic are each player's own)
         if (own_kept < 0) {
-            LOG_INFO(Core, "coop: save: no values of our own kept yet (a first join here): the host's rupees, ammo and "
-                           "bottles are where ours start");
+            LOG_INFO(Core, "coop: save: no values of our own kept yet (a first join here): ours start as a new "
+                           "player's (no rupees, no ammo, empty bottles, full life and magic), never the host's");
         } else {
             LOG_INFO(Core, "coop: save: our own {} rupees/ammo/bottles/life/magic values kept in it", own_kept);
         }

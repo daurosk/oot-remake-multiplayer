@@ -438,14 +438,14 @@ WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& host_slot,
   fs::create_directories(coop_dir, ec);
   if (ec) return WriteResult::failed;
   // Row 249: the guest's own values (from the slot there now, else as kept at the last clear) in the host's save.
+  // Row 328: none kept yet (the first join here): a new player's values, never the host's wallet, bags and bottles.
   keep_own_values(coop_dir);
   SaveSlot slot = host_slot;
-  if (const auto own = kept_own_values(coop_dir)) {
-    int n = 0;
-    for (auto& f : slot.files) {
-      if (f.name == kSlotFiles[0]) n = put_own_values(f.bytes, *own);
-    }
-    if (own_kept != nullptr) *own_kept = n;
+  const auto kept = kept_own_values(coop_dir);
+  for (auto& f : slot.files) {
+    if (f.name != kSlotFiles[0]) continue;
+    const int n = put_own_values(f.bytes, kept ? *kept : new_player_values(f.bytes));
+    if (own_kept != nullptr) *own_kept = kept ? n : -1;
   }
   // The player's own settings, so the game does not start as on a new console.
   for (const char* name : {"option.sav", "account.sav"}) {
@@ -663,6 +663,28 @@ int put_own_values(std::vector<std::uint8_t>& progress, std::span<const OwnValue
     ++n;
   }
   return n;
+}
+
+std::vector<OwnValue> new_player_values(std::span<const std::uint8_t> progress) {
+  static const std::uint32_t life = flag_hash("PlayerStatus.Life"), max_life = flag_hash("PlayerStatus.MaxLife");
+  static const std::uint32_t mp = flag_hash("PlayerStatus.MP"), mp_max = flag_hash("PlayerStatus.MPMax");
+  // An empty bottle's BottleItem: the Enum value "Empty" (murmur3 0xbe69de49, what every bottle of a save with no
+  // bottle content holds).
+  static const std::uint32_t empty = flag_hash("Empty");
+  std::vector<OwnValue> out;
+  for (const auto& f : item_flags()) {
+    if (!per_player_value(f) || !save_value_at(progress, f.hash)) continue;
+    if (f.hash == life || f.hash == mp) {
+      // Full: as much as this save's (shared) MaxLife / MPMax; nothing when that cannot be read.
+      const auto most = save_value_at(progress, f.hash == life ? max_life : mp_max, kSaveTypeInt);
+      if (most) out.push_back({f.hash, get_u32(progress, most->offset)});
+    } else if (f.kind == proto::FlagKind::uint32 && f.name.ends_with(".BottleItem")) {
+      out.push_back({f.hash, empty});
+    } else {
+      out.push_back({f.hash, 0});  // rupees and every ammo count
+    }
+  }
+  return out;
 }
 
 std::string own_values_text(std::span<const OwnValue> own) {

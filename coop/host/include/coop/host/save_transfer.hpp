@@ -350,8 +350,8 @@ enum class WriteResult {
 // folder has none yet (copied, never moved). Refuses any folder that is not
 // a co-op folder.
 // Row 249: the guest's own values (keep_own_values first, from the slot there now) go into the host's progress.sav
-// before it is written; `own_kept` (optional) says how many (-1: none kept yet, the first join: the host's values
-// are the start).
+// before it is written; `own_kept` (optional) says how many (-1: none kept yet, the first join: a new player's values,
+// new_player_values, are the start; row 328: never the host's wallet, bags and bottles).
 WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlot& slot,
                             const std::filesystem::path& own_dir, int* own_kept = nullptr);
 
@@ -570,6 +570,9 @@ std::vector<OwnValue> read_own_values(std::span<const std::uint8_t> progress);
 // it (wallet, bomb bag, quiver, bullet bag, stick and nut capacity, MPMax, MaxLife; at least 0), a bottle's content
 // only where that save's bottle IsValid is true, and never a life of 0. Returns how many values were written.
 int put_own_values(std::vector<std::uint8_t>& progress, std::span<const OwnValue> own);
+// Row 328: where a new player's own values start in `progress` (a guest's first join, nothing kept): 0 rupees, no
+// ammo, every bottle empty, full life and magic (as much as that save's MaxLife and MPMax). Only values the save has.
+std::vector<OwnValue> new_player_values(std::span<const std::uint8_t> progress);
 
 inline constexpr std::string_view kOwnValuesFile = "coop-own-values.txt";
 std::string own_values_text(std::span<const OwnValue> own);

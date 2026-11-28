@@ -472,7 +472,15 @@ class PipeTest(unittest.TestCase):
                                     1, 65536, 65536, 0, _winapi.NULL)
 
         def game():
-            _winapi.ConnectNamedPipe(h, False)
+            # ERROR_PIPE_CONNECTED (535) = the client opened the pipe before this call: it IS connected (Windows'
+            # ConnectNamedPipe contract). CI 46091979839 windows 3.10: Bridge.connect won that race, this thread died on
+            # the 535, nothing answered: 'wait/status: no reply in 5 s' (scratchpad probe: client first -> 535, the
+            # pipe then reads fine). The test now connects first, so this order runs every time.
+            try:
+                _winapi.ConnectNamedPipe(h, False)
+            except OSError as e:
+                if e.winerror != 535:
+                    raise
             buf, reqs = b"", []
             while len(reqs) < 2:
                 data, _ = _winapi.ReadFile(h, 65536)
@@ -482,9 +490,9 @@ class PipeTest(unittest.TestCase):
                     reqs.append(json.loads(line))
             for r in reversed(reqs):   # the second first: the first was held back until the second came
                 _winapi.WriteFile(h, (json.dumps({"id": r["id"], "ok": True, "cmd": r["cmd"]}) + "\n").encode())
+        bridge = hs.Bridge.connect(name, timeout=5)   # (before the server's ConnectNamedPipe: the order that raced)
         t = threading.Thread(target=game, daemon=True)
         t.start()
-        bridge = hs.Bridge.connect(name, timeout=5)
         got = {}
         w = threading.Thread(target=lambda: got.__setitem__("wait", bridge.request("wait", reply_timeout=5)))
         w.start()

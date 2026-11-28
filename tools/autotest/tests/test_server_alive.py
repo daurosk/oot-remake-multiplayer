@@ -105,7 +105,13 @@ class RunChecks(unittest.TestCase):
     """hookshot.py run end to end up to the server: games are empty folders (the server checks come first)."""
 
     def run_main(self, tmp, port, server):
-        code = hookshot.main(["run", "--game-a", os.path.join(tmp, "A"), "--game-b", os.path.join(tmp, "B"),
+        # (run needs an A script, hookshot.py main: '--script-a (or --only B)'; one plain step, never reached: the
+        # server checks come before the games start)
+        script = os.path.join(tmp, "a.txt")
+        with open(script, "w") as f:
+            f.write("press A\n")
+        code = hookshot.main(["run", "--script-a", script,
+                              "--game-a", os.path.join(tmp, "A"), "--game-b", os.path.join(tmp, "B"),
                               "--out", os.path.join(tmp, "out"), "--name", "t", "--every", "0",
                               "--server", server, "--port", str(port), "--no-restore"])
         with open(os.path.join(tmp, "out", "FAILED.txt"), encoding="utf-8") as f:

@@ -1,4 +1,4 @@
-"""Patch 0047 (row 301): a local co-op window's own shape. Run on Longshot's source with our patches applied (the
+"""Patches 0047 (row 301): a local co-op window's own shape, and 0048 (row 325): its Field of view. Run on Longshot's source with our patches applied (the
 linux-longshot job: the kit's data/builder/source after its build.sh --renderer-only):
     python -I -B split_shapes_test.py <patched source> [--cc gcc]
 Adapted from Longshot's own tests/test_widescreen_shapes.py (GPL-3.0, as this repo), which the Linux AppImage the kit
@@ -6,7 +6,10 @@ patches does not ship. Game-free: host/hos_wide_size.h is compiled as is, and ho
 of the source and compiled with a fake output size. Checked: HOS_ASPECT is read as a shape ("8:9", "1920x2100", "8/9")
 or a number, never "8:9" as 8; a split screen window's narrow HOS_OUTPUT_RES (1:2 to 5:4) is taken from the switch
 only, while output_res= and the Insert menu keep 5:4 to 48:9; the pictures of the narrow shapes (height kept, cameras
-at the ratio, HUD at full width), and without the switches the same ratios give the game's own picture as before.
+at the ratio, HUD at full width), and without the switches the same ratios give the game's own picture as before;
+0048: split screen fill (a run's switch asks for a shape narrower than 16:9, HOS_OUTPUT_RES's over HOS_ASPECT's, as
+hos_main.c) starts the menu's Field of view at 150% for the run only (env_override: never saved), only over its 100%,
+within the row's range; 16:9, wider shapes and no switch are not fill.
 Exit status 0 when all hold.
 """
 import argparse
@@ -95,6 +98,27 @@ SPLIT_CASES = (
 )
 
 
+FILL = r'''
+#include <stdio.h>
+#include "host/hos_wide_size.h"
+int main(void) { printf("%d %d\n", hos_wide_split_fill(), HOS_SPLIT_FOV); return 0; }
+'''
+
+# (the run's switches) -> split screen fill: 1 or 0
+FILL_CASES = (
+    ({"HOS_ASPECT": "8:9"}, 1),                                  # a half of a 16:9 screen
+    ({"HOS_ASPECT": "1920:2160", "HOS_OUTPUT_RES": "1024x1152"}, 1),   # the owner's kit: his own 1152 output, the half's shape
+    ({"HOS_OUTPUT_RES": "1920X2160"}, 1),
+    ({"HOS_ASPECT": "0.9143"}, 1),
+    ({"HOS_ASPECT": "16:9"}, 0),                                 # a quarter of a 16:9 screen: 16:9, the game's own view
+    ({"HOS_OUTPUT_RES": "1920x1080"}, 0),
+    ({"HOS_ASPECT": "21:9"}, 0),                                 # wider: the screens' widescreen, unchanged
+    ({"HOS_ASPECT": "8:9", "HOS_OUTPUT_RES": "2560x1440"}, 0),   # HOS_OUTPUT_RES's shape wins, as in hos_main.c
+    ({}, 0),                                                     # a game started alone
+    ({"HOS_ASPECT": "x"}, 0),
+)
+
+
 def wide_block(src):
     """The sizes, from the 16:9 constant to the else branch's log line, as hos_main.c has them"""
     start = src.index("        const uint32_t output_w = hos_output_size(0), output_h = hos_output_size(1);")
@@ -132,6 +156,11 @@ def main():
                                  env=dict(env, **switch)).stdout.strip()
             if got != expect:
                 bad.append("split %s %s: %s, expected %s" % (want, switch, got, expect))
+        exe = build(args.cc, root, work, "fill", FILL)
+        for switch, expect in FILL_CASES:
+            got = subprocess.run([str(exe)], capture_output=True, text=True, check=True, env=dict(env, **switch)).stdout.split()
+            if got != [str(expect), "150"]:
+                bad.append("fill %s: %s, expected %d 150" % (switch, " ".join(got), expect))
 
     # (the switch only: output_mode takes HOS_OUTPUT_RES's text with the narrow sizes, output_res= without; the menu's
     # hos_output_parse stays the 5:4 one; HOS_ASPECT goes through hos_aspect_parse)
@@ -146,13 +175,23 @@ def main():
         (main_c, r"float want = e \? \(float\)hos_aspect_parse\(e\) : 0\.0f;", "hos_main.c: HOS_ASPECT through hos_aspect_parse"),
         (main_c, r"const double r = split \? hos_wide_clamp_split\(want\) : hos_wide_clamp\(want\);", "hos_main.c: the split clamp"),
     )
+    # (0048: the menu's Field of view row, 50..150%, starts at HOS_SPLIT_FOV in fill for the run only, over its own 100%; save()
+    # writes the player's value, saved_value, not the run's)
+    menu = (root / "gpu/vk/vk_menu.cpp").read_text(encoding="utf-8")
+    gameplay = (root / "gpu/vk/menu/gameplay.cpp").read_text(encoding="utf-8")
+    need += (
+        (menu, r"if \(hos_wide_split_fill\(\) && opts\.fov == 100\) env_override\(&opts\.fov, HOS_SPLIT_FOV\);",
+         "vk_menu.cpp: Field of view HOS_SPLIT_FOV in fill, for the run only, over 100% only"),
+        (menu, r"fprintf\(f, \"%s=%d\\n\", ini_key\(r\), saved_value\(r\.value\)\);", "vk_menu.cpp: save() writes saved_value"),
+        (gameplay, r"\.value = &opts\.fov,\s*\.lo = 50, \.hi = 150,", "gameplay.cpp: the Field of view row reaches 150%"),
+    )
     for text, pattern, what in need:
         if not re.search(pattern, text):
             bad.append(what)
     if bad:
         raise SystemExit("FAIL:\n  " + "\n  ".join(bad))
     print("PASS: split screen shapes: HOS_ASPECT shapes, narrow HOS_OUTPUT_RES from the switch only, the pictures of "
-          "halves down to 1:2, menu sizes and the screens' own pictures unchanged")
+          "halves down to 1:2, menu sizes and the screens' own pictures unchanged; fill's Field of view 150% for the run only")
 
 
 if __name__ == "__main__":

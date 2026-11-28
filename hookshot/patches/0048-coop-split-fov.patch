@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 27 Nov 2026 20:32:12 -0900
+Subject: [PATCH] Co-op split screen fill: Field of view 150% by default in a
+ narrow window
+
+For oot-remake-multiplayer's local co-op (row 325): a game in a half of a
+16:9 screen keeps the game's height at about 8:9 (patch 0047), so it sees
+about half as much of the world across as the game's 16:9 picture; players
+found it zoomed in. A run whose HOS_OUTPUT_RES or HOS_ASPECT asks for a
+picture narrower than 16:9 (host/hos_wide_size.h hos_wide_split_fill, the
+shape hos_main.c makes) now starts the Insert menu's Field of view at 150%
+(HOS_SPLIT_FOV), for that run only, through the menu's env_override: the
+options file keeps the player's own value, so a game started alone or at
+16:9 is unchanged, a Field of view the player chose (not 100%) stays, and
+one changed in the menu during the run is saved as theirs.
+---
+ gpu/vk/vk_menu.cpp   |  6 ++++++
+ host/hos_wide_size.h | 16 ++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 0000000..0000000 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -4508,6 +4508,12 @@ void menu_init() {
+         player_custom_output = custom_output;   // (parse_output replaces the player's own size with the environment's)
+         env_override(&opts.output_res, parse_output(e));
+     }
++    // (co-op split screen fill, row 325: a run whose HOS_OUTPUT_RES or HOS_ASPECT asks for a picture narrower than 16:9, a half
++    // or a quarter of the screen (host/hos_wide_size.h hos_wide_split_fill), keeps the game's height and so sees much less of
++    // the world across: Field of view starts at HOS_SPLIT_FOV for this run. Only over the row's own 100%: a Field of view the
++    // player chose stays theirs. It is never saved (env_override, saved_value): the options file keeps the player's own, so a
++    // game started alone or 16:9 is unchanged; a Field of view changed in the menu during the run is saved as theirs.)
++    if (hos_wide_split_fill() && opts.fov == 100) env_override(&opts.fov, HOS_SPLIT_FOV);
+     // (the FSR 4 model for this run: RX_VK_FSR4_MODEL over the saved row; the engine's live value follows the row)
+     const int fsr4_env = fsr4_model_env();
+     if (fsr4_env >= 0) env_override(&opts.fsr4_model, fsr4_env);
+diff --git a/host/hos_wide_size.h b/host/hos_wide_size.h
+index 0000000..0000000 100644
+--- a/host/hos_wide_size.h
++++ b/host/hos_wide_size.h
+@@ -81,6 +81,22 @@ static inline double hos_aspect_parse(const char *text) {
+     return a > 0.0 ? a : 0.0;
+ }
+ 
++/* The Insert menu's Field of view in split screen fill: a half of a 16:9 screen keeps the game's height at about 8:9, so it
++   sees about half as much of the world across as the game's 16:9 picture; 150% (the row's widest) starts it wider. */
++#define HOS_SPLIT_FOV 150
++
++/* A run's switch asks for a picture narrower than 16:9 (split screen fill): the shape host/hos_main.c makes, HOS_OUTPUT_RES's
++   size when it parses (it wins there: hos_output_own_shape), else HOS_ASPECT's. A 16:9 shape, wider ones and a game started
++   alone (neither switch) are not. */
++static inline int hos_wide_split_fill(void) {
++    double want = 0.0;
++    unsigned w = 0, h = 0;
++    const char *res = getenv("HOS_OUTPUT_RES");
++    if (res && sscanf(res, "%u%*[xX]%u", &w, &h) == 2 && w > 0 && h > 0) want = (double)w / (double)h;
++    if (want <= 0.0) want = hos_aspect_parse(getenv("HOS_ASPECT"));
++    return want > 0.0 && want < 16.0 / 9.0 * 0.99;
++}
++
+ /* The most pixels a widescreen picture takes: 5120 x 2160's (a 21:9 screen at the 4K output, native; 7680 x 1440, 48:9 at
+    1440, has as many). The game's render targets come from a pool scaled with the picture's pixels (host/nn_applet.c
+    hos_rt_pool_size): 915 MB for that, from the game's 305 MB for 2560 x 1440. It was 3840 x 2160's: a 32:9 screen at the 4K
+-- 
+2.56.0.windows.4
+

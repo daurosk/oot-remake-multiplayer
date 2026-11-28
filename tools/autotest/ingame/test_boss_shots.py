@@ -33,6 +33,8 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import playtest_client as pc   # noqa: E402
+sys.path.insert(0, HERE)
+import pair as P                   # noqa: E402
 
 # The old rows' '#! switches' line (row-222-shots-twinrova.A.txt:12, row-286-shots-phantomganon.A.txt:8).
 SWITCHES = ("LICHII_COOP_DEBUG_BOSS=1", "LICHII_COOP_DEBUG_OBJECTS=1", "LICHII_COOP_CHEATS=1")
@@ -72,6 +74,34 @@ def warp_in(pair, stage):
     for x, s in st.items():
         assert (s.get("scene") or "").lower() == stage.lower() and not s.get("loading"), "%s after the warp: %s" % (
             x, s.get("scene"))
+
+
+# The most frames fight_ready waits after the old scripts' fixed intro wait: one more of the old Twinrova intro
+# allowance ('wait 1800', row-222-shots-twinrova.A.txt:27 = fr(1800) = 900 frames). A ceiling, not a timing: the wait
+# ends at the first read with the play UI up and no event, and every frame counts in the test's own budget.
+FIGHT_UI_FRAMES = 900
+
+
+def fight_ready(pair, stage):
+    """Before the first ZL: both games out of the boss intro, with the play UI up (review-tests-153-3, B #161 00:3x).
+    The warp is arrive_in_event (warp_in), and since 7f23bf2d1 an arrive_in_event warp no longer waits for the play UI
+    (the intro holds it down: row-215-confirm-4, probe-intro-53d40ab3-2), so after the fixed intro wait a game can still
+    be in its intro and a ZL there is not the fight's lock-on. Pair.until_in_play steps both games until each has a
+    fresh Link sample, no load, no event and its play UI not down; then each game's last play UI line must be 'up'
+    (pair.PLAY_UI, the module's own line: none at all = the intro's end not proven). Either one missing within
+    FIGHT_UI_FRAMES is a SETUP-FAIL naming the game, never a FAIL of the shots."""
+    try:
+        pair.until_in_play("%s: the boss intro over (play UI up) before the first ZL" % stage, max_frames=FIGHT_UI_FRAMES)
+    except P.TestTimeout:
+        raise
+    except AssertionError as e:
+        raise P.SetupFail("%s: the boss intro not over %d frames after the intro wait: %s" % (stage, FIGHT_UI_FRAMES, e)
+                          ) from None
+    for x in ("A", "B"):
+        ui = pair.play_ui(x)
+        if ui != "up":
+            raise P.SetupFail("%s: %s: no 'the game's play UI is up' line after the intro (last: %s); a ZL now may land in "
+                              "the intro" % (stage, x, ui))
 
 
 def hold_both(pair, buttons, frames):
@@ -215,6 +245,7 @@ def test_twinrova_shots(pair):
     pair.step_both(fr(1800))
     for x in ("A", "B"):
         pair.expect_log(x, sync_on("Enemy_DungeonBoss_Koume"), max_frames=fr(1200))
+    fight_ready(pair, "TwinrovaStage")               # (the intro over, play UI up: no ZL into the intro)
     hold_both(pair, ["ZL"], fr(240))                  # 'hold ZL 240'
     for i in range(1, 11):                            # 'hold ZL 90 a-p1-NN' + 'wait 510' (none after the 10th)
         hold_both(pair, ["ZL"], fr(90))
@@ -263,6 +294,7 @@ def test_phantom_ganon_shots(pair):
     pair.step_both(fr(3900))
     for x in ("A", "B"):
         pair.expect_log(x, sync_on(PG), max_frames=fr(1200))
+    fight_ready(pair, "PhantomGanonStage")            # (the intro over, play UI up: no ZL into the intro)
     for x in ("A", "B"):                              # 'press ZL 10  # lock on' (both), 'wait 600', mark t1
         pair.press(x, ["ZL"], frames=fr(10))
     pair.step_both(fr(600))

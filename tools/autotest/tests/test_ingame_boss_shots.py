@@ -82,6 +82,74 @@ class BossShots(unittest.TestCase):
                         bad.append("%s at line %d" % (name, sub.lineno))
         self.assertEqual(bad, [])
 
+# -- fight_ready (twinrova-222-8, B #161; review-tests-153-3: the first ZL came after fixed frame steps with no play-UI
+# proof, and since 7f23bf2d1 an arrive_in_event warp no longer waits for the play UI). On the fake lane (the same as
+# test_ingame.WarpPlayUi): the fight starts only once both games' play UI is up again after the warp; a play UI that
+# never comes up, or no play UI line at all, is a SETUP-FAIL naming the game, never a pass.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ingame"))
+from unittest import mock           # noqa: E402
+import fakegame                     # noqa: E402
+import pair as P                    # noqa: E402
+import test_boss_shots as BS        # noqa: E402
+
+SCENE = "KakarikoVillage_Child"     # (a scene the fake warps to: test_ingame.WarpPlayUi)
+
+
+class FightReady(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def lane(self, **env):
+        with mock.patch.dict(os.environ, env):
+            lane = fakegame.FakeLane(self.tmp)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=self.tmp)
+        self.addCleanup(pair.close)
+        pair.begin(120)
+        return pair
+
+    def warp_raw(self, pair):
+        # (the bridge's own warp verb, no Pair.warp_one play UI wait: what an arrive_in_event warp leaves since 7f23bf2d1)
+        for x in ("A", "B"):
+            pair.call(x, "warp", scene=SCENE)
+        self.assertEqual(pair.play_ui("A"), "down")
+        self.assertEqual(pair.play_ui("B"), "down")
+
+    def test_waits_until_the_play_ui_is_up_on_both(self):
+        pair = self.lane(BT_FAKE_UI_LATE="150")
+        self.warp_raw(pair)
+        before = pair.c["A"].last_frame or 0
+        BS.fight_ready(pair, SCENE)
+        self.assertEqual(pair.play_ui("A"), "up")
+        self.assertEqual(pair.play_ui("B"), "up")
+        self.assertGreaterEqual((pair.c["A"].last_frame or 0) - before, 140)   # (stepped, not judged from one read)
+
+    def test_a_play_ui_never_up_is_setup_fail_naming_the_game(self):
+        pair = self.lane(BT_FAKE_UI_NEVER="B")
+        self.warp_raw(pair)
+        with self.assertRaisesRegex(P.SetupFail, r"^%s: the boss intro not over %d frames .*B: " % (
+                SCENE, BS.FIGHT_UI_FRAMES)):
+            BS.fight_ready(pair, SCENE)
+
+    def test_no_play_ui_line_is_setup_fail(self):
+        pair = self.lane()
+        self.assertIsNone(pair.play_ui("A"))           # (the fake's boot says no play UI line)
+        with self.assertRaisesRegex(P.SetupFail, r"^%s: A: no 'the game's play UI is up' line" % SCENE):
+            BS.fight_ready(pair, SCENE)
+
+    def test_the_first_zl_comes_after_fight_ready_in_both_tests(self):
+        # (source order: each test's first ZL press/hold after its fight_ready call, review-tests-153-3)
+        with open(BS.__file__, encoding="utf-8") as f:
+            src = f.read()
+        for name, stage in (("def test_twinrova_shots", "TwinrovaStage"), ("def test_phantom_ganon_shots",
+                                                                             "PhantomGanonStage")):
+            body = src[src.index(name):]
+            body = body[:body.find("\ndef ", 1) if "\ndef " in body[1:] else len(body)]
+            ready = body.index('fight_ready(pair, "%s")' % stage)
+            self.assertLess(ready, body.index('["ZL"]'), name)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -158,13 +158,13 @@ std::optional<protocol::AsVars> read_as_vars(GameMemory& memory, std::uint64_t a
   if (!resource) return std::nullopt;
   if (memo.as != as || memo.resource != *resource) {
     AsVarsMemo fresh;
-    for (std::size_t i = 0; i < kAsF32Names.size(); ++i) {
-      const auto h = as_var_handle(memory, as, kAsF32Names[i], false);
+    for (std::size_t i = 0; i < protocol::kAsVarFloatNames.size(); ++i) {
+      const auto h = as_var_handle(memory, as, protocol::kAsVarFloatNames[i], false);
       if (!h) return std::nullopt;
       fresh.f32[i] = *h;
     }
-    for (std::size_t i = 0; i < kAsBoolNames.size(); ++i) {
-      const auto h = as_var_handle(memory, as, kAsBoolNames[i], true);
+    for (std::size_t i = 0; i < protocol::kAsVarBools.size(); ++i) {
+      const auto h = as_var_handle(memory, as, protocol::kAsVarBools[i].name, true);
       if (!h) return std::nullopt;
       fresh.boolean[i] = *h;
     }
@@ -182,11 +182,11 @@ std::optional<protocol::AsVars> read_as_vars(GameMemory& memory, std::uint64_t a
     any = true;
   }
   protocol::AsVars out{f[0], f[1], f[2], 0};
-  for (std::size_t i = 0; i < kAsBoolNames.size(); ++i) {
+  for (std::size_t i = 0; i < protocol::kAsVarBools.size(); ++i) {
     if (memo.boolean[i] < 0) continue;
     const auto v = as_bool(memory, as, memo.boolean[i]);
     if (!v) return std::nullopt;
-    if (*v) out.bits |= kAsBoolBits[i];
+    if (*v) out.bits |= protocol::kAsVarBools[i].bit;
     any = true;
   }
   if (!any) return std::nullopt;

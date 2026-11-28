@@ -47,11 +47,12 @@ void make_as(FakeMemory& m, std::uint64_t as = kAs) {
   m.put_u32(kAsb + 0x3c, static_cast<std::uint32_t>(kStrings - kAsb));
   m.put_u16(kTable + 0x18, 4);  // f32 count
   m.put_u16(kTable + 0x1a, 1);  // f32 names from table entry 1 (entry 0 is someone else's)
-  m.put_u16(kTable + 0x20, 2);  // bool count
+  m.put_u16(kTable + 0x20, 3);  // bool count
   m.put_u16(kTable + 0x22, 5);  // bool names from entry 5
-  const char* names[] = {"Before", "XZSpeed", "LinearVelXZ", "LeftStickLength", "Other", "IsDash", "IsLeftStickInput"};
+  const char* names[] = {"Before",  "XZSpeed",          "LinearVelXZ", "LeftStickLength",
+                         "Other",   "IsDash",           "IsLeftStickInput", "ServiceWait"};
   std::uint32_t at = 0;
-  for (std::uint32_t i = 0; i < 7; ++i) {
+  for (std::uint32_t i = 0; i < 8; ++i) {
     const std::string s = names[i];
     m.put(kStrings + at, s.c_str(), s.size() + 1);
     m.put_u32(kTable + 0x38 + 4 * i, at | 0x5000000u);  // the top byte is not part of the offset
@@ -64,9 +65,10 @@ void make_as(FakeMemory& m, std::uint64_t as = kAs) {
   m.put_f32(kFloats + 12, 1.0f);   // LeftStickLength
   m.put_f32(kFloats + 16, 99.0f);  // Other
   m.put_u64(as + 0x30, kBools);
-  m.put_u32(kBools, 2);
+  m.put_u32(kBools, 3);
   m.put_u8(kBools + 4, 1);  // IsDash
   m.put_u8(kBools + 5, 0);  // IsLeftStickInput
+  m.put_u8(kBools + 6, 1);  // ServiceWait (row 324)
 }
 
 }  // namespace
@@ -85,15 +87,17 @@ TEST_CASE("as vars: handles by name, values from the AS's own arrays (row 307)")
   CHECK(v->left_stick_length == 1.0f);
   CHECK(v->linear_vel_xz == 6.25f);
   CHECK(v->xz_speed == 6.5f);
-  CHECK(v->bits == proto::kAsVarDash);
+  CHECK(v->bits == (proto::kAsVarDash | proto::kAsVarServiceWait));
+  CHECK(memo.boolean[2] == 2);   // ServiceWait
+  CHECK(memo.boolean[3] == -1);  // BattleMode: not in this AS, sent as 0
   CHECK(memo.as == kAs);
   // The handles are kept: a second frame reads only the values.
   m.put_u8(kBools + 5, 1);
   m.reads = 0;
   const auto again = read_as_vars(m, kAs, memo);
   REQUIRE(again);
-  CHECK(again->bits == (proto::kAsVarDash | proto::kAsVarLeftStickInput));
-  CHECK(m.reads < 60);
+  CHECK(again->bits == (proto::kAsVarDash | proto::kAsVarLeftStickInput | proto::kAsVarServiceWait));
+  CHECK(m.reads <= 6 * 10 + 1);  // 10 reads a found value (6 here) + the resource word: no name search
 }
 
 TEST_CASE("as vars: a bound value, a linked AS and an override read as the game's lookup reads them") {

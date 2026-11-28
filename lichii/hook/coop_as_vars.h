@@ -281,11 +281,13 @@ inline constexpr std::uint64_t kVtF32Set = 0x80;
 inline constexpr std::uint64_t kVtBoolSet = 0x88;
 inline constexpr std::uint64_t kVtF32Handle = 0x2f8;
 inline constexpr std::uint64_t kVtBoolHandle = 0x300;
-inline constexpr std::size_t kVars = 5;  // f32 0..2, bool 3..4
-inline constexpr std::array<const char*, kVars> kNames{"LeftStickLength", "LinearVelXZ", "XZSpeed",
-                                                       "IsLeftStickInput", "IsDash"};
-inline constexpr std::array<std::uint8_t, 2> kBits{coop::protocol::kAsVarLeftStickInput, coop::protocol::kAsVarDash};
-inline constexpr bool IsBool(std::size_t i) { return i >= 3; }
+// Variable i: the floats first, then the bools (coop::protocol::kAsVarFloatNames and kAsVarBools, the one table).
+inline constexpr std::size_t kFloatVars = coop::protocol::kAsVarFloatNames.size();
+inline constexpr std::size_t kVars = kFloatVars + coop::protocol::kAsVarBools.size();
+inline constexpr bool IsBool(std::size_t i) { return i >= kFloatVars; }
+inline constexpr std::string_view NameOf(std::size_t i) {
+    return IsBool(i) ? coop::protocol::kAsVarBools[i - kFloatVars].name : coop::protocol::kAsVarFloatNames[i];
+}
 // Room in the puppet's block (CoopPuppet::block, 0x180 to 0x1a8 is free: after kNameText, before kPlayRequest).
 namespace block {
 inline constexpr std::uint64_t kNameText = 0x180;  // 0x20 bytes: the name being looked up
@@ -343,7 +345,10 @@ public:
             std::uint64_t fn = 0;
             if (!read(vt + (IsBool(i) ? kVtBoolHandle : kVtF32Handle), &fn, sizeof fn) || fn == 0) return std::nullopt;
             std::array<char, block::kNameTextCapacity> text{};
-            std::snprintf(text.data(), text.size(), "%s", kNames[i]);
+            const std::string_view name = NameOf(i);
+            static_assert(sizeof("IsLeftStickInput") <= block::kNameTextCapacity);
+            if (name.size() >= text.size()) return std::nullopt;
+            std::memcpy(text.data(), name.data(), name.size());
             const std::uint64_t text_at = block_at + block::kNameText;
             if (!write(text_at, text.data(), text.size()) || !write(block_at + block::kNamePtr, &text_at, 8)) {
                 return std::nullopt;
@@ -377,7 +382,7 @@ public:
             const auto h = static_cast<std::int32_t>(static_cast<std::uint32_t>(result));
             const auto i = static_cast<std::size_t>(asking_);
             handle_[i] = h < 0 ? -1 : h;
-            line = std::string("AS variable '") + kNames[i] + "' handle " + std::to_string(h) +
+            line = std::string("AS variable '") + std::string(NameOf(i)) + "' handle " + std::to_string(h) +
                    (h < 0 ? " (not in this AS: skipped)" : "");
         } else if (setting_ >= 0) {
             written_[static_cast<std::size_t>(setting_)] = true;
@@ -390,18 +395,24 @@ public:
 
     std::int32_t Handle(std::size_t i) const { return handle_[i]; }
 
+    static std::array<std::int32_t, kVars> Unknown() {
+        std::array<std::int32_t, kVars> a{};
+        a.fill(kUnknown);
+        return a;
+    }
+
     static float Value(const coop::protocol::AsVars& v, std::size_t i) {
         switch (i) {
         case 0: return v.left_stick_length;
         case 1: return v.linear_vel_xz;
         case 2: return v.xz_speed;
-        default: return (v.bits & kBits[i - 3]) != 0 ? 1.0f : 0.0f;
+        default: return (v.bits & coop::protocol::kAsVarBools[i - kFloatVars].bit) != 0 ? 1.0f : 0.0f;
         }
     }
 
 private:
     std::uint64_t as_ = 0;
-    std::array<std::int32_t, kVars> handle_{kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
+    std::array<std::int32_t, kVars> handle_ = Unknown();
     std::array<bool, kVars> written_{};
     std::array<float, kVars> value_{};
     std::size_t next_ = 0;

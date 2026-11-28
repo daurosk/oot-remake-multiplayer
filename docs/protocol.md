@@ -249,7 +249,7 @@ Protocol 10 also keeps 360 to 364 for `cutscene-snap` (issue 194); none is used 
 | 5 | `scene` | string, the game's scene name (for example `spot00`), up to 64 characters | 2 + string bytes |
 | 6 | `age` | u8: 0 child, 1 adult (other values refused) | 1 |
 | 7 | `animation` | string name up to 64 characters, f32 frame, f32 rate (stage 2) | 2 + string bytes + 8 |
-| 8 | `as_vars` | row 307: the sender's AS variables that the `Move` command's walk/run blend reads, f32 `LeftStickLength`, f32 `LinearVelXZ`, f32 `XZSpeed` (finite), u8 bits (0x01 `IsLeftStickInput`, 0x02 `IsDash`; unknown bits ignored). A Character Select character's puppet (no pose copy) gets them written into its own AS by the game's own setters; older builds skip it | 13 |
+| 8 | `as_vars` | row 307: the sender's AS variables that the `Move` command's walk/run blend reads, f32 `LeftStickLength`, f32 `LinearVelXZ`, f32 `XZSpeed` (finite), u8 bits (0x01 `IsLeftStickInput`, 0x02 `IsDash`; row 324, the idle blend's states: 0x04 `ServiceWait`, 0x08 `BattleMode`, 0x10 `IsCaution`, 0x20 `IsCautionLife`, 0x40 `IsInHotPlace`, 0x80 `IsInRain`; an older sender sends them 0; names and bits: messages.hpp kAsVarBools). A Character Select character's puppet (no pose copy) gets them written into its own AS by the game's own setters; older builds skip it | 13 |
 
 The `time` component is required in every sample; the others are sent only when the sender has them.
 

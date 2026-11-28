@@ -44,18 +44,14 @@ inline constexpr std::uint64_t kResourceVtBoolTable = 0x170;
 inline constexpr std::uint64_t kControllerAs = 0x40;
 }  // namespace as_addr
 
-// The five names PLAYER_SAMPLE's AsVars carries (the game's own name tables: f32 0x3ee5990 + offsets at +0x6a0,
-// bool 0x3ee5400 + offsets at +0x474; decoded in reports/puppet-run-307-4.md).
-inline constexpr std::array<std::string_view, 3> kAsF32Names{"LeftStickLength", "LinearVelXZ", "XZSpeed"};
-inline constexpr std::array<std::string_view, 2> kAsBoolNames{"IsLeftStickInput", "IsDash"};
-inline constexpr std::array<std::uint8_t, 2> kAsBoolBits{protocol::kAsVarLeftStickInput, protocol::kAsVarDash};
+// The names PLAYER_SAMPLE's AsVars carries: protocol::kAsVarFloatNames and kAsVarBools (one table, messages.hpp).
 
 // Handles found for one AS, kept from frame to frame: the search reads the name table.
 struct AsVarsMemo {
   std::uint64_t as = 0;        // the AS the handles are for; 0: none yet
   std::uint64_t resource = 0;  // and its resource ([AS + 0xf0], whose name table they index)
-  std::array<std::int32_t, 3> f32{-1, -1, -1};
-  std::array<std::int32_t, 2> boolean{-1, -1};
+  std::array<std::int32_t, protocol::kAsVarFloatNames.size()> f32{-1, -1, -1};
+  std::array<std::int32_t, protocol::kAsVarBools.size()> boolean{-1, -1, -1, -1, -1, -1, -1, -1};
 };
 
 // The handle the game's vt+0x2f8 (floats) or vt+0x300 (bools) would give for `name`; -1: not in the table.
@@ -64,7 +60,7 @@ std::optional<std::int32_t> as_var_handle(GameMemory& memory, std::uint64_t as, 
 // The value vt+0x1e0 / vt+0x1e8 would give for a handle (>= 0). Nothing: a read failed or an override.
 std::optional<float> as_f32(GameMemory& memory, std::uint64_t as, std::int32_t handle);
 std::optional<bool> as_bool(GameMemory& memory, std::uint64_t as, std::int32_t handle);
-// All five, for the AS at `as`. A missing name sends 0 (false); nothing when a read failed or no name is found.
+// All of them, for the AS at `as`. A missing name sends 0 (false); nothing when a read failed or no name is found.
 std::optional<protocol::AsVars> read_as_vars(GameMemory& memory, std::uint64_t as, AsVarsMemo& memo);
 
 }  // namespace coop::host

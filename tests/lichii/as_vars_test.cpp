@@ -118,29 +118,39 @@ TEST_CASE("as-vars writer: a character's AS gets each name's handle once, then t
     CoopAsVars::Writer w;
     CHECK(CoopAsVars::Writer::AsOf(read, actor) == as);
     CHECK_FALSE(w.Next(read, write, actor, block, std::nullopt, 1));  // an older sender: nothing
-    const coop::protocol::AsVars v{1.0f, 6.25f, 6.5f, coop::protocol::kAsVarDash};
+    // Row 324: ServiceWait (the idle fidget) rides in the same bits.
+    const coop::protocol::AsVars v{1.0f, 6.25f, 6.5f,
+                                   static_cast<std::uint8_t>(coop::protocol::kAsVarDash | coop::protocol::kAsVarServiceWait)};
     // Lookups: f32 names through vt+0x2f8, bools through vt+0x300, x1 = the cell holding the name's address.
-    const std::array<std::uint32_t, 5> handles{7, 9, 0xffffffffu, 3, 4};  // XZSpeed is not in this AS
+    // XZSpeed and the bools after ServiceWait are not in this AS.
+    std::array<std::uint32_t, CoopAsVars::kVars> handles{};
+    handles.fill(0xffffffffu);
+    handles[0] = 7;
+    handles[1] = 9;
+    handles[3] = 3;  // IsLeftStickInput
+    handles[4] = 4;  // IsDash
+    handles[5] = 5;  // ServiceWait
     std::uint64_t frame = 10;
-    for (std::size_t i = 0; i < 5; ++i) {
+    for (std::size_t i = 0; i < CoopAsVars::kVars; ++i) {
         if (i % 2 == 0) ++frame;  // two calls a frame
         const auto a = w.Next(read, write, actor, block, v, frame);
         REQUIRE(a);
-        CHECK(a->function == (i < 3 ? 0xf32400u : 0xb00400u));
+        CHECK(a->function == (CoopAsVars::IsBool(i) ? 0xb00400u : 0xf32400u));
         CHECK(a->x0 == as);
         CHECK(a->x1 == block + CoopAsVars::block::kNamePtr);
         std::uint64_t text_at = 0;
         REQUIRE(read(a->x1, &text_at, 8));
         char name[0x20] = {};
         REQUIRE(read(text_at, name, sizeof name));
-        CHECK(std::string(name) == CoopAsVars::kNames[i]);
+        CHECK(std::string(name) == std::string(CoopAsVars::NameOf(i)));
         CHECK_FALSE(w.Finish(handles[i]).empty());
         if (i % 2 == 1) CHECK_FALSE(w.Next(read, write, actor, block, v, frame));  // the frame's 2 are used
     }
     CHECK(w.Handle(2) == -1);
-    // Values: four (XZSpeed skipped), f32 by vt+0x80 with s0, bools by vt+0x88 with x2.
+    CHECK(w.Handle(6) == -1);
+    // Values: five (XZSpeed and the missing bools skipped), f32 by vt+0x80 with s0, bools by vt+0x88 with x2.
     std::vector<CoopAsVars::Ask> asks;
-    for (int k = 0; k < 4; ++k) {
+    for (int k = 0; k < 5; ++k) {
         const auto a = w.Next(read, write, actor, block, v, ++frame);
         REQUIRE(a);
         asks.push_back(*a);
@@ -157,6 +167,8 @@ TEST_CASE("as-vars writer: a character's AS gets each name's handle once, then t
     CHECK(asks[2].x2 == 0);  // not IsLeftStickInput
     CHECK(asks[3].x1 == 4);
     CHECK(asks[3].x2 == 1);  // IsDash
+    CHECK(asks[4].x1 == 5);
+    CHECK(asks[4].x2 == 1);  // ServiceWait (row 324)
     // A changed value is written again, alone.
     auto v2 = v;
     v2.linear_vel_xz = 2.0f;
@@ -164,6 +176,13 @@ TEST_CASE("as-vars writer: a character's AS gets each name's handle once, then t
     REQUIRE(again);
     CHECK(again->x1 == 9);
     CHECK(again->s0 == 2.0f);
+    w.Finish(0);
+    // The idle fidget ends: ServiceWait written 0, alone.
+    v2.bits = coop::protocol::kAsVarDash;
+    const auto idle = w.Next(read, write, actor, block, v2, ++frame);
+    REQUIRE(idle);
+    CHECK(idle->x1 == 5);
+    CHECK(idle->x2 == 0);
     w.Finish(0);
     CHECK_FALSE(w.Next(read, write, actor, block, v2, ++frame));
     // A new AS (the actor swapped): every name is looked up again.

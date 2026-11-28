@@ -504,6 +504,30 @@ struct PlayerRide {
 // (a newer build's bit still arrives, an unknown one is ignored).
 inline constexpr std::uint8_t kAsVarLeftStickInput = 0x01;  // IsLeftStickInput
 inline constexpr std::uint8_t kAsVarDash = 0x02;            // IsDash
+// Row 324 (a character's idle animations not shown to others): the idle ('Wait') blend's state bools, which only the
+// player's own code sets. Older builds send these bits 0 and ignore them (the byte is kept raw).
+inline constexpr std::uint8_t kAsVarServiceWait = 0x04;     // ServiceWait (the idle fidget)
+inline constexpr std::uint8_t kAsVarBattleMode = 0x08;      // BattleMode
+inline constexpr std::uint8_t kAsVarCaution = 0x10;         // IsCaution
+inline constexpr std::uint8_t kAsVarCautionLife = 0x20;     // IsCautionLife (low life)
+inline constexpr std::uint8_t kAsVarInHotPlace = 0x40;      // IsInHotPlace
+inline constexpr std::uint8_t kAsVarInRain = 0x80;          // IsInRain
+// The ONE table of AsVars' names (the game's own AS variable names: main's name tables, f32 0x3ee5990 + offsets at
+// +0x6a0, bool 0x3ee5400 + offsets at +0x474, reports/puppet-run-307-4.md and -5.md). The sender reads them
+// (coop/host/as_vars.hpp), the receiver writes them (lichii/hook/coop_as_vars.h Writer): both use this table.
+inline constexpr std::array<std::string_view, 3> kAsVarFloatNames{"LeftStickLength", "LinearVelXZ", "XZSpeed"};
+struct AsVarBool {
+  std::string_view name;
+  std::uint8_t bit;
+};
+inline constexpr std::array<AsVarBool, 8> kAsVarBools{{{"IsLeftStickInput", kAsVarLeftStickInput},
+                                                       {"IsDash", kAsVarDash},
+                                                       {"ServiceWait", kAsVarServiceWait},
+                                                       {"BattleMode", kAsVarBattleMode},
+                                                       {"IsCaution", kAsVarCaution},
+                                                       {"IsCautionLife", kAsVarCautionLife},
+                                                       {"IsInHotPlace", kAsVarInHotPlace},
+                                                       {"IsInRain", kAsVarInRain}}};
 struct AsVars {
   float left_stick_length = 0.0f;  // LeftStickLength
   float linear_vel_xz = 0.0f;      // LinearVelXZ

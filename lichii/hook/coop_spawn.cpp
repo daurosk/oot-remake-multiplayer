@@ -86,6 +86,30 @@ std::string Hex(std::uint64_t v) {
     return buf;
 }
 
+// The name in an actor's AS slot 0, read as Director::NextPlay reads it
+// (docs/puppet.md "Animation"); empty when it has none or it cannot be read.
+std::string PlayingName(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    namespace addr = CoopPuppet::addr;
+    std::uint64_t at = actor;
+    for (const std::uint64_t step : addr::kControllerPath) {
+        if (!ReadValue(guest, at + step, at) || at == 0) {
+            return {};
+        }
+    }
+    std::int32_t count = 0;
+    std::uint64_t array = 0, slot0 = 0, name_at = 0;
+    if (!ReadValue(guest, at + addr::kSlotCount, count) || count < 1 || !ReadValue(guest, at + addr::kSlots, array) ||
+        array == 0 || !ReadValue(guest, array, slot0) || slot0 == 0 ||
+        !ReadValue(guest, slot0 + addr::kSlotName, name_at) || name_at == 0) {
+        return {};
+    }
+    std::array<char, 64> text{};
+    if (!guest.Read(name_at, text.data(), text.size() - 1)) {
+        return {};
+    }
+    return std::string(text.data(), strnlen(text.data(), text.size()));
+}
+
 } // namespace
 
 bool IsShared(std::string_view name) {
@@ -683,6 +707,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         c.setter = setter_;
         c.held = r.held;
+        c.yields_to_lift =
+            CoopBombShare::YieldsToLift(bomb_share_, r.actor, r.held, r.taking, r.refused, r.removed.has_value());
         if (r.animation) {
             proto::Animation a = *r.animation;
             const std::int64_t age = std::int64_t(now_us) - std::int64_t(r.animation_at) -
@@ -1776,7 +1802,12 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                             " times already)");
                     }
                 }
-            } else if (const Copy* c = Wanted(slot.key); c != nullptr && c->act != Act::remove && c->place) {
+            } else if (const Copy* c = Wanted(slot.key);
+                       c != nullptr && c->act != Act::remove && c->place &&
+                       !(c->yields_to_lift && c->act == Act::show &&
+                         CoopProjectiles::HeldByAnimation(PlayingName(guest, slot.taken)).value_or(false))) {
+                // Row 308: a bomb copy our Link is lifting (its slot 0 plays Lifted) is not put back
+                // at the owner's place nor given the owner's animation: the walk sees the lift.
                 if (c->rotation) {
                     // Place and turn are one block at +0x31c, as the Mover writes them.
                     std::array<float, 12> transform{};

@@ -138,6 +138,15 @@ COSMETIC = ("TriggerRequestAutoSave", "TriggerNaviRequestBallonMessage", "Trigge
 # it, so the game itself keeps nothing of them).
 TRANSIENT_INPUTS = ("isSpawnAct", "IsSpawnAct")
 TRANSIENT_ACTORS = re.compile(r"AirWall|^Area$")
+# A shutter's lock (row 336; rows 62, 72, 160): the inputs that keep a room's shutter shut. A shared flag ORed into
+# one does NOT open the shutter in the game that did not play the event: in every player log of an enemy room
+# (Dodongo's Cavern's Lizalfos rooms 1 and 2, where the room-clear flag is the OR's only other leaf) the flag landed
+# (the room's enemies were deleted and its chest appeared by that same flag) and the shutters stayed shut until a
+# reload. The game that played the event has the asker's EventBool on that OR as well, and its shutters open. So a
+# lock input the asker drives is never covered by a shared flag: such an asker is class "asker", and our asker's
+# outputs are set as the event's own flow sets them (EventTriggerSetEventBool), so both games hold the same inputs.
+LOCK_ACTORS = re.compile(r"Shutter")
+LOCK_INPUTS = ("LockPlusZ", "LockMinusZ", "Open")
 
 
 def _leaf(kind, what, plug, neg, under_or):
@@ -502,7 +511,7 @@ def two_way_flags(wiring):
     return {f for f, d in seen.items() if d == {"set", "clear"}}
 
 
-def classify(line, wire, shared, two_way=frozenset()):
+def classify(line, wire, shared, two_way=frozenset(), locks=False):
     """(class, fix, why) of a switch line whose plug does not latch (deku-ladder, A #39).
 
     class "A": every room result of the event reaches the room through a shared flag: the asker's outputs only set
@@ -521,6 +530,7 @@ def classify(line, wire, shared, two_way=frozenset()):
     A class B fix that runs our asker (input, split) is refused ("none") when the asker writes a shared flag that
     some asker also writes the other way (`two_way`): our late run would be a second writer and could undo the
     other player's newer write for everyone (g3-objects: Jabu room 14's water flags once they are shared).
+    `locks` (asker_class, row 336): a shutter's lock input (LOCK_ACTORS, LOCK_INPUTS) is never covered by a shared flag.
     """
     event, scene, switch, at, plug, asker_at = line
     on_flags = {w for _, srcs in wire["on"] for k, w, ng in srcs if k == "flag" and not ng and w in shared}
@@ -544,6 +554,8 @@ def classify(line, wire, shared, two_way=frozenset()):
                           (w in shared or (w == switch and on_flags)) for w, ng, uo in also)
             covered = covered or any(uo == 1 and w in shared and (w, "clear" if ng else "set") in writes
                                      for w, ng, uo in also)
+            if locks and kind == "actor" and LOCK_ACTORS.search(what) and name in LOCK_INPUTS:
+                covered = False
             if not covered:
                 misses.append(f"{what}.{name}")
     if not misses:
@@ -615,7 +627,7 @@ def asker_class(key, wire, shared, plays=()):
     the played state only at its load), so such an asker is "asker" too."""
     event, scene, at = key
     cls, _, why = classify((event, scene, "", at, "", at), {"on": [], "results": wire["results"],
-                                                             "delete": wire["delete"]}, shared)
+                                                             "delete": wire["delete"]}, shared, locks=True)
     if plays:
         played = "; ".join(f"{actor} plays {asname} (its room deletes it at load only)" for actor, _, asname in plays)
         return "asker", played if cls == "A" else f"{why}; {played}"

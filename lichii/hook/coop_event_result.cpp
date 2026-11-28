@@ -16,8 +16,9 @@ namespace CoopEventResult {
 
 namespace {
 // Generated: tools/puppet_pack/eye_switches.py --romfs <romfs> --places lichii/hook/coop_live_places.cpp
-// --dungeon lichii/hook/coop_dungeon.cpp --results (189 askers of 186 events, 144 live, 45 asker; 12 events a field
-// asks). The comment says the class and why (for class asker: the result the room reads from the asker).
+// --dungeon lichii/hook/coop_dungeon.cpp --results (189 askers of 186 events, 119 live, 70 asker; 12 events a field
+// asks). The comment says the class and why (for class asker: the result the room reads from the asker). Row 336: a
+// shutter's lock input that the asker drives is never covered by a shared flag (eye_switches.py LOCK_INPUTS).
 // clang-format off
 constexpr Result kResults[] = {
     {"BottomOfTheWell_08_Enemy_WipedOut", "BottomOfTheWell", {-0.0f, 92.3f, -108.1f}, ""},  // live (EventRequestActor): results through shared flags
@@ -28,48 +29,48 @@ constexpr Result kResults[] = {
     {"Dm_ForestTemple_0014", "ForestTemple", {60.3f, 115.8f, 0.8f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_ForestTemple_MovableBox_A_01 plays C01_A_01 (its room deletes it at load only); Obj_ForestTemple_MovableBox_A_02 plays C01_A_02 (its room deletes it at load only); Obj_ForestTemple_MovableBox_A_03 plays C01_A_03 (its room deletes it at load only); Obj_ForestTemple_MovableBox_A_04 plays C01_A_04 (its room deletes it at load only)
     {"Dm_InsideGanonCastle_0035", "InsideGanonCastle", {-10.5f, 108.0f, -47.7f}, "EventBool"},  // asker (EventRequestActor): Obj_LiftRock_C_01 plays ToLift_0035 (its room deletes it at load only)
     {"DodongoCavern_Gimmick_CandleStickShutter", "DodongoCavern", {32.5f, 108.0f, -44.5f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.IsDisableBlend; Obj_SwitchShutter_A_06.Open; unshared flag DodongoCavern_NaviHelp_08_00
-    {"DodongoCavern_Gimmick_DefeatLizalfos01", "DodongoCavern", {84.9f, 100.5f, -54.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"DodongoCavern_Gimmick_DefeatLizalfos02", "DodongoCavern", {94.3f, 114.9f, -49.0f}, ""},  // live (EventRequestActor): results through shared flags
+    {"DodongoCavern_Gimmick_DefeatLizalfos01", "DodongoCavern", {84.9f, 100.5f, -54.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"DodongoCavern_Gimmick_DefeatLizalfos02", "DodongoCavern", {94.3f, 114.9f, -49.0f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
     {"DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern", {68.2f, 127.3f, -6.6f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_FireWall_A_01.RequestExtinguish; Obj_DodongoCave_FireWall_A_01.StartBurnSign; unshared flag DodongoCavern_NaviHelp_14_00
-    {"DodongoCavern_Gimmick_StatueSwitch", "DodongoCavern", {80.0f, 102.0f, -6.5f}, "EventBool+EventFinish"},  // asker (EventRequestActor): unshared flag DodongoCavern_NaviHelp_02_00
+    {"DodongoCavern_Gimmick_StatueSwitch", "DodongoCavern", {80.0f, 102.0f, -6.5f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open; unshared flag DodongoCavern_NaviHelp_02_00
     {"DodongoCavern_Gimmick_SwitchShortcut", "DodongoCavern", {19.0f, 118.0f, -23.0f}, ""},  // live (EventRequestActor): results through shared flags
-    {"DodongoCavern_Gimmick_SwitchShutter_Room01", "DodongoCavern", {16.0f, 103.8f, -23.0f}, ""},  // live (EventRequestActor): results through shared flags
-    {"DodongoCavern_Gimmick_SwitchShutter_Room12", "DodongoCavern", {-43.5f, 116.0f, -8.0f}, ""},  // live (EventRequestActor): results through shared flags
-    {"DodongoCavern_Gimmick_SwitchShutter_Room19", "DodongoCavern", {14.8f, 100.3f, -77.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): unshared flag DodongoCavern_NaviHelp_19_04
-    {"FireTemple_06_EyeSwitch", "FireTemple", {36.7f, 150.8f, 3.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SwitchShutter_A_02.IsDisableBlend
+    {"DodongoCavern_Gimmick_SwitchShutter_Room01", "DodongoCavern", {16.0f, 103.8f, -23.0f}, "EventBool"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"DodongoCavern_Gimmick_SwitchShutter_Room12", "DodongoCavern", {-43.5f, 116.0f, -8.0f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"DodongoCavern_Gimmick_SwitchShutter_Room19", "DodongoCavern", {14.8f, 100.3f, -77.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open; unshared flag DodongoCavern_NaviHelp_19_04
+    {"FireTemple_06_EyeSwitch", "FireTemple", {36.7f, 150.8f, 3.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_FireTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_02.IsDisableBlend; Obj_SwitchShutter_A_02.Open
     {"FireTemple_15_OpenShutter", "FireTemple", {7.3f, 103.5f, -12.0f}, "EventBool"},  // asker (EventRequestActor): Obj_EnemyCounter_A_01.Finish
     {"FireTemple_LargePillarFallCamera", "FireTemple", {-25.4f, 143.2f, -3.0f}, ""},  // live (EventRequestActor): results through shared flags
     {"FireTemple_MovingFireWallCamera_Room16", "FireTemple", {28.0f, 149.1f, 17.1f}, ""},  // live (EventRequestActor): results through shared flags
     {"FireTemple_PutOutFireWallTrap", "FireTemple", {-61.3f, 156.2f, -15.9f}, ""},  // live (EventRequestActor): results through shared flags
-    {"FireTemple_Room24_FocusOnGimmick", "FireTemple", {-72.2f, 149.9f, 3.3f}, ""},  // live (EventRequestActor): results through shared flags
+    {"FireTemple_Room24_FocusOnGimmick", "FireTemple", {-72.2f, 149.9f, 3.3f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_FireTemple_SwitchShutter_A_01.LockMinusZ; Obj_SwitchShutter_A_02.Open
     {"FireTemple_SwitchFireCamera_Room04", "FireTemple", {93.1f, 141.0f, 16.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"FireTemple_SwitchFireCamera_Room12", "FireTemple", {-67.5f, 187.3f, 14.2f}, ""},  // live (EventRequestActor): results through shared flags
     {"FocusGimmick_BlueTentacleGimmick", "InsideJabuJabuBelly", {0.4f, 103.5f, -147.8f}, ""},  // live (EventRequestActor): results through shared flags
     {"FocusGimmick_GreenTentacleGimmick", "InsideJabuJabuBelly", {-2.2f, 104.4f, -85.6f}, ""},  // live (EventRequestActor): results through shared flags
     {"FocusGimmick_RedTentacleGimmick0", "InsideJabuJabuBelly", {32.8f, 101.2f, -139.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"FocusOnGimmick_FireTemple_FlareDancer02", "FireTemple", {-7.0f, 102.0f, -35.5f}, ""},  // live (EventRequestActor): results through shared flags
+    {"FocusOnGimmick_FireTemple_FlareDancer02", "FireTemple", {-7.0f, 102.0f, -35.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_FireTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_02.Open
     {"FocusOnGimmick_InsideJabuJabuBelly_02", "InsideJabuJabuBelly", {20.0f, 79.5f, -35.0f}, ""},  // live (EventRequestActor): results through shared flags
     {"FocusOnGimmick_JabujabuLift", "InsideJabuJabuBelly", {-1.0f, 77.5f, -41.2f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room02_ShutterOpen", "ForestTemple", {16.4f, 101.7f, -12.3f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room04_OpenDoor_AppearTBox", "ForestTemple", {0.0f, 105.7f, -60.5f}, ""},  // live (EventRequestActor): results through shared flags
+    {"ForestTemple_Room04_OpenDoor_AppearTBox", "ForestTemple", {0.0f, 105.7f, -60.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_ForestTemple_SwitchShutter_A_03.LockMinusZ; Obj_SwitchShutter_A_02.Open
     {"ForestTemple_Room11_TBoxAppear", "ForestTemple", {-52.8f, 115.0f, 2.0f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room12_WaterLevelDrop", "ForestTemple", {-29.1f, 107.4f, -34.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room17_BigTBoxAppear", "ForestTemple", {0.2f, 114.7f, -66.2f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room17_ShutterOpen", "ForestTemple", {-7.5f, 121.5f, -59.5f}, "EventBool"},  // asker (EventRequestActor): unshared flag ForestTemple_NaviHelp_17_03
+    {"ForestTemple_Room17_ShutterOpen", "ForestTemple", {-7.5f, 121.5f, -59.5f}, "EventBool"},  // asker (EventRequestActor): Obj_ForestTemple_SwitchShutter_A_03.LockMinusZ; Obj_SwitchShutter_A_02.Open; unshared flag ForestTemple_NaviHelp_17_03
     {"ForestTemple_Room17_TBoxAppear_CandleLight", "ForestTemple", {-19.3f, 114.7f, -63.6f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room17_TBoxAppear_CandleLight_ShutterOpen", "ForestTemple", {19.3f, 114.7f, -63.6f}, ""},  // live (EventRequestActor): results through shared flags
+    {"ForestTemple_Room17_TBoxAppear_CandleLight_ShutterOpen", "ForestTemple", {19.3f, 114.7f, -63.6f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_ForestTemple_SwitchShutter_A_03.LockPlusZ; Obj_SwitchShutter_A_02.Open
     {"ForestTemple_Room17_TwoStalfosAppear", "ForestTemple", {4.8f, 132.8f, -60.4f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room21_ShutterOpen", "ForestTemple", {-58.2f, 105.1f, -60.4f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room22_FallingCeiling", "ForestTemple", {55.9f, 120.3f, -43.9f}, "EventBool"},  // asker (EventRequestActor): Obj_ForestTemple_FallingCeiling_A_01.BootUp; Obj_ForestTemple_FallingCeiling_A_01.IsForceFall
     {"ForestTemple_Room22_IceMelts", "ForestTemple", {56.5f, 137.7f, -10.7f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room22_ShutterOpen", "ForestTemple", {54.3f, 104.9f, -19.8f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room22_ShutterOpen_TBoxAppear", "ForestTemple", {-68.0f, 107.0f, -26.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room25_CandleLight_ShutterOpen", "ForestTemple", {53.3f, 106.0f, -3.9f}, ""},  // live (EventRequestActor): results through shared flags
+    {"ForestTemple_Room22_ShutterOpen_TBoxAppear", "ForestTemple", {-68.0f, 107.0f, -26.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_ForestTemple_SwitchShutter_A_03.LockPlusZ; Obj_SwitchShutter_A_02.Open
+    {"ForestTemple_Room25_CandleLight_ShutterOpen", "ForestTemple", {53.3f, 106.0f, -3.9f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_ForestTemple_SwitchShutter_A_03.LockPlusZ; Obj_SwitchShutter_A_02.Open
     {"ForestTemple_Room25_FirstTimeBLock", "FireTemple", {-46.9f, 153.9f, 0.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room25_FirstTimeBLock", "ForestTemple", {-16.2f, 101.4f, -14.7f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room27_CandleLight", "ForestTemple", {-10.4f, 61.0f, 6.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"ForestTemple_Room27_IceMelts", "ForestTemple", {23.8f, 65.5f, -3.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ForestTemple_Room27_ShutterOpen", "ForestTemple", {0.0f, 65.7f, -19.6f}, ""},  // live (EventRequestActor): results through shared flags
+    {"ForestTemple_Room27_ShutterOpen", "ForestTemple", {0.0f, 65.7f, -19.6f}, "EventBool"},  // asker (EventRequestActor): Obj_SwitchShutter_A_05.Open
     {"GerudoTrainingGround_00_FallTreasureBox", "GerudoTrainingGround", {2.5f, 99.5f, -9.8f}, ""},  // live (EventRequestActor): results through shared flags
     {"GerudoTrainingGround_01_AppearTreasureBox_From00", "GerudoTrainingGround", {-51.0f, 98.1f, -13.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"GerudoTrainingGround_02From03_SilverToken_Appear", "GerudoTrainingGround", {-63.8f, 105.9f, -29.9f}, ""},  // live (EventRequestActor): results through shared flags
@@ -77,11 +78,11 @@ constexpr Result kResults[] = {
     {"GerudoTrainingGround_02_SilverToken_Appear", "GerudoTrainingGround", {-66.1f, 111.9f, -44.3f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_silverRupeeCounter.TokenVisible; OperateGameDataAllocAutogenGameData.IsWrite; unshared flag HaveEncountered_Token
     {"GerudoTrainingGround_02_SilverToken_Unlock", "GerudoTrainingGround", {-66.3f, 111.9f, -48.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_silverRupeeCounter.Vanish; OperateGameDataAllocAutogenGameData.IsWrite
     {"GerudoTrainingGround_03_AppaerTreasureBox", "GerudoTrainingGround", {-53.8f, 104.0f, -88.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"GerudoTrainingGround_03_ShutterOpen", "GerudoTrainingGround", {-36.3f, 119.5f, -92.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SwitchShutter_A_02.IsDisableBlend
+    {"GerudoTrainingGround_03_ShutterOpen", "GerudoTrainingGround", {-36.3f, 119.5f, -92.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_Gerudo_SwitchShutter_A_04.LockPlusZ; Obj_SwitchShutter_A_02.IsDisableBlend; Obj_SwitchShutter_A_02.Open
     {"GerudoTrainingGround_04_ActStoneGimmick", "GerudoTrainingGround", {13.1f, 99.9f, -87.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"GerudoTrainingGround_05_AppaerTreasureBox", "GerudoTrainingGround", {43.5f, 101.9f, -89.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): TriggerGameSafetyStop.IsDrive
+    {"GerudoTrainingGround_05_AppaerTreasureBox", "GerudoTrainingGround", {43.5f, 101.9f, -89.5f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_Gerudo_SwitchShutter_A_04.LockMinusZ; Obj_SwitchShutter_A_02.Open; TriggerGameSafetyStop.IsDrive
     {"GerudoTrainingGround_05_DisappearFire", "GerudoTrainingGround", {44.9f, 107.6f, -84.4f}, ""},  // live (EventRequestActor): results through shared flags
-    {"GerudoTrainingGround_05_ShutterOpen", "GerudoTrainingGround", {34.4f, 108.5f, -89.8f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SwitchShutter_A_02.IsDisableBlend; TriggerGameSafetyStop.IsDrive
+    {"GerudoTrainingGround_05_ShutterOpen", "GerudoTrainingGround", {34.4f, 108.5f, -89.8f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_Gerudo_SwitchShutter_A_04.LockMinusZ; Obj_SwitchShutter_A_02.IsDisableBlend; Obj_SwitchShutter_A_02.Open; TriggerGameSafetyStop.IsDrive
     {"GerudoTrainingGround_06_DisappearFire", "GerudoTrainingGround", {32.8f, 107.6f, -35.6f}, "EventBool"},  // asker (EventRequestActor): Obj_GerudoTrainingGround_FireWall_A_01.StartBurnSign
     {"GerudoTrainingGround_06_SilverToken_Appear", "GerudoTrainingGround", {54.7f, 110.1f, -66.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_silverRupeeCounter.Start; Obj_silverRupeeCounter.TokenVisible; unshared flag HaveEncountered_Token
     {"GerudoTrainingGround_06_SilverToken_Unlock", "GerudoTrainingGround", {59.5f, 110.1f, -71.6f}, "EventBool"},  // asker (EventRequestActor): Obj_silverRupeeCounter.Vanish; OperateGameDataAllocAutogenGameData.IsWrite
@@ -92,7 +93,7 @@ constexpr Result kResults[] = {
     {"GerudoTrainingGround_10_AppearTreasureBox", "GerudoTrainingGround", {-43.6f, 109.9f, -137.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"GerudoTrainingGround_10_FallTreasureBox", "GerudoTrainingGround", {-51.4f, 103.5f, -131.8f}, ""},  // live (EventRequestActor): results through shared flags
     {"GerudoTrainingGround_Room04_StoneGimmick", "GerudoTrainingGround", {14.4f, 110.0f, -82.1f}, ""},  // live (EventRequestActor): results through shared flags
-    {"GerudoTrainingGround_Room07_TreasureAppear", "GerudoTrainingGround", {44.4f, 98.7f, -1.0f}, ""},  // live (EventRequestActor): results through shared flags
+    {"GerudoTrainingGround_Room07_TreasureAppear", "GerudoTrainingGround", {44.4f, 98.7f, -1.0f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_Gerudo_SwitchShutter_A_04.LockMinusZ; Obj_SwitchShutter_A_02.Open
     {"IceCavern_Gimmick_BlueFireShowup", "IceCavern", {19.1f, 115.2f, -69.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"IceCavern_Room01_DefeatEnemy", "IceCavern", {-5.8f, 109.5f, 26.2f}, ""},  // live (EventRequestActor): results through shared flags
     {"IceCavern_Room05_SilverToken_Appear", "IceCavern", {11.0f, 107.9f, -24.0f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_silverRupeeCounter_03.Start; Obj_silverRupeeCounter_03.TokenVisible; unshared flag HaveEncountered_Token
@@ -105,7 +106,7 @@ constexpr Result kResults[] = {
     {"InsideGanonCastle_Dungeon_AppaerTreasureBox", "InsideGanonCastle", {-39.2f, 103.9f, 15.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"InsideGanonCastle_Dungeon_AppaerTreasureBox_02", "InsideGanonCastle", {24.4f, 105.5f, 22.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"InsideGanonCastle_Dungeon_AppaerTreasureBox_08", "InsideGanonCastle", {47.2f, 103.9f, -103.4f}, ""},  // live (EventRequestActor): results through shared flags
-    {"InsideGanonCastle_Dungeon_AppaerTreasureBox_12", "InsideGanonCastle", {-38.2f, 99.8f, -21.0f}, ""},  // live (EventRequestActor): results through shared flags
+    {"InsideGanonCastle_Dungeon_AppaerTreasureBox_12", "InsideGanonCastle", {-38.2f, 99.8f, -21.0f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_InsideGanonCastle_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_02.Open
     {"InsideGanonCastle_Dungeon_AppearExtendingPlatform_03", "InsideGanonCastle", {39.7f, 102.8f, 41.4f}, ""},  // live (EventRequestActor): results through shared flags
     {"InsideGanonCastle_Dungeon_BarrierRemove_Fire", "InsideGanonCastle", {-40.0f, 141.0f, -78.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"InsideGanonCastle_Dungeon_BarrierRemove_Forest", "InsideGanonCastle", {50.3f, 119.2f, 66.1f}, ""},  // live (EventRequestActor): results through shared flags
@@ -148,7 +149,7 @@ constexpr Result kResults[] = {
     {"InsideTheDekuTree_Gimmick_RoomH_CandleStick", "InsideTheDekuTree", {-63.6f, 86.0f, 47.2f}, ""},  // live (EventRequestActor): results through shared flags
     {"ShadowTemple_01_BeakStatue_Clear", "ShadowTemple", {51.7f, 107.3f, -0.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"ShadowTemple_03_EnemyAnnihilation_Clear", "ShadowTemple", {2.6f, 93.9f, -24.0f}, ""},  // live (EventRequestActor): results through shared flags
-    {"ShadowTemple_04_EnemyAnnihilation_Clear", "ShadowTemple", {-74.4f, 97.3f, -10.1f}, ""},  // live (EventRequestActor): results through shared flags
+    {"ShadowTemple_04_EnemyAnnihilation_Clear", "ShadowTemple", {-74.4f, 97.3f, -10.1f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_ShadowTemple_SwitchShutter_A_04.LockPlusZ; Obj_SwitchShutter_A_02.Open
     {"ShadowTemple_07_EnemyAnnihilation_Clear", "ShadowTemple", {96.5f, 90.4f, 20.6f}, ""},  // live (EventRequestActor): results through shared flags
     {"ShadowTemple_10_EnemyAnnihilation_Clear", "ShadowTemple", {168.8f, 64.8f, 98.5f}, ""},  // live (EventRequestActor): results through shared flags
     {"ShadowTemple_13_EnemyAnnihilation_DOWN_Clear", "ShadowTemple", {39.3f, 61.2f, 34.9f}, ""},  // live (EventRequestActor): results through shared flags
@@ -172,31 +173,31 @@ constexpr Result kResults[] = {
     {"SpiritTemple_Level_Room_07_SunSwitchOn", "SpiritTemple", {-32.2f, 123.8f, -48.8f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_08_SwitchOn_01", "SpiritTemple", {-17.1f, 131.7f, -44.1f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SwitchShutter_A_06.IsDisableBlend; Obj_SwitchShutter_A_06.Open
     {"SpiritTemple_Level_Room_10_SilverToken_Appear", "SpiritTemple", {-45.5f, 141.3f, -13.3f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpiritTemple_Level_Room_10_SilverToken_Unlock", "SpiritTemple", {-45.5f, 141.3f, -17.1f}, "EventBool"},  // asker (EventRequestActor): Obj_silverRupeeCounter_02.Vanish
+    {"SpiritTemple_Level_Room_10_SilverToken_Unlock", "SpiritTemple", {-45.5f, 141.3f, -17.1f}, "EventBool"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open; Obj_silverRupeeCounter_02.Vanish
     {"SpiritTemple_Level_Room_10_SwitchOn_01", "SpiritTemple", {-59.0f, 132.8f, -27.7f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_16_SilverToken_Appear", "SpiritTemple", {47.3f, 108.2f, -48.4f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpiritTemple_Level_Room_16_SilverToken_Unlock", "SpiritTemple", {47.3f, 108.2f, -52.3f}, "EventBool"},  // asker (EventRequestActor): Obj_silverRupeeCounter_02.Vanish
+    {"SpiritTemple_Level_Room_16_SilverToken_Unlock", "SpiritTemple", {47.3f, 108.2f, -52.3f}, "EventBool"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open; Obj_silverRupeeCounter_02.Vanish
     {"SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple", {31.4f, 120.0f, -41.6f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple", {40.9f, 119.2f, -47.5f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_19_wallmaster", "SpiritTemple", {41.9f, 125.7f, -41.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_30_BoardNetFall", "SpiritTemple", {19.8f, 159.5f, -77.8f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpiritTemple_Level_Room_32_SwitchOn_01", "SpiritTemple", {-23.8f, 159.9f, -49.7f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpiritTemple_Room19_SunSwitchShutterOpen", "SpiritTemple", {27.1f, 120.7f, -47.6f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room03_OpenShutter", "SpiritTemple", {-33.6f, 104.8f, -32.7f}, ""},  // live (EventRequestActor): results through shared flags
+    {"SpiritTemple_Room19_SunSwitchShutterOpen", "SpiritTemple", {27.1f, 120.7f, -47.6f}, "EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room03_OpenShutter", "SpiritTemple", {-33.6f, 104.8f, -32.7f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
     {"SpritTemple_Room04_OpenShutter", "SpiritTemple", {-31.7f, 108.1f, -77.1f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpritTemple_Room05_AppearTreasure", "SpiritTemple", {-15.3f, 104.7f, -58.0f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpritTemple_Room07_AppearTreasure", "SpiritTemple", {-39.2f, 119.2f, -41.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"SpritTemple_Room08_AppearTreasureBox", "SpiritTemple", {0.0f, 114.2f, -55.3f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room08_OpenShutter", "SpiritTemple", {1.5f, 118.4f, -51.4f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room12_OpenShutter", "SpiritTemple", {-48.0f, 136.4f, 24.8f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room14_OpenShutter", "SpiritTemple", {33.4f, 104.8f, -34.3f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room22_OpenShutter", "SpiritTemple", {47.2f, 131.8f, -17.8f}, ""},  // live (EventRequestActor): results through shared flags
+    {"SpritTemple_Room08_OpenShutter", "SpiritTemple", {1.5f, 118.4f, -51.4f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room12_OpenShutter", "SpiritTemple", {-48.0f, 136.4f, 24.8f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room14_OpenShutter", "SpiritTemple", {33.4f, 104.8f, -34.3f}, "EventBool+EventBoolEX1+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room22_OpenShutter", "SpiritTemple", {47.2f, 131.8f, -17.8f}, "EventBool"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
     {"SpritTemple_Room22_StepSwitch", "SpiritTemple", {46.5f, 134.0f, -25.3f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room23_StepSwitch", "SpiritTemple", {56.7f, 131.6f, -16.6f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room23_SunSwitch", "SpiritTemple", {55.9f, 133.0f, -33.6f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room25_OpenShutter", "SpiritTemple", {55.7f, 134.1f, 23.9f}, ""},  // live (EventRequestActor): results through shared flags
+    {"SpritTemple_Room23_StepSwitch", "SpiritTemple", {56.7f, 131.6f, -16.6f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room23_SunSwitch", "SpiritTemple", {55.9f, 133.0f, -33.6f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
+    {"SpritTemple_Room25_OpenShutter", "SpiritTemple", {55.7f, 134.1f, 23.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
     {"SpritTemple_Room30_StepSwitch", "SpiritTemple", {23.1f, 150.9f, -71.4f}, ""},  // live (EventRequestActor): results through shared flags
-    {"SpritTemple_Room31_OpenShutter", "SpiritTemple", {-3.0f, 158.1f, -46.9f}, ""},  // live (EventRequestActor): results through shared flags
+    {"SpritTemple_Room31_OpenShutter", "SpiritTemple", {-3.0f, 158.1f, -46.9f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_SpiritTemple_SwitchShutter_A_01.LockMinusZ; Obj_SpiritTemple_SwitchShutter_A_01.LockPlusZ; Obj_SwitchShutter_A_06.Open
     {"StoneOfWater_ElevatedFloor", "InsideJabuJabuBelly", {-40.7f, 84.7f, -109.9f}, ""},  // live (EventRequestActor): results through shared flags
     {"WaterTempleRoom08HitSwitch", "WaterTemple", {-39.0f, 96.0f, -21.6f}, ""},  // live (EventRequestActor): results through shared flags
     {"WaterTempleRoom14StepSwitch", "WaterTemple", {1.5f, 100.0f, -109.3f}, ""},  // live (EventRequestActor): results through shared flags
@@ -205,9 +206,9 @@ constexpr Result kResults[] = {
     {"WaterTemple_EyeSwitch_Focus", "WaterTemple", {-33.5f, 118.9f, -40.7f}, ""},  // live (EventRequestActor): results through shared flags
     {"WaterTemple_EyeSwitch_Focus", "WaterTemple", {0.7f, 116.1f, -29.3f}, ""},  // live (EventRequestActor): results through shared flags
     {"WaterTemple_FocusGimmick_Room18", "WaterTemple", {41.5f, 100.0f, -4.5f}, ""},  // live (EventRequestActor): results through shared flags
-    {"WaterTemple_FocusonGimmick_02", "WaterTemple", {-6.7f, 89.6f, -4.5f}, ""},  // live (EventRequestActor): results through shared flags
+    {"WaterTemple_FocusonGimmick_02", "WaterTemple", {-6.7f, 89.6f, -4.5f}, "EventBool+EventFinish"},  // asker (EventRequestActor): Obj_WaterTemple_SwitchShutter_A_03.Open
     {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", {-71.8f, 121.2f, -15.1f}, ""},  // live (EventRequestActor): results through shared flags
-    {"WaterTemple_Room17_FocusOnGimmick", "WaterTemple", {25.0f, 102.3f, -4.7f}, "EventBool"},  // asker (EventRequestActor): Obj_SwitchShutter_A_02.IsDisableBlend
+    {"WaterTemple_Room17_FocusOnGimmick", "WaterTemple", {25.0f, 102.3f, -4.7f}, "EventBool"},  // asker (EventRequestActor): Obj_SwitchShutter_A_02.IsDisableBlend; Obj_SwitchShutter_A_02.Open; Obj_WaterTemple_SwitchShutter_A_01.LockPlusZ
     {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", {-35.4f, 103.8f, 17.4f}, "EventBool+EventFinish"},  // asker (EventRequestActor): unshared flag WaterTemple_Room03_FocusOnGimmick
     {"DodongoCavern_OpenShutterPlusZ_FocusOnEnemy", "DodongoCavern", {0.0f, 0.0f, 0.0f}, ""},  // live (no asker actor: a field asks it)
     {"DodongoCavern_OpenShutterPlusZ_FocusOnEnemy_02", "DodongoCavern", {0.0f, 0.0f, 0.0f}, ""},  // live (no asker actor: a field asks it)
@@ -236,16 +237,26 @@ constexpr Play kPlays[] = {
 
 constexpr Guard kGuards[] = {
     {"DodongoCavern_CandleStick", "DodongoCavern", "DodongoCavern_Gimmick_CandleStickShutter"},
+    {"FireTemple_Room03_EventHasPlayed", "FireTemple", "FocusOnGimmick_FireTemple_FlareDancer02"},
+    {"ForestTemple_Room_13_AppearTreasureChest", "ForestTemple", "ForestTemple_Room17_TBoxAppear_CandleLight_ShutterOpen"},
+    {"ForestTemple_Room_18_AppearTreasureChest", "ForestTemple", "ForestTemple_Room22_ShutterOpen_TBoxAppear"},
     {"GerudoTrainingGround_Dungeon_Room05_DefeatEnemy", "GerudoTrainingGround", "GerudoTrainingGround_05_AppaerTreasureBox"},
+    {"GerudoTrainingGround_Dungeon_Room07_DefeatEnemy", "GerudoTrainingGround", "GerudoTrainingGround_Room07_TreasureAppear"},
+    {"Gimmick_DefeatEnemy_Open_DodongoCave_01", "DodongoCavern", "DodongoCavern_Gimmick_DefeatLizalfos01"},
+    {"Gimmick_DefeatEnemy_Open_DodongoCave_02", "DodongoCavern", "DodongoCavern_Gimmick_DefeatLizalfos02"},
+    {"Gimmick_DefeatEnemy_Open_FireTemple_02_CounterOff", "FireTemple", "FireTemple_15_OpenShutter"},
+    {"Gimmick_DefeatEnemy_Open_ForestTemple_01", "ForestTemple", "ForestTemple_Room04_OpenDoor_AppearTBox"},
     {"HavePlayedEvent.Dm_DodongoCave_0010", "DodongoCavern", "Dm_DodongoCave_0010"},
     {"HavePlayedEvent.Dm_InsideGanonCastle_0035", "InsideGanonCastle", "Dm_InsideGanonCastle_0035"},
-    {"Gimmick_DefeatEnemy_Open_FireTemple_02_CounterOff", "FireTemple", "FireTemple_15_OpenShutter"},
     {"IceCavern_Room05_Unlocked", "IceCavern", "IceCavern_Room05_SilverToken_Unlock"},
     {"IceCavern_Room06_Unlocked", "IceCavern", "IceCavern_Room06_SilverToken_Unlock"},
+    {"InsideGanonCastle_Dungeon_Room12_DefeatEnemy", "InsideGanonCastle", "InsideGanonCastle_Dungeon_AppaerTreasureBox_12"},
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch"},
     {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_FallingLadder"},
+    {"ShadowTemple_RoomB1FD_Cleared", "ShadowTemple", "ShadowTemple_04_EnemyAnnihilation_Clear"},
     {"SpiritTemple_Room08_Unlocked_00", "SpiritTemple", "SpiritTemple_Level_Room_08_SwitchOn_01"},
+    {"WaterTemple_Room02_00", "WaterTemple", "WaterTemple_FocusonGimmick_02"},
     {"WaterTemple_Room22_Cleared", "WaterTemple", "WaterTempleRoom22Clear"},
 };
 

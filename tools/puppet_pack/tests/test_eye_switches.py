@@ -167,6 +167,21 @@ class PerformerPlaysTest(unittest.TestCase):
         self.assertEqual(cls, "asker")
         self.assertIn("Obj_Stair plays Stair_Demo_Anim", why)
 
+    def test_a_shutter_lock_is_never_covered_by_a_shared_flag(self):
+        # row 336 (Dodongo's Cavern Lizalfos rooms): LockPlusZ <- NOT(room flag OR asker EventBool); the flag landing
+        # alone left the shutters shut in the game that did not play the event, so the asker is class asker
+        key = ("Ev", "Cave", (0.0, 0.0, 0.0))
+        lock = ("actor", "Obj_DodongoCave_SwitchShutter_A_01", ("LockPlusZ", (("Room_Done", True, 1),)))
+        w = {"results": [lock, ("flag", "Room_Done", "set")], "delete": ["Room_Done"]}
+        cls, why = eye_switches.asker_class(key, w, SHARED)
+        self.assertEqual(cls, "asker")
+        self.assertIn("Obj_DodongoCave_SwitchShutter_A_01.LockPlusZ", why)
+        # the same flag ORed into any other input still covers it (the switch line classifier is unchanged too)
+        lift = ("actor", "Obj_Lift", ("IsOn", (("Room_Done", True, 1),)))
+        self.assertEqual(eye_switches.asker_class(key, {"results": [lift], "delete": []}, SHARED)[0], "live")
+        self.assertEqual(eye_switches.classify(("Ev", "Cave", "", key[2], "", key[2]),
+                                               {"on": [], "results": [lock], "delete": []}, SHARED)[0], "A")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,11 +42,15 @@ TEST_CASE("dungeon: a mid-boss beaten is shared, its fight start is not (mid-bos
     CHECK_FALSE(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossAppear"));
 }
 
-TEST_CASE("dungeon: an enemy room's clear reaches every game at once, never held (rows 160/161)") {
+TEST_CASE("dungeon: an enemy room's clear sets our asker's result, then its flags land (rows 160/161, 336)") {
     // Dodongo's Cavern's Lizalfos rooms: the shutters are NOT(clear flag OR asker EventBool) and the room deletes its
-    // Lizalfos on the clear flag (romfs Gimmick_DodongoCavern_MiddleBoss01/02). A game that never gets the flag (row
-    // 160: a player spectating or teleported out when the group won) re-makes the fight and stays locked in. So the
-    // flag and the event's played flag land live: no dungeon hold, no result guard, and the event is class live.
+    // Lizalfos on the clear flag (romfs Gimmick_DodongoCavern_MiddleBoss01/02). Row 336 (aetherrose 0.12.0 host log
+    // 20261128-081808): the clear flag landed in the game that did not play the event (its Lizalfos were deleted and
+    // its chest appeared) and the shutters stayed shut until a reload, as in rows 62 and 72. The game that played it
+    // also has the asker's EventBool on that OR. So the event is class asker: our asker gets EventBool (+ EX1 and
+    // EventFinish, as the event's flow sets them), and the clear flag (it deletes our asker) waits as a result guard
+    // until that is set, the same order as in the game that played it. The flag itself is never in the dungeon hold
+    // (row 160: a game away from the room gets it when it leaves the dungeon or loads, or once our result is set).
     for (const std::string_view room : {"01", "02"}) {
         const std::string flag = std::string("Gimmick_DefeatEnemy_Open_DodongoCave_") + std::string(room);
         const std::string event = std::string("DodongoCavern_Gimmick_DefeatLizalfos") + std::string(room);
@@ -59,12 +63,31 @@ TEST_CASE("dungeon: an enemy room's clear reaches every game at once, never held
         REQUIRE(find(flag) != flags.end());
         REQUIRE(find(played) != flags.end());
         CHECK_FALSE(CoopDungeon::HeldIn(find(flag)->hash).has_value());
-        CHECK_FALSE(CoopDungeon::HeldIn(find(played)->hash).has_value());
-        CHECK(CoopEventResult::IsLive(event));
+        CHECK_FALSE(CoopEventResult::IsLive(event));
+        const auto lines = CoopEventResult::AskerLines(event, "DodongoCavern");
+        REQUIRE(lines.size() == 1);
+        const auto outs = CoopEventResult::SplitOutputs(lines[0]->outputs);
+        CHECK(std::find(outs.begin(), outs.end(), "EventBool") != outs.end());
+        CHECK(std::find(outs.begin(), outs.end(), "EventFinish") != outs.end());
+        bool guarded = false;
         for (const auto& g : CoopEventResult::Guards()) {
-            CHECK(g.flag != flag);
+            guarded |= g.flag == flag && g.event == event;
             CHECK(g.flag != played);
         }
+        CHECK(guarded);
+    }
+}
+
+TEST_CASE("dungeon: every room event whose asker drives a shutter's lock is class asker (row 336)") {
+    // tools/puppet_pack/eye_switches.py LOCK_INPUTS: the enemy rooms of Fire, Forest, Ganon, Gerudo and Shadow too.
+    for (const std::string_view event :
+         {"DodongoCavern_Gimmick_DefeatLizalfos01", "DodongoCavern_Gimmick_DefeatLizalfos02",
+          "FireTemple_Room24_FocusOnGimmick", "FocusOnGimmick_FireTemple_FlareDancer02",
+          "ForestTemple_Room04_OpenDoor_AppearTBox", "ForestTemple_Room22_ShutterOpen_TBoxAppear",
+          "GerudoTrainingGround_Room07_TreasureAppear", "InsideGanonCastle_Dungeon_AppaerTreasureBox_12",
+          "ShadowTemple_04_EnemyAnnihilation_Clear"}) {
+        CAPTURE(event);
+        CHECK_FALSE(CoopEventResult::IsLive(event));
     }
 }
 

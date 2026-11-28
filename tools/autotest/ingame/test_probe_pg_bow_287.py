@@ -184,6 +184,16 @@ class _Hunt:
         self.frames += frames
         self.since_keep += frames
         if self.since_keep >= KEEP_EVERY:
+            # (review-rows-c130-13 08:56: a give/flag runs read-back frames with no input, ZR up = the drawn arrow
+            # loosed; so never while drawn. Drawn, the refill waits unless A is under half life, then the bow is put
+            # away first. Reads only: flag_read runs no frame.)
+            if self.ready:
+                life = self.p.flag_read("A", "PlayerStatus.Life").get("value")
+                mx = self.p.flag_read("A", "PlayerStatus.MaxLife").get("value")
+                if not (isinstance(life, int) and isinstance(mx, int) and life * 2 < mx):
+                    return
+                self.note("A at life %s of %s while drawn: put away for the refill" % (life, mx))
+                self.put_away()
             self.since_keep = 0
             keep_up(self.p)
             arrows = km.ammo_of(self.p.state("A"), ARROWS)

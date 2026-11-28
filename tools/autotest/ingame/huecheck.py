@@ -135,6 +135,34 @@ def _in_box(shape, box):
     return out
 
 
+def outside(path, boxes):
+    """Mask of the shot at `path`: True on every pixel outside all of `boxes` (None entries skipped). Used to leave the
+    OTHER Link out of a Link's box (hair-measure-0defc551: B's red-tunic Link in front of A's puppet, in A's box)."""
+    import numpy as np
+    from PIL import Image
+    with Image.open(path) as im:
+        w, h = im.size
+    keep = np.ones((h, w), dtype=bool)
+    for b in boxes:
+        if b:
+            keep &= ~_in_box(keep.shape, b)
+    return keep
+
+
+def covered(box, boxes):
+    """Share (0..1) of `box`'s top third (where a Link's hair is) that lies inside any of `boxes`."""
+    import numpy as np
+    x0, y0, x1, y1 = box
+    y1 = y0 + max(1, (y1 - y0) // 3)
+    area = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+    for b in boxes:
+        if b:
+            ax0, ay0, ax1, ay1 = max(x0, b[0]), max(y0, b[1]), min(x1, b[2]), min(y1, b[3])
+            if ax1 > ax0 and ay1 > ay0:
+                area[ay0 - y0:ay1 - y0, ax0 - x0:ax1 - x0] = True
+    return float(area.sum()) / area.size
+
+
 def hair_patch(path, box, rgb):
     """The solid rgb patch inside `box`, grown by HAIR_GROW: where that Link's hair is in this shot."""
     from scipy import ndimage

@@ -17,6 +17,8 @@ BT_FAKE_HAIR=speckle (the game's hair has specks of #DD4527's hue, every other p
 and skin under warm light, which the old +-30 degree band took as red);
 BT_FAKE_HAIR=blink (a colour is drawn on a test's first shot of a step but not on its '-2' shot 6 frames later: a check
 that cannot see a colour stay, so the still-red control must keep the unset row from passing);
+BT_FAKE_HAIR=othertunic (B's red tunic over B's whole box, which overlaps A's, on the shots before a colour only:
+hair-measure-0defc551, the other Link counted in the measured box; the test leaves the other Link's box out);
 BT_FAKE_WINDMILL=RRGGBB (game B only: a 24x24 block of that colour that moves 40 px between shots, away from the
 Links: hair-link-309d7180's turning Kakariko windmill, a false 'red left' on B).
 """
@@ -90,6 +92,14 @@ def after(game, m, r):
     blinked = mode == "blink" and str(m.get("name", "")).endswith("-2-%s" % game.tag)
     im = Image.open(r["path"]).convert("RGB")
     d = ImageDraw.Draw(im)
+    name = str(m.get("name", ""))
+    if mode == "othertunic" and "-red" not in name and "-blue" not in name:
+        # B's red tunic + cap over B's whole box (which overlaps A's), on the shots before a colour only: the other
+        # Link's red counted in the measured box and moving between shots (hair-measure-0defc551's 9 false FAILs)
+        bt = game if game.tag == "B" else game.other
+        b = bandcheck.box(VIEW, bt.pos, im.size[0], im.size[1])
+        if b:
+            d.rectangle([b[0], b[1], b[2] - 1, b[3] - 1], fill=_rgb(0xC83A22))
     for g in (game, game.other):
         b = bandcheck.box(VIEW, g.pos, im.size[0], im.size[1])
         if not b:

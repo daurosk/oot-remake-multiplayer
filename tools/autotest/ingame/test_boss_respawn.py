@@ -79,11 +79,13 @@ BOSS_ROOMS = ["GohmaStage", "BigOctoStage", "BarinadeStage", "PhantomGanonStage"
 # the dungeon's only start 'FireTemple' (coop_teleport_game.cpp:471).
 FIGHT_ROOM = "FireTemple"
 FIGHT_AT = {"A": (-64.51, 102.58, -0.01), "B": (-64.51, 102.58, 1.49)}   # the preset's point; B kArrivalSpread 1.5 m off
-FIGHT_FLAGS = [("setenum", "0xeea87aec", "DefeatBoss"),          # before-volvagia.json 'flags' (the boss alive: SageOfFire
-               ("setflag", "Volvagia_TemporaryDelete", "0"),     # quest back to DefeatBoss, the room's played flags off)
-               ("setflag", "HavePlayedEvent.SageOfFire_DefeatBoss", "0"),
-               ("setflag", "HavePlayedEvent.Dm_FireTemple_BossOut", "0"),
-               ("setflag", "HavePlayedEvent.Dm_FireTemple_BossIn", "0")]
+# (written by the bridge's `flag` (Pair.flag, read back), never a bare 'act setflag': a wrong name must not pass silently,
+# review-tests-153-6 05:4x, the Get_Epona trap)
+FIGHT_FLAGS = [("0xeea87aec", "DefeatBoss"),                      # before-volvagia.json 'flags' (the boss alive: SageOfFire
+               ("Volvagia_TemporaryDelete", 0),                   # quest back to DefeatBoss, the room's played flags off)
+               ("HavePlayedEvent.SageOfFire_DefeatBoss", 0),
+               ("HavePlayedEvent.Dm_FireTemple_BossOut", 0),
+               ("HavePlayedEvent.Dm_FireTemple_BossIn", 0)]
 AGE_FRAMES = 30         # Sequence_IsChildhood 0, then 30 frames before the warp (before-volvagia.json notes; playtest.md warp)
 IN_ROOM = r"coop: boss: in the boss room of FireTemple: Enemy_DungeonBoss_Volvagia"   # coop_boss.cpp:469, logged :390
 FIGHT_ON = r"coop: boss: (no intro: the fight has begun here|intro started \(Dm_FireTemple_BossIn\))"   # coop_boss.cpp
@@ -245,8 +247,12 @@ def boss_room_fight(pair):
     try:
         marks = {x: pair.log[x].size() for x in ("A", "B")}   # (size, not mark: the test's own base stays)
         for x in ("A", "B"):
-            for kind, name, value in FIGHT_FLAGS:
-                pair.act(x, "%s %s %s" % (kind, name, value))
+            for name, value in FIGHT_FLAGS:
+                pair.flag(x, name, value)     # (a refused name raises; a bridge error is this phase's SETUP-FAIL)
+                got = pair.flag_read(x, name).get("value")    # (read back: an unknown name reads no value)
+                if str(got).lower() != str(value).lower() and not (value == 0 and got is False):
+                    raise P.SetupFail("%s: flag %s reads %r after writing %r (unknown name or not kept)"
+                                      % (x, name, got, value))
         phase = "adult"
         for x in ("A", "B"):
             pair.flag(x, "Sequence_IsChildhood", 0)   # (the bridge's flag write, read back: did_not_stick = SETUP-FAIL)

@@ -736,8 +736,17 @@ void WorldSync::Drain(std::uint64_t now_us) {
             // newer pose; the old place would win in PoseAt whenever the moves are a little apart and pull our copy
             // back to it. A late move from before the place (moves are unreliable, places reliable) is stamped at
             // least kRestUs before the place was sent, so it leaves the place alone.
-            if (r.place && v->time_us + kPlaceStaleUs > r.place->time_us) {
+            // Part 2: a carrier who takes it again over a slow link (its move reaches us > kPlaceStaleUs after the
+            // place) is caught in its own clock by place_after_us; the arrival test stays for a placer we had no
+            // move from (and for a slowly drifting object, whose moves may run up to its place).
+            if (r.place && ((r.place_after_us && v->time_us > *r.place_after_us) ||
+                            v->time_us + kPlaceStaleUs > r.place->time_us)) {
                 r.place.reset();
+                r.place_after_us.reset();
+            }
+            if (r.newest_move_us == 0 || r.newest_mover != v->player_number || v->time_us > r.newest_move_us) {
+                r.newest_move_us = v->time_us;
+                r.newest_mover = v->player_number;
             }
         } else if (const auto* h = std::get_if<proto::WorldHit>(&m)) {
             auto& waiting = hits_[h->hash];
@@ -752,6 +761,10 @@ void WorldSync::Drain(std::uint64_t now_us) {
             Remote& r = remote_[p->hash];
             r.place = Sample{now_us, p->position, p->rotation};
             ++r.place_serial;
+            r.place_after_us.reset();
+            if (r.newest_move_us != 0 && r.newest_mover == p->player_number) {
+                r.place_after_us = r.newest_move_us + kPlaceAfterUs;
+            }
             if (r.samples.empty()) {
                 r.player = p->player_number;
             }

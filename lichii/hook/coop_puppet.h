@@ -297,7 +297,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 
 namespace block {
-inline constexpr std::uint64_t kSize = 0x900;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress; 0x880 to 0x900: coop_link_sound.h's effect cells (row 310)
+inline constexpr std::uint64_t kSize = 0x980;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress; 0x880 to 0x980: coop_link_sound.h's effect cells (row 310: the Link's, then its held pieces')
 // Character Select's colours on the puppet (coop_char_colours.h: names and arguments of its calls).
 inline constexpr std::uint64_t kDress = 0x780;      // CoopCharColours::kCellBytes
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
@@ -697,6 +697,7 @@ private:
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         // the player's own effects on it (row 310: spin charge, trail, Din's Fire), on its ELink user
         CoopLinkSound::Player link_effect = CoopLinkSound::EffectPlayer();
+        CoopLinkSound::Player link_piece = CoopLinkSound::PieceEffectPlayer();  // its held pieces' (the sword trail)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
         // Character Select: what the colour routine was last given for this actor (Target::custom), when,
         // and what the call under way gives it.
@@ -716,7 +717,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, link_effect, stray, own_state, head_show, head_hair, flame, dress
+        hold_check, move, sound, link_sound, link_effect, link_piece, stray, own_state, head_show, head_hair, flame, dress
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -773,6 +774,8 @@ private:
         std::uint32_t state = 0;
     };
     std::vector<PieceActor> Pieces(Slot& slot, Guest& guest) const;
+    // The present piece in equipment slot `s` (0 to 7), or 0.
+    std::uint64_t PieceIn(Slot& slot, Guest& guest, std::uint32_t s) const;
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
     // Native puppets phase 1 (coop_puppet_body.h).
     static void ResetBody(Slot& slot);

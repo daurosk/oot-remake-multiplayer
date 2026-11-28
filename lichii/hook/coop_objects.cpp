@@ -4740,12 +4740,39 @@ private:
                     const u64 effects =
                         xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkEffectUser).value_or(0) : 0;
                     CoopLinkSound::SetOurEffectUser(effects);
+                    // And the ELink users of the pieces it holds (the sword's has the trail `Blur_Default`), by
+                    // equipment slot, read as the puppet director reads a puppet's (Director::PieceIn).
+                    std::array<u64, CoopLinkSound::kPieces> piece_users{};
+                    namespace pa = CoopPuppet::addr;
+                    const u64 eu = parts ? r.Get<u64>(parts + pa::kPartsEquipmentUser).value_or(0) : 0;
+                    for (std::size_t s = 0; eu != 0 && s < piece_users.size(); ++s) {
+                        const u64 slot = eu + pa::kEquipSlots + pa::kEquipSlotStride * s;
+                        const u32 id = r.Get<u32>(slot + pa::kEquipSlotId).value_or(0xFFFFFFFFu);
+                        const u64 holder = id != 0xFFFFFFFFu ? r.Get<u64>(slot + pa::kEquipSlotHolder).value_or(0) : 0;
+                        const u64 piece = holder ? r.Get<u64>(holder + pa::kHolderActor).value_or(0) : 0;
+                        if (piece == 0 || r.Get<u32>(piece + pa::kActorState).value_or(0) != pa::kStatePresent) {
+                            continue;
+                        }
+                        const u64 piece_parts = r.Get<u64>(piece + CoopPuppetSound::addr::kActorParts).value_or(0);
+                        const u64 piece_xlink =
+                            piece_parts ? r.Get<u64>(piece_parts + CoopPuppetSound::addr::kPartsXLink).value_or(0) : 0;
+                        const u64 user =
+                            piece_xlink ? r.Get<u64>(piece_xlink + CoopPuppetSound::addr::kXLinkEffectUser).value_or(0) : 0;
+                        piece_users[s] = user != effects ? user : 0;
+                    }
+                    CoopLinkSound::SetOurPieceEffectUsers(piece_users);
                     static u64 tracked_ms = 0;  // the walk's thread only
                     const u64 now = SteadyNowMs();
                     if (effects != 0 && now >= tracked_ms + CoopLinkSound::kTrackEveryMs) {
                         tracked_ms = now;
                         ReaderGuest guest(r);
                         CoopLinkSound::TrackOurEffects(CoopPuppetSound::Playing(guest, effects), now);
+                        for (std::size_t s = 0; s < piece_users.size(); ++s) {
+                            // A piece put away keeps its tracker: an empty list ends what it sent.
+                            CoopLinkSound::TrackOurEffects(
+                                piece_users[s] ? CoopPuppetSound::Playing(guest, piece_users[s]) : std::string(), now,
+                                static_cast<std::uint8_t>(s + 1));
+                        }
                     }
                 }
                 coop::protocol::Vec3 at{};

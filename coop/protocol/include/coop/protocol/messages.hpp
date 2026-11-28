@@ -1383,13 +1383,17 @@ struct LinkSound {
 // Fire, Nayru's Love), by its key, relayed to everyone else, who start the same
 // key on that player's puppet with the game's own call. kLinkEffectEnd: the
 // sender's game no longer plays it (a held loop let go): the others stop it.
-// The key follows the LINK_SOUND name rule.
+// The key follows the LINK_SOUND name rule. `piece`: whose ELink user it is on,
+// 0 the Link's own, 1 to kLinkEffectPieces a held piece's (its equipment slot + 1:
+// the sword trail `Blur_Default` is the sword's own user's key, not the Link's).
 inline constexpr std::uint8_t kLinkEffectEnd = 0x01;
 inline constexpr std::uint8_t kLinkEffectFlags = kLinkEffectEnd;  // every flag this build knows
+inline constexpr std::uint8_t kLinkEffectPieces = 8;              // the EquipmentUser's held slots
 struct LinkEffect {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
   std::uint8_t flags = 0;                    // kLinkEffectEnd
   std::string name;                          // the effect's key
+  std::uint8_t piece = 0;                    // 0 the Link; 1 to kLinkEffectPieces a held slot + 1
   bool operator==(const LinkEffect&) const = default;
 };
 inline bool valid_link_sound_name(std::string_view name) {

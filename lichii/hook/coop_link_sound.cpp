@@ -24,12 +24,18 @@ static_assert(block::kEffectAsset >= CoopPuppet::block::kDress + 0x100);  // aft
 static_assert(block::kEffectText == block::kEffectAsset + 8);
 static_assert(block::kEffectText + kNameMax + 1 <= block::kEffectHandle);
 static_assert(block::kEffectHandle + 8 * block::kHandleSlots == block::kEffectEnd);
+static_assert(block::kPieceText == block::kPieceAsset + 8 && block::kPieceAsset == block::kEffectEnd);
+static_assert(block::kPieceText + kNameMax + 1 <= block::kPieceHandle);
+static_assert(block::kPieceHandle + 8 * block::kHandleSlots == block::kPieceEnd);
+static_assert(block::kPieceEnd <= CoopPuppet::block::kSize);
+static_assert(kPieces == coop::protocol::kLinkEffectPieces);
 static_assert(block::kEffectEnd <= CoopPuppet::block::kSize);
 
 namespace {
 
 std::atomic<std::uint64_t> g_our_user{0};
 std::atomic<std::uint64_t> g_our_effect_user{0};
+std::array<std::atomic<std::uint64_t>, kPieces> g_our_piece_users{};
 std::atomic<bool> g_probe{false};
 
 std::mutex& CaughtMutex() {
@@ -52,9 +58,9 @@ std::vector<EffectOut>& CaughtEffects() {  // under CaughtMutex
     static std::vector<EffectOut> v;
     return v;
 }
-EffectEnds& OurEnds() {  // under CaughtMutex
-    static EffectEnds e;
-    return e;
+EffectEnds& OurEnds(std::uint8_t piece = 0) {  // under CaughtMutex; piece 0 the Link's, slot + 1 a held piece's
+    static std::array<EffectEnds, kPieces + 1> e;
+    return e[piece <= kPieces ? piece : 0];
 }
 inline constexpr std::size_t kProbePairsMax = 512;
 
@@ -201,6 +207,16 @@ std::uint64_t OurEffectUser() {
     return g_our_effect_user.load(std::memory_order_relaxed);
 }
 
+void SetOurPieceEffectUsers(const std::array<std::uint64_t, kPieces>& users) {
+    for (std::size_t s = 0; s < kPieces; ++s) {
+        g_our_piece_users[s].store(users[s], std::memory_order_relaxed);
+    }
+}
+
+std::uint64_t OurPieceEffectUser(std::size_t slot) {
+    return slot < kPieces ? g_our_piece_users[slot].load(std::memory_order_relaxed) : 0;
+}
+
 void EffectEnds::Started(std::string_view name, std::uint64_t now_ms) {
     if (const auto it = started_.find(name); it != started_.end()) {
         it->second = now_ms;  // started again: its end is counted from now
@@ -236,11 +252,14 @@ std::vector<EffectOut> TakeCaughtEffects() {
     return std::exchange(CaughtEffects(), {});
 }
 
-void TrackOurEffects(std::string_view playing, std::uint64_t now_ms) {
+void TrackOurEffects(std::string_view playing, std::uint64_t now_ms, std::uint8_t piece) {
+    if (piece > kPieces) {
+        return;
+    }
     std::lock_guard lock(CaughtMutex());
-    for (auto& name : OurEnds().Check(playing, now_ms)) {
+    for (auto& name : OurEnds(piece).Check(playing, now_ms)) {
         if (CaughtEffects().size() < kCaughtMax) {
-            CaughtEffects().push_back(EffectOut{std::move(name), true});
+            CaughtEffects().push_back(EffectOut{std::move(name), true, piece});
         }
     }
 }
@@ -285,7 +304,16 @@ bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read) {
     const std::uint64_t ours = OurUser();
     const std::uint64_t our_effects = OurEffectUser();
     const bool probe = g_probe.load(std::memory_order_relaxed);
-    if (user == 0 || (!probe && user != ours && user != our_effects)) {
+    std::uint8_t piece = 0;  // slot + 1 when `user` is a held piece's ELink user
+    if (user != 0 && user != ours && user != our_effects) {
+        for (std::size_t s = 0; s < kPieces; ++s) {
+            if (OurPieceEffectUser(s) == user) {
+                piece = static_cast<std::uint8_t>(s + 1);
+                break;
+            }
+        }
+    }
+    if (user == 0 || (!probe && user != ours && user != our_effects && piece == 0)) {
         return false;  // nearly every call: not our Link
     }
     std::string name = NameAt(asset_cell, read);
@@ -295,18 +323,20 @@ bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read) {
         if (seen.size() < kProbePairsMax && seen.emplace(user, name).second) {
             const std::string owner = OwnerOf(user, read);
             ProbeLines().push_back("coop: sound probe: user " + Hex(user) +
-                                   (user == ours ? " (our Link)" : user == our_effects ? " (our Link's effects)" : "") +
+                                   (user == ours ? " (our Link)" : user == our_effects ? " (our Link's effects)"
+                                    : piece != 0 ? " (our Link's held piece " + std::to_string(piece - 1) + ")" : "") +
                                    (owner.empty() ? std::string() : " of '" + owner + "'") + " emits '" +
                                    (name.empty() ? std::string("?") : name) + "'");
         }
     }
-    if (user == our_effects && user != ours) {
-        // Our Link's effect (row 310): sent as LINK_EFFECT, and watched for its end.
+    if ((user == our_effects || piece != 0) && user != ours) {
+        // Our Link's effect (row 310), or one of a piece it holds (the sword trail): sent as LINK_EFFECT, and
+        // watched for its end on that user.
         if (name.empty() || CaughtEffects().size() >= kCaughtMax) {
             return false;
         }
-        OurEnds().Started(name, SteadyMs());
-        CaughtEffects().push_back(EffectOut{std::move(name), false});
+        OurEnds(piece).Started(name, SteadyMs());
+        CaughtEffects().push_back(EffectOut{std::move(name), false, piece});
         return true;
     }
     if (user != ours || name.empty() || OwnOnly(name)) {
@@ -578,6 +608,16 @@ Player EffectPlayer() {
     return p;
 }
 
+Player PieceEffectPlayer() {
+    Player p;
+    p.cells = EffectCells();
+    p.cells.asset = block::kPieceAsset;
+    p.cells.text = block::kPieceText;
+    p.cells.handle = block::kPieceHandle;
+    p.cells.what = "piece effect";
+    return p;
+}
+
 void End(Player& player, std::string name) {
     if (player.found && player.name == name) {
         player.found = false;  // found but not started yet: it is not started
@@ -666,11 +706,12 @@ void Frame(coop::host::Session* session, std::uint64_t now_ms) {
             }
             // The first ones, then every 200th: enough to see it work, no spam (the probe: every one, for the tests).
             if (++effects_sent <= 20 || effects_sent % 200 == 0 || g_probe.load(std::memory_order_relaxed)) {
-                LOG_INFO(Core, "coop: link effect '{}'{} sent ({} sent)", e.name, e.end ? " end" : "", effects_sent);
+                LOG_INFO(Core, "coop: link effect '{}'{}{} sent ({} sent)", e.name, e.end ? " end" : "",
+                         e.piece != 0 ? " of held piece " + std::to_string(e.piece - 1) : std::string(), effects_sent);
             }
             c.send(coop::protocol::LinkEffect{coop::protocol::kPlayerSelf,
                                               e.end ? coop::protocol::kLinkEffectEnd : std::uint8_t{0},
-                                              std::move(e.name)});
+                                              std::move(e.name), e.piece});
         }
         for (auto& name : names) {
             if (!limiter.Allow(name, now_ms)) {

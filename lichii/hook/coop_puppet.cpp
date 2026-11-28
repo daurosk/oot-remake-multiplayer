@@ -358,6 +358,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             CoopLinkSound::Dropped(slot.link_sound);
         } else if (pending_ == Pending::link_effect) {
             CoopLinkSound::Dropped(slot.link_effect);
+        } else if (pending_ == Pending::link_piece) {
+            CoopLinkSound::Dropped(slot.link_piece);
         } else if (pending_ == Pending::flame) {
             CoopPuppetFlame::Dropped(slot.flame);
         }
@@ -374,6 +376,15 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         for (auto& slot : slots_) {
             if (slot.number == t.number && !t.sounds.empty()) {
                 for (auto& s : t.sounds) {
+                    if (s.effect && s.piece != 0) {  // a held piece's key (the sword trail): on that piece's user
+                        if (s.end) {
+                            CoopLinkSound::End(slot.link_piece, std::move(s.name));
+                        } else {
+                            slot.link_piece.piece = s.piece;  // another slot: Next forgets the old piece's
+                            slot.link_piece.heard.Push(std::move(s.name), s.at_ms);
+                        }
+                        continue;
+                    }
                     if (s.effect) {  // LINK_EFFECT (row 310): on the puppet's effect user
                         if (s.end) {
                             CoopLinkSound::End(slot.link_effect, std::move(s.name));
@@ -825,6 +836,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopLinkSound::Finish(slot.link_effect, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
         break;
+    case Pending::link_piece:
+        CoopLinkSound::Finish(slot.link_piece, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
     case Pending::head_show:
         slot.head_show = false;
         slot.head_shown = true;
@@ -1003,6 +1018,18 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                         slot.block, now_ms,
                         [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
                     pending_ = Pending::link_effect;
+                    return c;
+                }
+            }
+            // Its held pieces' effects (the sword trail): on the puppet's piece in the same slot, its own ELink user.
+            if (slot.link_piece.piece != 0) {
+                const std::uint64_t piece = PieceIn(slot, guest, slot.link_piece.piece - 1u);
+                const std::uint64_t user = piece != 0 ? CoopPuppetSound::EffectUser(guest, piece) : 0;
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_piece, effect_budget_, guest, input_.main_base, piece != 0 ? piece : slot.actor,
+                        user, slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_piece;
                     return c;
                 }
             }
@@ -1957,27 +1984,33 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // The puppet's held pieces, each as the actor the game keeps for it.
 std::vector<Director::PieceActor> Director::Pieces(Slot& slot, Guest& guest) const {
     std::vector<Director::PieceActor> out;
-    std::uint64_t parts = 0;
-    std::uint64_t eu = 0;
-    if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
-        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
-        return out;
-    }
     for (std::uint32_t s = 0; s < 8; ++s) {
-        const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
-        std::uint32_t id = 0xFFFFFFFFu;
-        std::uint64_t holder = 0;
-        std::uint64_t piece = 0;
-        std::uint32_t state = 0;
-        if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu ||
-            !ReadValue(guest, link + addr::kEquipSlotHolder, holder) || holder == 0 ||
-            !ReadValue(guest, holder + addr::kHolderActor, piece) || piece == 0 ||
-            !ReadValue(guest, piece + addr::kActorState, state) || state != addr::kStatePresent) {
-            continue;
+        if (const std::uint64_t piece = PieceIn(slot, guest, s)) {
+            out.push_back({piece, addr::kStatePresent});
         }
-        out.push_back({piece, state});
     }
     return out;
+}
+
+std::uint64_t Director::PieceIn(Slot& slot, Guest& guest, std::uint32_t s) const {
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (s >= 8 || !ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return 0;
+    }
+    const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+    std::uint32_t id = 0xFFFFFFFFu;
+    std::uint64_t holder = 0;
+    std::uint64_t piece = 0;
+    std::uint32_t state = 0;
+    if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu ||
+        !ReadValue(guest, link + addr::kEquipSlotHolder, holder) || holder == 0 ||
+        !ReadValue(guest, holder + addr::kHolderActor, piece) || piece == 0 ||
+        !ReadValue(guest, piece + addr::kActorState, state) || state != addr::kStatePresent) {
+        return 0;
+    }
+    return piece;
 }
 
 void Director::Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_t now_ms) {
@@ -3202,7 +3235,7 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[effect->player_number];
         CoopLinkSound::MakeRoom(queue, 2 * CoopLinkSound::kHeardMax);  // the newest kept, and every effect's end
-        queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end});
+        queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end, effect->piece});
     } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
                event.kind == EventKind::message && emote != nullptr) {
         // EMOTE (coop_emote.h): the puppet holds the emote's animation (Collect); a call is said by its Navi (coop_emote_body.h). An id this

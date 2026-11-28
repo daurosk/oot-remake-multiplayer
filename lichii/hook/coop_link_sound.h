@@ -71,6 +71,11 @@ inline constexpr std::uint64_t kEffectAsset = 0x880;   // 8 bytes
 inline constexpr std::uint64_t kEffectText = 0x888;    // kNameMax + 1 bytes
 inline constexpr std::uint64_t kEffectHandle = 0x8c0;  // kHandleSlots handles of 8 bytes
 inline constexpr std::uint64_t kEffectEnd = 0x900;
+// The held pieces' effect cells (the sword trail on the puppet's sword), the same layout after them.
+inline constexpr std::uint64_t kPieceAsset = 0x900;   // 8 bytes
+inline constexpr std::uint64_t kPieceText = 0x908;    // kNameMax + 1 bytes
+inline constexpr std::uint64_t kPieceHandle = 0x940;  // kHandleSlots handles of 8 bytes
+inline constexpr std::uint64_t kPieceEnd = 0x980;
 }  // namespace block
 
 // Limits (one place, so the tests and docs/puppet.md say the same).
@@ -109,6 +114,12 @@ std::uint64_t OurUser();
 // Our Link's effect (ELink) user, the same way (row 310).
 void SetOurEffectUser(std::uint64_t user);
 std::uint64_t OurEffectUser();
+// The ELink users of the pieces our Link holds, by equipment slot (0: none): a held piece's own keys (the sword
+// trail `Blur_Default` is the sword's user's, not the Link's: romfs ELink2 table) go out as LINK_EFFECT piece
+// slot + 1, and the receiver plays them on the same slot's piece of the puppet.
+inline constexpr std::size_t kPieces = 8;  // = coop::protocol::kLinkEffectPieces
+void SetOurPieceEffectUsers(const std::array<std::uint64_t, kPieces>& users);
+std::uint64_t OurPieceEffectUser(std::size_t slot);
 
 // Reads guest memory; false when it cannot.
 using Read = std::function<bool(std::uint64_t address, void* out, std::size_t size)>;
@@ -123,6 +134,7 @@ std::vector<std::string> TakeCaught();
 struct EffectOut {
     std::string name;
     bool end = false;
+    std::uint8_t piece = 0;  // 0 our Link's user; slot + 1 a held piece's
     bool operator==(const EffectOut&) const = default;
 };
 // The effect keys kept (and the ends found) since the last call, oldest first.
@@ -130,7 +142,8 @@ std::vector<EffectOut> TakeCaughtEffects();
 // The calc thread, every kTrackEveryMs while our Link is known: `playing` is
 // what our effect user plays now (CoopPuppetSound::Playing). A key caught and
 // sent at least kEndAfterMs ago that is no longer in it gets an end.
-void TrackOurEffects(std::string_view playing, std::uint64_t now_ms);
+// `piece` (slot + 1): the same for that held piece's user, each with its own tracker.
+void TrackOurEffects(std::string_view playing, std::uint64_t now_ms, std::uint8_t piece = 0);
 // The tracker itself (one per sender; TrackOurEffects uses the module's).
 class EffectEnds {
 public:
@@ -178,6 +191,7 @@ struct Sound {
     std::uint64_t at_ms = 0;  // received (steady ms)
     bool effect = false;      // a LINK_EFFECT key (row 310), not a sound
     bool end = false;         // with effect: its end
+    std::uint8_t piece = 0;   // with effect: 0 the Link's user, slot + 1 a held piece's
 };
 
 // One player's sounds waiting to be played on their puppet.
@@ -218,6 +232,7 @@ struct Player {
         const char* what = "sound";
     };
     Cells cells;
+    std::uint8_t piece = 0;  // the piece Player: the held slot + 1 it plays on now (0: none yet)
     // Ends received (effects): the slot still playing that name is stopped first.
     std::deque<std::string> ended;
     // A sound started on the puppet: its handle cell is block::kHandle + 8 * slot.
@@ -256,6 +271,8 @@ std::vector<Cast> Casting(std::uint8_t player, std::uint64_t now_ms);
 Player::Cells EffectCells();
 // A Player with them.
 Player EffectPlayer();
+// The held pieces' effect Player (one per puppet, on the piece in `slot`: a key for another slot moves it there).
+Player PieceEffectPlayer();
 // An end for `name` (effects): stops it if it still plays, and drops it from the queue. A name already waiting
 // to end is not added twice; with kEndedMax waiting, an end for a key not started goes first (it stops nothing).
 void End(Player& player, std::string name);

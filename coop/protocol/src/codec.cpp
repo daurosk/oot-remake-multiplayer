@@ -2136,7 +2136,7 @@ Error decode_body(Reader& r, LinkSound& m) {
 
 Error check_link_effect(const LinkEffect& m) {
   if (!valid_player_or_self(m.player_number) || (m.flags & ~kLinkEffectFlags) != 0 ||
-      !valid_link_sound_name(m.name)) {
+      !valid_link_sound_name(m.name) || m.piece > kLinkEffectPieces) {
     return Error::bad_value;
   }
   return Error::none;
@@ -2146,6 +2146,7 @@ Error encode_body(const LinkEffect& m, Writer& w) {
   COOP_TRY(check_link_effect(m));
   w.u8(m.player_number);
   w.u8(m.flags);
+  w.u8(m.piece);
   w.str(m.name);
   return Error::none;
 }
@@ -2154,6 +2155,7 @@ Error decode_body(Reader& r, LinkEffect& m) {
   m = LinkEffect{};
   COOP_READ(r.u8(m.player_number));
   COOP_READ(r.u8(m.flags));
+  COOP_READ(r.u8(m.piece));
   COOP_TRY(r.str(m.name, kMaxLinkSoundChars));
   return check_link_effect(m);
 }

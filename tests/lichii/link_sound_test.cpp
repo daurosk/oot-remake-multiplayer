@@ -93,9 +93,13 @@ void PutAsset(FakeGuest& g, const std::string& name) {
 void Reset() {
     SetOurUser(0);
     SetOurEffectUser(0);
+    SetOurPieceEffectUsers({});
     SetProbe(false);
     TakeCaught();
     TrackOurEffects("", ~std::uint64_t{0});  // every watched key ends
+    for (std::uint8_t piece = 1; piece <= kPieces; ++piece) {
+        TrackOurEffects("", ~std::uint64_t{0}, piece);
+    }
     TakeCaughtEffects();
     TakeProbeLines();
 }
@@ -565,6 +569,64 @@ TEST_CASE("link effect: the effect cells sit after the dress cells, inside the p
     CHECK(block::kEffectAsset >= CoopPuppet::block::kDress + 0x100);
     CHECK(block::kEffectEnd <= CoopPuppet::block::kSize);
     CHECK(EffectCells().handle != Player{}.cells.handle);
+    // The held pieces' cells: after the Link's, inside the block, their own handles.
+    const Player piece = PieceEffectPlayer();
+    CHECK(piece.cells.asset == block::kEffectEnd);
+    CHECK(piece.cells.text == block::kPieceText);
+    CHECK(piece.cells.handle == block::kPieceHandle);
+    CHECK(piece.cells.longest_ms == kEffectLongestMs);
+    CHECK(block::kPieceEnd <= CoopPuppet::block::kSize);
+    CHECK(piece.piece == 0);
+}
+
+TEST_CASE("link effect: a held piece's key (the sword trail) is caught as that slot's, and ends on its own user") {
+    Clean clean;
+    FakeGuest g;
+    constexpr std::uint64_t kOurEffects = 0x11000;
+    constexpr std::uint64_t kSword = 0x12000;
+    PutAsset(g, "Blur_Default");
+    CHECK_FALSE(OnEmit(kSword, kCell, g.AsRead()));  // no piece known: not ours
+    SetOurEffectUser(kOurEffects);
+    std::array<std::uint64_t, kPieces> pieces{};
+    pieces[0] = kSword;  // slot 0: the sword
+    SetOurPieceEffectUsers(pieces);
+    CHECK(OurPieceEffectUser(0) == kSword);
+    CHECK(OurPieceEffectUser(kPieces) == 0);
+    REQUIRE(OnEmit(kSword, kCell, g.AsRead()));
+    CHECK(TakeCaughtEffects() == std::vector<EffectOut>{{"Blur_Default", false, 1}});
+    // Still on the sword's list: no end; the Link's own tracker does not end it either.
+    TrackOurEffects("Blur_Default", ~std::uint64_t{0}, 1);
+    TrackOurEffects("", ~std::uint64_t{0});
+    CHECK(TakeCaughtEffects().empty());
+    TrackOurEffects("", ~std::uint64_t{0}, 1);
+    CHECK(TakeCaughtEffects() == std::vector<EffectOut>{{"Blur_Default", true, 1}});
+    TrackOurEffects("", ~std::uint64_t{0}, static_cast<std::uint8_t>(kPieces + 1));  // no such piece: nothing
+    CHECK(TakeCaughtEffects().empty());
+}
+
+TEST_CASE("link effect: the piece Player plays on the piece's user in its own cells") {
+    FakeGuest g = Puppet();
+    Player p = PieceEffectPlayer();
+    p.piece = 1;
+    Budget b;
+    std::vector<std::string> said;
+    const auto say = [&said](const std::string& s) { said.push_back(s); };
+    const auto none = [] { return std::string(); };
+    p.heard.Push("Blur_Default", 1000);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1000, none, "P2", say, true);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSearchAsset);
+    CHECK(c->x[1] == kBlock + block::kPieceAsset);
+    CHECK(g.TextAt(kBlock + block::kPieceText) == "Blur_Default");
+    CHECK(g.TextAt(kBlock + block::kEffectText).empty());  // the Link's effect cells untouched
+    g.Put<std::uint64_t>(kBlock + block::kPieceAsset, 0xb1);
+    Finish(p, 1, g, kBlock, "P2", say, true);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1001, none, "P2", say, true);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kEmit);
+    CHECK(c->x[2] == kBlock + block::kPieceHandle);
+    Finish(p, 1, g, kBlock, "P2", say, true);
+    CHECK(said == std::vector<std::string>{"P2 piece effect 'Blur_Default'"});
 }
 
 TEST_CASE("link effect: a full received queue drops the oldest non-end, never an effect's end (review-mod-153)") {

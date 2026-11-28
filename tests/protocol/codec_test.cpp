@@ -1686,7 +1686,7 @@ TEST_CASE("a Link effect has its number, channel and layout, its end flag, and o
   CHECK(sender_of(n) == 16);
   const std::string longest(kMaxLinkSoundChars, 'a');
   const Bytes b = must_encode(LinkEffect{3, kLinkEffectEnd, longest});
-  REQUIRE(b.size() == kHeaderSize + 1 + 1 + 2 + kMaxLinkSoundChars);
+  REQUIRE(b.size() == kHeaderSize + 1 + 1 + 1 + 2 + kMaxLinkSoundChars);  // player, flags, piece, the key
   Message back;
   REQUIRE(decode(b, back) == Error::none);
   CHECK(std::get<LinkEffect>(back) == LinkEffect{3, kLinkEffectEnd, longest});
@@ -1696,6 +1696,13 @@ TEST_CASE("a Link effect has its number, channel and layout, its end flag, and o
   CHECK(encode(LinkEffect{0, 0, "Din Fire"}, out) == Error::bad_value);
   CHECK(encode(LinkEffect{0, 0x02, "DinFire"}, out) == Error::bad_value);  // a flag this build does not know
   CHECK(encode(LinkEffect{17, 0, "DinFire"}, out) == Error::bad_value);
+  // A held piece's key (the sword trail on slot 0's sword: piece 1), round trip; past the last slot: refused.
+  const Bytes p = must_encode(LinkEffect{2, 0, "Blur_Default", 1});
+  Message pb;
+  CHECK(decode(p, pb) == Error::none);
+  CHECK(std::get<LinkEffect>(pb) == LinkEffect{2, 0, "Blur_Default", 1});
+  CHECK(encode(LinkEffect{0, 0, "Blur_Default", kLinkEffectPieces}, out) == Error::none);
+  CHECK(encode(LinkEffect{0, 0, "Blur_Default", kLinkEffectPieces + 1}, out) == Error::bad_value);
   Bytes bad = must_encode(LinkEffect{0, 0, "DinFire"});
   bad[kHeaderSize + 1] = 0x80;
   Message m;

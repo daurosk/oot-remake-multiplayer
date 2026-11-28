@@ -295,6 +295,9 @@ def ahead_back_turned(pair, x, of):
     pair.press(x, ["ZL"], frames=8)
     pair.step_both(CAM_WAIT)
     got = pair.state(x).get("pos")
+    pair.notes.append("hilt place: %s asked %.2f %.2f %.2f, now at %s (%s at %.2f %.2f %.2f)" % (
+        x, ax, oy, az, got, of, ox, oy, oz))   # (the rerun rule's proof of where A ended up, pass or fail)
+    print(pair.notes[-1])
     if not got or abs(got[1] - oy) > PLACE_TOL or math.hypot(got[0] - ax, got[2] - az) > PLACE_TOL:
         raise P.SetupFail("%s is not where placed: asked %.2f %.2f %.2f, now at %s (%s at %.2f %.2f %.2f)" % (
             x, ax, oy, az, got, of, ox, oy, oz))

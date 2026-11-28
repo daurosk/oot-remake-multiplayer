@@ -54,5 +54,32 @@ class ProbeBannerSet(unittest.TestCase):
         self.assertEqual(f["stray_dark"], [])
 
 
+class Runs(unittest.TestCase):
+    """runs() alone (review-tests-153-6): a dark run with no set before or in it is still flagged."""
+
+    @staticmethod
+    def samples(*words_sets):
+        return [{"i": i, "frame": 100 + i, "words": w, "sets": n, "texts": ["t"] * n} for i, (w, n) in enumerate(words_sets)]
+
+    def runs(self, samples, **kw):
+        sys.path.insert(0, INGAME)
+        import test_probe_banner_set as probe
+        return probe.runs(samples, max(s["words"] for s in samples), **kw)
+
+    def test_a_dark_run_with_no_set_is_flagged(self):
+        after, stray = self.runs(self.samples((0.05, 0), (0.0, 0), (0.0, 0)))
+        self.assertEqual(stray, [1, 2])
+        self.assertEqual(after, [])
+
+    def test_a_set_read_before_the_first_shot_covers_the_first_dark_run(self):
+        self.assertEqual(self.runs(self.samples((0.0, 0), (0.0, 0), (0.05, 0)), set_before=True)[1], [])
+        self.assertEqual(self.runs(self.samples((0.0, 0), (0.0, 0), (0.05, 0)))[1], [0, 1])
+
+    def test_a_set_on_the_bright_frame_before_covers_its_dark_run(self):
+        after, stray = self.runs(self.samples((0.05, 1), (0.0, 0), (0.0, 0), (0.05, 0), (0.0, 0)))
+        self.assertEqual(stray, [4])
+        self.assertEqual([(a["i"], a["blank_after"]) for a in after], [(0, 2)])
+
+
 if __name__ == "__main__":
     unittest.main()

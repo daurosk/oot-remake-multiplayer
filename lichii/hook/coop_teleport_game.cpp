@@ -487,7 +487,12 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         // (row 329: nor in the gap between the game's own map change event and its load: LoadReserved)
         if (!start || main_base == 0 || local.loading_banc || local.event || LoadReserved(local)) {
             respawn_moved = false;
-            LOG_INFO(Core, "coop: teleport: respawn at the entrance: no start point known here");
+            LOG_INFO(Core, "coop: teleport: respawn at the entrance: not asked ({})",
+                     !start                ? "no start point known here"
+                     : main_base == 0      ? "no game"
+                     : local.loading_banc  ? "a load runs"
+                     : local.event         ? "an event runs"
+                                           : "a scene load is reserved");
         } else {
             Trip::Actions entrance;
             entrance.scene = *local.scene;

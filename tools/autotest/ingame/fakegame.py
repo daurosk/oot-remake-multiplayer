@@ -437,6 +437,8 @@ class FakeGame:
     def walk(self, yaw, strength, frames):
         """`move` (docs/playtest.md): 0.1 m a frame toward world yaw (0 = +z, 90 = +x); a fakes/ module's move_step
         may change each step (a wall). From row-53-ocarina-5's b829adf93, made generic by the file's owner."""
+        if frames > 0 and strength > 0:
+            self.facing = yaw % 360          # a stick push turns Link toward it (the real game: state.facing follows)
         for _ in range(frames):
             pos = [self.pos[0] + 0.1 * strength * math.sin(math.radians(yaw)), self.pos[1],
                    self.pos[2] + 0.1 * strength * math.cos(math.radians(yaw))]

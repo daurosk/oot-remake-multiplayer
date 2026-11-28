@@ -95,11 +95,12 @@ def test_temple_of_time_places(pair):
         pair.step_both(WAIT_PLACE)
         landed(pair, "A", mark, tx, ty, tz, over)
         if mark in FACE_AT:
-            pair.act("A", "face %.2f %.2f" % (DOOR_X, DOOR_Z))
-            pair.step_both(WAIT_FACE)
-            f = pair.state("A")["facing"]
-            d = abs((f - FACE_DOOR + 180.0) % 360.0 - 180.0)
-            assert d <= FACE_TOL, "A %s-face: facing %.1f, not toward the door (%.0f)" % (mark, f, FACE_DOOR)
+            # Turned by the stick (Pair.turn_to), not by `act face`: that line writes the yaw (the module logs 'test face
+            # ... turned to yaw 90.0') but state.facing never follows it (run row53-tot-182cd53b: facing -180.0 after the
+            # line; probe row53face-182cd53b: -180.0 at +1, +2, +30, +120 frames).
+            turned, f, off = pair.turn_to("A", DOOR_X, DOOR_Z, tol=FACE_TOL)
+            assert turned, "A %s-face: facing %.1f, %.0f degrees off the door (%.0f) after the stick pushes" % (
+                mark, f, off, FACE_DOOR)
     # p-at-door: walk on toward the door from p-altar (the old goto 116.0 -34.0; it stops at the door's wall when the
     # door is shut). Not a pass/fail check in the old row either (its judge: "may read NOT THERE if the door is
     # shut"): where Link stopped is a note for the open_fast Door of Time run.

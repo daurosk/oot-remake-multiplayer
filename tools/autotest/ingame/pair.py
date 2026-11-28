@@ -23,6 +23,7 @@ AUTOTEST = os.path.dirname(HERE)
 sys.path.insert(0, AUTOTEST)
 sys.path.insert(0, HERE)
 import playtest_client as pc   # noqa: E402
+import playtest_helpers as ph   # noqa: E402 (turn_to's constants)
 
 CHUNK = 10            # frames per step while waiting for a condition (a log line, a state)
 SETUP_LIMIT_S = 30.0  # owner rule (worker-rules TEST SYSTEM): a test's set-up proves itself in under 30 s
@@ -1070,6 +1071,29 @@ class Pair:
 
     def act(self, x, line):
         return self.call(x, "act", lines=line)
+
+    def turn_to(self, x, tx, tz, tol=ph.TURN_TOL, rounds=ph.TURN_ROUNDS):
+        """Turn game x's Link toward the world point (tx, tz) the way a player does: light pushes of the stick that
+        way (`move`, TURN_FRAMES each; playtest_helpers.turn_to's rule, on a Pair) until the state's `facing` is within
+        `tol` degrees. The test line `act face X Z` is NOT used: it runs and writes the yaw, but state.facing never
+        followed it (row 53 probe row53face-182cd53b: 'test face ... turned to yaw 90.0' and facing -180.0 at +1, +30,
+        +120 frames). The other game runs the same frames. Returns (turned, facing, off)."""
+        facing, off = None, None
+        for r in range(rounds + 1):
+            st = self.state(x)
+            pos, facing = st.get("pos"), st.get("facing")
+            assert pos and facing is not None, "%s: no place or facing in the state to turn from" % x
+            want = pc.yaw_to(pos, tx, tz) % 360
+            off = (want - float(facing) + 180.0) % 360.0 - 180.0
+            if abs(off) <= tol:
+                return True, float(facing), off
+            if r == rounds:
+                break
+            self.call(x, "move", yaw=float(want), strength=ph.TURN_STRENGTH, frames=ph.TURN_FRAMES)
+            for y in self.c:
+                if y != x:
+                    self.step_other(y, ph.TURN_FRAMES)
+        return False, float(facing), off
 
     def give(self, x, item):
         return self._kept(x, "give", item=item)

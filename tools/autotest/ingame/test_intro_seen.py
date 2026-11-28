@@ -27,6 +27,7 @@ Every log pattern is the module's own line (cited at its writer); every place an
 import pytest
 
 from test_enemies import actors, alive, place, walk_to   # noqa: E402  (the same world list, place and goto)
+import boss_lines as BL   # noqa: E402  (the native boss table's lines: one table)
 
 BOOT, SCENE = "live-deku-gohma-seen", "InsideTheDekuTree"   # the boot's 'warp InsideTheDekuTree Entrance'
 GOHMA = "Enemy_DungeonBoss_Gohma"                         # hs-intro-seen-gohma.A.txt 'kill Enemy_DungeonBoss_Gohma'
@@ -44,10 +45,11 @@ CORRIDOR_WAIT, INTRO, TRIGGER = 240, 2400, 900   # 'wait 240' after the place; '
 LOOK_UP = ([0.0, 1.0], 60, 10)        # A 'rstick 0 1 60' (bridge rstick [angle, strength]), 'press ZL 10'
 WATCH = 600                           # A 'wait 600' + 'mark a-watch1' (B's copy after its intro)
 
-# coop_boss_native.cpp:527 Note (logged 'coop: boss: <line>', coop_boss_game.cpp:390)
-SYNC = r"coop: boss: Enemy_DungeonBoss_Gohma: native boss sync on \(BSA 0x[0-9a-f]+, %s\)"
-VERBS = r"coop: boss: Enemy_DungeonBoss_Gohma: the owner's verbs came"        # coop_boss_native.cpp:1512
-NOW_OURS = r"coop: boss: Enemy_DungeonBoss_Gohma: now ours"                   # coop_boss_native.cpp:393
+# The native boss table's notes (coop_boss_native.cpp:527/1512/393), logged 'coop: bosses: <note>' by coop_objects.cpp:
+# the one table boss_lines.py (row 303 VOID 11-28: 'coop: boss:' here never matched a live line).
+SYNC = BL.sync_re(GOHMA, "%s")
+VERBS = BL.verbs_re(GOHMA)
+NOW_OURS = BL.now_ours_re(GOHMA)
 NOT_READY = r"coop: boss: not ready to own the boss: our game plays its intro now \(Dm_Deku_BossIn\)"  # coop_boss_game.cpp:367
 DEATH = r"Dm_Deku_BossOut: our game started the death"   # coop_boss_scenes.cpp:458 (as test_boss_away.DEATH)
 READY = r"coop: boss: ready to own the boss \(Dm_Deku_BossIn\)"                # coop_boss_game.cpp:366 (room->intro, coop_boss.cpp:52)

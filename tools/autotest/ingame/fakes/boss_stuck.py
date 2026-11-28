@@ -15,11 +15,15 @@ nodeath -> the kill never lands.
 """
 import math
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import boss_lines as BL   # noqa: E402  (the native boss table's lines: one table, tests/test_ingame_boss_lines.py)
 
 SCENE, GOHMA, QUEST, ALIVE, DEFEAT = ("InsideTheDekuTree", "Enemy_DungeonBoss_Gohma", "0x7d776b61", "0xb5df43cb",
                                       "Gohma_DefeatBoss")
 SPOT = {"A": [-14.5, 79.6, -6.5], "B": [-20.0, 48.5, 60.0]}
-SYNC = "coop: boss: Enemy_DungeonBoss_Gohma: native boss sync on (BSA 0x7f3a20, %s)"
+SYNC = BL.sync_line(GOHMA, "%s", 0x7f3a20)   # boss_lines.py: the module's one form
 DEATH = "Dm_Deku_BossOut: our game started the death: the others in the area play it too"
 CEILING = (18.49, 59.97, 67.79)   # boss_away.py's place of her (on the ceiling)
 CENTRE, RADIUS, PERIOD = (15.0, 47.0, 67.6), 3.0, 120.0

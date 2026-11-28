@@ -199,6 +199,11 @@ std::string SeedSettings(std::string_view seed_file_text);
 // Whether a seed file (.ootrr, JSON) places shop items (shopsanity: a top-level "shops" object with an entry). Such a seed
 // sells its one-time shelves once (lichii/hook/coop_shop_sale.h: co-op shares their sold counters).
 bool SeedShops(std::string_view seed_file_text);
+// Row 331: whether a seed file (.ootrr, JSON) places a "Gold Skulltula Token" at a location that is not a Gold
+// Skulltula's (its "placements" name has no "GS " and does not end in " GS"): tokens shuffled into chests, pots and rewards (OOTRR
+// shuffle_skulltulas). Co-op's token guard then lets another one-time pickup pay for a token gain
+// (coop::host::FlagWatcher::set_tokens_anywhere).
+bool SeedTokensOffSkulltulas(std::string_view seed_file_text);
 // The item a seed file (.ootrr, JSON) places at `location` (its top-level "placements" object, OOTRR settings/seed.rs:
 // location name -> item name), or none when the location is not listed (it keeps its vanilla item) or the file has
 // no placements. lichii/hook/coop_story.h GiftShuffled (row 237): Saria's gift and the moat's ocarina.
@@ -434,6 +439,8 @@ public:
     bool SeedRead() const;
     // The item this run's seed places at `location` (SeedPlacement of its seed file), none when not listed or unread.
     std::optional<std::string> PlacementAt(std::string_view location) const;
+    // Row 331: SeedTokensOffSkulltulas of this run's seed file (false when unread).
+    bool SeedTokensElsewhere() const;
     bool HoldPack() const { return hold_pack_.load() || outside_.load() || rows_out_.load(); }
     // A mod's RSDB table wins without the pack's rows this run (OutsideActorRows): the game would refuse the puppets.
     bool RowsMissing() const { return rows_out_.load(); }

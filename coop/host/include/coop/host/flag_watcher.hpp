@@ -302,8 +302,12 @@ class FlagWatcher {
   // pickup going 0 to 1 in our own game, not one of `sources`) within kOtherPickupFrames before the gain pays for
   // it like a source does (a chest's key is set when it opens, the item a few seconds later); (2) each source
   // written here for another player puts back at most ONE gain (the one token copy that stayed here), not every
-  // unmatched gain for kGuardRecentFrames.
+  // unmatched gain for kGuardRecentFrames. Rule (1) pays a gain before the put-back only when tokens can lie
+  // elsewhere (set_tokens_anywhere: the seed places a token off a Skulltula); otherwise (no seed, or a seed with
+  // the Skulltulas vanilla) a token comes only from a Skulltula, so a pending take is used first and (1) pays only
+  // the gains beyond the pending takes: the copy taken again right after a chest is still put back, as before.
   static constexpr std::uint64_t kOtherPickupFrames = 10 * 60;
+  void set_tokens_anywhere(bool on) { tokens_anywhere_ = on; }
   struct CountGuarded {
     FlagKey count;
     std::int32_t amount = 0;  // the gain put back
@@ -677,6 +681,7 @@ class FlagWatcher {
     std::int32_t own = 0;           // that change, ours only
   };
   std::map<FlagKey, Guard> guards_;          // guard_count, by count
+  bool tokens_anywhere_ = false;             // row 331: set_tokens_anywhere
   struct Raced {
     std::int32_t gains = 0;  // a player's gains of the count still to drop
     std::uint64_t at = 0;    // the frame the last raced source came

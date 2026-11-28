@@ -2424,6 +2424,7 @@ TEST_CASE("token guard: a randomizer token from a chest after another player's S
   store.set(chest, 0);
   FlagWatcher w(token_shared(), FlagRole::player);
   guard(w);
+  w.set_tokens_anywhere(true);  // the seed places tokens off the Skulltulas
   CHECK(w.share_pickup(chest));
   w.frame(store);
   w.receive(state({entry(kSkull, 1), token_total(6)}));  // another player's Skulltula
@@ -2438,6 +2439,42 @@ TEST_CASE("token guard: a randomizer token from a chest after another player's S
   CHECK(sent == std::vector{token_delta(1)});
   CHECK(store.tokens() == 7);
   CHECK(w.stats().counts_guarded == 0);
+}
+
+TEST_CASE("token guard: tokens only on Skulltulas: the copy taken again after a chest is still put back") {
+  // Review of 5496c12d5: with no seed (or the Skulltulas vanilla) a token comes only from a Skulltula, so a
+  // pickup of ours just before does not pay a gain while another player's take is pending.
+  TokenStore store = token_game();
+  const FlagKey chest = FlagKey::key64_flag(0x11223344aabbccddull);
+  store.set(chest, 0);
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  CHECK(w.share_pickup(chest));
+  w.frame(store);
+  w.receive(state({entry(kSkull, 1), token_total(6)}));  // another player's Skulltula
+  w.frame(store);
+  store.set(chest, 1);  // our chest (rupees)
+  w.frame(store);
+  for (int f = 0; f < 2 * 60; ++f) w.frame(store);
+  store.tokens(7);  // the token copy that stayed here, taken again
+  const auto sent = run_hold(w, store);
+  CHECK_FALSE(has(sent, token_delta(1)));
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().counts_guarded == 1);
+  // Two gains after one take and a chest: one put back, the other paid by the chest.
+  store.set(kSkull2, 0);
+  w.receive(state({entry(kSkull2, 1), token_total(6)}));
+  w.frame(store);
+  const FlagKey pot = FlagKey::key64_flag(0x5566778899aabbccull);
+  store.set(pot, 0);
+  CHECK(w.share_pickup(pot));
+  w.frame(store);
+  store.set(pot, 1);
+  w.frame(store);
+  store.tokens(8);
+  CHECK(run_hold(w, store) == std::vector{token_delta(1)});
+  CHECK(store.tokens() == 7);
+  CHECK(w.stats().counts_guarded == 2);
 }
 
 TEST_CASE("token guard: one take elsewhere puts back one gain only") {

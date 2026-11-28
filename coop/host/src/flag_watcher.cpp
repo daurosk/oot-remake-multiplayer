@@ -1902,16 +1902,20 @@ void FlagWatcher::settle_guards(FlagStore& store, Table& changes) {
     g.held -= matched;
     g.credit -= matched;
     send += matched;
-    // Row 331: our own other one-time pickup just before (or within the hold) pays for a gain too.
+    // Row 331: our own other one-time pickup just before (or within the hold) pays for a gain too: any gain when
+    // the seed places tokens elsewhere, else only the gains beyond the takes still pending (those are put back).
     if (g.other_credit > 0 && frames_ - g.other_credit_since > kOtherPickupFrames + kGuardHoldFrames) g.other_credit = 0;
-    if (g.held > 0 && g.other_credit > 0 && g.held_since + kOtherPickupFrames >= g.other_credit_since) {
-      const std::int32_t paid = std::min(g.held, g.other_credit);
+    while (!g.others.empty() && frames_ + 1 - g.others.front() > kGuardRecentFrames) g.others.pop_front();
+    const std::int32_t payable =
+        tokens_anywhere_ ? g.held
+                         : std::max<std::int32_t>(0, g.held - static_cast<std::int32_t>(g.others.size()));
+    if (payable > 0 && g.other_credit > 0 && g.held_since + kOtherPickupFrames >= g.other_credit_since) {
+      const std::int32_t paid = std::min(payable, g.other_credit);
       g.held -= paid;
       g.other_credit -= paid;
       send += paid;
     }
     if (g.held > 0 && frames_ - g.held_since >= kGuardHoldFrames) {
-      while (!g.others.empty() && frames_ + 1 - g.others.front() > kGuardRecentFrames) g.others.pop_front();
       // Row 331: one put-back per take written here for another player (the one copy of that token that stayed).
       const std::int32_t gain = g.held;
       const std::int32_t back = std::min<std::int32_t>(gain, static_cast<std::int32_t>(g.others.size()));

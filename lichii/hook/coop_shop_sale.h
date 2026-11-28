@@ -89,6 +89,14 @@ inline std::atomic<bool>& SeedHasShopsFlag() {
 }
 inline void SetSeedHasShops(bool on) { SeedHasShopsFlag().store(on, std::memory_order_relaxed); }
 inline bool SeedHasShops() { return SeedHasShopsFlag().load(std::memory_order_relaxed); }
+// Row 331: whether this run's seed places Gold Skulltula tokens off the Skulltulas (set by the module's randomizer at
+// its start, CoopRando::SeedTokensOffSkulltulas; never in the emulator build). The hook hands it to the token guard.
+inline std::atomic<bool>& SeedTokensElsewhereFlag() {
+    static std::atomic<bool> on{false};
+    return on;
+}
+inline void SetSeedTokensElsewhere(bool on) { SeedTokensElsewhereFlag().store(on, std::memory_order_relaxed); }
+inline bool SeedTokensElsewhere() { return SeedTokensElsewhereFlag().load(std::memory_order_relaxed); }
 
 // Adds the counters to the shared list; returns how many were new.
 inline std::size_t Merge(std::optional<coop::host::SharedFlags>& shared) {

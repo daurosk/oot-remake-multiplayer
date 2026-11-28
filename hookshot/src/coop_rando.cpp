@@ -425,6 +425,33 @@ bool SeedShops(std::string_view text) {
     return false;
 }
 
+bool SeedTokensOffSkulltulas(std::string_view text) {
+    // In the first "placements" object (as SeedPlacement), each value "Gold Skulltula Token" and its key before it.
+    static constexpr std::string_view kToken = "\"Gold Skulltula Token\"";
+    for (auto key = text.find("\"placements\""); key != std::string_view::npos;
+         key = text.find("\"placements\"", key + 12)) {
+        auto at = text.find_first_not_of(" \t\r\n", key + 12);
+        if (at == std::string_view::npos || text[at] != ':') continue;
+        at = text.find_first_not_of(" \t\r\n", at + 1);
+        if (at == std::string_view::npos || text[at] != '{') return false;
+        const auto end = text.find('}', at);
+        const std::string_view body = text.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+        for (auto v = body.find(kToken); v != std::string_view::npos; v = body.find(kToken, v + kToken.size())) {
+            const auto colon = body.find_last_not_of(" \t\r\n", v - 1);
+            if (colon == std::string_view::npos || body[colon] != ':') continue;  // a key, not a value
+            const auto close = body.find_last_not_of(" \t\r\n", colon - 1);
+            if (close == std::string_view::npos || body[close] != '"') continue;
+            const auto open = body.rfind('"', close - 1);
+            if (open == std::string_view::npos) continue;
+            const std::string_view location = body.substr(open + 1, close - open - 1);
+            // OOTRR data/locations.json kind "gs": 96 names, each with "GS " or ending in " GS" ("SFM GS").
+            if (location.find("GS ") == std::string_view::npos && !location.ends_with(" GS")) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
 std::optional<std::string> SeedPlacement(std::string_view text, std::string_view location) {
     // {"format": "ootrr-seed", ..., "placements": {"KF Midos Top Left Chest": "Bow", ...}, ...}: the first
     // "placements" key followed by ':' and an object, then the location's key in it (names hold no quotes).
@@ -2269,6 +2296,11 @@ bool Rando::SeedRead() const {
 std::optional<std::string> Rando::PlacementAt(std::string_view location) const {
     std::lock_guard lock(mutex_);
     return SeedPlacement(seed_text_, location);
+}
+
+bool Rando::SeedTokensElsewhere() const {
+    std::lock_guard lock(mutex_);
+    return SeedTokensOffSkulltulas(seed_text_);
 }
 
 }  // namespace CoopRando

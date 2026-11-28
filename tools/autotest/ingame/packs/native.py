@@ -25,7 +25,7 @@ Both lane games get the same files (testpack.put_in), so lane A's and lane B's c
 pack has under romfs/ (a pack made by another tool, left in) would stay in and is a make failure too, except the own
 tunic files the kit's start puts into the pack's romfs (hookshot.py pack_start -> self_tunic.put: self_tunic.FIXED and
 each colour's `self_files` path of either manifest), which the start takes away and puts again from the new
-manifest (dry make on lane1-A 21:1x UTC: 9 such files, Model/Player_*.bfres.zs and Tex/*Angin*/Mt_*). The kit's own
+manifest (dry make on lane1-A 20:51-21:07 UTC: 9 such files, Model/Player_*.bfres.zs and Tex/*Angin*/Mt_*). The kit's own
 files beside romfs/ (_coop-archives/, coop-merged.txt, ...) are not the build's and are left alone.
 """
 import hashlib

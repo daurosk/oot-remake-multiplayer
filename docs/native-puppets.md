@@ -944,6 +944,10 @@ included) gets its own `PhysicsParam` and `ControllerSetParam` made from the pla
 
 - `InitializerName`, `ShapeNamePathAry`, `MatterRigidBodyNamePathAry`, `CColEntityNamePathAry`,
   `PathCharacterController`: Link's own body shapes and character controller;
+  the main matter body (`MainMatterRigidBody`) is not Link's (LayerEntity Player, Mass 10) but a character's: a
+  param with `$parent` `Npc_Default` (ResidentCommon: LayerEntity Character, SubLayerEntity NPC, Mass 60, pushed
+  scales 1000, as every placed NPC) and Link's own `Shapes` and water values, so Link bumps into the copy and cannot
+  push it through (N1b; in-game check: walk Link into another player's copy, he stops);
 - `Cloth`, `ClothAdvandecOption`, `ClothList`, `ClothReaction`: his cloth (hair, hood, belt), as
   hs-puppets-alt-b's `cloth` mode, which ran without the slot-10 crash.
 

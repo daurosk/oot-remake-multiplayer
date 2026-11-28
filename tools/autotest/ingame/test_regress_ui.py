@@ -279,6 +279,34 @@ def turn_diff(a, b):
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
+def view_facts(pair, of, x):
+    """One line of the numbers behind other_in_view on game `of`: its Link's place and facing, its view's yaw/pitch and
+    frame (when the state has them), where its own Link, x's place and the puppet of x it draws are on its screen, and
+    their depths. The puppet's place is of's world list (CoopPuppet_*), not x's own state."""
+    st, ot = pair.state(of), pair.state(x)
+    view, own, far = st.get("view") or {}, st.get("pos"), ot.get("pos")
+    m = view.get("clip") if isinstance(view.get("clip"), list) and len(view.get("clip")) == 16 else None
+
+    def depth(p):
+        return None if not (m and p) else round(sum(m[12 + j] * v for j, v in enumerate(list(p) + [1.0])), 2)
+
+    def scr(p):
+        q = on_screen(view, p) if p else None
+        return None if q is None else (round(q[0], 2), round(q[1], 2))
+    pup = None
+    try:
+        w = pair.c[of].world().get("world") or {}
+        pups = [a.get("pos") for a in w.get("actors", []) if (a.get("name") or "").startswith("CoopPuppet_")]
+        pup = pups[0] if pups else None
+    except Exception as e:   # (facts only; never the result)
+        pup = "world: %s" % type(e).__name__
+    keys = {k: view.get(k) for k in ("yaw", "pitch", "frame", "y_down") if k in view}
+    return ("%s pos %s facing %s view %s; own on screen %s depth %s; %s's place %s on screen %s depth %s; puppet %s on "
+            "screen %s depth %s" % (of, own, st.get("facing"), keys, scr(own), depth(own), x, far, scr(far), depth(far),
+                                    pup, scr(pup) if isinstance(pup, list) else None,
+                                    depth(pup) if isinstance(pup, list) else None))
+
+
 def ahead_back_turned(pair, x, of):
     """Game x's Link HILT_DIST m ahead of game `of`'s Link (HILT_BEARING off its facing), facing the same way as `of`
     ('place' / 'face', as test_rows.place_in_front); ZL on both (camera behind each own Link: x's camera sees its own
@@ -306,9 +334,16 @@ def ahead_back_turned(pair, x, of):
         pair.press(of, ["ZL"], frames=8)
         pair.step_both(CAM_WAIT)
         ok, why = other_in_view(pair, of, x, behind=True)
+        pair.notes.append("hilt view %d: %s" % (n + 1, view_facts(pair, of, x)))   # (gate-hilt-182cd53b's probe)
+        print(pair.notes[-1])
         if ok:
             break
     else:
+        try:
+            r = pair.call(of, "shot", name="hilt-setup-fail-%s" % of)   # (the framebuffer at the failed check)
+            pair.notes.append("hilt set-up shot %s: %s" % (of, r.get("path")))
+        except Exception as e:    # (the shot is evidence only; the SetupFail below is the result)
+            pair.notes.append("hilt set-up shot %s failed: %s: %s" % (of, type(e).__name__, e))
         raise P.SetupFail("%s: %s's puppet not ahead in view after %d ZL: %s" % (of, x, CAM_TRIES, why))
     fx, fo = pair.state(x).get("facing"), pair.state(of).get("facing")
     turn = turn_diff(fx, fo)

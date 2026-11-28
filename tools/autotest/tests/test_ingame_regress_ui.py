@@ -89,6 +89,16 @@ class RegressUi(unittest.TestCase):
         self.assertIn("is not where placed", s["tests"][0]["why"])
         self.assertTrue(any(n.startswith("hilt place: A asked") for n in s["tests"][0]["notes"]), s["tests"][0]["notes"])
 
+    def test_hilt_b_view_fail_notes_the_numbers(self):
+        """gate-hilt-182cd53b (07:13 UTC 11-28): B's view check failed with A where placed. The failed set-up notes
+        every try's view facts and keeps a framebuffer shot of B (fake =camera: B's camera in front of B)."""
+        p, s = self.run_fake("hilt-cam", HILT, bug="camera")
+        self.assertEqual(T.results(s), {HILT: "SETUP-FAIL"}, p.stdout[-1500:])
+        self.assertIn("puppet not ahead in view", s["tests"][0]["why"])
+        notes = s["tests"][0]["notes"]
+        self.assertEqual(sum(n.startswith("hilt view ") for n in notes), 3, notes)
+        self.assertTrue(any(n.startswith("hilt set-up shot B: ") and "failed" not in n for n in notes), notes)
+
     def test_hilt_not_painted_fails(self):
         p, s = self.run_fake("hilt-bug", HILT, bug="hilt")
         self.assertEqual(T.results(s), {HILT: "FAIL"}, p.stdout[-1500:])

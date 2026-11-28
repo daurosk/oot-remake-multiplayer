@@ -91,15 +91,56 @@ def camera_behind_each(pair):
             raise SetupFail("%s's camera not behind its Link facing %s after %d ZL: %s" % (x, other, CAM_TRIES, why))
 
 
+# face_each_other's two Links stand on two parallel lines SIDE m apart (each SIDE/2 off B's boot line), facing each
+# other's way: with the camera behind its own Link, the other Link is then BESIDE it on the screen, never behind it.
+# On one line (B straight ahead of A) the ZL camera behind A had B wholly inside A's box: 'huecheck B ... covered=1.00',
+# B blind, every hair/vest set-up NO-REF (integrate-0120-8 report: face-link-0121 + hair-check-0121).
+# The size: bandcheck.box makes a Link HALF_W = 0.35 * bandcheck.HEAD (1.9) = 0.665 m wide each side of its feet; with
+# the camera c m behind the own Link and the other D = 2.5 m further (place_in_front's default), the boxes part when
+# (SIDE - HALF_W) / (c + D) > HALF_W / c, i.e. SIDE > 1.66 m at the game's c ~ 5 m (nocs4-182cd53b
+# hair-link-no-cs-unset-B.png: own Link ~200 px tall, the other 2.5 m further ~138 px: (c + 2.5) / c = 1.45) and
+# SIDE > 1.88 m at the fake's c = 3 m (fakes/regress_ui.py CAM_BACK). 2.2 m leaves room for both; the other's feet
+# stay at screen x ~0.3-0.45 (EDGE 0.9). apart_on_screen proves it on each game's state after the cameras move.
+SIDE = 2.2
+SHOT_W, SHOT_H = 1280, 720     # the bridge framebuffer shot's size (nocs4-182cd53b lane1/new/*.png)
+
+
+def apart_on_screen(pair):
+    """Each game's own Link box and the other Link's box (bandcheck.box from that game's state `view`, as the look
+    checks find them) both on the screen and not overlapping; else SetupFail with both boxes."""
+    import bandcheck
+    for x, other in (("A", "B"), ("B", "A")):
+        view = pair.state(x).get("view")
+        own = bandcheck.box(view, pair.state(x)["pos"], SHOT_W, SHOT_H) if view else None
+        far = bandcheck.box(view, pair.state(other)["pos"], SHOT_W, SHOT_H) if view else None
+        why = "%s: own Link box %s, %s's box %s" % (x, own, other, far)
+        if not own or not far or (own[0] < far[2] and far[0] < own[2] and own[1] < far[3] and far[1] < own[3]):
+            raise SetupFail("%s's shot would not show %s's Link clear of its own: %s" % (x, other, why))
+        pair.notes.append("apart on %s's screen: %s" % (x, why))
+
+
 def face_each_other(pair):
-    """THE set-up for a check that needs each game to see the other's Link (its puppet): A is put in front of B facing
-    it, B faces A, then each camera goes behind its own Link (camera_behind_each: the game's own ZL reset, proven on
-    each game's state). place/face move a Link, never its camera: before this, A's camera stayed behind B and B's
-    puppet was cut off at the bottom of every A shot (nocs4-182cd53b 01:36, gear/hair/leather/vest no-CS)."""
-    place_in_front(pair, "A", of="B")
-    pair.act("B", "face %.2f %.2f" % tuple(pair.state("A")["pos"][::2]))
+    """THE set-up for a check that needs each game to see the other's Link (its puppet): B steps SIDE/2 to its left
+    keeping its facing, A is put 2.5 m in front of B's boot place and SIDE/2 to its right facing back the other way
+    (parallel lines, see SIDE), then each camera goes behind its own Link (camera_behind_each: the game's own ZL
+    reset, proven on each game's state) and apart_on_screen proves the two boxes do not overlap. place/face move a
+    Link, never its camera: before the ZL, A's camera stayed behind B and B's puppet was cut off at the bottom of every
+    A shot (nocs4-182cd53b 01:36, gear/hair/leather/vest no-CS)."""
+    s = pair.state("B")
+    px, py, pz = s["pos"]
+    yaw = math.radians(s["facing"])
+    fx, fz = math.sin(yaw), math.cos(yaw)          # B's facing (0 = +z, 90 = +x: docs/playtest.md "State")
+    rx, rz = fz, -fx                                # B's right (fakes/regress_ui.py state(): the same right)
+    h, d = SIDE / 2, 2.5
+    bx, bz = px - h * rx, pz - h * rz               # B: SIDE/2 to its left
+    ax, az = px + d * fx + h * rx, pz + d * fz + h * rz    # A: d ahead, SIDE/2 to B's right
+    pair.act("B", "place %.2f %.2f %.2f" % (bx, py, bz))
+    pair.act("B", "face %.2f %.2f" % (bx + d * fx, bz + d * fz))     # along its own line (facing kept)
+    pair.act("A", "place %.2f %.2f %.2f" % (ax, py, az))
+    pair.act("A", "face %.2f %.2f" % (ax - d * fx, az - d * fz))     # back along its own line, towards B's side
     pair.step_both(10)
     camera_behind_each(pair)
+    apart_on_screen(pair)
 
 
 @pytest.mark.budget(120)

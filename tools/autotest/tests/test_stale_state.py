@@ -99,5 +99,29 @@ class PosTest(unittest.TestCase):
             st["pos"]
 
 
+class FlagGuardTest(unittest.TestCase):
+    """Pair.flag refuses a name the game has no flag for (probe0121e-16ac9701 05:07: 'coop: test setenum Get_Epona
+    Complete: unknown (was -)', test_epona's GET_EPONA was not the quest's Enum name)."""
+
+    def pair(self, kind):
+        p = StubPair([FRESH])
+        p.writes = []
+        p.flag_read = lambda x, name: {"kind": kind, "value": None}
+        p._kept = lambda x, cmd, **a: p.writes.append((x, cmd, a)) or {"ok": True}
+        return p
+
+    def test_unknown_name_is_setup_fail(self):
+        p = self.pair("unknown")
+        with self.assertRaises(P.SetupFail) as c:
+            p.flag("B", "Get_Epona", "Complete")
+        self.assertIn("B: flag 'Get_Epona' is unknown to the game", str(c.exception))
+        self.assertEqual(p.writes, [])
+
+    def test_known_name_is_written(self):
+        p = self.pair("enum")
+        p.flag("B", "Step_Get_Epona", "Complete")
+        self.assertEqual(p.writes, [("B", "flag", {"name": "Step_Get_Epona", "value": "Complete"})])
+
+
 if __name__ == "__main__":
     unittest.main()

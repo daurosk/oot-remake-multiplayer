@@ -1197,6 +1197,14 @@ class Pair:
         return self._kept(x, "give", item=item)
 
     def flag(self, x, name, value=1):
+        """A set-up write of flag `name` on game x. A name the game has no flag for (flag_read kind 'unknown') is
+        SETUP-FAIL before the write: the bridge's write of it is a no-op the module only logs ('coop: test setenum
+        Get_Epona Complete: unknown (was -)', probe0121e-16ac9701 2026-11-28 05:07: test_epona's GET_EPONA was not the
+        quest's Enum name, so every 'won' set-up never won)."""
+        k = (self.flag_read(x, name) or {}).get("kind")
+        if k == "unknown":
+            raise SetupFail("%s: flag %r is unknown to the game (flag_read kind 'unknown'): a wrong name, nothing "
+                            "written" % (x, name))
         return self._kept(x, "flag", name=name, value=value)
 
     def _kept(self, x, cmd, **args):

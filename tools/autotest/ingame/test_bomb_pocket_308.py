@@ -113,7 +113,10 @@ def test_bomb_pocket(pair):
     # the cited lift (test_carry_304 LIFT_SETTLE + LIFT_FRAMES = rock.A.txt 'wait 20', 'press A 12'); probe
     # carry-304-182cd53b-3's 8-frame press left the bomb lying (UNKNOWN (a) press too short vs (b) not liftable on A)
     pair.step_both(C.LIFT_SETTLE)
-    _, _, st0 = bombs(pair, "A", "bomb-a-at")
+    _, at_bombs, st0 = bombs(pair, "A", "bomb-a-at")
+    if not [b for b in at_bombs if C.xz(b["pos"], o) <= REST_M]:   # review-tests-153-7: the lit bomb may go off first
+        pair.unproven("B's bomb no longer lying at %s on A's game just before A's press (went off during the %d-frame "
+                      "wait?): A's Item_Bombs %s" % (o, C.LIFT_SETTLE, [b["pos"] for b in at_bombs]))
     pair.press("A", ["A"], frames=C.LIFT_FRAMES)
     pair.step_both(SETTLE)
     a_link, a_bombs, st = bombs(pair, "A", "bomb-a-held")

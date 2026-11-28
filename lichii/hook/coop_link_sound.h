@@ -256,8 +256,12 @@ std::vector<Cast> Casting(std::uint8_t player, std::uint64_t now_ms);
 Player::Cells EffectCells();
 // A Player with them.
 Player EffectPlayer();
-// An end for `name` (effects): stops it if it still plays, and drops it from the queue.
+// An end for `name` (effects): stops it if it still plays, and drops it from the queue. A name already waiting
+// to end is not added twice; with kEndedMax waiting, an end for a key not started goes first (it stops nothing).
 void End(Player& player, std::string name);
+// Room for one more in a received queue of `max`: drops the OLDEST entry that is not an effect's end (an end
+// lost leaves a held effect, the spin charge, on the puppet until kEffectLongestMs); only ends: the oldest.
+void MakeRoom(std::vector<Sound>& queue, std::size_t max);
 
 // The next call for this puppet's sounds, if any (one at a time). `playing`
 // is what the puppet's user plays now (CoopPuppetSound::Playing), read only

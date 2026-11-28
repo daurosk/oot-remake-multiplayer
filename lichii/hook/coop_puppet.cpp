@@ -3185,9 +3185,7 @@ void OnEvent(const coop::net::Event& event) {
                 .count());
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[sound->player_number];
-        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
-            queue.erase(queue.begin());  // the newest are kept
-        }
+        CoopLinkSound::MakeRoom(queue, 2 * CoopLinkSound::kHeardMax);  // the newest kept, and every effect's end
         queue.push_back(CoopLinkSound::Sound{sound->name, now_ms, false, false});
     } else if (const auto* effect = std::get_if<coop::protocol::LinkEffect>(&event.message);
                event.kind == EventKind::message && effect != nullptr) {
@@ -3203,9 +3201,7 @@ void OnEvent(const coop::net::Event& event) {
         CoopLinkSound::NoteEffect(effect->player_number, effect->name, end, now_ms);
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[effect->player_number];
-        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
-            queue.erase(queue.begin());  // the newest are kept
-        }
+        CoopLinkSound::MakeRoom(queue, 2 * CoopLinkSound::kHeardMax);  // the newest kept, and every effect's end
         queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end});
     } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
                event.kind == EventKind::message && emote != nullptr) {

@@ -583,10 +583,25 @@ void End(Player& player, std::string name) {
         player.found = false;  // found but not started yet: it is not started
     }
     player.heard.Remove(name);  // still waiting: it is not started
+    if (std::find(player.ended.begin(), player.ended.end(), name) != player.ended.end()) {
+        return;  // already waiting to end: once is enough
+    }
     if (player.ended.size() >= kEndedMax) {
-        player.ended.pop_front();
+        // An end for a key not started stops nothing: it goes first; else the oldest.
+        const auto useless = std::find_if(player.ended.begin(), player.ended.end(), [&player](const std::string& n) {
+            return std::none_of(player.started.begin(), player.started.end(),
+                                [&n](const auto& s) { return s.name == n; });
+        });
+        player.ended.erase(useless != player.ended.end() ? useless : player.ended.begin());
     }
     player.ended.push_back(std::move(name));
+}
+
+void MakeRoom(std::vector<Sound>& queue, std::size_t max) {
+    while (!queue.empty() && queue.size() >= max) {
+        const auto drop = std::find_if(queue.begin(), queue.end(), [](const Sound& s) { return !(s.effect && s.end); });
+        queue.erase(drop != queue.end() ? drop : queue.begin());
+    }
 }
 
 void Dropped(Player& player) {

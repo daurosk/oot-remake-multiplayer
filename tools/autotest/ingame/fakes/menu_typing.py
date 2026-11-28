@@ -14,7 +14,11 @@ import os
 
 TABS = ["customize", "settings", "commands", "local"]   # (coop_pause_tab.h kMenuTabNames' pages)
 ROWS = ["Your name", "Players when you host", "Port when you host", "Relay", "Room name", "List my room",
-        "Auto-rejoin", "Difficulty"]   # (coop_pause_menu.cpp Page::kSettings, shortened)
+        "Auto-rejoin", "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode",
+        "Shared floor switches", "PvP", "Down but not out", "Difficulty"]
+# (the real Settings page's order up to Difficulty: menu.coop focused_name as seen on lane 1 module 182cd53b5,
+# difficulty-182cd53b 08:56 summary.md; Difficulty after HostRuleLines, coop_pause_menu.cpp:808. Not shortened:
+# a shortened list hid a 14-step budget that never reached the 16th row)
 ROOM = ROWS.index("Room name")
 NAME = "squad-1"   # (the fake's saved room name)
 

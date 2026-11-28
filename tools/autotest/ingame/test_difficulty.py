@@ -23,7 +23,7 @@ Sources of every value (worker-rules "no guessed values"):
 - the Difficulty row: coop_pause_menu.cpp DifficultyLines Choice("Difficulty", ...) on the Settings page (:808) and the
   Host page; the Custom sliders' first row 'Enemy life' (the same lines).
 - in play: Co-op settings = test_menu_pages.open_page(x, "settings") -> ("minus", "settings"); A gives its list the pad
-  (RowAction::kMenuTab); the moves and the presses: test_menu_typing (PRESS, WAIT, MOST_STEPS, SETTINGS_ROW, tap).
+  (RowAction::kMenuTab); the moves and the presses: test_menu_typing (PRESS, WAIT, SETTINGS_ROW, tap; the steps to a row: the page's own row count).
 - the title (the lanes' pack): 'coop: title: the title's own menu: Continue, New Game, Multiplayer, Options'
   (coop_title.cpp:1492; hookshot_log-A.txt:705 of difficulty-309d7180); its rows CoopTitleMenu::MenuFor
   (coop_title_menu.cpp:1120): with a save Continue 0, New Game 1, Options 2, Multiplayer 3; Multiplayer's rows Join 0,
@@ -48,7 +48,7 @@ import pytest
 
 from pair import SetupFail, kept_difficulty
 from test_menu_pages import open_page, close_menu, page_shown
-from test_menu_typing import MOST_STEPS, SETTINGS_ROW, minus, coop, tap
+from test_menu_typing import SETTINGS_ROW, minus, coop, tap
 
 BOOT = "live-lobby-hard"
 HARD = r"coop: difficulty: Hard"
@@ -81,9 +81,14 @@ def row_names(pair, x):
 def to_row(pair, x, name):
     """Game x's focus on co-op's page's row `name` by the state's menu.coop.focused_name: Down first, then Up
     (test_menu_typing.to_room_name's way). AssertionError naming the rows seen when it is not reached."""
+    # (the steps: the page's own row count from the state's menu.coop.rows (coop_menu_state.cpp TabJson: every row),
+    # not test_menu_typing's MOST_STEPS 14: on 182cd53b5 'Difficulty' is the 16th Settings row (after HostRuleLines,
+    # coop_pause_menu.cpp:808), 14 Downs ended on 'Down but not out' (difficulty-182cd53b FAIL 08:56))
+    rows = row_names(pair, x)
+    assert name in rows, "%s: no %r row on co-op's %s page (rows: %s)" % (x, name, coop(pair.state(x)).get("page"), rows)
     seen = []
     for button in ("DOWN", "UP"):
-        for _ in range(MOST_STEPS):
+        for _ in range(len(rows) + 1):
             now = coop(pair.state(x)).get("focused_name")
             if now == name:
                 return

@@ -21,6 +21,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pair as P                     # noqa: E402  (P.SetupFail: the knock-down's landing is set-up proof)
 from test_boss_shots import Shots   # noqa: E402  (paired shots on both games, look misses asserted at the end)
 
 PG = "Enemy_DungeonBoss_PhantomGanon"
@@ -40,6 +41,8 @@ PROBE = re.compile(r"move probe: %s 0x[0-9a-f]+ (ours|a copy of player \d+):(.*?
                    r"(?:\d+ \(type \d+, before \d+\) -> )?(\d+) \(type" % PG)
 VERB_ANY = r"coop: test verb %s 139: " % PG    # coop_objects.cpp:7248 (either answer: ours or a copy's 'no boss')
 CCT_ASKED = re.compile(r"%s: CCT move state (\d+) asked of the game: in \(" % PG)   # coop_brain_state.cpp:341
+LANDED_ATTACK = r"%s 0x[0-9a-f]+ attack starts \(action verbs 139\b" % PG   # coop_objects.cpp:388
+LANDED_MOVE = r"move probe: %s 0x[0-9a-f]+ ours:.* -> 1 \(type" % PG         # coop_move_probe.cpp Watch::Step
 
 
 def cause(lines):
@@ -79,15 +82,32 @@ def after_first(lines, first_rx, rx):
     return None
 
 
+def landed(lines):
+    """The knock-down's start on the owner's game: 'attack starts (action verbs 139' (coop_objects.cpp:388) or the move
+    probe's '-> 1' for him (coop_move_probe.cpp Watch::Step). pganon-287-182cd53b had neither after any of 6 asks."""
+    return [ln for ln in lines if re.search(LANDED_ATTACK, ln) or re.search(LANDED_MOVE, ln)]
+
+
 def turns(pair, x_verbs, shots):
     """The old scenario's k1..k5: both games ask `verb PG 139` (only the owner's game runs it, the knock-down; the
-    other sees it as a copy), 60 frames, then 5 x 300 frames so his turn can go to the other player; then shot kN."""
+    other sees it as a copy), 60 frames, then 5 x 300 frames so his turn can go to the other player; then shot kN.
+    SETUP-FAIL when no ask of k1..k5 started the knock-down on its owner's game within its 60 frames (NO REPEAT VOIDS,
+    pganon-287-182cd53b: his CCT stayed 2, so no hand-over could show the bug's condition)."""
+    seen = []
     for k in range(1, 6):
+        pos = {x: pair.log[x].mark() for x in ("A", "B")}
         for x in x_verbs:
             pair.act(x, "verb %s 139" % PG)
         pair.step_both(60)
+        for x in ("A", "B"):
+            lines = pair.log[x].since(pos[x])
+            if any(re.search(ASKED_OURS, ln) for ln in lines):
+                seen += landed(lines)
         pair.step_both(1500)
         shots.both("k%d" % k)
+    if not seen:
+        raise P.SetupFail("knock-down did not land: verb 139 not started (CCT stayed 2) on the owner's game after "
+                          "k1..k5 (no '%s' or '%s' line within 60 frames of an ask)" % (LANDED_ATTACK, LANDED_MOVE))
 
 
 @pytest.mark.budget(900)

@@ -15,6 +15,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <mutex>
 #include <utility>
@@ -126,6 +127,19 @@ std::string NameOf(const coop::net::Client& client, std::uint8_t number) {
         return p->nickname;
     }
     return "P" + std::to_string(number);
+}
+
+// Whether the game can show teammate `t` from our Link at `self` (Teammate::here):
+// in the game, our scene and, in a dungeon, a room CoopTeleport::CheckMove says
+// ok (rooms load one at a time). The spectating camera follows only such a one,
+// and rows 318 + 334 call only such a one nearby: one rule for both.
+bool ShownHere(const std::optional<std::string>& scene, const Vec3& self, const Teammate& t) {
+    static const CoopRooms::Table rooms = CoopFairy::RoomTable();
+    return t.in_game && t.scene && scene && coop::protocol::same_place(*t.scene, *scene) && t.position &&
+           std::isfinite((*t.position)[0]) && std::isfinite((*t.position)[1]) && std::isfinite((*t.position)[2]) &&
+           CoopTeleport::CheckMove(rooms, *scene, CoopTeleport::Vec{self[0], self[1], self[2]},
+                                   CoopTeleport::Vec{(*t.position)[0], (*t.position)[1], (*t.position)[2]}) ==
+               CoopTeleport::MoveCheck::ok;
 }
 
 // Whether the game's Life step asks the module (Hookshot patch 0007): only
@@ -334,6 +348,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
                 th && now_us < th->at_us + kThreatStaleUs) {
                 t.threat = th->enemy_near ? Threat::enemy : Threat::clear;
             }
+            t.here = reading.has_value() && ShownHere(scene, reading->position, t);
             team.push_back(std::move(t));
             if (g.roster.Downed(r.number)) {
                 fallen.push_back(Fallen{r.number, r.scene, r.position});
@@ -488,12 +503,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     // a time: coop_teleport.h CheckMove; the camera moves, Link does not, so his room stays the one loaded).
     std::optional<Vec3> offset;
     if (out.state == State::spectating && reading && scene) {
-        static const CoopRooms::Table rooms = CoopFairy::RoomTable();
         for (const Teammate& t : team) {
-            if (t.number == out.watching && t.scene && coop::protocol::same_place(*t.scene, *scene) && t.position &&
-                CoopTeleport::CheckMove(rooms, *scene, CoopTeleport::Vec{in.position[0], in.position[1], in.position[2]},
-                                        CoopTeleport::Vec{(*t.position)[0], (*t.position)[1], (*t.position)[2]}) ==
-                    CoopTeleport::MoveCheck::ok) {
+            if (t.number == out.watching && t.here) {
                 offset = Vec3{(*t.position)[0] - in.position[0], (*t.position)[1] - in.position[1],
                               (*t.position)[2] - in.position[2]};
             }

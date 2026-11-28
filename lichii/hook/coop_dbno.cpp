@@ -195,13 +195,54 @@ void Machine::Enter(State state, std::uint64_t now_us) {
     move_to_ = 0;
     move_since_us_ = 0;
     dying_since_us_ = 0;
+    alone_retry_us_ = 0;
+}
+
+void Machine::Notice(const Input& in) {
+    // No Link of ours to read (our own load, a hitch): nobody is judged
+    // gone; who was nearby stays so until we can see again.
+    const bool blind = !in.life;
+    for (const Teammate& t : in.team) {
+        if (!ValidPlayer(t.number) || t.state != State::up) {
+            continue;
+        }
+        std::uint64_t& at = near_us_[t.number];
+        // Here now; or loading (a door, a loading zone) after being here: a
+        // load counts as still here, however long it takes.
+        if (t.here || ((t.loading || blind) && at != 0 && in.now_us <= at + kNearbyGraceUs)) {
+            at = std::max<std::uint64_t>(in.now_us, 1);
+        }
+    }
+}
+
+bool Machine::Nearby(const Teammate& t, std::uint64_t now_us) const {
+    if (!ValidPlayer(t.number) || t.state != State::up) {
+        return false;
+    }
+    const std::uint64_t at = near_us_[t.number];
+    return at != 0 && now_us <= at + kNearbyGraceUs;
+}
+
+bool Machine::AnyNearby(const Input& in) const {
+    return std::any_of(in.team.begin(), in.team.end(),
+                       [&](const Teammate& t) { return Nearby(t, in.now_us); });
+}
+
+void Machine::ToEntranceAlone(Output& out, std::uint64_t now_us) {
+    watch_ = 0;
+    move_ = Move::entrance;
+    move_to_ = 0;
+    move_since_us_ = now_us;
+    out.move_entrance = true;
+    out.events.push_back(Event::alone);
 }
 
 std::uint8_t Machine::PickWatch(const Input& in) const {
-    // Who may be watched: up and in the game, in the order of their numbers.
+    // Who may be watched: up and nearby (rows 318 + 334: the camera can show
+    // them; one taking a door stays watched through its load), by number.
     std::vector<const Teammate*> up;
     for (const Teammate& t : in.team) {
-        if (ValidPlayer(t.number) && t.state == State::up && t.in_game) {
+        if (ValidPlayer(t.number) && t.state == State::up && (t.in_game || t.loading) && Nearby(t, in.now_us)) {
             up.push_back(&t);
         }
     }
@@ -217,8 +258,8 @@ std::uint8_t Machine::PickWatch(const Input& in) const {
         }
         return std::next(at) == up.end() ? up.front()->number : (*std::next(at))->number;
     }
-    // A first pick (or the one watched is no longer up): the nearest in our
-    // scene, else the lowest number elsewhere.
+    // A first pick (or the one watched is no longer up or nearby): the
+    // nearest in our scene, else the lowest number (a nearby one loading).
     const Teammate* best = nullptr;
     float best_m = 0.0f;
     for (const Teammate* t : up) {
@@ -302,6 +343,8 @@ Output Machine::Frame(const Input& in) {
                                                 ? std::min<std::int32_t>(in.rules.revive_life, *in.max_life)
                                                 : in.rules.revive_life);
 
+    Notice(in);
+
     if (in.life) {
         gone_since_us_ = 0;
     } else if (gone_since_us_ == 0) {
@@ -310,7 +353,13 @@ Output Machine::Frame(const Input& in) {
 
     switch (state_) {
     case State::up:
-        if (active && in.lethal) {
+        if (active && in.lethal && someone_up && !AnyNearby(in)) {
+            // Row 334: nobody nearby could revive us: no downed wait, the
+            // row 318 respawn at once (our entrance, then up). Nobody up
+            // anywhere is the downed path below, so the wipe check stands.
+            Enter(State::spectating, in.now_us);
+            ToEntranceAlone(out, in.now_us);
+        } else if (active && in.lethal) {
             Enter(State::downed, in.now_us);
             left_us_ = in.rules.BleedUs();
             out.events.push_back(Event::went_down);
@@ -352,6 +401,14 @@ Output Machine::Frame(const Input& in) {
         // the wipe waits, the bleed-out runs on.
         alone_us_ = someone_up || !in.connected ? 0 : alone_us_ + step;
         reviver_ = PickReviver(in);
+        if (reviver_ == 0 && someone_up && !AnyNearby(in)) {
+            // Rows 318 + 334: downed only with someone nearby. The last one
+            // nearby left (past kNearbyGraceUs; a door's load from beside us
+            // still counts): the entrance at once, as when the one watched leaves.
+            Enter(State::spectating, in.now_us);
+            ToEntranceAlone(out, in.now_us);
+            break;
+        }
         if (reviver_ != 0) {
             held_us_ += step;  // the bleed-out stands still meanwhile
         } else {
@@ -372,8 +429,12 @@ Output Machine::Frame(const Input& in) {
             // Not revived in time: watch the others until the fight is over.
             Enter(State::spectating, in.now_us);
             watch_ = PickWatch(in);
-            out.by = watch_;
-            out.events.push_back(Event::bled_out);
+            if (watch_ == 0 && someone_up) {
+                ToEntranceAlone(out, in.now_us);  // row 318: nobody nearby to watch
+            } else {
+                out.by = watch_;
+                out.events.push_back(Event::bled_out);
+            }
             if (in.life && *in.life != kDownedLife) {
                 out.write_life = kDownedLife;
             }
@@ -426,8 +487,13 @@ Output Machine::Frame(const Input& in) {
                     } else {
                         move_ = Move::none;  // try again once it is quiet again
                         quiet_us_ = 0;
+                        alone_retry_us_ = in.now_us + kQuietUs;
                     }
                 }
+            } else if (watch_ == 0 && someone_up && in.connected && in.now_us >= alone_retry_us_) {
+                // Row 318: nobody nearby to watch (the one watched left by a
+                // door or a warp, kNearbyGraceUs past): the entrance at once.
+                ToEntranceAlone(out, in.now_us);
             } else if (quiet_us_ >= kQuietUs && in.now_us >= spectate_since_us_ + kSpectateMinUs) {
                 move_ = Move::beside;
                 move_to_ = watch_;
@@ -706,13 +772,17 @@ std::optional<std::string> OwnLine(Event event, std::string_view by_name) {
         return "Nobody reached you in time: you watch " + std::string(by_name.empty() ? "a teammate" : by_name) +
                " and come back once no enemy is near (A: watch the next player)";
     case Event::respawned:
-        return "No enemy is near: you are back beside " + std::string(by_name.empty() ? "a teammate" : by_name);
+        if (by_name.empty()) {
+            return std::string("No teammate is near: you are back at the entrance");
+        }
+        return "No enemy is near: you are back beside " + std::string(by_name);
     case Event::wiped:
         return "Nobody is left standing";
     case Event::got_up:
         return "Down but not out was turned off: you are up again";
     case Event::died:
     case Event::back:
+    case Event::alone:  // the respawned line that follows says it
         break;
     }
     return std::nullopt;

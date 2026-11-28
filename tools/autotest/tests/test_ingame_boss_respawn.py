@@ -33,7 +33,43 @@ class BossRespawn(unittest.TestCase):
 
     def test_fixed_path_passes_on_every_stage(self):
         p, r = self.run_file(self.OBJ + ["-k", "shows"])
-        self.assertEqual([r[k] for k in sorted(r)], ["PASS"] * 4, p.stdout[-2000:])
+        self.assertEqual([r[k] for k in sorted(r)], ["PASS"] * 12, p.stdout[-2000:])
+        self.assertEqual(len([k for k in r if "boss_room" in k]), 8, sorted(r))
+
+    def test_boss_rooms_are_the_tables_and_the_fakes(self):
+        """boss-respawn-289-6: every stage of both tests is a coop_start_points.inc row of its own name with no entrance
+        actor (the 6th field false: the row 289 cause), and the fake knows the same lists."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+        with open(os.path.join(root, "lichii", "hook", "coop_start_points.inc"), encoding="utf-8") as f:
+            rows = dict(re.findall(r'\{"(\w+)", "(?:\w+)", [^}]*, (true|false)\}', f.read()))
+        with open(os.path.join(INGAME, "test_boss_respawn.py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        lists = {t.id: ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                 for t in n.targets if getattr(t, "id", None) in ("STAGES", "BOSS_ROOMS")}
+        self.assertEqual(len(lists["BOSS_ROOMS"]), 8)
+        for s in lists["STAGES"] + lists["BOSS_ROOMS"]:
+            self.assertEqual(rows.get(s), "false", "%s: not a no-entrance-actor row of coop_start_points.inc" % s)
+        sys.path.insert(0, os.path.join(INGAME, "fakes"))
+        import boss_respawn as F
+        self.assertEqual(F.BOSS_ROOMS, tuple(lists["BOSS_ROOMS"]))
+        self.assertEqual(F.STAGES, tuple(lists["STAGES"] + lists["BOSS_ROOMS"]))
+
+    def test_party_wipe_is_no_ref_never_fail(self):
+        """review-tests-153 MUST 1: A downed in the fight too (a wipe) and B never respawns = a fight result, NO-REF
+        naming A's down; without A down the same miss stays the row's FAIL."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_room and GohmaStage"], env={"BT_FAKE_BROKEN": "wipe"})
+        self.assertEqual(list(r.values()), ["NO-REF"], p.stdout[-2000:])
+        self.assertIn("A was downed in GohmaStage's fight too", p.stdout, p.stdout[-2000:])
+
+    def test_long_intro_is_waited_on_to_the_event_ceiling(self):
+        """A boss room's intro longer than IN_PLAY_FRAMES (2400) but inside BOOT_EVENT_FRAMES (6000) is waited on and
+        noted; one past the ceiling is SETUP-FAIL 'boss arrival in <S>' naming the event wait."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_room and GohmaStage"], env={"BT_FAKE_INTRO": "3000"})
+        self.assertEqual(list(r.values()), ["PASS"], p.stdout[-2000:])
+        p, r = self.run_file(self.OBJ + ["-k", "boss_room and GohmaStage"], env={"BT_FAKE_INTRO": "9000"})
+        self.assertEqual(list(r.values()), ["SETUP-FAIL"], p.stdout[-2000:])
+        self.assertIn("boss arrival in GohmaStage", p.stdout, p.stdout[-2000:])
+        self.assertIn("in an event at 2400 frames: waited on up to 6000", p.stdout, p.stdout[-2000:])
 
     def test_black_screen_fails_the_fixed_path(self):
         p, r = self.run_file(self.OBJ + ["-k", "shows"], env={"BT_FAKE_BROKEN": "starter"})
@@ -72,7 +108,7 @@ class BossRespawn(unittest.TestCase):
         SETUP-FAIL 'boss arrival in <S>' (never FAIL: the row's own check did not run)."""
         p, r = self.run_file(self.OBJ, env={"BT_FAKE_BROKEN": "no-arrival"})
         self.assertEqual(set(r.values()), {"SETUP-FAIL"}, p.stdout[-2000:])
-        for stage in ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage"):
+        for stage in ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage", "GohmaStage", "GanondorfStage"):
             self.assertIn("boss arrival in %s" % stage, p.stdout, p.stdout[-2000:])
         # (boss-respawn-bridge-e3e6e253: a bare 'TimeoutError: timed out' named no phase; now the phase and its time)
         self.assertIn("boss arrival in VolvagiaStage: in 'warp A' after", p.stdout, p.stdout[-2000:])
@@ -86,7 +122,7 @@ class BossRespawn(unittest.TestCase):
     def test_default_run_deselects_them(self):
         p, r = self.run_file([])
         self.assertEqual(r, {}, p.stdout[-2000:])
-        self.assertEqual(p.stdout.count("deselected: needs_env LICHII_COOP_DEBUG_OBJECTS=1 "), 6, p.stdout[-2000:])
+        self.assertEqual(p.stdout.count("deselected: needs_env LICHII_COOP_DEBUG_OBJECTS=1 "), 14, p.stdout[-2000:])
 
 
 if __name__ == "__main__":

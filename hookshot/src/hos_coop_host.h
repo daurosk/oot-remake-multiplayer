@@ -49,7 +49,9 @@ typedef struct HosCoopHostOptions {
                                "Difficulty"; the host can change it in the session): 0 automatic (more as more
                                players join; every older caller), 1 easy, 2 normal, 3 hard, 4 custom (the three
                                values below) */
-    uint8_t reserved2;
+    uint8_t party_wait;     /* 1: wait for the party (docs/party-wait.md): a player is told on the banner to wait for the
+                               others before a boss door, a locked room or a big chest; 0, every older caller's
+                               reserved byte: off */
     uint16_t difficulty_life;     /* custom: enemy life, percent (25 to 500, steps of 25) */
     uint16_t difficulty_damage;   /* custom: the damage enemies deal, percent (25 to 400) */
     uint16_t difficulty_enemies;  /* custom: how many enemies, percent (100 to 300) */

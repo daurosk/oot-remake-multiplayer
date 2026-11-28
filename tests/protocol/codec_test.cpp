@@ -1674,6 +1674,34 @@ TEST_CASE("a Link sound has its number, channel and layout, and only the game's 
   CHECK(decode(bad, m) == Error::bad_value);
 }
 
+TEST_CASE("a Link effect has its number, channel and layout, its end flag, and only the game's own keys pass") {
+  CHECK(static_cast<int>(MessageType::link_effect) == 501);
+  CHECK(channel_of(MessageType::link_effect) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::link_effect, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::link_effect));
+  CHECK(may_send(Sender::server, MessageType::link_effect));
+  Message n = LinkEffect{0, 0, "DinFire"};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const std::string longest(kMaxLinkSoundChars, 'a');
+  const Bytes b = must_encode(LinkEffect{3, kLinkEffectEnd, longest});
+  REQUIRE(b.size() == kHeaderSize + 1 + 1 + 2 + kMaxLinkSoundChars);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LinkEffect>(back) == LinkEffect{3, kLinkEffectEnd, longest});
+  Bytes out;
+  CHECK(encode(LinkEffect{0, 0, ""}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0, longest + "a"}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0, "Din Fire"}, out) == Error::bad_value);
+  CHECK(encode(LinkEffect{0, 0x02, "DinFire"}, out) == Error::bad_value);  // a flag this build does not know
+  CHECK(encode(LinkEffect{17, 0, "DinFire"}, out) == Error::bad_value);
+  Bytes bad = must_encode(LinkEffect{0, 0, "DinFire"});
+  bad[kHeaderSize + 1] = 0x80;
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+}
+
 TEST_CASE("an emote has its number, channel and layout, and only a known range of ids passes") {
   CHECK(static_cast<int>(MessageType::emote) == 615);
   CHECK(channel_of(MessageType::emote) == kChannelSession);
@@ -2166,6 +2194,25 @@ TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
   Bytes short_one = b;
   short_one.pop_back();
   CHECK(decode(short_one, back) != Error::none);
+}
+
+TEST_CASE("party wait mode: type 560, protocol 19, the session channel, both sides, two bytes") {
+  CHECK(kProtocolVersion == 19);  // party-wait-298's bump (PARTY_WAIT_MODE); the next bump changes this pin
+  CHECK(static_cast<int>(MessageType::party_wait_mode) == 560);
+  CHECK(channel_of(MessageType::party_wait_mode) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::party_wait_mode, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::party_wait_mode));
+  CHECK(may_send(Sender::server, MessageType::party_wait_mode));
+  Message mode = PartyWaitMode{2, true};
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+  Bytes bad = b;
+  bad.back() = 2;  // a mode other than 0 or 1
+  CHECK(decode(bad, back) != Error::none);
+  CHECK(encode(PartyWaitMode{kMaxPlayers + 1, true}, b) == Error::bad_value);
 }
 
 TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and hurts on ownership") {
@@ -3260,7 +3307,7 @@ TEST_CASE("pvp on real bodies: types 540 to 542, round-trip and refuse bad value
 }
 
 TEST_CASE("object components 25-28 carry keyed values (protocol 18, sync plan S1)") {
-  CHECK(kProtocolVersion == 18);  // one bump for the whole sync plan: 25-28 kept by the server
+  CHECK(kProtocolVersion >= 18);  // one bump for the whole sync plan: 25-28 kept by the server
   CHECK(static_cast<int>(ObjectComponent::brain) == 25);
   CHECK(static_cast<int>(ObjectComponent::plugs) == 26);
   CHECK(static_cast<int>(ObjectComponent::clocks) == 27);

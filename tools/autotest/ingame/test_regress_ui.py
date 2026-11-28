@@ -31,6 +31,25 @@ CRASH = r"exception 0x|crash window: .*caught|FATAL|CRASH:"
 TAGS_ON = r"coop: native tags: name tags on the game's balloons \(\d+ shown, screen 0x[0-9a-f]+\)"
 TAGS_NO_MEMORY = r"coop: native tags: the game gave no memory for the names"
 TAGS_DIST = 3.0   # m: hs-native-tags.A.txt mark "near" ("B stands 3 m in front"); the old file's mid/far walk is not set-up
+TAGS_WAIT = 120   # frames: the part's in animation and the next tag step (the old TAGS_ON wait, max_frames=120)
+
+
+def tags_seen(pair, x):
+    """x's state `name_tags` (coop_playtest.cpp, CoopHookshot::TagsSeen: shown / open / screen_root, emitted always)."""
+    t = pair.state(x).get("name_tags")
+    assert isinstance(t, dict), "%s: no name_tags in the bridge's state (a module without nametags-300)" % x
+    return t
+
+
+def tags_open(pair, x):
+    """Row 300's root check: within TAGS_WAIT frames x holds a tag of ours shown, its balloon part open (the game's
+    own open state) and the balloon screen's root pane shown. TAGS_ON + a shot alone passed 0.12.0 with no tag seen."""
+    pair.until("%s name_tags open and the screen root shown" % x,
+               lambda: (lambda t: t.get("open", 0) >= 1 and t.get("screen_root") is True)(tags_seen(pair, x)),
+               max_frames=TAGS_WAIT)
+    t = tags_seen(pair, x)
+    assert t.get("shown", 0) >= 1, "%s: no tag of ours on the balloons: %s" % (x, t)
+    return t
 # The name tag floats just over the other Link's head: lichii/hook/coop_hook.cpp:196-197 kHeadChild 1.35 / kHeadAdult 1.9
 # (m above the feet; HeadHeight by age), where the module's markers put it (tag_head) and the balloon goes.
 HEAD_M = {"child": 1.35, "adult": 1.9}
@@ -104,7 +123,9 @@ def test_name_tags(pair):
         place_in_front(pair, "B", of="A", dist=TAGS_DIST)       # B in front of A, facing A: each sees the other
         camera_behind_each(pair)                                 # (each game's own view, proven on its state)
     for x in ("A", "B"):
-        seen_not(pair, x, TAGS_ON, TAGS_NO_MEMORY, max_frames=120)
+        seen_not(pair, x, TAGS_ON, TAGS_NO_MEMORY, max_frames=TAGS_WAIT)
+    for x in ("A", "B"):                                         # row 300: the part open + screen root (not the line only)
+        pair.notes.append("%s name_tags %s" % (x, tags_open(pair, x)))
     for x, other in (("A", "B"), ("B", "A")):                   # (still in view at the shot: the tag on EACH game)
         ok, why = other_in_view(pair, x, other)
         assert ok, "%s: the other player's puppet and tag are not in view at the shot: %s" % (x, why)

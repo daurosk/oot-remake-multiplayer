@@ -331,6 +331,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.upnp = COOP_HAS(o, HosCoopHostOptions, upnp) && o->upnp != 0;
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
+    job.party_wait = COOP_HAS(o, HosCoopHostOptions, party_wait) && o->party_wait != 0;
     if (COOP_HAS(o, HosCoopHostOptions, difficulty_enemies)) {   // (an older caller: automatic)
         job.difficulty = o->difficulty;
         job.difficulty_life = o->difficulty_life;
@@ -405,6 +406,7 @@ void Menu::RunHost(HostJob job) {
         config.helper_bind = coop::net::test_bind();
         config.session.join_password = job.password;
         config.session.pvp = job.pvp;
+        config.session.party_wait = job.party_wait;
         config.session.difficulty = HostDifficulty(job.difficulty, job.difficulty_life, job.difficulty_damage,
                                                    job.difficulty_enemies);
         config.session.approve_joins = job.approve_joins;

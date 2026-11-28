@@ -235,6 +235,8 @@ const std::vector<Command>& Commands() {
          "you move. Nothing happens when you play alone."},
         {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
         {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
+        {"/wait", "Says whether players are told to wait for the party in this game."},
+        {"/wait on, /wait off", "The host only: tells players to wait for the party before a boss door, a locked room or a big chest, or stops it."},
         // Down but not out (docs/play-online.md "Down but not out"; lichii/hook/coop_dbno.cpp Parse).
         {"/dbno", "Says the down-but-not-out rules in this game: on or off, the bleed-out time, the revive hold and the "
                   "hearts a revived player gets."},
@@ -463,6 +465,14 @@ void Menu::HostRuleLines(std::vector<Line>& out, bool guest) const {
                          : std::string("On: sword hits, arrows and other attacks hurt the other players too, both "
                                        "ways. In a game you host it changes at once for everyone (as /pvp on and "
                                        "/pvp off); else it is used at your next Host.")});
+    Row party_wait = Toggle("Wait for the party", live ? session_.party_wait : options_.party_wait);
+    party_wait.fixed = guest;
+    out.push_back({party_wait, Act::kPartyWait,
+                   guest ? std::string(kHostOnly)
+                         : std::string("On: before a boss door, a locked room or a big chest, a player whose party is "
+                                       "not all there is told on the banner to wait for the others (never stopped). "
+                                       "In a game you host it changes at once (as /wait on and /wait off); else it "
+                                       "is used at your next Host.")});
     Row dbno = Toggle("Down but not out", live ? session_.dbno : true);
     dbno.fixed = guest || !live;
     const std::string dbno_help =
@@ -2026,6 +2036,7 @@ void Menu::Decide(Act act) {
     case Act::kRace:
     case Act::kFloorSwitches:
     case Act::kPvp:
+    case Act::kPartyWait:
     case Act::kDbno:
         Change(act, 0);   // (a toggle: A flips it)
         break;
@@ -2179,6 +2190,14 @@ void Menu::Change(Act act, int step) {
         const bool want = step > 0 ? true : step < 0 ? false : !now;
         options_.pvp = want;   // (the next Host's too: the module saves the options with the chat line)
         request_ = session_.rules ? Request{Request::Kind::kChat, want ? "/pvp on" : "/pvp off"}
+                                  : Request{Request::Kind::kSave, {}};
+        break;
+    }
+    case Act::kPartyWait: {
+        const bool now = session_.rules ? session_.party_wait : options_.party_wait;
+        const bool want = step > 0 ? true : step < 0 ? false : !now;
+        options_.party_wait = want;   // (the next Host's too, as PvP's)
+        request_ = session_.rules ? Request{Request::Kind::kChat, want ? "/wait on" : "/wait off"}
                                   : Request{Request::Kind::kSave, {}};
         break;
     }

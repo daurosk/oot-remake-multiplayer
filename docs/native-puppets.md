@@ -22,7 +22,7 @@ Every switch is off by default; solo and co-op idle have no copy, so none of thi
 | Hit effects (the game's own spark, sound, flash on a hit player) | The victim's own hit replay with the strike's kind words (`HurtOurLinkNative`); every other game replays a result on its `_Pvp` copy (`CoopObjects::ReplayOnCopy`: flash, sparks, sound on its invincible Life) (native-puppets-e-3) | No: the PvP pack never built: proof-0116-5 `missing Pack/Actor/Enemy_Amos.pack.zs` (COORD-LOG 17:59 UTC 2026-11-19) | The same PACK FAIL cause, fixed here (`Enemy_Amos` added). Then path B live (next row), so a hit lands; the attacker's own spark comes from its own collision with the `_Pvp` copy (U6, unproven) |
 | PvP damage and knockback | Protocol 540-544, server `on_pvp_strike`, `coop_pvp_native.h` (rings; the rewind check fair at 200 ms: fable-puppet-pvp 15c1f45e1, merged on this branch); path B's amount from the victim's own tables | No | The kinds' multipliers (U2/U7) are not filled, so `PathBLive` is false and every native strike is "kept off"; today's `PVP_HIT` (242) still does the damage. Needs the one probe run (U1, U2, U4, U6, U7) |
 | Shield block, synced on both screens | Path B's guard check (today a guess: "guard" in our Link's AS name and 60 degrees); U5 read from main: the game's own guard bits (EquipmentUser +0x13a0 bit 5, player part +0x32 bit 4; fable-puppet-pvp-2) | No | `Guarding` from the game's two bits (measured once by the probe); the guard result replayed on the attacker's and every other game's copy (the guard reaction and the clang) |
-| Puppet physics sync | The body rule (above); Yield wired; `Carry` pure code only | No | B2's speed field (a walking copy carries a rider); a thrown or knocked-back copy follows its owner's path |
+| Puppet physics sync | The body rule (above); Yield wired; lift Carry wired for every copy (puppet-body-4, "Lift carry" below) | No | B2's speed field (a walking copy carries a rider); a thrown or knocked-back copy follows its owner's path |
 | Navi physics sync | Each copy has a Navi (`CoopFairy`, `Dm_Npc_Navi`) placed from the copy's place plus a fixed shoulder offset and bob (docs/puppet.md "Fairy": "The remote player's real Navi position is not sent") | No | The owner's real Navi place and state (idle, flying to a target, Z-target) sent and shown, so another player's Navi moves as she does in her own game |
 
 ### Plan for the missing items (native-puppets-f: smallest first, each phase its own two-game bridge test)
@@ -339,6 +339,14 @@ returns before anything when not connected).
     the lift's frame stops being called. The lifted game frees itself
     (`LIFT_ANSWER freed`) on an event or death, when the places stop for 1 s (the lifter left), or after 15 s
     (it wriggles free; the game's own escape timer is UNKNOWN). The camera stays on our Link (nothing changes it).
+    **Break free (row 312, puppet-body-4):** lifted, the player struggles as when an enemy holds Link: every new
+    press of A, B, X or Y and every new push of the stick in a direction (`hos_coop_pad` -> `NotePad`, counted only
+    while lifted) fills a meter that drains 2 a second; at 10 the lifted game frees itself (`LIFT_ANSWER freed`,
+    log `our Link freed itself from P<n> (struggled free)`), its Link falls by its own character controller, and
+    for 2 s every new ask is refused `busy` so the freed player is not caught again at once. About 1.3 s of
+    mashing frees; a held button or a press every 0.6 s never does. Our numbers (the game's grab escape count is
+    not read). The lifter's game gets `freed` as for every other free and lets the copy go (`Lifter::Drop`).
+    Host test: `tests/lichii/lift_player_test.cpp` "row 312". Not proven in a game yet.
 - **The game's functions used:** the lifter's own lift, carry and throw (`PlayerLifterParam` `LiftThrowParams` on
   the copy's `LiftableRef`); the physics-aware setter `ExecuteActorForceSetMtx` (vtable slot 0x218,
   main+0x4c6580) on our Link; the player's input-off check main+0x3025850 (wrap 18). No memory poke of the
@@ -935,6 +943,20 @@ Open in the glue: `Carry` (which platform: coop_lift_ride's stands-on test).
   carried (shot).
 - **B3** B swims and dives: the copy's `body:` x stays under 0.02 m. **B4** B climbs a ladder beside A: A is not
   pushed (shot); if he is, the body swaps to `Player_cct_climb`.
+
+## Lift carry (N5, puppet-body-4; `lichii/hook/coop_platform_carry.h`)
+
+A copy is drawn where its owner was `CoopShowDelay::Us(owner)` ago (at least 100 ms), but our lift is where every
+game's lift is now (coop_platforms.h keeps them in step). On a lift moving v m/s the copy was v x delay off the floor
+(the Jabu-Jabu lift, ~2 m/s: 0.2 m inside it going up; a copy with a body was then pushed out or warped each frame).
+Every copy, body or not, standing on one of our lifts is now carried by what that lift moved over the delay
+(`Carry(lift then, lift now, place)`). "Stands on" is CoopLiftRide's rider footprint (1.8 m around, 0.5 m under,
+2.5 m over the lift's actor place) asked of the lift's place THEN, so only the lift it stood on carries it. The
+lifts are #65's (`IsRideLift`: ElevatorLift_ and MoveFloor_), recorded by the objects walk (every two frames); they
+do not turn, so no yaw is kept. A carry over 2 m (a lift record that jumped) and a lift unseen for 500 ms carry
+nothing; race mode carries nothing (its lifts are not in step). The log says `P<n> lift carry: on our lift, carried
+<m> m (show delay <ms> ms)` and `... off our lift` on each change. `LICHII_COOP_PUPPET_CARRY=0` turns it off.
+Host test: `tests/lichii/puppet_body_test.cpp` ("platform carry: ..."). Not proven in a game yet.
 
 ## The phase 1 switch (built)
 

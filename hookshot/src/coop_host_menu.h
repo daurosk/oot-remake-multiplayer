@@ -99,6 +99,7 @@ private:
         std::string name, password, relay_via, relay_key, relay_room, relay_list;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false, approve_joins = false;
+        bool party_wait = false;   // wait for the party (docs/party-wait.md)
         bool same_network_open = false;   // (players from a private address join without the password: the options' default)
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;

@@ -22,6 +22,8 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_hallway_game.cpp"
     "${_coop_hook}/coop_pivot.cpp"
     "${_coop_hook}/coop_pvp.cpp"
+    "${_coop_hook}/coop_party_wait.cpp"
+    "${_coop_hook}/coop_party_wait_game.cpp"
     "${_coop_hook}/coop_dbno.cpp"
     "${_coop_hook}/coop_dbno_game.cpp"
     "${_coop_hook}/coop_dbno_body.cpp"

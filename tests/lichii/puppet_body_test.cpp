@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "coop_platform_carry.h"
 #include "coop_puppet_body.h"
 
 using CoopPuppetBody::Capsule;
@@ -249,4 +250,54 @@ TEST_CASE("puppet body: where a platform was when a sample was made") {
     CHECK(h.At(450)->at[0] == doctest::Approx(4.5f));
     h.Clear();
     CHECK_FALSE(h.At(450).has_value());
+}
+
+TEST_CASE("platform carry: a copy on our rising lift is drawn on it, not sunk into it") {
+    CoopPlatformCarry::Store s;
+    // Our lift rises 2 m/s (the walk every 2 frames: 66 ms).
+    for (std::uint64_t t = 1000; t <= 1330; t += 66) {
+        s.Feed({{0xa0, {0.0f, 2.0f * static_cast<float>(t - 1000) / 1000.0f, 0.0f}}}, t);
+    }
+    // At 1330 the lift is at y 0.66; the copy is shown 100 ms late: it stood on the lift at y ~0.46.
+    const Vec3 shown{0.5f, 0.46f, 0.3f};
+    const auto c = s.Carried(shown, 100, 1330);
+    REQUIRE(c.has_value());
+    CHECK((*c)[0] == doctest::Approx(0.5f));
+    CHECK((*c)[1] == doctest::Approx(0.66f).epsilon(0.01));
+    CHECK((*c)[2] == doctest::Approx(0.3f));
+    // Off the lift's footprint (2 m to the side): not carried.
+    CHECK_FALSE(s.Carried({2.5f, 0.46f, 0.0f}, 100, 1330).has_value());
+    // High over it (3 m up) or well under it: not carried.
+    CHECK_FALSE(s.Carried({0.0f, 3.5f, 0.0f}, 100, 1330).has_value());
+    CHECK_FALSE(s.Carried({0.0f, -0.6f, 0.0f}, 100, 1330).has_value());
+    // No delay, or a delay older than the lift's record: nothing.
+    CHECK_FALSE(s.Carried(shown, 0, 1330).has_value());
+    CHECK_FALSE(s.Carried(shown, 2000, 1330).has_value());
+}
+
+TEST_CASE("platform carry: the lift the copy stood on THEN decides, and a gone lift carries nothing") {
+    CoopPlatformCarry::Store s;
+    // A lift that came down fast: 100 ms ago at y 2, now at y 0. The copy stood on the floor at y 0 then
+    // (2 m under the lift's then-place: below its footprint), so the lift now under it does not carry it.
+    s.Feed({{0xb0, {0.0f, 2.0f, 0.0f}}}, 1000);
+    s.Feed({{0xb0, {0.0f, 1.0f, 0.0f}}}, 1050);
+    s.Feed({{0xb0, {0.0f, 0.0f, 0.0f}}}, 1100);
+    CHECK_FALSE(s.Carried({0.0f, -0.6f, 0.0f}, 100, 1100).has_value());
+    // A copy that stood on it then goes down with it.
+    const auto c = s.Carried({0.0f, 2.0f, 0.0f}, 100, 1100);
+    REQUIRE(c.has_value());
+    CHECK((*c)[1] == doctest::Approx(0.0f));
+    // A record that jumped (a reset: 10 m in one walk) is no lift's move: nothing carried.
+    s.Feed({{0xb0, {0.0f, 10.0f, 0.0f}}}, 1150);
+    CHECK_FALSE(s.Carried({0.0f, 0.5f, 0.0f}, 100, 1150).has_value());
+    // The walk stopped seeing the lift (scene change): after kGoneMs it carries nothing.
+    CHECK_FALSE(s.Carried({0.0f, 10.0f, 0.0f}, 100, 1150 + CoopPlatformCarry::kGoneMs + 1).has_value());
+    s.Clear();
+    CHECK_FALSE(s.Carried({0.0f, 10.0f, 0.0f}, 100, 1150).has_value());
+}
+
+TEST_CASE("platform carry: the footprint is CoopLiftRide's rider footprint") {
+    CHECK(CoopPlatformCarry::kRadiusM == 1.8f);
+    CHECK(CoopPlatformCarry::kBelowM == 0.5f);
+    CHECK(CoopPlatformCarry::kAboveM == 2.5f);
 }

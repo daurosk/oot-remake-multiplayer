@@ -52,6 +52,12 @@ struct FakeGame final : T::Game {
         if (f == kBase + T::addr::kMalloc) return malloc_ok ? next_malloc : 0;
         if (f == kBase + T::addr::kPartRootPane) return x[0] - 0x40 + 0x1000;   // a part's root pane: part + 0x1000
         if (f == kBase + T::addr::kPaneByName) return text_pane;
+        if (f == kBase + T::addr::kPaneShow) {   // as f_8022aea0: bit 0 of the pane's flags
+            const auto flags = Get<std::uint32_t>(x[0] + T::addr::kPaneFlags);
+            Put<std::uint32_t>(x[0] + T::addr::kPaneFlags, x[1] != 0 ? flags | 1u : flags & ~1u);
+        }
+        if (f == kBase + T::addr::kLayoutOpen) Put<std::uint8_t>(x[0] + T::addr::kLayoutState, 2);
+        if (f == kBase + T::addr::kLayoutClose) Put<std::uint8_t>(x[0] + T::addr::kLayoutState, 0);
         return 0;
     }
     template <typename V>
@@ -75,6 +81,7 @@ struct FakeGame final : T::Game {
 };
 
 constexpr std::uint64_t kManager = 0xa0000000, kScreens = 0xa0001000, kScreen = 0xa0002000;
+constexpr std::uint64_t kLayout = 0xa0100000;   // the balloon screen's layout; its root pane at kLayout + 0x1000
 std::uint64_t PartObj(std::size_t i) { return 0xb0000000 + i * 0x10000; }
 
 // A game with the UI manager holding two screens, the second the balloon screen with its 16 parts.
@@ -87,6 +94,7 @@ void SetUp(FakeGame& g) {
     g.Put<std::uint64_t>(0xa0003000, 0x1234);
     g.Put<std::uint64_t>(kScreens + 8, kScreen);
     g.Put<std::uint64_t>(kScreen, kBase + T::addr::kBalloonVtable);
+    g.Put<std::uint64_t>(kScreen + T::addr::kScreenLayout, kLayout);
     for (std::size_t i = 0; i < T::addr::kParts; ++i) {
         g.Put<std::uint64_t>(kScreen + T::addr::kPartTable + i * T::addr::kPartStride, PartObj(i));
     }
@@ -215,7 +223,20 @@ TEST_CASE("native tags: balloons named, coloured, moved and shown, hidden again 
     CHECK(g.Get<float>(root + T::addr::kPaneXY + 4) == doctest::Approx(1080.0f - 300.0f / 720.0f * 2160.0f));
     std::size_t shows = 0;
     for (const auto& c : g.calls) shows += c.f == kBase + T::addr::kPaneShow && c.x[1] == 1;
-    CHECK(shows == 2);
+    CHECK(shows == 3);   // the two parts' roots and the screen's root (hidden: no NPC balloon ran)
+    // nametags-300: each part opened as the balloon step opens its own (f_80020d00(part, 0, 0, 1, part+0x30 != 0)):
+    // a part only shown stays closed and is not seen.
+    std::size_t opens = 0;
+    for (const auto& c : g.calls) {
+        opens += c.f == kBase + T::addr::kLayoutOpen && (c.x[0] == PartObj(15) || c.x[0] == PartObj(14)) &&
+                 c.x[1] == 0 && c.x[2] == 0 && c.x[3] == 1 && c.x[4] == 0;
+    }
+    CHECK(opens == 2);
+    CHECK(g.Get<std::uint8_t>(PartObj(15) + T::addr::kLayoutState) == 2);
+    CHECK((g.Get<std::uint32_t>(kLayout + 0x1000 + T::addr::kPaneFlags) & 1u) == 1u);
+    CHECK(b.seen().shown == 2);
+    CHECK(b.seen().open == 2);
+    CHECK(b.seen().screen_root);
 
     // Next frame, only Mido: he takes part 15 (renamed), part 14 is hidden; nothing new asked of the game's memory.
     g.calls.clear();
@@ -226,6 +247,14 @@ TEST_CASE("native tags: balloons named, coloured, moved and shown, hidden again 
     bool hid14 = false;
     for (const auto& c : g.calls) hid14 |= c.f == kBase + T::addr::kPaneShow && c.x[0] == PartObj(14) + 0x1000 && c.x[1] == 0;
     CHECK(hid14);
+    // ... and closed as the balloon step closes its own (f_80220320(part, 0, 0, 1)); part 15, open, not opened again.
+    CHECK(g.Count(T::addr::kLayoutClose) == 1);
+    CHECK(g.Get<std::uint8_t>(PartObj(14) + T::addr::kLayoutState) == 0);
+    CHECK(g.Count(T::addr::kLayoutOpen) == 0);
+    // The game hid the screen's root (its NPC behind the camera): shown again while ours are up.
+    g.Put<std::uint32_t>(kLayout + 0x1000 + T::addr::kPaneFlags, 0);
+    b.Step(g, {{"Mido", 320, 300, 1.0f, 0x00FF00}}, 1280, 720);
+    CHECK(b.seen().screen_root);
     // The same again: no new name and no new colour.
     g.calls.clear();
     b.Step(g, {{"Mido", 320, 300, 1.0f, 0x00FF00}}, 1280, 720);
@@ -233,6 +262,27 @@ TEST_CASE("native tags: balloons named, coloured, moved and shown, hidden again 
     CHECK(g.Count(T::addr::kTextColour0) == 0);
     b.HideAll(g);
     CHECK(b.shown() == 0);
+    CHECK(g.Get<std::uint8_t>(PartObj(15) + T::addr::kLayoutState) == 0);
+    // We showed the screen's root: given back hidden with our last tag.
+    CHECK((g.Get<std::uint32_t>(kLayout + 0x1000 + T::addr::kPaneFlags) & 1u) == 0u);
+}
+
+TEST_CASE("native tags: a part with animations: opened by the game's call, its root left to the animation") {
+    FakeGame g;
+    SetUp(g);
+    g.Put<std::uint64_t>(PartObj(15) + T::addr::kLayoutAnims, 0xe0000000);   // an in animation
+    g.Put<std::uint64_t>(PartObj(15) + T::addr::kLayoutOpenArg, 0xe0001000);
+    g.Put<std::uint32_t>(kLayout + 0x1000 + T::addr::kPaneFlags, 1u);      // an NPC balloon showed the screen root
+    T::Balloons b;
+    REQUIRE(b.Step(g, {{"Saria", 640, 300, 1.0f, 0xFF0000}}, 1280, 720));
+    bool opened = false;
+    for (const auto& c : g.calls) opened |= c.f == kBase + T::addr::kLayoutOpen && c.x[0] == PartObj(15) && c.x[4] == 1;
+    CHECK(opened);
+    for (const auto& c : g.calls) CHECK_FALSE((c.f == kBase + T::addr::kPaneShow && c.x[0] == PartObj(15) + 0x1000));
+    CHECK_FALSE((g.Count(T::addr::kPaneShow) != 0));   // the screen root was shown already: left as the game has it
+    b.HideAll(g);
+    CHECK(g.Count(T::addr::kLayoutClose) == 1);
+    CHECK((g.Get<std::uint32_t>(kLayout + 0x1000 + T::addr::kPaneFlags) & 1u) == 1u);   // not ours to hide
 }
 
 TEST_CASE("native tags: no colour on a pane that is not a text pane, no memory: said, nothing shown") {

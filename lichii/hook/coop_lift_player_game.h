@@ -42,4 +42,8 @@ void CarriedPose(std::optional<coop::host::PlayerReading>& reading);
 // Any thread: our Link is lifted now (CarriedPose gives its reading the carried pose). Off: false.
 bool Carried();
 
+// Break free (coop_lift_player.h Victim::Struggle): player 1's struggle bits (face buttons and the stick's four
+// directions) at each pad read, from hos_coop_pad (any thread). Counts new presses only while our Link is lifted.
+void NotePad(std::uint64_t struggle_bits);
+
 } // namespace CoopLiftPlayerGame

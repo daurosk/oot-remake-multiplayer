@@ -419,6 +419,11 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         out += ",\"slow_steps\":{\"party_hud\":" + slow(CoopHookshot::PartySlow()) +
                ",\"name_tags\":" + slow(CoopHookshot::TagsSlow()) + "}";
     }
+    {   // nametags-300: our tags as the game holds them (open parts, the balloon screen's root pane shown)
+        const auto t = CoopHookshot::TagsSeen();
+        out += ",\"name_tags\":{\"shown\":" + std::to_string(t.shown) + ",\"open\":" + std::to_string(t.open) +
+               ",\"screen_root\":" + (t.screen_root ? "true" : "false") + "}";
+    }
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
     return out;

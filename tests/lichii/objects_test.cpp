@@ -4249,6 +4249,47 @@ TEST_CASE("objects: a ceiling Skulltula copy with our Link under it is flagged t
     CHECK_FALSE(run(1.0f, "CeilingWait", 2, true, 800));  // under 1 s: not yet
 }
 
+TEST_CASE("objects: a copy Gohma in her owner's pre-battle ceiling wait with our Link under her is flagged targeting "
+          "(row 303)") {
+    constexpr const char* kGohma = "Enemy_DungeonBoss_Gohma";
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Wait"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Turn"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Find_LOD"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink("Enemy_Skulltula", "CeilingWait"));     // issue 35, as before
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "Sleep"));               // her sleep is on no ceiling
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "CeilingMove"));         // her fight's own ceiling moves
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "CeilingServiceWait"));
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink("Enemy_Gohma_Larva", "Pre_Battle_Ceiling_Wait"));  // no boss
+
+    // The owner's (player 2's) Gohma on her ceiling spot (lane1 hs-gohma-downed 20261120-085401: 18.49 59.97 67.79,
+    // the floor at 47.0): 13 m over the floor.
+    auto run = [&](float link_x, const std::string& owners, std::uint8_t owner = 2) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        auto seen = [&] {
+            Seen s = Acting(0x100, 0x11, 2, 0.0f, "Pre_Battle_Ceiling_Wait", kGohma);
+            s.position[1] = 13.0f;
+            return s;
+        };
+        Tick(sync, 0, {seen()});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            proto::ObjectSample s = OwnerSample(id, owner, t * kMs, 0.0f, 2, owners);
+            s.state.position = proto::Vec3{0.0f, 13.0f, 0.0f};
+            sync.Receive(s);
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {seen()}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(1.0f, "Pre_Battle_Ceiling_Wait"));        // under her: the server gives her to us (row 303)
+    CHECK_FALSE(run(6.0f, "Pre_Battle_Ceiling_Wait"));  // 6 m across: not under her
+    CHECK_FALSE(run(1.0f, "Pre_Battle_Ceiling_Wait", 1));  // ours already: our own AI finds our Link
+}
+
 TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
     // A buried Peahat's AI asks for its rise once; the Mover plays the
     // owner's ground animation over it on the next game frame, so every walk

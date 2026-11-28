@@ -1069,3 +1069,40 @@ hand-over. Log: `<boss>: its old owner's move state differed from ours: the move
 from our stale state, its AI chooses again (row 149)`. Every boss with carried keys, every resume; a start-over
 (attack) and a re-choice already decide after the values. Tests: `boss_native_test` (row 149 resumed then
 differed), `brain_state_test` (a hand-over that changed a value names its boss once).
+
+## Gohma stuck on the ceiling: only her owner's Link could start her fight (tracker row 303, 0.12.1)
+
+**Seen.** Owner, 0.12.0: "There are still bugs with bosses like gohma getting stuck." The lane logs had it since
+11-20 (lane1 hs-gohma-downed 20261120-085401, A her owner, B under her): `Enemy_DungeonBoss_Gohma: ours held
+'Pre_Battle_Ceiling_Wait' (brain 8, action 65, life 21) 25 s with no hit: stuck, its AI chooses again` 3 of 3, then the
+same at life 1, and B's hits refused (`its game takes no hit now`, she is invincible in that wait).
+
+**Why (root cause).** Before her fight Queen Gohma waits on the ceiling (`Pre_Battle_Ceiling_Wait`, `_Turn`, `_Find`):
+her brain root (`Enemy_DungeonBoss_Gohma.brain.root.ainb`: `EnemyCommmon.PerceptionTargetSearchAndSet`,
+`BossCommon.StartEvent` with `PreBattle`) turns her to the Link her own game perceives and drops her for it. That AI
+runs in her owner's game only (native boss sync), so it starts the fight only for the owner's Link. A player who is
+not her owner stood under her and looked up at a copy that never came down. Nothing moved her: the hook's ceiling
+claim (issue 35) read only a plain enemy's `CeilingWait`, and the server hears a copy's claim (a chase) only out of a
+fight, while her owner's samples keep her in one. The stall re-choices (row 149) choose the same wait again: correct
+for her AI, which still perceives nobody.
+
+**Now.**
+- Hook (`CoopObjects::WaitsOnCeilingForLink`): a boss copy whose owner's last sample plays `Pre_Battle_Ceiling_*`
+  (not her `Sleep`), with our Link under it (`UnderCeilingEnemy`: 4 m across, up to 30 m below), is claimed
+  (targeting), as a ceiling Skulltula is.
+- Server (`Session::pre_battle`, before the turns and near rules): a boss whose owner's last state is a pre-battle wait
+  (`anim::IsPreBattle`, life above 0) goes to the player whose copy claims it, held `handover_chased_us`, never to a
+  game whose own intro has not played (`chased_by`, boss-copy-b). Log `hand-over: ... its pre-battle wait: another
+  player found it (row 303)`, stat `boss_to_finder`. Her owner under her finds her itself (no claim: it owns her).
+- Solo or co-op idle: no copies, no claim, nothing changes.
+
+**Every boss swept.** The other bosses start their fight from their room's arrival event in each game (King Dodongo,
+Barinade, Phantom Ganon, Volvagia, Morpha, Bongo Bongo, Twinrova, Ganondorf, Ganon: `kRooms` intro events), and
+`anim::IsPreBattle` names only Gohma's waits; none waits for a Link of its owner's game to find it. Gohma's own ceiling
+moves later in the fight (`CeilingMove`, `CeilingServiceWait`) drop on her owner's Link in turn (boss turns): not this
+rule.
+
+**Tests.** `session_test` (row 303: asked over in a fight before `boss_stall_us`; none for a fight move, at life 0, or
+to an unready finder), `objects_test` (row 303: the names; under her, 6 m across, ours already). In game:
+`tools/autotest/ingame/test_boss_stuck.py` (B, not her owner, looks up under her: she must leave the ceiling within the
+solo trigger's wait; then the fight, both world lists every second, the kill and her death in both).

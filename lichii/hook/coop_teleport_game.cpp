@@ -484,7 +484,8 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         // The game's own respawn point: our scene again, at its entrance nearest us.
         const auto start = local.scene && local.position ? NearestStart(*local.scene, *local.position)
                                                          : std::nullopt;
-        if (!start || main_base == 0 || local.loading_banc || local.event) {
+        // (row 329: nor in the gap between the game's own map change event and its load: LoadReserved)
+        if (!start || main_base == 0 || local.loading_banc || local.event || LoadReserved(local)) {
             respawn_moved = false;
             LOG_INFO(Core, "coop: teleport: respawn at the entrance: no start point known here");
         } else {
@@ -500,13 +501,16 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     }
     if (want_map) {
         // The bridge's warp: the same map change event as the respawn's entrance, with the scene and start asked for.
-        if (main_base == 0 || local.loading_banc || local.event) {
+        if (main_base == 0 || local.loading_banc || local.event || LoadReserved(local)) {
             std::lock_guard lock(g.mutex);
             if (--g.map_frames_left <= 0) {
                 g.want_map.reset();
                 LOG_INFO(Core, "coop: teleport: map change to {} at {}: dropped, no free frame for 5 s ({})",
                          want_map->first, want_map->second,
-                         main_base == 0 ? "no game" : local.loading_banc ? "a load runs" : "an event runs");
+                         main_base == 0         ? "no game"
+                         : local.loading_banc   ? "a load runs"
+                         : local.event          ? "an event runs"
+                                                : "a scene load is reserved");
             }
         } else {
             {

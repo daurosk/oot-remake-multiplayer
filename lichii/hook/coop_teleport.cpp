@@ -624,7 +624,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
                 event_us_ = now_us;
             }
             const bool reserved_ours = local.reserved_banc && *local.reserved_banc == scene_;
-            if (map_event_ && !local.event && !local.loading_banc && !reserved_ours &&
+            if (map_event_ && !local.event && !local.loading_banc && !reserved_ours && !LoadReserved(local) &&
                 now_us - event_us_ >= kEventAgainUs) {
                 if (event_asks_ >= kMaxEventAsks) {
                     phase_ = Phase::idle;
@@ -675,6 +675,11 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         }
     }
     return a;
+}
+
+bool LoadReserved(const Local& local) {
+    return !local.loading_banc && local.reserved_banc && !local.reserved_banc->empty() &&
+           (!local.scene || *local.reserved_banc != *local.scene);
 }
 
 MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to) {

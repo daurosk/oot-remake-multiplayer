@@ -179,6 +179,14 @@ struct Local {
     bool loading_banc = false;
 };
 
+// Row 329: the game has reserved a scene load that has not begun yet
+// (Sequence_ReservedNextBanc names a scene other than this one, no load runs):
+// the gap of a frame or two between a map change event's end and its load. A
+// map change event of ours asked in that gap has the load begin inside it and
+// the arrival never comes (black picture at 60 fps, no Link), so none is asked
+// then: not a teleport's re-ask, not the respawn's entrance, not a warp.
+bool LoadReserved(const Local& local);
+
 // The age a scene is for, from its name (X_Child, X_Adult); nothing for a
 // scene of both ages (dungeons, most interiors).
 std::optional<coop::protocol::Age> AgeOfScene(std::string_view scene);

@@ -932,3 +932,26 @@ TEST_CASE("teleport: the arrival's starter: an entrance with its actor is never 
     CHECK(s.writes() == 0);
     CHECK(s.scene() == "GohmaStage");
 }
+
+TEST_CASE("teleport: a scene load the game reserved but has not begun (row 329: no map change event of ours then)") {
+    Local here = At("DeathMountainTrail_Child", 0, 0, 0);
+    CHECK_FALSE(CoopTeleport::LoadReserved(here));  // not read
+    here.reserved_banc = "";
+    CHECK_FALSE(CoopTeleport::LoadReserved(here));  // nothing reserved
+    here.reserved_banc = "DeathMountainTrail_Child";
+    CHECK_FALSE(CoopTeleport::LoadReserved(here));  // the scene we are in (left by the last load)
+    here.reserved_banc = "KakarikoVillage_Child";
+    CHECK(CoopTeleport::LoadReserved(here));  // the gap: the game's own loading zone or event reserved it
+    here.loading_banc = true;
+    CHECK_FALSE(CoopTeleport::LoadReserved(here));  // the load runs (that case is loading_banc's)
+    // A trip's re-ask also waits for a reservation of another scene (the player walked into a loading zone).
+    Trip trip(true);
+    const Local start = At("DeathMountainTrail_Child", 0, 0, 0);
+    trip.Start(2, "Camila", start, 0);
+    REQUIRE(trip.Accepted(2, Target("KakarikoVillage_Child", 0, 0, 0), start, kS).start_event);
+    Local other = start;
+    other.reserved_banc = "DeathMountain_Child";
+    for (std::uint64_t t = kS + kS / 2; t < 10 * kS; t += kS / 2) {
+        CHECK_FALSE(trip.Tick(other, t).start_event);
+    }
+}

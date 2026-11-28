@@ -1,6 +1,8 @@
 """Fake-game reactions for row 300 (ingame/test_nametags_300.py). Hooks: fakegame.py docstring.
 
-The state's `name_tags` (coop_playtest.cpp; CoopHookshot::TagsSeen), a key only row 300 reads: while the other
+The state's `name_tags` (coop_playtest.cpp; CoopHookshot::TagsSeen), read by row 300 and by the regress gate's
+test_regress_ui.test_name_tags (tags_open). The real module emits it in every state, so this hook does too (B #149:
+no other fake writes the key, so fakegame's guard 1 holds; it reacts only to the near player, as the module): while the other
 game's Link is within NEAR m of this game's (the module's tags show for a player near and in view), one tag of ours,
 its part open, the balloon screen's root pane shown; else all 0 / false, as the module solo or with nobody near. The
 TAGS_ON line comes from fakes/regress_ui.py's lane hook.

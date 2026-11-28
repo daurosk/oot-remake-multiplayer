@@ -396,6 +396,10 @@ Error encode_body(const PlayerSample& m, Writer& w) {
       return Error::bad_value;
     }
   }
+  if (m.as_vars && (!std::isfinite(m.as_vars->left_stick_length) || !std::isfinite(m.as_vars->linear_vel_xz) ||
+                    !std::isfinite(m.as_vars->xz_speed))) {
+    return Error::bad_value;
+  }
 
   auto component = [&w](SampleComponent id, auto&& write) {
     w.u16(static_cast<std::uint16_t>(id));
@@ -419,6 +423,14 @@ Error encode_body(const PlayerSample& m, Writer& w) {
       w.str(m.animation->name);
       w.f32(m.animation->frame);
       w.f32(m.animation->rate);
+    });
+  }
+  if (m.as_vars) {
+    component(SampleComponent::as_vars, [&] {
+      w.f32(m.as_vars->left_stick_length);
+      w.f32(m.as_vars->linear_vel_xz);
+      w.f32(m.as_vars->xz_speed);
+      w.u8(m.as_vars->bits);
     });
   }
   return Error::none;
@@ -1378,6 +1390,17 @@ Error decode_component(SampleComponent id, Reader& c, PlayerSample& m, bool& kno
       COOP_READ(c.f32(a.frame));
       COOP_READ(c.f32(a.rate));
       if (!std::isfinite(a.frame) || !std::isfinite(a.rate)) return Error::bad_value;
+      return Error::none;
+    }
+    case SampleComponent::as_vars: {
+      auto& v = m.as_vars.emplace();
+      COOP_READ(c.f32(v.left_stick_length));
+      COOP_READ(c.f32(v.linear_vel_xz));
+      COOP_READ(c.f32(v.xz_speed));
+      COOP_READ(c.u8(v.bits));
+      if (!std::isfinite(v.left_stick_length) || !std::isfinite(v.linear_vel_xz) || !std::isfinite(v.xz_speed)) {
+        return Error::bad_value;
+      }
       return Error::none;
     }
   }

@@ -3366,3 +3366,33 @@ TEST_CASE("keyed values merge: a full list replaces, a delta changes the keys it
   CHECK_FALSE(next.clocks);
   CHECK(next.position == Vec3{1, 2, 3});
 }
+
+TEST_CASE("player sample: the row 307 AS variables round trip, an older build skips them") {
+  PlayerSample s;
+  s.time = {100, 1};
+  s.animation = Animation{"Move", 3.0f, 1.0f};
+  s.as_vars = AsVars{0.8f, 4.5f, 4.25f, static_cast<std::uint8_t>(kAsVarLeftStickInput | kAsVarDash | 0x80)};
+  const Bytes raw = encoded_sample(s);
+  Message back;
+  REQUIRE(decode(raw, back) == Error::none);
+  CHECK(std::get<PlayerSample>(back) == s);  // bits kept raw, 0x80 (unknown) too
+  // The component is written last: u16 id 8, u16 length 13, 3 x f32 + u8. An older build does not know id 8.
+  REQUIRE(raw.size() > 17);
+  const std::size_t at = raw.size() - 17;
+  CHECK(raw[at] == 8);
+  CHECK(raw[at + 2] == 13);
+  Bytes older = raw;
+  older[at] = 200;
+  PlayerSample without = s;
+  without.as_vars.reset();
+  REQUIRE(decode(older, back) == Error::none);
+  CHECK(std::get<PlayerSample>(back) == without);
+  // Floats must be finite, on encode and on the wire.
+  PlayerSample bad = s;
+  bad.as_vars->xz_speed = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(Message{bad}) == std::nullopt);
+  Bytes wire = raw;
+  wire[raw.size() - 3] = 0x80;  // xz_speed's top bytes to 0x7F80: +infinity
+  wire[raw.size() - 2] = 0x7F;
+  CHECK(decode_bytes(wire) == Error::bad_value);
+}

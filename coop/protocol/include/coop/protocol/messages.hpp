@@ -228,6 +228,7 @@ enum class SampleComponent : std::uint16_t {
   scene = 5,
   age = 6,
   animation = 7,
+  as_vars = 8,  // row 307: AsVars (older builds skip it as unknown)
 };
 
 // PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
@@ -497,6 +498,20 @@ struct PlayerRide {
 
 // PLAYER_SAMPLE. The time component is always sent; the others only when the
 // sender has them. Floats must be finite.
+// Row 307 (a character's puppet runs like a fast walk): the sender's own AS variables that the player's
+// code writes each frame and the 'Move' command's walk/run blend reads; nothing writes them on a puppet, so
+// the receiver writes these into the puppet's AS (coop_as_vars.h). Floats must be finite; `bits` is kept raw
+// (a newer build's bit still arrives, an unknown one is ignored).
+inline constexpr std::uint8_t kAsVarLeftStickInput = 0x01;  // IsLeftStickInput
+inline constexpr std::uint8_t kAsVarDash = 0x02;            // IsDash
+struct AsVars {
+  float left_stick_length = 0.0f;  // LeftStickLength
+  float linear_vel_xz = 0.0f;      // LinearVelXZ
+  float xz_speed = 0.0f;           // XZSpeed
+  std::uint8_t bits = 0;
+  bool operator==(const AsVars&) const = default;
+};
+
 struct PlayerSample {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
   SampleTime time;
@@ -506,6 +521,7 @@ struct PlayerSample {
   std::optional<std::string> scene;
   std::optional<Age> age;
   std::optional<Animation> animation;
+  std::optional<AsVars> as_vars;
   bool operator==(const PlayerSample&) const = default;
 };
 

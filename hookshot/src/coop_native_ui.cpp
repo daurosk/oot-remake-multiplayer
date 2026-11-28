@@ -870,8 +870,14 @@ bool Banner::Step(Game& game, TextRing& ring, const std::optional<std::string>& 
     if (text != shown_ || !up_ || shut) {
         // Up with the held line already: only its text changes (the revive's share, the clock), nothing replayed.
         const bool opening = (!up_ || shut) && !KeptUp(game, screen);   // (shows already: typing-blink-0121)
-        const std::uint64_t ref = ring.PutFixed(game, 0, text);
+        // Into the fixed slot the box does NOT show (banner-steady-0121): the game keeps the shown text's pointer and
+        // length (game-ui.md Text: +0xf0, +0x124) and lays it out from there, so the text it shows is never rewritten
+        // under it. Before, each change rewrote the one shown buffer in place (0.12.0's blank line after each set,
+        // revive-flicker-0121: the leading cause; the owner's rc check proves it).
+        const std::size_t next = (held_slot_ + 1) % TextRing::kFixed;
+        const std::uint64_t ref = ring.PutFixed(game, next, text);
         if (ref == 0 || !Set(game, screen, ref, opening)) return true;
+        held_slot_ = next;   // (only once set: a failed set leaves the box on the slot it shows)
         tint_.Restore(game, ring);   // (the held line in the game's own colour)
         if (opening && !Raise(game, screen)) return true;
         shown_ = text;

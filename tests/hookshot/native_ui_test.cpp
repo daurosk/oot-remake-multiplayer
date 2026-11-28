@@ -649,7 +649,7 @@ TEST_CASE("native ui: once our banner is shut or let go, the game's next one fro
     CHECK(v.g.CallsTo(kClose).size() == 1);
 }
 
-TEST_CASE("native ui: a held banner line stays, changes its text in place, closes when let go") {
+TEST_CASE("native ui: a held banner line stays, changes its text in the other fixed slot, closes when let go") {
     World w;
     ui::Banner b;
     CHECK_FALSE(ui::HeldBanner());
@@ -669,9 +669,11 @@ TEST_CASE("native ui: a held banner line stays, changes its text in place, close
     CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 1000));
     const auto sets = w.g.CallsTo(At(ui::addr::kSetPaneText));
     REQUIRE(sets.size() == 2);
-    CHECK(sets[1].x[2] == sets[0].x[2]);  // the fixed slot, written in place: the ring does not move
+    // The fixed slots, in turn (banner-steady-0121): the new text in the one the box does not show; the ring does not move.
     CHECK(sets[0].x[2] == kBlock + ui::TextRing::kSlotBytes * ui::TextRing::kSlots);
+    CHECK(sets[1].x[2] == kBlock + ui::TextRing::kSlotBytes * (ui::TextRing::kSlots + 1));
     CHECK(w.g.Text(w.RefAt(sets[1].x[2]).text) == "You are down  0:31");
+    CHECK(w.g.Text(w.RefAt(sets[0].x[2]).text) == "You are down  0:32");   // the text shown till the set: untouched
     CHECK(w.ring.Put(w.g, "chat") == kBlock);  // the ring's first slot still next
     CHECK(w.g.CallsTo(kOpen).size() == 1);  // up already: not opened again
     CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);  // nor its Type put back (revive-flicker-0121)
@@ -714,6 +716,33 @@ TEST_CASE("native ui: a held line whose text changes every frame never replays t
     ui::HoldBanner("Reviving Saria  0:45  50%");
     CHECK(b.Step(w.g, w.ring, ui::HeldBanner(), 4000));
     CHECK(w.g.CallsTo(At(ui::addr::kAnimFirstFrame)).size() == 1);
+    ui::EndBanner();
+}
+
+TEST_CASE("native ui: a held line's next text never rewrites the text the box shows (banner-steady-0121)") {
+    // 0.12.0 and 53d40ab3e: every change of the held line rewrote the ONE fixed buffer the text box points at (it keeps
+    // the pointer and the length, game-ui.md Text) in place, then set it; the line was blank after each set.
+    World w;
+    ui::Banner b;
+    ui::HoldBanner("Saria is reviving you  0:45  0%");
+    REQUIRE(b.Step(w.g, w.ring, ui::HeldBanner(), 0));
+    w.Up();
+    for (int frame = 1; frame <= 9; ++frame) {
+        const auto before = w.g.CallsTo(At(ui::addr::kSetPaneText));
+        REQUIRE_FALSE(before.empty());
+        const std::uint64_t shown = before.back().x[2];
+        const std::string shown_text = w.g.Text(w.RefAt(shown).text);
+        ui::HoldBanner("Saria is reviving you  0:45  " + std::to_string(frame) + "%");
+        REQUIRE(b.Step(w.g, w.ring, ui::HeldBanner(), static_cast<std::uint64_t>(frame) * 33));
+        const auto after = w.g.CallsTo(At(ui::addr::kSetPaneText));
+        REQUIRE(after.size() == before.size() + 1);
+        CHECK(after.back().x[2] != shown);                          // another slot
+        CHECK(w.g.Text(w.RefAt(shown).text) == shown_text);         // the shown one untouched until the set
+        CHECK(w.ring.Owns(after.back().x[2]));                      // still ours (Holding)
+    }
+    CHECK(b.Holding(w.g, w.ring) == ui::Holds::kOurs);
+    // Never round the ring: the chat's next slot is still the ring's first.
+    CHECK(w.ring.Put(w.g, "chat") == kBlock);
     ui::EndBanner();
 }
 

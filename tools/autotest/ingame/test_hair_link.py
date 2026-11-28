@@ -64,6 +64,7 @@ except ImportError:
     solo = None
 from test_rows import face_each_other   # noqa: E402  (the shared set-up helpers)
 from test_rows import need_child_in_play     # noqa: E402
+from pair import SetupFail                   # noqa: E402  (a set-up fault, never a judged result)
 from test_tunic import puppet_at             # noqa: E402  (the puppet's place in a game's world list)
 
 RED, BLUE = 0xDD4527, 0x4F8AE1
@@ -199,15 +200,12 @@ def count(shot, colour, second=False, within=None, hide=()):
     return huecheck.solid_count(shot["path" + k], shot["box" + k], colour, m)
 
 
-# A Link whose hair area (its box's top third) is more than this share under the other Link cannot be judged on that
-# game: NO-REF, never FAIL or PASS (a hidden hair adds nothing either way).
-HIDDEN_MAX = 0.5
-
-
 def gained(pair, before, after, colour, what, low, blind, games_=None, within=None, hide=None):
     """Each game's solid `colour` count in the Link's box (the other Link's boxes of both shots, or `hide` {x: boxes},
     left out), before -> after: nothing added is a FAIL (the hair was not repainted); less than GAIN goes to `low`
-    (judged only once MEASURED); a hair mostly under the other Link goes to `blind` (NO-REF). `within`: {x: mask}."""
+    (judged only once MEASURED). Too little colour with any of the hair area under the other Link's box is SetupFail:
+    face_each_other's layout keeps the boxes apart (apart_on_screen). `within`: {x: mask}. (`blind`: the callers' list
+    of what a check could not see; gained adds nothing to it.)"""
     out = {}
     hide = hide or hides(before, after)
     for x in games_ or tuple(before):
@@ -217,19 +215,19 @@ def gained(pair, before, after, colour, what, low, blind, games_=None, within=No
         note(pair, "huecheck %s %s #%06X before=%d after=%d gain=%d box=%s hide=%s covered=%.2f" % (
             x, what, colour, n0, n1, n1 - n0, list(after[x]["box"]), [list(b) for b in hx], cov))
         out[x] = (n0, n1)
-        if cov > HIDDEN_MAX:
-            blind.append("%s %s: the Link's hair is %.0f%% under the other Link (want <= %.0f%%)" % (
-                x, what, cov * 100, HIDDEN_MAX * 100))
-            continue
-        # A hair partly under the other Link's box is counted only outside it: the box is a rectangle, so a near-camera
-        # puppet's box can cover the hair's pixels though the puppet is not drawn there (hair-measure-1ccc2b2f
-        # test_hair_adult[r3]: A's adult hair red on hair-link-adult-red-A.png, B's box [390,378,699,720] over A's head,
-        # covered 0.43 -> before 0 after 0 -> a false 'not repainted'). Too little colour is then no proof either way:
-        # blind (NO-REF). 'Not repainted' FAILs and low gains are judged only on a hair nothing of which is left out.
+        # The other Link's box is a rectangle: a near-camera puppet's box covers hair pixels the puppet is not drawn
+        # over, and the count leaves them out (hair-measure-1ccc2b2f test_hair_adult[r3]: A's adult hair red on
+        # hair-link-adult-red-A.png, B's box [390,378,699,720] over A's head, covered 0.43 -> before 0 after 0, a false
+        # 'not repainted'). No share of hidden hair is safe to judge on: every real line of the old layout had covered
+        # 0.37-0.84 (review-tests-153-8: 31 lines, hair-link-11 measure-0defc551/1ccc2b2f, hair-link-5 309d7180), so a
+        # NO-REF there would leave the row's FAIL unreachable. face_each_other (face-link a2c3cdd16) puts the Links on
+        # parallel lines and apart_on_screen SETUP-FAILs any box overlap, so on a valid set-up covered is 0 and an
+        # unpainted hair FAILs below. Hair hidden at a check anyway (a box moved after the set-up) with too little
+        # colour is a set-up fault, named, never a NO-REF that hides the FAIL; enough colour is proof either way.
         if cov > 0 and n1 - n0 < max(1, GAIN[colour] if MEASURED else 1):
-            blind.append("%s %s: #%06X gained %d with %.0f%% of the Link's hair under the other Link (judged only when "
-                         "none of it is)" % (x, what, colour, n1 - n0, cov * 100))
-            continue
+            raise SetupFail("%s %s: #%06X gained %d with %.0f%% of the Link's hair area under the other Link's box %s "
+                            "(face_each_other's apart_on_screen held at set-up; the boxes met at the check)" % (
+                                x, what, colour, n1 - n0, cov * 100, [list(b) for b in hx]))
         assert n1 - n0 > 0, "%s %s: no #%06X added on the Link: the hair was not repainted (before %d, after %d)" % (
             x, what, colour, n0, n1)
         if n1 - n0 < GAIN[colour]:
@@ -300,8 +298,6 @@ def test_hair_own_and_puppet(pair):
         rb = hides(red, blue)
         gained(pair, red, blue, BLUE, "red->blue", low, blind, within=patch, hide=rb)   # (Navi is not hair)
         for x in blue:
-            if any(b.startswith(x + " ") for b in blind):
-                continue   # (that game's hair was under the other Link)
             gone = count(blue[x], RED, hide=rb[x])
             note(pair, "huecheck %s red->blue red left=%d of %d" % (x, gone, n[x][1]))
             assert gone < LEFT_HAIR * max(1, n[x][1]), "%s: the red stayed on the hair after blue (%d of %d)" % (
@@ -330,8 +326,6 @@ def test_hair_unset_is_game(pair):
         back = shots(pair, "hair-link-unset-again")
         every = hides(before, coloured, back)   # (one area left out of all four counts of a game)
         for x in back:
-            if any(b.startswith(x + " ") for b in blind):
-                continue   # (that game's hair was under the other Link: nothing to judge there)
             hx = every.get(x, [])
             n0, n1 = count(before[x], RED, hide=hx), count(coloured[x], RED, hide=hx)
             added = max(1, n1 - n0)

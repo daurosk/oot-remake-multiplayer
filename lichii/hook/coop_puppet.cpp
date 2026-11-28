@@ -945,8 +945,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
         // seen) the whole song; the notes must sound then too.
-        const bool voice_lines = anim_ || debug_voice_;
-        if (voice_lines && CoopLinkSound::OurUser() != our_user_named_) {
+        if (VoiceLines() && CoopLinkSound::OurUser() != our_user_named_) {
             // Row 319: our own Link's sound user and the name it was made with (the mod's voice hook changes the
             // archive list it loads, not this name: the run compares it with the puppets' lines).
             our_user_named_ = CoopLinkSound::OurUser();
@@ -956,7 +955,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (t->show != Show::hide) {
             const std::string who = "P" + std::to_string(slot.number);
             const auto say = [this](const std::string& line) { Say(line); };
-            if (voice_lines) {
+            if (VoiceLines()) {
                 CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
             }
             if (!OcarinaSoundOn()) {
@@ -975,7 +974,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 if (auto c = CoopLinkSound::Next(
                         slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
                         slot.block, now_ms,
-                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, voice_lines)) {
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, VoiceLines())) {
                     pending_ = Pending::link_sound;
                     return c;
                 }

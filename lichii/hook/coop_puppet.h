@@ -439,6 +439,8 @@ public:
     // Row 319 (LICHII_COOP_DEBUG_VOICE, reads only): each puppet's and our Link's sound user name, what the
     // puppet plays and each of the player's sounds started on it (the lines LICHII_COOP_DEBUG_ANIM also gives).
     void SetDebugVoice(bool on) { debug_voice_ = on; }
+    // The sound debug lines are on (LICHII_COOP_DEBUG_ANIM or LICHII_COOP_DEBUG_VOICE).
+    bool VoiceLines() const { return anim_ || debug_voice_; }
     // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
     // offset 0: none, no colours on a character's puppet.
     // The sound list each puppet's row names (PackSoundLists): added to its "spawned" line.

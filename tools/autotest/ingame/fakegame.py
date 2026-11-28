@@ -292,6 +292,10 @@ class FakeGame:
             self.paused = False
         elif cmd == "state":
             r.update(self.state())
+        elif cmd == "key" and m.get("key") is not None:
+            # (a key no row's fake takes: co-op leaves it, Longshot's, never played: docs/playtest.md `key`. Here, not in
+            # fakes/f1_event.py, which answered every key for every row: B #149)
+            r.update(key=m.get("key"), vk=0, taken=False, longshot="none")
         elif cmd in ("step", "input"):
             r["from"] = self.frame
             if cmd == "input":

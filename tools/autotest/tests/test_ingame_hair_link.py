@@ -167,6 +167,38 @@ class SolidCount(unittest.TestCase):
         self.assertEqual(huecheck.covered(box, [(100, 140, 200, 220)]), 0.0)   # (below the top third: the body only)
         self.assertEqual(huecheck.covered(box, [(0, 0, 999, 999)]), 1.0)
 
+    def test_partly_hidden_hair_is_setup_fail_not_fail(self):
+        """hair-measure-1ccc2b2f test_hair_adult[r3]: B's near-camera box covered A's head (covered 0.43) though B was not
+        drawn there; the count left the red hair out: before 0 after 0, a false 'not repainted'. Any hidden share with
+        too little gain is SetupFail (face_each_other keeps the boxes apart), never FAIL and never a NO-REF (every real
+        line of the old layout had covered > 0: a NO-REF there left the FAIL unreachable, review-tests-153-8); nothing
+        hidden: the row's FAIL; enough gain counts with the box partly hidden."""
+        import test_hair_link as T
+        from pair import SetupFail
+        red = 0xDD4527
+        pic = self.pic("adult", lambda im, d: d.rectangle([140, 100, 160, 110], fill=(0xDD, 0x45, 0x27)))
+        empty = self.pic("empty", lambda im, d: None)
+
+        class P:
+            notes = []
+        shot = lambda p: {"A": {"path": p, "box": (100, 100, 200, 220)}}   # noqa: E731
+        head = {"A": [(130, 95, 170, 115)]}    # the other Link's box over the hair (huecheck.covered 0.15)
+        blind, low = [], []
+        with self.assertRaises(SetupFail) as cm:
+            T.gained(P(), shot(empty), shot(pic), red, "adult", low, blind, hide=head)
+        self.assertIn("15% of the Link's hair area under the other Link's box", str(cm.exception))
+        self.assertEqual(blind, [])
+        with self.assertRaises(SetupFail):     # wholly hidden: the same set-up fault
+            T.gained(P(), shot(empty), shot(empty), red, "adult", [], [], hide={"A": [(0, 0, 999, 999)]})
+        with self.assertRaises(AssertionError) as cm:   # nothing hidden (covered 0): the row's FAIL
+            T.gained(P(), shot(empty), shot(empty), red, "adult", [], [], hide={"A": [(0, 0, 1, 1)]})
+        self.assertNotIsInstance(cm.exception, SetupFail)
+        self.assertIn("the hair was not repainted", str(cm.exception))
+        out = T.gained(P(), shot(empty), shot(pic), red, "adult", [], [], hide={"A": [(100, 200, 120, 220)]})
+        self.assertGreater(out["A"][1] - out["A"][0], 0)   # hidden part off the hair area: counted (gain > 0)
+        with self.assertRaises(AssertionError):            # no fake picture: the head band really unpainted, not hidden
+            T.gained(P(), shot(empty), shot(empty), red, "adult", [], [])
+
     def test_lit(self):
         import huecheck
         self.assertFalse(huecheck.lit(self.pic("black", lambda im, d: None, ground=(0, 0, 0))))

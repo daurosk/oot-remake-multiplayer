@@ -1,5 +1,5 @@
 """Row 307's selftest (ingame/test_puppet_run.py + ingame/fakes/puppet_run.py), run by test_ingame.py's load_tests:
-NO-REF on the fake (look shots have no references), FAIL when B's probe gives no line, A never makes Malon's puppet
+NO-REF on the fake (look shots have no references; the VARS_FOLLOW measure run is UNPROVEN on top), FAIL when B's probe gives no line, A never makes Malon's puppet
 or A's Malon puppet holds 0 while B runs (before the fix), deselected without the probe switch."""
 import os
 import shutil

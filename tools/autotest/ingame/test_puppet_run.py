@@ -15,9 +15,14 @@ root.asb's variable table) that the player's own code writes each frame and noth
 The fix (coop_as_vars.h Writer, coop/host/as_vars.hpp): the sender's values ride in PLAYER_SAMPLE component 8 and
 are written into a character puppet's AS by the game's own setters. Judged by state: the probe's 'vars' line
 (coop_puppet.cpp AsVarsProbeFrame: our Link's and each live puppet's values as the game's own lookups give them) on
-B (ours) and on A (its puppet of B) while B runs as Malon: A's puppet's XZSpeed follows B's (>= VARS_FOLLOW of B's
-highest) and its IsDash bit is set while B's is. Link's puppets take the pose copy (no writes): their phases note
-the values only.
+B (ours) and on A (its puppet of B) while B runs as Malon: A found the XZSpeed handle in its puppet's AS, the puppet's
+XZSpeed is not 0 while B runs (0 is the bug: nothing wrote it), and its IsDash bit is set while B's is. Link's puppets
+take the pose copy (no writes): their phases note the values only.
+
+MEASURE FIRST (B #171, no guessed values): VARS_FOLLOW is None until a run has measured how closely the puppet's
+XZSpeed follows B's. While it is None the test notes the ratio (A's puppet's highest XZSpeed / B's) and ends UNPROVEN on
+that check, never PASS; the limit is then set from that run's cited note line and the rerun can PASS. RAN is set from
+puppet-probe-2c948e08's cited lines (B's measured walk and run speeds) before the fix run's preflight.
 
 It was the probe run first (LICHII_COOP_AS_VARS_PROBE=1: where those values are in the AS controller, and what
 each puppet holds there) plus LICHII_COOP_DEBUG_POSE=1 (A's pose copy: 'written/s' and 'refused/s' a second, coop_pose.
@@ -57,8 +62,8 @@ POSE = r"coop: pose: .* written/s, .* refused/s"  # coop_pose.cpp OnCalcFrame de
 TOL = 0.80                                       # animated puppet (test_levitate.TOL)
 VARS = re.compile(r"\| (ours|P\d+ (CoopPuppet_\w+)) L=(-?[\d.]+) V=(-?[\d.]+) S=(-?[\d.]+) bits=(\d+)")  # AsVarsProbeFrame
 HANDLE = re.compile(r"coop: puppet: P\d+: AS variable '(\w+)' handle (-?\d+)")   # CoopAsVars::Writer::Finish
-RAN = 1.0            # m/s: B's own XZSpeed above this shows its run landed (ESTIMATED; the first real run cites it)
-VARS_FOLLOW = 0.75   # A's puppet's highest XZSpeed against B's own (ESTIMATED; the values arrive 100+ ms late)
+RAN = 1.0            # NOT YET CITED: set from puppet-probe-2c948e08's lines (B's walk/run speeds) before the preflight
+VARS_FOLLOW = None   # MEASURE RUN: None -> the follow ratio is noted and the test ends UNPROVEN; set from that note
 DASH = 2             # coop.protocol kAsVarDash (messages.hpp)
 
 
@@ -190,13 +195,21 @@ def test_puppet_run_swap(pair):
                 a_top = max([v[2] for v in a_vars] or [0.0])
                 pair.notes.append("malon: A's puppet of B: %d vars lines, highest S %.2f (B %.2f)" % (
                     len(a_vars), a_top, b_top))
-                assert a_top >= VARS_FOLLOW * b_top, (
-                    "malon: A's puppet of B does not follow B's run: its XZSpeed at most %.2f, B's %.2f" % (a_top, b_top))
+                pair.notes.append("malon: follow ratio %.3f (A's puppet's highest XZSpeed / B's)" % (a_top / b_top))
+                assert a_top > 0.0, (
+                    "malon: A's puppet of B does not follow B's run: its XZSpeed stays 0 (B's %.2f)" % b_top)
+                if VARS_FOLLOW is not None:
+                    assert a_top >= VARS_FOLLOW * b_top, (
+                        "malon: A's puppet of B does not follow B's run: its XZSpeed at most %.2f, B's %.2f" % (
+                            a_top, b_top))
                 if any(v[3] & DASH for v in b_vars):
                     assert any(v[3] & DASH for v in a_vars), "malon: B dashed but A's puppet of B never had IsDash"
         for tag, b_probe, _ in phases:
             assert b_probe, "%s: B's log has no '%s' line (the probe did not run: switch missing?)" % (tag, PROBE)
         done = True
+        if VARS_FOLLOW is None:
+            pair.unproven("measure run: A's Malon puppet's XZSpeed follow ratio is in the notes ('malon: follow ratio'); "
+                          "VARS_FOLLOW is set from it, then the rerun judges")
     finally:
         try:
             if was is not None:

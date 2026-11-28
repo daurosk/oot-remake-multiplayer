@@ -337,6 +337,52 @@ TEST_CASE("teleport: a map change event the game does not take is asked again, t
     CHECK(t < 15 * kS);  // well before the 60 s give-up
 }
 
+TEST_CASE("teleport: no second map change event in the gap between the first one's end and its load (row 329)") {
+    // Owner P1 log 2026-11-28: the first Dm_SY_BancChangeGo began late and ended 1.2 s later, past 3 s after the ask;
+    // the second was asked in the very next frame, the game's load began 0.1 s into it, the arrival never came.
+    Trip trip(true);
+    const Local here = At("DeathMountainTrail_Child", 0, 0, 0);
+    trip.Start(2, "Camila", here, 0);
+    REQUIRE(trip.Accepted(2, Target("KakarikoVillage_Child", 0, 0, 0), here, kS).start_event);
+    CHECK_FALSE(trip.Tick(here, kS + kS / 2).start_event);  // not begun yet
+    Local busy = here;
+    busy.event = true;
+    for (std::uint64_t t = 2 * kS + kS / 2; t <= 4 * kS + kS / 5; t += kS / 10) {
+        CHECK_FALSE(trip.Tick(busy, t).start_event);
+    }
+    // Ended at 4.2 s (3.2 s after the ask): the load comes a frame later. Nothing asked meanwhile.
+    CHECK_FALSE(trip.Tick(here, 4 * kS + kS / 4).start_event);
+    Local loading = here;
+    loading.loading_banc = true;
+    const auto a = trip.Tick(loading, 4 * kS + kS / 3);
+    CHECK(a.release);
+    CHECK_FALSE(a.start_event);
+}
+
+TEST_CASE("teleport: the game's reservation of our scene is waited for, a refused event is asked again later (row 329)") {
+    Trip trip(true);
+    const Local here = At("DeathMountainTrail_Child", 0, 0, 0);
+    trip.Start(2, "Camila", here, 0);
+    REQUIRE(trip.Accepted(2, Target("KakarikoVillage_Child", 0, 0, 0), here, kS).start_event);
+    // The event ran and reserved our scene; the load is late: no second event while the reservation names it.
+    Local reserved = here;
+    reserved.reserved_banc = "KakarikoVillage_Child";
+    for (std::uint64_t t = kS + kS / 2; t < 10 * kS; t += kS / 2) {
+        CHECK_FALSE(trip.Tick(reserved, t).start_event);
+    }
+    CHECK(trip.phase() == Trip::Phase::travelling);
+    // Another trip whose event ran and was refused (nothing reserved): asked again 3 s after it ENDED.
+    Trip other(true);
+    other.Start(2, "Camila", here, 0);
+    REQUIRE(other.Accepted(2, Target("KakarikoVillage_Child", 0, 0, 0), here, kS).start_event);
+    Local busy = here;
+    busy.event = true;
+    CHECK_FALSE(other.Tick(busy, 3 * kS).start_event);
+    CHECK_FALSE(other.Tick(here, 3 * kS + kS / 2).start_event);
+    CHECK_FALSE(other.Tick(here, 5 * kS + kS / 2).start_event);
+    CHECK(other.Tick(here, 6 * kS).start_event);
+}
+
 TEST_CASE("teleport: a scene's default start is its first start point, a boss stage has its own") {
     CHECK(CoopTeleport::DefaultStart("GohmaStage") == "GohmaStage");
     CHECK(CoopTeleport::DefaultStart("InsideTheDekuTree") == "Entrance");

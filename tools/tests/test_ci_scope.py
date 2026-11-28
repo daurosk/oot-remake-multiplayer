@@ -14,7 +14,7 @@ D = "workflow_dispatch"
 
 class Decide(unittest.TestCase):
     def test_python_only_diff_is_scoped(self):
-        full, why = cs.decide(D, WORK, ["tools/autotest/rc_tests.py", "tools/autotest/tests/test_rc_tests.py", "docs/testing.md"])
+        full, why = cs.decide(D, WORK, ["tools/autotest/rc_tests.py", "tools/autotest/tests/test_rc_tests.py", "docs/plan.md"])
         self.assertFalse(full)
         self.assertTrue(why.startswith("python-only (files: tools/autotest/rc_tests.py"), why)
 
@@ -34,6 +34,34 @@ class Decide(unittest.TestCase):
 
     def test_md_anywhere_is_scoped(self):
         self.assertFalse(cs.decide(D, WORK, ["hookshot/README.md", "docs/plan.md"])[0])
+
+    def test_kit_read_docs_are_full_and_run_longshot(self):
+        # review-mod-153-2 00:26: the kits read these; a change to one must build both kits
+        for f in ("THIRD_PARTY_NOTICES.md", "docs/known-issues.md", "docs/setup-linux.md", "docs/problem-send-address.txt",
+                  "docs/setup.md"):
+            self.assertTrue(cs.kit_read(f), f)
+            self.assertTrue(cs.decide(D, WORK, ["tools/autotest/a.py", f])[0], f)
+            self.assertTrue(cs.longshot_needed(["docs/plan.md", f]), f)
+        self.assertFalse(cs.kit_read("docs/plan.md"))
+        self.assertFalse(cs.kit_read("tools/autotest/README.md"))
+
+    def test_kit_read_list_follows_the_kit_scripts(self):
+        # drift check: every repo doc a kit script names by "$repo/<path>" (make_kit_linux.sh, the kit tests) or in
+        # make_kit_hookshot.ps1's $KitDocs is in the derived list
+        import re
+        rel = os.path.join(cs.REPO, "tools", "release")
+        named = set()
+        for name in ("make_kit_linux.sh", os.path.join("tests", "linux_longshot_kit_test.sh")):
+            with open(os.path.join(rel, name), encoding="utf-8") as fh:
+                for m in re.finditer(r'\$repo/((?:docs/)?[A-Za-z0-9_.-]+\.(?:md|txt))', fh.read()):
+                    named.add(m.group(1))
+        with open(os.path.join(rel, "make_kit_hookshot.ps1"), encoding="utf-8") as fh:
+            kd = re.search(r"^\$KitDocs = (.*)$", fh.read(), re.M).group(1)
+        named.update("docs/" + n for n in re.findall(r"@\('([^']+)'", kd))
+        self.assertIn("docs/known-issues.md", named)
+        self.assertIn("THIRD_PARTY_NOTICES.md", named)
+        missing = sorted(n for n in named if os.path.exists(os.path.join(cs.REPO, n)) and n not in cs.kit_read_paths())
+        self.assertEqual(missing, [])
 
     def test_main_integrate_release_tags_always_full(self):
         for ref in ("refs/heads/main", "refs/heads/integrate-0120", "refs/heads/release-01112", "refs/tags/v0.12.0"):
@@ -173,7 +201,7 @@ class RealGit(unittest.TestCase):
                   ".github/workflows/build.yml", "tests/hookshot/load_module.c", "src/net/x.cpp", "newdir/x"):
             self.assertTrue(cs.longshot_needed([f]), f)
             self.assertTrue(cs.longshot_needed(["docs/a.md", f]), f)
-        for f in ("tools/autotest/a.py", "docs/x.md", "README.md", "tools/release/tests/launch_test.ps1",
+        for f in ("tools/autotest/a.py", "docs/plan.md", "tools/autotest/README.md", "tools/release/tests/launch_test.ps1",
                   ".github/workflows/content-guard.yml"):
             self.assertFalse(cs.longshot_needed([f]), f)
         self.assertTrue(cs.longshot_needed(None))

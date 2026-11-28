@@ -56,9 +56,66 @@ LONGSHOT_NEVER_READ_FILES = (".github/workflows/content-guard.yml",)
 LONGSHOT_NEVER_READ_DIR_EXT = (("tools/release/tests", ".ps1"),)
 BASE_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 
+# KIT-READ docs (review-mod-153-2 2026-11-28 00:26): SCOPED has docs/** and **.md, but the kits copy or read some of them
+# (make_kit_linux.sh: docs/setup-linux.md, docs/known-issues.md, THIRD_PARTY_NOTICES.md; make_kit_hookshot.ps1 $KitDocs:
+# setup.md, known-issues.md; linux_longshot_kit_test.sh: docs/problem-send-address.txt; ...). Such a file is never
+# python-only (the windows job builds the Windows kit) and never skips linux-longshot. The list is not typed in here: it is
+# derived at run time from the files that build or test a kit (KIT_SCAN), so it cannot drift from them. A docs/ file or
+# repo-root file is kit-read when its repo path (/ or \), its docs\ path or its bare name (any case, as one token) occurs
+# in any of them. Over-matching (e.g. README.md) only costs a full run; any doubt = kit-read.
+KIT_SCAN = ("tools/release/", "tools/hookshot/", "tools/puppet_pack/", "cmake/", "CMakeLists.txt",
+            ".github/workflows/build.yml")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_kit_read = None
+
+
+def kit_read_paths(repo=None):
+    """Repo paths (docs/** and repo-root files) that a kit script or kit test names; cached for the default repo."""
+    global _kit_read
+    if repo is None and _kit_read is not None:
+        return _kit_read
+    root = repo or REPO
+    try:
+        files = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True, check=True).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        files = []
+    text = []
+    for f in files:
+        if f and (f.startswith(KIT_SCAN) or f in KIT_SCAN):
+            try:
+                with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                    text.append(fh.read())
+            except OSError:
+                pass
+    blob = "\n".join(text).lower()
+    found = set()
+    for f in files:
+        if not f or not (f.startswith("docs/") or "/" not in f):
+            continue
+        lf = f.lower()
+        name = lf.rsplit("/", 1)[-1]
+        if lf in blob or lf.replace("/", "\\") in blob or \
+                re.search(r"(?<![a-z0-9_.-])" + re.escape(name) + r"(?![a-z0-9_-])", blob):
+            found.add(f)
+    if not files:
+        found = None   # no listing: every docs/root file counts as kit-read (see scoped_path)
+    if repo is None:
+        _kit_read = found
+    return found
+
+
+def kit_read(path):
+    """True when a kit script or kit test may read path (docs/** or a repo-root file); no git listing = True."""
+    if not (path.startswith("docs/") or "/" not in path):
+        return False
+    paths = kit_read_paths()
+    return paths is None or path in paths
+
 
 def scoped_path(path):
-    """True when path matches a SCOPED pattern ('**' = any depth, '**.md' = any .md file)."""
+    """True when path matches a SCOPED pattern ('**' = any depth, '**.md' = any .md file) and is not kit-read."""
+    if kit_read(path):
+        return False
     for pat in SCOPED:
         if pat == "**.md":
             if path.lower().endswith(".md"):

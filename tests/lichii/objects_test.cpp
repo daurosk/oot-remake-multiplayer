@@ -781,10 +781,12 @@ TEST_CASE("objects: Business Scrubs are each game's own shop (GitHub 253)") {
     CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
 }
 
-TEST_CASE("objects: Jabu-Jabu's child Ruto is each game's own, so a carried Ruto is never put down by a copy (#64)") {
+TEST_CASE("objects: Jabu-Jabu's child Ruto is one shared Ruto, her carry the carry claim's (row 304, #64)") {
+    // Row 304: each game's own (#64) left a carried Ruto on no other screen. Shared again; #64's drop (the owner's
+    // Crouch over our carried copy) is the carry claim's case ("carry claim: ... child Ruto" below).
     for (const char* ruto : {"Npc_Zora_Ruto_Child_001", "Npc_Zora_Ruto_Child_002"}) {
-        CHECK_MESSAGE(CoopObjects::IsOwnFollower(ruto), ruto);
-        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(ruto), ruto);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(ruto), ruto);
+        CHECK_MESSAGE(CoopObjects::IsShared(ruto), ruto);
     }
     // Other Zoras, and adult Ruto, stay shared NPCs.
     CHECK(CoopObjects::IsShared("Npc_Zora_ZU_001"));
@@ -807,7 +809,8 @@ TEST_CASE("objects: every actor whose AI goes with the local Link is each game's
     for (const char* shared : {"Npc_Hylia_Zelda_Child", "Npc_Hylia_Sheik_Adult", "Animal_Horse_Wagon",
                                "Animal_Horse_Archery", "Animal_Cucco", "Npc_Pierre_CallOcarina",
                                "Npc_Goron_011_Shop_Child", "Npc_Hylia_051", "Npc_Kaepora",
-                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001"}) {
+                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001",
+                               "Npc_Zora_Ruto_Child_001"}) {  // row 304: carried, by the carry claim
         CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(shared), shared);
         CHECK_MESSAGE(CoopObjects::IsShared(shared), shared);
     }
@@ -4247,6 +4250,47 @@ TEST_CASE("objects: a ceiling Skulltula copy with our Link under it is flagged t
     CHECK_FALSE(run(1.0f, "CeilingWait", 1));     // ours already
     CHECK_FALSE(run(1.0f, "CeilingWait", 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
     CHECK_FALSE(run(1.0f, "CeilingWait", 2, true, 800));  // under 1 s: not yet
+}
+
+TEST_CASE("objects: a copy Gohma in her owner's pre-battle ceiling wait with our Link under her is flagged targeting "
+          "(row 303)") {
+    constexpr const char* kGohma = "Enemy_DungeonBoss_Gohma";
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Wait"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Turn"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink(kGohma, "Pre_Battle_Ceiling_Find_LOD"));
+    CHECK(CoopObjects::WaitsOnCeilingForLink("Enemy_Skulltula", "CeilingWait"));     // issue 35, as before
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "Sleep"));               // her sleep is on no ceiling
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "CeilingMove"));         // her fight's own ceiling moves
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink(kGohma, "CeilingServiceWait"));
+    CHECK_FALSE(CoopObjects::WaitsOnCeilingForLink("Enemy_Gohma_Larva", "Pre_Battle_Ceiling_Wait"));  // no boss
+
+    // The owner's (player 2's) Gohma on her ceiling spot (lane1 hs-gohma-downed 20261120-085401: 18.49 59.97 67.79,
+    // the floor at 47.0): 13 m over the floor.
+    auto run = [&](float link_x, const std::string& owners, std::uint8_t owner = 2) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        auto seen = [&] {
+            Seen s = Acting(0x100, 0x11, 2, 0.0f, "Pre_Battle_Ceiling_Wait", kGohma);
+            s.position[1] = 13.0f;
+            return s;
+        };
+        Tick(sync, 0, {seen()});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            proto::ObjectSample s = OwnerSample(id, owner, t * kMs, 0.0f, 2, owners);
+            s.state.position = proto::Vec3{0.0f, 13.0f, 0.0f};
+            sync.Receive(s);
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {seen()}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(1.0f, "Pre_Battle_Ceiling_Wait"));        // under her: the server gives her to us (row 303)
+    CHECK_FALSE(run(6.0f, "Pre_Battle_Ceiling_Wait"));  // 6 m across: not under her
+    CHECK_FALSE(run(1.0f, "Pre_Battle_Ceiling_Wait", 1));  // ours already: our own AI finds our Link
 }
 
 TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
@@ -7791,6 +7835,12 @@ TEST_CASE("sensor claim: no claim without the input, for a walk that missed him,
 TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries is not (row 138(8))") {
     CHECK(CoopSensorClaim::Carried("Lifted"));
     CHECK_FALSE(CoopSensorClaim::Carried("Wait"));
+    // Row 304: child Ruto's carry (her AS command and its states).
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest"));
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest_Wait"));
+    CHECK(CoopSensorClaim::Carried("Act_LiftRest_Ed"));
+    CHECK_FALSE(CoopSensorClaim::Carried("Act_LiftRestX"));
+    CHECK_FALSE(CoopSensorClaim::Carried("Crouch"));
     // A Cucco owned by P2. `ours` is our copy's own AS command, `theirs` the owner's in its samples.
     auto run = [](const std::string& ours, const std::string& theirs) {
         Sync sync;
@@ -7814,6 +7864,33 @@ TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries
     CHECK(run("Lifted", "Wait"));         // our Link carries it: ours, the owner's motion waits
     CHECK_FALSE(run("Lifted", "Lifted"));  // the owner carries it: its Lifted on our copy, it stays theirs
     CHECK_FALSE(run("Wait", "Wait"));      // nobody carries it
+}
+
+TEST_CASE("carry claim: child Ruto our Link carries is ours, the owner's Crouch stays off her (row 304, #64)") {
+    // Shared Ruto owned by P2. `ours`: our copy's own AS command; `theirs`: the owner's in its samples.
+    auto run = [](const std::string& ours, const std::string& theirs) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x300, 0x33, 1, 1.0f, "Wait", "Npc_Zora_Ruto_Child_001")});
+        const proto::ObjectId id = *sync.IdOf(0x300);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t <= 1000; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 1.0f, 1, theirs));
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x300, 0x33, 1, 1.0f, ours, "Npc_Zora_Ruto_Child_001")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const bool claimed = sync.AreaClaim(0x300, 1000 * kMs);
+        CHECK(claimed == sync.EventPartner(0x300, 1000 * kMs));  // the owner's motion (#64's Crouch) waits
+        CHECK(claimed == (flags && (*flags & kTargeting) != 0));  // the server hands her to us
+        return claimed;
+    };
+    CHECK(run("Act_LiftRest", "Crouch"));              // #64: we carry her, the owner's Crouch is not put on her
+    CHECK(run("Act_LiftRest", "Wait"));
+    CHECK_FALSE(run("Act_LiftRest", "Act_LiftRest"));  // the owner carries her: she stays theirs
+    CHECK_FALSE(run("Wait", "Crouch"));                // nobody here carries her
 }
 
 TEST_CASE("objects: a Floormaster at life 0 is split, its death is its whole brood's (row 172)") {

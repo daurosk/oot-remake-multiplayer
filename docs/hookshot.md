@@ -280,6 +280,31 @@ A guest's ask while the host plays a file is answered with a save written after 
 - **The co-op window.** The emulator's Qt window is not on Hookshot; the chat, name tags, player list, panel, HUD and cheats are drawn in Hookshot's ImGui frame instead ("Where the co-op module lives" above).
 - **Licences.** Hookshot is GPL-3.0, as we are. Its lifted C contains the game and is never shared; we ship our module, our patch and our scripts, and each player builds Hookshot from their own game.
 
+## Null reads
+
+A co-op puppet is a stripped copy of Link: it has no Player component (the one main+0x82acc0 returns) and, built without
+perception, no component in slot 10. The game's code for it, or for an item it wears, loads through those null pointers.
+The emulator reads 0 there and the game takes its own "nothing there" branch; Longshot (and a real Switch) faults. Two
+layers cover it, and both stay:
+
+- **Patch 0023 (`nx2/coop_null_guards.py`): the known loads, at the source.** 29 loads of main e0f3ccfa run only when
+  their base register holds a real pointer, else the register gets 0, what the emulator reads: the 25 loads through x0
+  straight after `bl main+0x82acc0` with no check, main+0x27975f0 (the same component, after a tbz), and the slot-10 chain
+  main+0x4b85e4..ec in f_804d84b0 (a guest's crash, guest 0x20). Each word, the call before each Player load and the build
+  id are checked when the game is built; a changed word leaves that one out. The game build's log counts the guards
+  written into the lifted C, `co-op null guards: 29 of 29 emitted in the lifted C` (Longshot's fast float copy of the
+  emit, `nx2/fastfp.py`, writes them too, and the emit's new processes on Windows get them); the game's log says
+  `coop: null guard at main+...` the first few uses. main+0x2dceef8 (the bow's wearer) is met first by patch 0038, which takes the game's own exit there; 0023's
+  guard is its backstop. No cost on the normal path: Link, who has both components, runs as shipped (one compare).
+- **The module's null page (`hookshot/src/coop_null_page.*`, patch 0002's guard): everything else.** The module arms the
+  guest's first MB read-only before its first puppet, so any other read through a missing component (slot 10 is read
+  unchecked at 574 places in main; only those a puppet was seen to reach are in 0023) still gives 0. Where the page cannot
+  be armed, no Link puppet is made (player report 131). `HOS_COOP_NULL_READS=0` turns the page off: with 0023 the listed
+  loads still read 0, so a run with it off shows what the page still serves.
+
+So 0023 is the exact fix for the loads we know (and what a console, which has no such page, needs); the page is the net
+for the ones we have not met. Tests: `tools/hookshot/null_guards_test.py` (the linux-longshot job, on the patched source).
+
 ## Emulator and Hookshot players together
 
 Yes, by design. Both run main `e0f3ccfaf50065ae` with the same co-op code, so positions, actor names, flag hashes and scene names are the same; both send the same `HELLO` with the same protocol version to the same `coop_server`, which compares only the game build. Proof (4) below checks it.
@@ -316,4 +341,4 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 | Co-op window: chat, player list, markers, HUD hearts, cheats | Drawn in Hookshot's ImGui frame (see the table above, "Co-op window, chat, player list, markers"): chat lines, name tags, player list (F6), panel (F7), HUD blocks, chat box (T), item cheats (F8). Keys differ from the emulator's: Enter and Tab are the game's Plus on Hookshot. With the HUD pack in the game look (the game's font, heart pictures, players' colours); the cheats take the mouse; on Linux too |
 | Co-op's per-frame work during loads and pause | Once per present, as the emulator's composite |
 | Pack hints (old pack, no pack) at start | `Host-Hookshot.bat` and `Join-Hookshot.bat` give the same hints as the emulator's (`play.ps1 -Hookshot`, `Use-KitPuppetPack`); without a pack the puppets are off and a line says so |
-| Other players' Link (puppets) | Shown, child and adult, with patch 0002 in hookshot.exe (proof 3 above; scenarios hs-puppets, hs-adult). A hookshot.exe built without 0002 refuses them (they show as their fairy, with a log line to build again); `LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0` / `1` forces it, `HOS_COOP_NULL_READS=0` turns the null reads off (the puppet's update then crashes). Linux: on, untested |
+| Other players' Link (puppets) | Shown, child and adult, with patch 0002 in hookshot.exe (proof 3 above; scenarios hs-puppets, hs-adult). A hookshot.exe built without 0002 refuses them (they show as their fairy, with a log line to build again); `LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0` / `1` forces it, `HOS_COOP_NULL_READS=0` turns the null page off. Patch 0023 guards 29 of the game's loads through the puppet's missing components at the source ("Null reads" below). Linux: on, untested |

@@ -57,7 +57,7 @@ std::uint8_t status_bits(std::uint8_t previous, const std::optional<PlayerReadin
     // in the other games.
     set(st::in_cutscene, our_link_in_event(*reading->event_running, reading->event_whose));
   }
-  const bool menu = play && reading->in_menu.value_or(false);
+  const bool menu = play && reading->in_menu.value_or(false) && !reading->menu_world_runs;
   set(st::in_menu, menu);
   // Row 164 follow-up: a world standing still with no menu named (the quick-switch menu) is paused too, not in_menu
   // (no menu is known to be in front).

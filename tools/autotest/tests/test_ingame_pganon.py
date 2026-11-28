@@ -16,7 +16,8 @@ TEST = "test_phantom_ganon_hand_over_no_fall"
 
 
 class PhantomGanonRow(unittest.TestCase):
-    """PASS as the fixed game logs it; a fall after the hand-over FAILs (and stays FAIL on its rerun: never FLAKY)."""
+    """PASS (with refs) as the fixed game logs it; a fall after the hand-over FAILs (and stays FAIL on its rerun: never
+    FLAKY); a copy in the owner's state (no cause) is NO-REF."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -29,16 +30,49 @@ class PhantomGanonRow(unittest.TestCase):
         p = T.pytest_run([".", "--fake", "--out", out, "-q", "--boot", BOOT, "-k", TEST], env=env)
         return p, T.summary(out)
 
-    def test_pass(self):
-        p, s = self.run_row()
-        self.assertEqual(T.results(s), {TEST: "PASS"}, p.stdout[-2000:])
+    def test_no_ref_then_pass(self):
+        """First run: the log + state judge and the cause hold, the 8 paired shots (k1..k5, h1, h2, d1) are NO-REF
+        candidates on each game (never PASS); adopted into refs/, the next run PASSes and notes the cause per game."""
+        refs = os.path.join(self.tmp, "refs")
+        p, s = self.run_row({"BT_FAKE_REFS": refs})
+        self.assertEqual(T.results(s), {TEST: "NO-REF"}, p.stdout[-2000:])
         self.assertEqual(s["identity"]["boot"]["name"], BOOT)
+        new = os.path.join(self.tmp, "o0", "lane1", "new")
+        self.assertEqual(sorted(os.listdir(new)), sorted("pg287-%s-%s.png" % (n, x) for x in "AB" for n in
+                                                         ("k1", "k2", "k3", "k4", "k5", "h1", "h2", "d1")))
+        os.makedirs(refs)
+        for f in os.listdir(new):
+            shutil.copyfile(os.path.join(new, f), os.path.join(refs, f))
+        p, s = self.run_row({"BT_FAKE_REFS": refs})
+        self.assertEqual(T.results(s), {TEST: "PASS"}, p.stdout[-2000:])
+        self.assertIn("cause: his copy stood in CCT move state 1 when made ours; the owner's was 2", json.dumps(s["tests"]))
+
+    def test_no_cause_is_no_ref(self):
+        """The copy in the owner's state when made ours: the row's own asserts hold, the cause is unseen -> NO-REF
+        naming it, never FAIL (review-rows-c130-10 20:53 MUST 1). Refs adopted first, so the NO-REF is the cause's."""
+        refs = os.path.join(self.tmp, "refs")
+        self.run_row({"BT_FAKE_REFS": refs})
+        os.makedirs(refs)
+        new = os.path.join(self.tmp, "o0", "lane1", "new")
+        for f in os.listdir(new):
+            shutil.copyfile(os.path.join(new, f), os.path.join(refs, f))
+        p, s = self.run_row({"BT_FAKE_REFS": refs, "BT_FAKE_PG_SAME": "1"})
+        self.assertEqual(T.results(s), {TEST: "NO-REF"}, p.stdout[-2000:])
+        self.assertIn("cause not seen", json.dumps(s["tests"]))
+        self.assertIn("no cause seen", json.dumps(s["tests"]))
 
     def test_fall_after_hand_over_fails(self):
         p, s = self.run_row({"BT_FAKE_PG_FALL": "1"})
         self.assertEqual(T.results(s), {TEST: "FAIL"}, p.stdout[-2000:])
         self.assertIn("below his fight start", json.dumps(s["tests"]))
         self.assertNotEqual(p.returncode, 0)
+
+    def test_knock_down_not_landed_is_setup_fail(self):
+        """NO REPEAT VOIDS (pganon-287-182cd53b): no ask of k1..k5 starts the knock-down on its owner's game ->
+        SETUP-FAIL naming it, never the fix-line FAIL."""
+        p, s = self.run_row({"BT_FAKE_PG_NO_LAND": "1"})
+        self.assertEqual(T.results(s), {TEST: "SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertIn("knock-down did not land: verb 139 not started (CCT stayed 2)", json.dumps(s["tests"]))
 
     def test_default_boot_deselects_it(self):
         out = os.path.join(self.tmp, "d")

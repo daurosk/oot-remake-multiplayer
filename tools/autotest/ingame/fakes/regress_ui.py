@@ -12,6 +12,8 @@
 Selftest switch (tests/test_ingame_regress_ui.py): BT_FAKE_REGRESS_BUG=tags -> no tag line, the drawn-tags warning
 instead (:712); =title -> A on Title Screen opens nothing; =hilt -> B's copy is not painted (:314);
 =camera -> B's ZL leaves B's camera in front of B (c272735f8: B's shots of its own Link's face, no A).
+=turn -> A's 'face' turns A the other way (towards B: gate-hilt-53d40ab3-2's side-on puppet, its back not to B's
+camera).
 """
 import math
 import os
@@ -54,6 +56,15 @@ def lane(fl):
                                       "cannot be read; make the puppet pack again): their puppet keeps the game's items"))
         else:
             b.later(60, lambda: b.say("coop: look: P1's gear colours painted for their puppet (copy 0)"))
+
+
+def act(game, w):
+    """=turn only: A's 'face' points A away from the point it was given (back towards B)."""
+    if not (_bug("turn") and game.tag == "A" and w[:1] == ["face"]):
+        return False
+    dx, dz = float(w[1]) - game.pos[0], float(w[2]) - game.pos[2]
+    game.facing = (math.degrees(math.atan2(dx, dz)) + 180.0) % 360
+    return True
 
 
 def _on(game):
@@ -100,6 +111,8 @@ def command(game, m):
 
 
 def after(game, m, r):
+    if m.get("cmd") == "shot" and r.get("path"):
+        _draw_puppet(game, r["path"])
     if not _on(game):
         return
     g = _ts(game)
@@ -115,20 +128,44 @@ def after(game, m, r):
 CAM_BACK, CAM_UP, FOCAL = 3.0, 1.2, 1.2   # m behind (or in front of) Link, m up, 1/tan(half the view)
 
 
-def state(game, st):
-    """The state's `view` (docs/playtest.md: clip = m * [x y z 1] row-major, w the depth) once a ZL was pressed: the
-    camera CAM_BACK behind Link looking along his facing, or (=camera, B) in front of him looking back at his face, the
-    c272735f8 shots. Only set when no other fake set one (setdefault)."""
-    cam = getattr(game, "rg_cam", None)
-    if cam is None or not st.get("pos") or st.get("facing") is None:
+def _draw_puppet(game, path):
+    """Sword handle row only (A:HILT): B's shot draws A's puppet in its box (sight.prove compares B's shots with A
+    there and A away: kokiri-band-c124-8)."""
+    o = game.other
+    if game.tag != "B" or o is None or not o.env_on(HILT):
         return
-    look = math.radians(st["facing"] + (0 if cam else 180))
+    view = _view(game, game.pos, game.facing)
+    if view is None:
+        return
+    import bandcheck
+    from PIL import Image, ImageDraw
+    im = Image.open(path).convert("RGB")
+    b = bandcheck.box(view, o.pos, im.size[0], im.size[1])
+    if b:
+        ImageDraw.Draw(im).rectangle([b[0] + 3, b[1] + 3, b[2] - 4, b[3] - 4], fill=(40, 200, 40))
+        im.save(path)
+
+
+def _view(game, pos, facing):
+    cam = getattr(game, "rg_cam", None)
+    if cam is None or not pos or facing is None:
+        return None
+    look = math.radians(facing + (0 if cam else 180))
     fx, fz = math.sin(look), math.cos(look)          # forward (yaw 0 = +z, 90 = +x)
     rx, rz = fz, -fx                                  # right
-    px, py, pz = st["pos"]
+    px, py, pz = pos
     cx, cy, cz = px - CAM_BACK * fx, py + CAM_UP, pz - CAM_BACK * fz
     clip = [FOCAL * rx, 0.0, FOCAL * rz, -FOCAL * (rx * cx + rz * cz),
             0.0, FOCAL, 0.0, -FOCAL * cy,
             0.0, 0.0, 0.0, 0.0,
             fx, 0.0, fz, -(fx * cx + fz * cz)]
-    st.setdefault("view", {"yaw": math.degrees(look) % 360, "pitch": 0.0, "clip": clip, "y_down": False})
+    return {"yaw": math.degrees(look) % 360, "pitch": 0.0, "clip": clip, "y_down": False}
+
+
+def state(game, st):
+    """The state's `view` (docs/playtest.md: clip = m * [x y z 1] row-major, w the depth) once a ZL was pressed: the
+    camera CAM_BACK behind Link looking along his facing, or (=camera, B) in front of him looking back at his face, the
+    c272735f8 shots. Only set when no other fake set one (setdefault)."""
+    view = _view(game, st.get("pos"), st.get("facing"))
+    if view is not None:
+        st.setdefault("view", view)

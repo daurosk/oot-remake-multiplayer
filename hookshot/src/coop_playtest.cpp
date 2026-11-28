@@ -40,6 +40,7 @@
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
 #include "coop_pause_world.h"
+#include "coop_navi_probe.h"
 #include "coop_playtest_core.h"
 #include "coop_talk_text.h"
 #include "coop_teleport_game.h"
@@ -396,7 +397,8 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     for (const auto& p : CoopHook::PlayerList()) {
         out += std::string(first ? "" : ",") + "{\"number\":" + std::to_string(p.number) + ",\"name\":" +
                Quote(p.name) + ",\"self\":" + (p.self ? "true" : "false") + ",\"state\":" + Quote(p.state) +
-               ",\"scene\":" + (p.scene ? Quote(*p.scene) : "null") + "}";
+               ",\"scene\":" + (p.scene ? Quote(*p.scene) : "null") +
+               ",\"status\":" + (p.status ? std::to_string(*p.status) : std::string("null")) + "}";
         first = false;
     }
     out += "]}";
@@ -410,6 +412,7 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     }
     out += ",\"banner\":" + CoopNativeUi::StatsJson(CoopNativeUi::Stats());   // (typing-blink-0121: our banner's opens)
     out += ",\"pause_world\":" + CoopPauseWorld::StateJson();   // (row 299: the PauseMgr's holds, reads only)
+    out += ",\"navi\":" + CoopNaviProbe::StateJson();   // (row 316 probes: our Npc_Navi + the fairies, reads only)
     out += ",\"map_native\":" + CoopMapIcons::StateJson();   // (coop_map_icons.h State: the others on the game's map icons)
     {   // hud-stepped-0121: the last party HUD and name-tag steps a second or more after the one before (coop_hookshot.h)
         const auto slow = [](const CoopHookshot::SlowStep& x) {
@@ -418,6 +421,11 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
         };
         out += ",\"slow_steps\":{\"party_hud\":" + slow(CoopHookshot::PartySlow()) +
                ",\"name_tags\":" + slow(CoopHookshot::TagsSlow()) + "}";
+    }
+    {   // nametags-300: our tags as the game holds them (open parts, the balloon screen's root pane shown)
+        const auto t = CoopHookshot::TagsSeen();
+        out += ",\"name_tags\":{\"shown\":" + std::to_string(t.shown) + ",\"open\":" + std::to_string(t.open) +
+               ",\"screen_root\":" + (t.screen_root ? "true" : "false") + "}";
     }
     out += WorldText(full_world);
     out += StrikeMember(CoopStrike::TheBook().Last());
@@ -625,7 +633,8 @@ std::string Handle(const Request& r) {
         }
         return ErrorReply(r.id, gate.Frame(), gate.Held(), "timeout",
                           "not in " + wait_for + " after " + std::to_string(static_cast<int>(r.timeout_s)) +
-                              " s; held; the state: " + StateObject());
+                              " s (via " + (plan.route == WarpRoute::event ? "event" : plan.route == WarpRoute::map_event ? "map_event" : "teleport") +
+                              "); held; the state: " + StateObject());
     }
     if (r.cmd == "flag") {
         std::string error;

@@ -18,8 +18,8 @@ TESTS = ["test_vest_link.py"]
 
 
 class HueCheck(unittest.TestCase):
-    """The changed pixels and their share in a colour's hue: a recolour that did not happen, went to another hue, or
-    went grey is caught."""
+    """The vest's colour classes in a Link's box (solid_count) and the unset check on the wear's own pixels
+    (left_after_unset, leather's unset row)."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -27,25 +27,27 @@ class HueCheck(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def shot(self, name, vest, sway=0):
+    def count(self, fill, rgb, where=(300, 200, 360, 280)):
+        """A 'Link' box with blond hair (hue 40, S 0.69: the box's warm scene) and a block of `fill` at `where`."""
         from PIL import Image, ImageDraw
-        im = Image.new("RGB", (640, 360), (30, 80, 30))
+        im = Image.new("RGB", (640, 360), (90, 90, 90))   # (grey ground: a green one is in the green class)
         d = ImageDraw.Draw(im)
-        d.rectangle((300 + sway, 60, 340 + sway, 200), fill=(230, 220, 200))   # "Link", swaying a pixel
-        d.rectangle((300, 200, 360, 280), fill=vest)                            # "the vest"
-        path = os.path.join(self.tmp, name + ".png")
+        d.rectangle((300, 60, 340, 120), fill=(0xD0, 0xA0, 0x40))
+        d.rectangle(where, fill=fill)
+        path = os.path.join(self.tmp, "c.png")
         im.save(path)
-        return path
+        return huecheck.solid_count(path, (280, 40, 380, 300), rgb)
 
-    def test_changed_hue(self):
-        blue, yellow, red, grey = (0x30, 0x70, 0xFF), (0xFF, 0xD0, 0x00), (0xFF, 0x30, 0x30), (0x80, 0x80, 0x80)
-        before = self.shot("before", blue)
-        h = huecheck.changed_hue(before, self.shot("yellow", yellow, sway=1), 0xFFD000)
-        self.assertGreater(h["changed"], 20, h)
-        self.assertGreaterEqual(h["share"], 0.5, h)
-        self.assertEqual(huecheck.changed_hue(before, self.shot("same", blue, sway=1), 0xFFD000)["coloured"], 0)
-        self.assertLess(huecheck.changed_hue(before, self.shot("red", red), 0xFFD000)["share"], 0.5)
-        self.assertLess(huecheck.changed_hue(before, self.shot("grey", grey), 0xFFD000)["share"], 0.5)
+    def test_vest_classes(self):
+        """The vest's classes (huecheck.CLASSES, measured on gate-look 309d7180c): a solid yellow / green vest in the
+        box counts; the warm scene, the tunics' slot colours and the white shirt do not; outside the box never."""
+        self.assertGreater(self.count((0xFF, 0xD0, 0x00), 0xFFD000), 1000)
+        self.assertGreater(self.count((0x40, 0xC8, 0x30), 0x20C020), 1000)   # (the game's lighter green: hue 115)
+        self.assertEqual(self.count((0x30, 0x30, 0x30), 0xFFD000), 0)        # (the blond hair alone is not yellow)
+        for fill in ((0x30, 0x70, 0xFF), (0xFF, 0x30, 0x30), (0xC0, 0xC0, 0xB8)):
+            self.assertEqual(self.count(fill, 0xFFD000), 0, fill)
+            self.assertEqual(self.count(fill, 0x20C020), 0, fill)
+        self.assertEqual(self.count((0xFF, 0xD0, 0x00), 0xFFD000, where=(450, 200, 510, 280)), 0)
         self.assertAlmostEqual(huecheck.hue_of(0xFF0000), 0.0)
         self.assertAlmostEqual(huecheck.hue_of(0x0000FF), 240.0)
 
@@ -69,7 +71,6 @@ class HueCheck(unittest.TestCase):
         left' (the whole-frame changed_hue counted it), and a wear still on is."""
         blond, red, flame = (0xE0, 0xC0, 0x60), (0xDD, 0x45, 0x27), (0xE8, 0x50, 0x20)
         before, coloured, after = self.unset_shots(blond, red, blond, flame)
-        self.assertGreaterEqual(huecheck.changed_hue(before, after, 0xDD4527)["coloured"], 20)   # (the old false FAIL)
         h = huecheck.left_after_unset(before, coloured, after, 0xDD4527)
         self.assertGreater(h["wear"], 20, h)
         self.assertLess(h["share"], huecheck.LEFT_SHARE, h)
@@ -107,10 +108,11 @@ class VestLink(unittest.TestCase):
         # (judged()'s own "; low: " in the NO-REF reason: a bare "low:" also matched the vest's traceback
         # line "took the yellow: the vest", CI 45930967885)
         self.assertNotRegex(p.stdout, r"NO-REF: [^\n]*; low: ")   # (the fake's vest blocks: every share holds)
-        # changed_hue: own+puppet 2 steps x 2 games, no-CS 2 x 2; left_after_unset: unset-again 2
+        # gained: own+puppet 2 steps, unset 1, no-CS 2, each x 2 games; left: own+puppet, unset, no-CS 1 each x 2
         # (no ^: pytest's progress letters may stand before a printed line)
-        self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*changed=\d+", p.stdout)), 8, p.stdout[-3000:])
-        self.assertEqual(len(re.findall(r"huecheck [AB] unset-again [^\n]*wear=\d+ left=\d+", p.stdout)), 2,
+        self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*before=\d+ after=\d+ gain=[1-9]\d*", p.stdout)), 10,
+                         p.stdout[-3000:])
+        self.assertEqual(len(re.findall(r"huecheck [AB] [^\n]*left=-?\d+ of [1-9]\d* share=", p.stdout)), 6,
                          p.stdout[-3000:])
         s, p = self.run_it("off", [])
         self.assertEqual([d["test"] for d in s["deselected"]], ["test_vest_link.py::test_vest_without_character_select"],

@@ -413,6 +413,14 @@ TEST_CASE("host sampler: status_bits, every away bit (issue 150, away-status)") 
     r.in_menu = false;
     CHECK(status_bits(st::in_menu | st::paused, r, false) == 0);
   }
+  SUBCASE("row 299: a game menu in front while the world runs under it: neither in_menu nor paused") {
+    r.in_menu = true;
+    r.menu_world_runs = true;
+    CHECK(status_bits(0, r, false) == 0);
+    CHECK(status_bits(st::in_menu | st::paused, r, false) == 0);   // (the hold let go after the menu came up)
+    r.menu_world_runs = false;
+    CHECK(status_bits(0, r, false) == (st::in_menu | st::paused));   // (the option off: as before)
+  }
   SUBCASE("a menu inside our event (a talk's choices): in_menu, not paused") {
     r.in_menu = true;
     r.event_running = true;

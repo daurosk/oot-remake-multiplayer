@@ -343,6 +343,12 @@ std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor) {
     return xlink != 0 ? Pointer(guest, xlink + addr::kXLinkSoundUser) : 0;
 }
 
+std::uint64_t EffectUser(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    const std::uint64_t parts = Pointer(guest, actor + addr::kActorParts);
+    const std::uint64_t xlink = parts != 0 ? Pointer(guest, parts + addr::kPartsXLink) : 0;
+    return xlink != 0 ? Pointer(guest, xlink + addr::kXLinkEffectUser) : 0;
+}
+
 void Reset(State& state) {
     state.sounding = 0;
     state.step = State::Step::none;
@@ -356,6 +362,12 @@ void Reset(State& state) {
     state.ocarina_looked = false;
     state.module_said.clear();
     state.playing.clear();
+    state.named_user = 0;
+}
+
+void MadeAgain(State& state) {
+    state.actor = 0;       // Next: 'actor != state.actor' -> Reset, once no call is pending
+    state.named_user = 0;  // LogPlaying: the new user's name is said even at the old address
 }
 
 std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPuppet::Guest& guest,
@@ -599,7 +611,15 @@ void LogPlaying(State& state, CoopPuppet::Guest& guest, std::uint64_t actor,
         return;
     }
     state.playing_ms = now_ms;
-    std::string now = Playing(guest, SoundUser(guest, actor));
+    const std::uint64_t user = SoundUser(guest, actor);
+    if (user != state.named_user) {
+        // Row 319: the name the puppet's sound user was made with ([[user + 0x58] + 0x10]), so a run can tell
+        // which voice list the game gave it (the ActorInfo row's Player_<Age>_V<NN> / CoopPuppet_<Age>, or the
+        // component's Player_<Age>). Said again when the user changes (a puppet made again, an age change).
+        state.named_user = user;
+        say(who + " sound user " + Hex(user) + " is '" + (user != 0 ? UserName(guest, user) : std::string()) + "'");
+    }
+    std::string now = Playing(guest, user);
     if (state.ocarina_user != 0) {
         // The game's Ocarina user: the notes played there (issue 152).
         const std::string notes = Playing(guest, state.ocarina_user);

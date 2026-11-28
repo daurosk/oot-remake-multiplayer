@@ -19,8 +19,14 @@ name: Build
 # A pull request from a branch of this repo into anything but main runs nothing:
 # the push already ran it. A pull request from a fork runs the branch tier.
 # Docs-only changes skip Build; Content guard still checks them.
+# BRANCH TIER of a manual run (OWNER 2026-11-28 00:16 UTC via B #160): a workflow_dispatch on a work branch runs scope,
+# python-tools (ubuntu 3.12, windows 3.12), windows, linux (clang), and linux-longshot unless every changed
+# file is one it never reads (tools/ci_scope.py LONGSHOT_NEVER_READ_*; scope output `longshot`). asan, tsan, gcc and Python 3.10 run only on integrate-*/main/
+# release-*/tag Builds (and a pull request into main); a red integrate batch gets bisected. The work-branch dispatch test:
+#   github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integrate-')
+#   && !startsWith(github.ref, 'refs/heads/release-') && !startsWith(github.ref, 'refs/tags/')
 # Scope (B #131, 2026-11-26): a manual run on a work branch whose diff vs its merge-base with the `base` input
-# (default integrate-0120) touches only python-only paths (tools/ci_scope.py SCOPED: tools/autotest, docs, *.md, ...)
+# (default auto = the newest origin/integrate-* by merge-base, tools/ci_scope.py auto_base) touches only python-only paths (tools/ci_scope.py SCOPED: tools/autotest, docs, *.md, ...)
 # runs python-tools only; windows, linux and linux-longshot are SKIPPED and the scope job's summary says
 # 'scope: python-only (files: ...)'. main, integrate-*, release-*, tags, pushes and pull requests always run full.
 #
@@ -55,9 +61,9 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Branch the scope job diffs against (merge-base); a python-only diff skips the C++ jobs"
+        description: "Branch the scope job diffs against (merge-base); auto = the newest integrate-*; a python-only diff skips the C++ jobs"
         required: false
-        default: integrate-0120
+        default: auto
 
 permissions:
   contents: read
@@ -79,6 +85,7 @@ jobs:
     runs-on: ${{ (github.repository == 'daurosk/oot-remake-multiplayer' && github.actor == 'daurosk' && github.triggering_actor == 'daurosk' && vars.COOP_SELF_HOSTED_LINUX == 'on' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/'))))) && fromJSON('["self-hosted", "linux", "x64", "squadala-wsl"]') || 'ubuntu-latest' }}
     outputs:
       full: ${{ steps.scope.outputs.full }}
+      longshot: ${{ steps.scope.outputs.longshot }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -86,7 +93,7 @@ jobs:
           filter: blob:none
       - id: scope
         env:
-          SCOPE_BASE: ${{ inputs.base || 'integrate-0120' }}
+          SCOPE_BASE: ${{ inputs.base || 'auto' }}
         run: python3 tools/ci_scope.py --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --base "$SCOPE_BASE" >> "$GITHUB_OUTPUT"
 
   # The puppet pack tool runs on the player's PC (Windows, any recent Python 3), so its
@@ -98,7 +105,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
-        python: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["3.10", "3.12"]' || '["3.12"]') }}
+        python: ${{ fromJSON(!(github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integrate-') && !startsWith(github.ref, 'refs/heads/release-') && !startsWith(github.ref, 'refs/tags/')) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["3.10", "3.12"]' || '["3.12"]') }}
     runs-on: ${{ matrix.os == 'ubuntu-latest' && (github.repository == 'daurosk/oot-remake-multiplayer' && github.actor == 'daurosk' && github.triggering_actor == 'daurosk' && vars.COOP_SELF_HOSTED_LINUX == 'on' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/'))))) && fromJSON('["self-hosted", "linux", "x64", "squadala-wsl"]') || matrix.os }}
     name: python-tools (${{ matrix.os }}, ${{ matrix.python }})
     steps:
@@ -157,10 +164,16 @@ jobs:
       # tools/autotest/ingame/test_gear_link.py and tools/autotest/ingame/test_leather_link.py on two fake bridges)
       - name: In-game test system selftests (fake games, no game)
         run: python tools/autotest/tests/test_ingame.py -v
+      - name: In-game test source check ('%' format arity, SETUP-FAIL source; probe0121-c53046a6)
+        run: python tools/autotest/tests/test_fmtcheck.py -v
+      - name: In-game VOID gpu-reset label selftests (fake driver events)
+        run: python tools/autotest/tests/test_gpu_reset.py -v
       - name: In-game rejoin, server restart, lan251 and host-menu (rows 292/170) selftests (fake live.py)
         run: |
           python tools/autotest/tests/test_ingame_rejoin.py -v
           python tools/autotest/tests/test_ingame_host_menu.py -v
+      - name: Host-starved reading of a set-up frame timeout selftests (no game)
+        run: python tools/autotest/tests/test_host_starved.py -v
       - name: Test game window placement tests
         run: python tools/autotest/tests/test_placement.py -v
       - name: hs.py cache, locks and game build tests
@@ -233,6 +246,20 @@ jobs:
         run: python tools/game_scan/tests/test_game_names.py -v
       - name: MSBT reader tests
         run: python tools/puppet_pack/tests/test_msbt.py -v
+      - name: ExeFS prototype NSO converter tests
+        run: python tools/switch_mod/elf2nso_test.py -v
+      - name: ExeFS module lift check tests
+        run: python tools/switch_mod/lift_check_test.py -v
+      # Builds the ExeFS module with stock LLVM; build.py refuses it if a recomp could not lift it.
+      - name: ExeFS module build + lift check
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v clang >/dev/null || ! command -v ld.lld >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang lld
+          fi
+          clang --version | head -1
+          python tools/switch_mod/build.py
+          cat build/switch-proto/subsdk1.entries
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''
@@ -477,7 +504,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["gcc", "clang", "asan", "tsan"]' || '["gcc"]') }}
+        job: ${{ fromJSON((github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integrate-') && !startsWith(github.ref, 'refs/heads/release-') && !startsWith(github.ref, 'refs/tags/')) && '["clang"]' || ((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-')))) && '["gcc", "clang", "asan", "tsan"]' || '["gcc"]')) }}
     name: linux (${{ matrix.job }})
     env:
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
@@ -585,6 +612,16 @@ jobs:
       - name: Kit dependency licence tests (Linux)
         if: matrix.job == 'gcc'
         run: bash tools/release/tests/kit_deps_test.sh
+      # The ExeFS module's net code (switch/net) built for this PC as the module builds it
+      # (freestanding, shim headers), then joined to this build's coop_server next to a coop_test
+      # client: HELLO, JOIN_PROOF, sealed WELCOME with the other player in it (cross-play handshake).
+      - name: ExeFS net code, PC build + join a real coop_server
+        if: matrix.job == 'gcc'
+        run: |
+          if ! command -v clang >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang
+          fi
+          python3 tools/switch_mod/net_host.py --server build/server/coop_server --client build/tools/coop_test/coop_test
       - name: coop_test, 2 clients for 20 seconds
         if: env.COOP_SOAK == '1'
         run: |
@@ -601,7 +638,7 @@ jobs:
   # (a release tag v*: the only Build job of a tag push).
   linux-longshot:
     needs: scope
-    if: needs.scope.outputs.full == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/linux-longshot')))
+    if: needs.scope.outputs.full == 'true' && needs.scope.outputs.longshot == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/linux-longshot')))
     runs-on: ubuntu-22.04
     name: linux-longshot (module, kit, patched renderer)
     env:
@@ -670,6 +707,16 @@ jobs:
       # tests/ is not in the AppImage, so the test is ours)
       - name: Patch 0039's menu pads on the patched source
         run: python3 -I -B tools/hookshot/menu_pads_behind_test.py "$KIT/data/builder/source" --cc gcc-12
+      # (patch 0047: a local co-op window's own shape, HOS_ASPECT shapes and narrow HOS_OUTPUT_RES; Longshot's own tests/
+      # is not in the AppImage, so the test is ours)
+      - name: Patch 0047's split screen shapes on the patched source
+        run: python3 -I -B tools/hookshot/split_shapes_test.py "$KIT/data/builder/source" --cc gcc-12
+      # (patch 0023: its tests, tools/hookshot/null_guards_cases_test.py (ours: the AppImage ships no tests/), on the patched
+      # source: the install, the words, a real Lifter's text, the lift's own chain (fastfp, guest locals) writing and
+      # counting the guard, and the emitted C compiled with gcc and run on fake memory; with Longshot's own
+      # Python from the kit, which has what nx2/lift.py imports: capstone)
+      - name: Patch 0023's null guards on the patched source
+        run: '"$KIT/data/builder/image/usr/python/bin/python3" -I -B tools/hookshot/null_guards_test.py "$KIT/data/builder/source" --cc gcc-12'
       - name: A first start without a game stops in plain words
         run: |
           set +e

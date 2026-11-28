@@ -55,8 +55,8 @@ INGAME_DIR = os.path.join(HERE, "ingame")
 DEFAULT_S = 120.0          # bt_plugin DEFAULT_BUDGET: a test's deadline when it names none
 BOOT_S = 120.0             # one more session = one more game-pair boot + its lane check (live.py start)
 TIMED = ("PASS", "FAIL", "FLAKY")
-NOT_PASS = ("FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "NOT-RUN")
-RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "NOT-RUN", "SKIP")
+NOT_PASS = ("FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "VOID", "NOT-RUN")   # (VOID: gpu_reset.py, never a pass)
+RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "VOID", "NOT-RUN", "SKIP")
 
 
 class Fail(Exception):
@@ -353,7 +353,7 @@ def summary_md(doc):
     out = ["# rc in-game tests: %s" % doc["verdict"], "",
            " ".join("%s %d" % (k, v) for k, v in c.items()) + ", ~%s min (longest session)" % doc["minutes"], "",
            "| result | test | session | why |", "|---|---|---|---|"]
-    order = {"FAIL": 0, "SETUP-FAIL": 1, "NOT-RUN": 2, "FLAKY": 3, "NO-REF": 4, "PASS": 5, "SKIP": 6}
+    order = {"FAIL": 0, "SETUP-FAIL": 1, "VOID": 2, "NOT-RUN": 3, "FLAKY": 4, "NO-REF": 5, "PASS": 6, "SKIP": 7}
     for r in sorted(doc["tests"], key=lambda r: order.get(r.get("result"), -1)):
         out.append("| %s | %s | %s | %s |" % (r.get("result"), r.get("test"),
                                              r.get("session") or os.path.basename(r.get("lane") or ""),

@@ -773,8 +773,8 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
-                                               "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "PvP",
-                                               "Down but not out", "Difficulty",
+                                               "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "World runs in menus", "PvP",
+                                               "Wait for the party", "Down but not out", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Show players on map", "Names on map", "New Game+",
                                                "Saves", "Original game"});   // (no patch 0015: no input rows)
     View v = m.view();
@@ -791,10 +791,12 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK(v.rows[11].value == "Shared");   // (Gold Skulltulas: shared unless chosen)
     CHECK_FALSE(v.rows[12].on);   // (Race mode: off unless chosen)
     CHECK(v.rows[13].on);         // (Shared floor switches: on unless turned off)
-    CHECK_FALSE(v.rows[14].on);   // (PvP too)
-    CHECK(v.rows[15].fixed);      // (Down but not out: the session's, so not in one it waits, dimmed)
-    CHECK(v.rows[17].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[17].on);   // the default
+    CHECK_FALSE(v.rows[14].on);   // (World runs in menus: off unless turned on, row 299)
+    CHECK_FALSE(v.rows[15].on);   // (PvP too)
+    CHECK_FALSE(v.rows[16].on);   // (Wait for the party too)
+    CHECK(v.rows[17].fixed);      // (Down but not out: the session's, so not in one it waits, dimmed)
+    CHECK(v.rows[19].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[19].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -866,10 +868,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 24);   // (the port, relay, room, network password, host rows and chat key rows before them, New Game+, Saves and Original game after)
-    CHECK(v.rows[19].kind == RowKind::kToggle);
-    CHECK(v.rows[19].on);
-    CHECK(v.rows[20].on);
+    REQUIRE(v.rows.size() == 26);   // (the port, relay, room, network password, host rows and chat key rows before them, New Game+, Saves and Original game after)
+    CHECK(v.rows[21].kind == RowKind::kToggle);
+    CHECK(v.rows[21].on);
+    CHECK(v.rows[22].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -944,11 +946,11 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(17);
+    m.Select(18);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(17, 1);   // the On half
+    m.Click(18, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(17, -1);
+    m.Click(18, -1);
     CHECK_FALSE(m.options().voice);
     m.Click(14, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
@@ -1038,8 +1040,8 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
-                                               "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "PvP",
-                                               "Down but not out", "Difficulty",
+                                               "Password on this network", "Game", "Approve joins", "Gold Skulltulas", "Race mode", "Shared floor switches", "World runs in menus", "PvP",
+                                               "Wait for the party", "Down but not out", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Controller",
                                                "Keyboard and mouse", "Show players on map", "Names on map",
                                                "New Game+", "Saves", "Original game"});
@@ -1067,7 +1069,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 24);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 25);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 
@@ -2544,6 +2546,47 @@ TEST_CASE("pause tab: Settings: Shared floor switches, on unless turned off, kep
     m.options().Write(coop, options);
     CHECK(options.find("floor_switches") == std::string::npos);  // on: no line
     CHECK(CoopTitleMenu::Options::Read(coop, options).floor_switches);
+}
+
+TEST_CASE("pause tab: Settings: World runs in menus, off unless turned on, kept in coop-options.ini") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    CHECK_FALSE(m.options().pause_world);
+    m.Open(Page::kSettings);
+    SelectRow(m, "World runs in menus");
+    CHECK(m.view().help.rfind("Off: the pause menu stops your world", 0) == 0);
+    m.Press(Input::kRight);
+    CHECK(m.options().pause_world);
+    CHECK(m.view().help.rfind("On: in a game you host, the world keeps going", 0) == 0);
+    CHECK(m.view().help.size() <= 160);   // (the caption's room)
+    std::string coop, options;
+    m.options().Write(coop, options);
+    CHECK(options.find("pause_world = on") != std::string::npos);
+    CHECK(CoopTitleMenu::Options::Read(coop, options).pause_world);
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().pause_world);
+    coop.clear();
+    options.clear();
+    m.options().Write(coop, options);
+    CHECK(options.find("pause_world") == std::string::npos);  // off: no line
+    CHECK_FALSE(CoopTitleMenu::Options::Read(coop, options).pause_world);
+    // A host live in a session whose next Host differs: the session keeps its setting until the next Host.
+    Session s = Hosting(2);
+    s.rules = true;
+    s.pause_world = false;
+    m.SetSession(s);
+    SelectRow(m, "World runs in menus");
+    m.Press(Input::kRight);
+    REQUIRE(m.options().pause_world);
+    CHECK(m.view().help.rfind("Applies at your next Host: stop hosting", 0) == 0);
+    CHECK(m.view().help.find("This game: Off.") != std::string::npos);
+    // A guest reads the session's state.
+    Session g = Joined();
+    g.rules = true;
+    g.pause_world = true;
+    m.SetSession(g);
+    SelectRow(m, "World runs in menus");
+    CHECK(m.view().help.find("This game: On.") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Settings: Shared floor switches says race mode shares none, chosen or in the session") {

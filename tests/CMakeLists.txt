@@ -59,6 +59,7 @@ add_executable(coop_tests
   lichii/callers_test.cpp
   lichii/hit_replay_test.cpp
   lichii/fairy_test.cpp
+  lichii/navi_probe_test.cpp
   lichii/map_refresh_test.cpp
   lichii/life_gauge_test.cpp
   lichii/rooms_test.cpp
@@ -130,6 +131,7 @@ add_executable(coop_tests
   lichii/pivot_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_hallway.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pivot.cpp
+  lichii/party_wait_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_party_wait.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
   lichii/pvp_rewind_test.cpp
@@ -164,6 +166,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_local_net.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_navi_probe.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_map_refresh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
@@ -208,6 +211,7 @@ add_executable(coop_tests
   lichii/gold_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_gold_mode.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_race_mode.cpp
   lichii/switch_stand_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_stand_mode.cpp
+  lichii/pause_world_mode_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pause_world_mode.cpp
   lichii/pack_notice_test.cpp
   lichii/chat_log_test.cpp
   lichii/name_privacy_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_name_privacy.cpp

@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# OWNER 2026-11-28 00:16 UTC (via B #160): a newer push to the same work branch (or pull request) cancels its older,
+# still-running guard; main keeps every run (its group holds the commit).
+concurrency:
+  group: content-guard-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest

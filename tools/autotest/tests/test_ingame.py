@@ -1580,6 +1580,16 @@ class WarpPlayUi(unittest.TestCase):
             pair.warp_both("KakarikoVillage_Child")
         self.assertEqual(len(self.up_lines(pair, "A")), 1)
 
+    def test_arrive_in_event_has_no_play_ui_wait(self):
+        # (row-215-confirm-4, probe-intro-53d40ab3-2: a boss stage's intro holds the play UI down after the bridge's ok;
+        # arrive_in_event=True leaves the game in its event, never a SETUP-FAIL on the UI)
+        pair = self.lane(BT_FAKE_UI_NEVER="A")
+        pair.warp_one("A", "KakarikoVillage_Child", arrive_in_event=True)
+        self.assertIn("A: warp KakarikoVillage_Child: arrive_in_event, no play UI wait (the arrival's event holds it "
+                      "down)", pair.notes)
+        with self.assertRaisesRegex(P.SetupFail, r"^A: warp KakarikoVillage_Child: the game's play UI not up"):
+            pair.warp_one("A", "KakarikoVillage_Child")      # (free play: the wait stays)
+
     def test_no_play_ui_line_is_no_wait(self):
         pair = self.lane()
         before = pair.c["A"].last_frame
@@ -1661,6 +1671,36 @@ class BootPlayUi(unittest.TestCase):
         proof = (summary(out).get("boot_proof") or {}).get("lane1") or ""
         self.assertIn("A: in play with its play UI down: waited ", proof)    # (the boot proof's wait, said)
         self.assertNotIn("B: in play with its play UI down", proof)
+
+    def test_warp_without_the_ui_wait_leaves_the_case_and_until_in_play_waits(self):
+        """pause-press-0121-3 (B #158: force the case, do not wait for luck): warp_one(ui_wait=False) returns with A in
+        play and its play UI down (the fake's warp: down, up BT_FAKE_UI_LATE frames later); until_in_play then waits
+        and says so. The default warp_one still waits for the play UI (crawl-337-12)."""
+        pair = self.lane(BT_FAKE_UI_LATE="60")
+        pair.until_in_play("both", max_frames=P.READY_FRAMES)
+        pair.warp_one("A", "KakarikoVillage_Child", "Kakariko_WellSide", ui_wait=False)
+        self.assertEqual(pair.play_ui("A"), "down")
+        self.assertTrue(pair.in_play(pair.state("A")))
+        pair.until_in_play("both", max_frames=P.READY_FRAMES)
+        self.assertEqual(pair.play_ui("A"), "up")
+        self.assertTrue(any(n.startswith("A: in play with its play UI down: waited ") for n in pair.notes), pair.notes)
+        pair.warp_one("A", "KakarikoVillage_Child", "Kakariko_WellSide")
+        self.assertEqual(pair.play_ui("A"), "up")
+
+    def test_suite_forced_case_test_passes(self):
+        """The fake suite's test_pause_after_play_ui_down: PASS, its set-up note names the hit, the wait is noted."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        out = os.path.join(tmp, "o")
+        p = pytest_run([".", "--fake", "--out", out, "-q", "-k", "test_pause_after_play_ui_down", "--no-smoke-gate",
+                        "--no-rerun"], env={"BT_FAKE_UI_LATE": "60"})
+        rows = [r for r in summary(out)["tests"] if r["test"].split("::")[-1] == "test_pause_after_play_ui_down"]
+        self.assertEqual(len(rows), 1, p.stdout[-3000:])
+        self.assertEqual(rows[0]["result"], "PASS", (rows[0], p.stdout[-3000:]))
+        notes = " | ".join(rows[0].get("notes") or [])
+        self.assertIn("forced case hit: A in play at frame ", notes)
+        self.assertIn("A: in play with its play UI down: waited ", notes)
+
 
 class SetupLimit(unittest.TestCase):
     """Pair.setup's 30 s limit holds for the calls inside it (review-c123-6 point 2): a hung bridge in a set-up is a
@@ -2218,6 +2258,36 @@ class ImageCompare(unittest.TestCase):
             r_, g_, b_ = im.split()
             _I.merge("RGB", (b_, r_, g_)).save(os.path.join(self.tmp, "hue.png"))   # (channels rotated: a hue shift)
         self.assertFalse(imagecheck.compare(os.path.join(self.tmp, "hue.png"), green, 0.80)["ok"])
+
+    def test_box_compares_only_its_part(self):
+        """pause-press-0121-3: the pause page's right half shows the live world behind it (it moves); test_pause compares
+        only the page's own part (check_shot box). A change outside the box is not seen, one inside it still fails."""
+        from PIL import Image, ImageDraw
+        def pic(name, left, right):
+            im = Image.new("RGB", (640, 360), (30, 80, 30))
+            d = ImageDraw.Draw(im)
+            d.rectangle(left, fill=(220, 30, 30))
+            d.rectangle(right, fill=(40, 40, 200))
+            path = os.path.join(self.tmp, name + ".png")
+            im.save(path)
+            return path
+        box = (0.0, 0.0, 0.56, 1.0)
+        ref = pic("ref", (40, 40, 120, 100), (420, 40, 600, 300))
+        world = pic("world", (40, 40, 120, 100), (380, 200, 630, 350))     # (only the "world" right of the box moved)
+        page = pic("page", (40, 200, 120, 260), (420, 40, 600, 300))       # (the page itself changed)
+        self.assertFalse(imagecheck.compare(world, ref, 0.90)["ok"])        # (whole picture: the world fails it)
+        r = imagecheck.compare(world, ref, 0.90, box=box)
+        self.assertTrue(r["ok"], r)
+        self.assertIn("(box [0.0, 0.0, 0.56, 1.0])", r["why"])
+        self.assertEqual(r["box"], list(box))
+        self.assertFalse(imagecheck.compare(page, ref, 0.90, box=box)["ok"])
+        # (several boxes: the lowest one counts; a change in the second box fails though the first matches)
+        bar = pic("bar", (40, 40, 120, 100), (420, 0, 600, 30))
+        two = [box, (0.0, 0.0, 1.0, 0.10)]
+        self.assertTrue(imagecheck.compare(world, ref, 0.90, box=two)["ok"])
+        r = imagecheck.compare(bar, ref, 0.90, box=two)
+        self.assertFalse(r["ok"], r)
+        self.assertEqual(r["box"], [list(box), [0.0, 0.0, 1.0, 0.10]])
 
     def test_no_reference_is_never_ok(self):
         keep = os.path.join(self.tmp, "keep")

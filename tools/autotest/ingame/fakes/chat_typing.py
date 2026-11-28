@@ -1,5 +1,6 @@
 """Fake-game reactions for typing-blink-0121 (ingame/test_typing_blink.py; owner typing-blink-0121). Hooks: fakegame.py
-docstring. Named chat_typing so it loads before f1_event.py, whose `key` hook answers every key it does not own.
+docstring. (Named chat_typing to load before f1_event.py, whose `key` hook once answered every key; since f1-fake-scope
+it takes F1 only and fakegame.builtin_answer answers a key no fake takes.)
 
 What a real game does, each from the module source test_typing_blink.py cites:
 - `key` T (coop_chatbox.h kOpenKey, coop_hookshot.cpp TypeKey) opens the chat box: taken. `key` text types

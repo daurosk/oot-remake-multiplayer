@@ -11,6 +11,9 @@ Results (one summary per run, DIR/summary.json + summary.md, and pytest's --juni
   FLAKY       failed, then passed on the one rerun (never counted as a pass)
   SETUP-FAIL  the lane, the boot or the test's own set-up (Pair.setup(), < 30 s) did not hold; not rerun
   NO-REF      a look check has no stored reference yet (its shot is kept under DIR/new/); not a pass
+  VOID        a FAIL/SETUP-FAIL caused by an NVIDIA driver reset of the whole GPU (gpu_reset.py: System nvlddmkm 14/153 in
+              the session window AND the game's log has VK_ERROR_DEVICE_LOST after it); never a pass, not rerun in the
+              run (the games are gone): the job is rerun once; a second gpu-reset of that rerun (same test + commit) is FAIL
 Smoke gate: a smoke test (marker `smoke`) that FAILs or SETUP-FAILs stops the run there (the rc is broken), unless
 --no-smoke-gate.
 """
@@ -34,9 +37,12 @@ import pair as P   # noqa: E402
 import testpack    # noqa: E402
 import testsave    # noqa: E402
 import solo        # noqa: E402
+import stale_paths  # noqa: E402
 import windowshot  # noqa: E402
+import fmtcheck    # noqa: E402
+import gpu_reset   # noqa: E402
 
-RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "SKIP", "NOT-RUN")
+RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "VOID", "SKIP", "NOT-RUN")
 DEFAULT_BUDGET = 120
 
 
@@ -193,8 +199,52 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=lambda it: (_rep_of(it), 1 if it.get_closest_marker("leaves_play") else 0,
                                0 if it.get_closest_marker("smoke") else 1, order[id(it)]))
     _deselect_needs_env(config, items)
-    if config.getoption("lane_check_only"):
-        _lane_check_only(config, items)
+    bad = _source_problems(items)
+    _mark_stale(config, items)
+    config._bt_bad = bad      # (--lane-check-only reads it in pytest_collection_finish, once -k / -m have run)
+    if bad and not config.getoption("lane_check_only"):
+        raise pytest.UsageError("SETUP-FAIL source: " + "; ".join(bad))
+
+
+def _source_problems(items):
+    """fmtcheck over the collected test files + the harness files next to this plugin (probe0121-c53046a6 22:41:
+    a '%' with 5 placeholders and 4 values killed a lane run after --lane-check-only said OK)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    files = {os.path.join(here, f) for f in os.listdir(here) if f.endswith(".py") and not f.startswith("test_")}
+    files |= {str(it.fspath) for it in items if str(it.fspath).endswith(".py")}
+    return fmtcheck.check_files(files)
+
+
+def _mark_stale(config, items):
+    """stale_paths.py (B #156): each collected test file is scanned once; a hit is kept on each of its items, whose
+    set-up is then SETUP-FAIL by name (pytest_runtest_setup below), and --lane-check-only prints it as SETUP-FAIL."""
+    seen, config._bt_stale = {}, []
+    for it in items:
+        path = str(getattr(it, "path", None) or it.fspath)
+        if path not in seen:
+            try:
+                seen[path] = stale_paths.scan_file(path)
+            except OSError:
+                seen[path] = []
+            config._bt_stale.extend(seen[path])
+        it._bt_stale = seen[path]
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    hits = getattr(item, "_bt_stale", None)
+    if hits:          # (before any fixture: no lane boot, no game input for a test that reads a path the module lacks)
+        raise P.SetupFail("; ".join(stale_paths.line_of(h) for h in hits))
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session):
+    """--lane-check-only once collection is done (after EVERY plugin's modifyitems), so its 'tests collected N' is what
+    the run gets: pytest's own -k / -m deselection (the mark plugin's modifyitems) ran after ours before, and the chk
+    line counted the tests -k/-m leaves out (B #158: gate-hilt 23:09 'collected 49', pause-press 23:27 'collected 6
+    not 2'). (Not a renamed modifyitems impl: pytest registers only functions named pytest_*, CI 46086753563.)"""
+    if session.config.getoption("lane_check_only"):
+        _lane_check_only(session.config, session.items, getattr(session.config, "_bt_bad", ()))
 
 
 def _deselect_line(d):
@@ -403,10 +453,10 @@ def _real_lane_info(config, lane):
     return info
 
 
-def _lane_check_only(config, items):
+def _lane_check_only(config, items, bad=()):
     lanes = [int(x) for x in str(config.getoption("lanes")).split(",") if x.strip()]
     res = {"collected": len(items), "smoke": sum(1 for it in items if it.get_closest_marker("smoke")),
-           "look": sum(1 for it in items if it.get_closest_marker("look")), "lanes": {}}
+           "look": sum(1 for it in items if it.get_closest_marker("look")), "lanes": {}, "source": list(bad)}
     for lane in lanes:
         try:
             if config.getoption("fake"):
@@ -421,7 +471,11 @@ def _lane_check_only(config, items):
             res["lanes"][str(lane)] = dict(info, ok=True)
         except P.SetupFail as e:
             res["lanes"][str(lane)] = {"ok": False, "why": str(e)}
-    res["ok"] = bool(lanes) and bool(items) and all(v["ok"] for v in res["lanes"].values())
+    # (the items left after -k / -m, not config._bt_stale = every collected file's hits: a deselected test's stale path
+    # must not SETUP-FAIL a chk whose run never sets it up; items of one file share one hits list, so once per list)
+    lists = {id(h): h for h in (getattr(it, "_bt_stale", None) for it in items) if h}
+    res["stale"] = [stale_paths.line_of(h) for hits in lists.values() for h in hits]
+    res["ok"] = bool(lanes) and bool(items) and not bad and all(v["ok"] for v in res["lanes"].values()) and not res["stale"]
     out = config.getoption("out") or os.path.join(os.getcwd(), "ingame-out")
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "setup.json"), "w", encoding="utf-8") as f:
@@ -434,6 +488,10 @@ def _lane_check_only(config, items):
         say("lane%s %s %s" % (lane, "SETUP-OK" if v["ok"] else "SETUP-FAIL",
                               ("commit %s dll %s" % (v.get("commit"), (v.get("dll_sha256") or "")[:16])) if v["ok"]
                               and not v.get("fake") else v.get("why", "fake")))
+    for b in bad:
+        say("SETUP-FAIL source: " + b)
+    for why in res["stale"]:
+        say("SETUP-FAIL %s" % why)
     say("tests collected %d (smoke %d, look %d); RESULT: %s" % (res["collected"], res["smoke"], res["look"],
                                                                "SETUP-ONLY OK" if res["ok"] else "SETUP-FAIL"))
     config._bt_setup = res
@@ -633,6 +691,26 @@ def games_closed(session, alive=None):
         ", ".join(gone), ", ".join(str(pids[x]) for x in gone))
 
 
+def _void_why(config, kind, test):
+    """(result, why) for a FAIL / SETUP-FAIL of this lane's session that a GPU reset caused, else None (B #161 guards:
+    only those two results, only with the driver event AND the game's DEVICE_LOST right after it; see gpu_reset.py):
+    ("VOID", 'VOID gpu-reset: ...') the first time, ("FAIL", 'gpu-reset twice: maybe ours ...') when this test on this
+    commit was VOID gpu-reset in an earlier run (the job's rerun)."""
+    if kind not in ("FAIL", "SETUP-FAIL"):
+        return None
+    session = getattr(config, "_bt_session", None) or getattr(config, "_bt_boot_session", None)
+    try:
+        why = gpu_reset.judge(session, time.time())
+        if not why:
+            return None
+        old = gpu_reset.second_reset(test, config.getoption("expect_commit"), getattr(config, "_bt_started", None), why)
+    except Exception:            # noqa: BLE001 (the check itself failing never hides the result: it stays as it was)
+        return None
+    if old:
+        return "FAIL", "gpu-reset twice: maybe ours (first VOID %s) | %s" % (old.get("when"), why)
+    return "VOID", why
+
+
 def _stop_why(config):
     return memwatch_stop() or games_closed(getattr(config, "_bt_session", None))
 
@@ -682,7 +760,14 @@ def lane_pair(request):
         games = lanefake.games()
         if config.getoption("solo"):     # (the fake A logs what the real module logs with no server: solo.IDLE)
             games = {solo.GAME: games[solo.GAME]}
-        pair = P.Pair(games, out_dir=out, refs_dir=os.environ.get("BT_FAKE_REFS", refs))
+        # (--fake never reads the repo refs: fake shots are not game shots, so a real ref the repo adds would turn a
+        #  fake selftest red (B #166, CI 46093151892 party-hud). BT_FAKE_REFS if set, else an empty dir: NO-REF.)
+        #  (BT_FAKE_REFS is never created here: selftests copytree candidates into it after a NO-REF run; CI 46106069466)
+        fake_refs = os.environ.get("BT_FAKE_REFS")
+        if not fake_refs:
+            fake_refs = os.path.join(out, "fake", "no-refs")
+            os.makedirs(fake_refs, exist_ok=True)
+        pair = P.Pair(games, out_dir=out, refs_dir=fake_refs)
         pair.lane, pair.info = lane, {"fake": True}
         pair.window_shooter = _fake_window_shooter(lanefake)
         pair.has_switch = boot_switch_check(config)
@@ -716,6 +801,7 @@ def lane_pair(request):
             _pack_in(config, lane, folders, out, romfs=os.path.join(game_a, "romfs"))
         except (testpack.PackError, testsave.SaveProfileError, OSError) as e:   # (OSError: review-c123-9 nit a)
             raise P.SetupFail("lane%d pack/save: %s" % (lane, e))
+        config._bt_boot_session = session       # (gpu_reset: a driver reset during the boot is judged on this session)
         started = _live(["start"] + boot_args(config, lane, info["server"], session), timeout=1200)
         if not started.get("ok"):
             crash = _crash_why(session)
@@ -947,8 +1033,10 @@ def _stop_run(item, why):
     item.ihook.pytest_runtest_logstart(nodeid=item.nodeid, location=item.location)
     if first:
         from _pytest.reports import TestReport
-        rep = TestReport(item.nodeid, item.location, {}, "failed", why, "teardown",
-                         user_properties=[("result", "SETUP-FAIL"), ("seconds", 0), ("why", why)])
+        void = _void_why(config, "SETUP-FAIL", item.nodeid)
+        result, row_why = (void[0], "%s | was SETUP-FAIL: %s" % (void[1], why)) if void else ("SETUP-FAIL", why)
+        rep = TestReport(item.nodeid, item.location, {}, "failed", row_why, "teardown",
+                         user_properties=[("result", result), ("seconds", 0), ("why", row_why)])
         item.ihook.pytest_runtest_logreport(report=rep)
         config._bt_stopped = why
         item.session._setupstate.teardown_exact(None)
@@ -986,9 +1074,10 @@ def pytest_runtest_protocol(item, nextitem):
     t0 = time.monotonic()
     reports = runtestprotocol(item, nextitem=nextitem, log=False)
     kind, first = _kind(reports), None
+    void = _void_why(item.config, kind, item.nodeid)      # (a GPU reset: no rerun, the lane's games are gone)
     # a FAIL reruns once, but never one from set-up (the lane's boot: a GameCrash): that would boot the lane again
     in_setup = any(r.when == "setup" and r.failed for r in reports)
-    if kind == "FAIL" and not in_setup and not item.config.getoption("no_rerun") and not _past_deadline(item.config):
+    if kind == "FAIL" and not void and not in_setup and not item.config.getoption("no_rerun") and not _past_deadline(item.config):
         first = reports
         again = runtestprotocol(item, nextitem=nextitem, log=False)
         rerun = _kind(again)
@@ -1010,13 +1099,15 @@ def pytest_runtest_protocol(item, nextitem):
             crash = getattr(r.longrepr, "reprcrash", None)
             why = " ".join((crash.message if crash else str(r.longrepr)).split())[:400]
             break
+    if void:
+        kind, why = void[0], ("%s | was %s: %s" % (void[1], kind, why))[:700]
     for r in reports:
         r.user_properties.append(("result", kind))
         r.user_properties.append(("seconds", secs))
         r.user_properties.append(("why", why))
         item.ihook.pytest_runtest_logreport(report=r)
     item.ihook.pytest_runtest_logfinish(nodeid=item.nodeid, location=item.location)
-    if item.get_closest_marker("smoke") and kind in ("FAIL", "SETUP-FAIL") and not item.config.getoption("no_smoke_gate"):
+    if item.get_closest_marker("smoke") and kind in ("FAIL", "SETUP-FAIL", "VOID") and not item.config.getoption("no_smoke_gate"):
         item.session.shouldstop = "smoke %s %s: the rc stops here" % (item.name, kind)
     return True
 
@@ -1131,4 +1222,8 @@ def result_line(summary):
     bad = next(r for r in rows if r["result"] != "PASS")
     if c["SETUP-FAIL"] == len(rows):
         return "RESULT: SETUP-FAIL %s" % bad["why"]
+    if c.get("VOID") and all(r["result"] in ("PASS", "VOID", "NOT-RUN") for r in rows):
+        void = next(r for r in rows if r["result"] == "VOID")
+        return "RESULT: VOID (%s); first: %s %s; rerun the job once (a second gpu-reset of the rerun is FAIL: maybe ours)" % (
+            counts, void["test"], void["why"][:300])
     return "RESULT: NOT PASS (%s); first: %s %s %s" % (counts, bad["test"], bad["result"], bad["why"][:300])

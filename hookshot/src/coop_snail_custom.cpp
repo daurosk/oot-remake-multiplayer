@@ -22,6 +22,15 @@ int Neighbour(int f, Dir dir) {
     return to >= 0 && to < kOptions ? to : -1;
 }
 
+std::uint64_t GameKeys(std::uint64_t in, std::uint64_t down, std::uint64_t his, bool mixer, std::uint64_t* kept) {
+    constexpr std::uint64_t kDirs = kUp | kDown | kLeft | kRight | kStickUp | kStickDown | kStickLeft | kStickRight;
+    constexpr std::uint64_t kOurs = kB | kMinus;   // (the keys co-op may take: B leaves its mixer, - stays in it)
+    *kept = (*kept | (down & kOurs & ~his)) & in;   // (taken at its press, co-op's until let go)
+    std::uint64_t pass = kDirs | kOurs | kPlus;
+    if (mixer) pass &= ~kOurs;   // (B leaves co-op's mixer, not his screen; - does not close his screen from it)
+    return in & pass & ~*kept;
+}
+
 void Driver::Open(const CoopLook::Look& look, std::uint16_t character) {
     page_.SetPaged(true);
     page_.SetCharacter(character, false);

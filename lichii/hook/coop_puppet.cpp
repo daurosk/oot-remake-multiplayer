@@ -12,6 +12,7 @@
 #include "coop_pvp_native.h"
 #include "coop_puppet_own.h"
 #include "coop_show_delay.h"
+#include "coop_platform_carry.h"
 
 #include <algorithm>
 #include <atomic>
@@ -381,6 +382,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.sound.pending = CoopPuppetSound::State::Step::none;
         } else if (pending_ == Pending::link_sound) {
             CoopLinkSound::Dropped(slot.link_sound);
+        } else if (pending_ == Pending::link_effect) {
+            CoopLinkSound::Dropped(slot.link_effect);
         } else if (pending_ == Pending::flame) {
             CoopPuppetFlame::Dropped(slot.flame);
         }
@@ -397,6 +400,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         for (auto& slot : slots_) {
             if (slot.number == t.number && !t.sounds.empty()) {
                 for (auto& s : t.sounds) {
+                    if (s.effect) {  // LINK_EFFECT (row 310): on the puppet's effect user
+                        if (s.end) {
+                            CoopLinkSound::End(slot.link_effect, std::move(s.name));
+                        } else {
+                            slot.link_effect.heard.Push(std::move(s.name), s.at_ms);
+                        }
+                        continue;
+                    }
                     if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
                         continue;  // the OCARINA_NOTE path plays the notes: not twice
                     }
@@ -559,6 +570,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 }
                 if (t->show == Show::show || t->show == Show::hold) {
                     DrawAt(slot, guest, *t, now_ms);
+                    if (++slot.cloth_frames >= kClothProbeFrames) {
+                        slot.cloth_frames = 0;
+                        const std::string who = "P" + std::to_string(slot.number);
+                        ClothProbe(guest, slot.actor, who);
+                        if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+                            ClothProbe(guest, player, who + " our own Link's");  // the game's own cloth, beside it
+                        }
+                    }
                 } else if (t->show == Show::hide) {
                     slot.smooth.Set(t->position);  // out of sight: comes back where they are
                     slot.follow.Reset();
@@ -836,6 +855,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
         break;
+    case Pending::link_effect:
+        CoopLinkSound::Finish(slot.link_effect, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
     case Pending::head_show:
         slot.head_show = false;
         slot.head_shown = true;
@@ -979,10 +1002,17 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
         // seen) the whole song; the notes must sound then too.
+        if (VoiceLines() && CoopLinkSound::OurUser() != our_user_named_) {
+            // Row 319: our own Link's sound user and the name it was made with (the mod's voice hook changes the
+            // archive list it loads, not this name: the run compares it with the puppets' lines).
+            our_user_named_ = CoopLinkSound::OurUser();
+            Say("our sound user " + Hex(our_user_named_) + " is '" +
+                (our_user_named_ != 0 ? CoopPuppetSound::UserName(guest, our_user_named_) : std::string()) + "'");
+        }
         if (t->show != Show::hide) {
             const std::string who = "P" + std::to_string(slot.number);
             const auto say = [this](const std::string& line) { Say(line); };
-            if (anim_) {
+            if (VoiceLines()) {
                 CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
             }
             if (!OcarinaSoundOn()) {
@@ -1001,8 +1031,19 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 if (auto c = CoopLinkSound::Next(
                         slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
                         slot.block, now_ms,
-                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, VoiceLines())) {
                     pending_ = Pending::link_sound;
+                    return c;
+                }
+            }
+            // The player's own effects (row 310, coop_link_sound.h): their own cells, on the puppet's ELink user.
+            {
+                const std::uint64_t user = CoopPuppetSound::EffectUser(guest, slot.actor);
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_effect, effect_budget_, guest, input_.main_base, slot.actor, user,
+                        slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_effect;
                     return c;
                 }
             }
@@ -1129,6 +1170,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.take = slot.drop = false;
     slot.anim_name.clear();
     slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    CoopPuppetSound::MadeAgain(slot.sound);     // (so may its sound user: row 319 review)
+    CoopLinkSound::MadeAgain(slot.link_sound);
     slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
@@ -2096,6 +2139,75 @@ void Director::BodyProbe(Guest& guest, std::uint64_t actor, const std::string& w
     }
 }
 
+// Row 313 probe, LICHII_COOP_DEBUG_CLOTH=1 only, read and never written: the cloth the game simulates for an
+// actor, read the way its hair code reads it (main+0x4b8438..0x4b84b4, disassembled from dump/main.plain):
+// holder C = [[[[actor+0x270]+0x50]+0x20]+0x1c8]; if C != 0 and the s32 at C+0xd0 >= 1, the list
+// O = [[[C+0xd8]]] holds an s32 count at O+0x10 and entries at [O+0x18], 0x78 bytes each; the game sets bit 0
+// of each entry's u64 at +0x18 (and clears it where bit 3 is set). A puppet built without its cloth
+// (pack --no-cloth) has C == 0 while our own Link's is set; with the cloth the first entry's floats change
+// while the copy moves and settle while it stands.
+void Director::ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_DEBUG_CLOTH");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!on || actor == 0) {
+        return;
+    }
+    constexpr std::uint64_t kComponents = 0x270;  // actor -> component table
+    constexpr std::uint64_t kPhysics = 0x50;      // table -> the physics component
+    constexpr std::uint64_t kSet = 0x20;          // physics -> the controller set
+    constexpr std::uint64_t kHolder = 0x1c8;      // set -> the cloth holder (the hair code's C)
+    constexpr std::uint64_t kHolderCount = 0xd0;  // C: s32
+    constexpr std::uint64_t kHolderList = 0xd8;   // C -> -> -> O
+    constexpr std::uint64_t kListCount = 0x10;    // O: s32 entries
+    constexpr std::uint64_t kListEntries = 0x18;  // O -> entries
+    constexpr std::uint64_t kEntrySize = 0x78;
+    constexpr std::uint64_t kEntryFlags = 0x18;   // entry: u64, bit 0 set by the hair code
+    std::uint64_t parts = 0;
+    std::uint64_t physics = 0;
+    std::uint64_t set = 0;
+    std::uint64_t holder = 0;
+    ReadValue(guest, actor + kComponents, parts);
+    if (parts != 0) {
+        ReadValue(guest, parts + kPhysics, physics);
+    }
+    if (physics != 0) {
+        ReadValue(guest, physics + kSet, set);
+    }
+    if (set != 0) {
+        ReadValue(guest, set + kHolder, holder);
+    }
+    std::int32_t count = 0;
+    std::uint64_t list = 0;
+    std::int32_t entries = 0;
+    std::uint64_t first = 0;
+    if (holder != 0 && ReadValue(guest, holder + kHolderCount, count) && count >= 1) {
+        std::uint64_t p = 0;
+        if (ReadValue(guest, holder + kHolderList, p) && p != 0 && ReadValue(guest, p, p) && p != 0 &&
+            ReadValue(guest, p, list) && list != 0) {
+            ReadValue(guest, list + kListCount, entries);
+            ReadValue(guest, list + kListEntries, first);
+        }
+    }
+    std::string line = "cloth: " + who + " physics " + Hex(physics) + " set " + Hex(set) + " holder " +
+                       Hex(holder) + " n " + std::to_string(count) + " list " + Hex(list) + " entries " +
+                       std::to_string(entries);
+    std::array<float, kEntrySize / 4> words{};
+    std::uint64_t flags = 0;
+    if (entries >= 1 && first != 0 && guest.Read(first, words.data(), sizeof(words)) &&
+        ReadValue(guest, first + kEntryFlags, flags)) {
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), " e0 flags %016llx:", static_cast<unsigned long long>(flags));
+        line += buf;
+        for (const float w : words) {
+            std::snprintf(buf, sizeof(buf), " %.4g", w);
+            line += buf;
+        }
+    }
+    Say(line);
+}
+
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
     const std::string who = "P" + std::to_string(slot.number);
     const bool held = target.show == Show::hold;
@@ -2156,6 +2268,27 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     } else {
         slot.follow.Reset();
         slot.raw_follow.Reset();
+    }
+    // N5 (coop_platform_carry.h): standing on one of our lifts, the place is carried by what that lift moved
+    // over their show delay (the place is that late; our lift is where theirs is now).
+    if (!held) {
+        const auto carried =
+            CoopPlatformCarry::TheStore().Carried(place, CoopShowDelay::Us(slot.number) / 1000, now_ms);
+        if (carried.has_value() != slot.lift_carried) {
+            slot.lift_carried = carried.has_value();
+            if (carried) {
+                char buf[120];
+                std::snprintf(buf, sizeof(buf), " lift carry: on our lift, carried %.3f m (show delay %llu ms)",
+                              CoopPuppetBody::Length(CoopPuppetBody::Sub(*carried, place)),
+                              static_cast<unsigned long long>(CoopShowDelay::Us(slot.number) / 1000));
+                Say(who + buf);
+            } else {
+                Say(who + " lift carry: off our lift");
+            }
+        }
+        if (carried) {
+            place = *carried;
+        }
     }
     // jitter-3: the rotation followed the same way (coop_follow.h Turner).
     Mat3 rotation = target.rotation;
@@ -2627,6 +2760,12 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
             t.sounds = r.sounds;  // too far, or out of sight: not heard
+        } else {
+            for (const auto& s : r.sounds) {
+                if (s.effect && s.end) {
+                    t.sounds.push_back(s);  // an effect's end always: one started while near stops
+                }
+            }
         }
         in.targets.push_back(std::move(t));
     }
@@ -3179,10 +3318,28 @@ void OnEvent(const coop::net::Event& event) {
                 .count());
         std::lock_guard lock(g_anim_mutex);
         auto& queue = g_sounds[sound->player_number];
-        if (queue.size() >= CoopLinkSound::kHeardMax) {
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
             queue.erase(queue.begin());  // the newest are kept
         }
-        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
+        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms, false, false});
+    } else if (const auto* effect = std::get_if<coop::protocol::LinkEffect>(&event.message);
+               event.kind == EventKind::message && effect != nullptr) {
+        // LINK_EFFECT (row 310): the same queue as the sounds, marked, played on the puppet's effect user.
+        if (effect->player_number == 0 || effect->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        const bool end = (effect->flags & coop::protocol::kLinkEffectEnd) != 0;
+        CoopLinkSound::NoteEffect(effect->player_number, effect->name, end, now_ms);
+        std::lock_guard lock(g_anim_mutex);
+        auto& queue = g_sounds[effect->player_number];
+        if (queue.size() >= 2 * CoopLinkSound::kHeardMax) {
+            queue.erase(queue.begin());  // the newest are kept
+        }
+        queue.push_back(CoopLinkSound::Sound{effect->name, now_ms, true, end});
     } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
                event.kind == EventKind::message && emote != nullptr) {
         // EMOTE (coop_emote.h): the puppet holds the emote's animation (Collect); a call is said by its Navi (coop_emote_body.h). An id this
@@ -3223,6 +3380,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
         g_director->SetAsVarsProbe(settings.as_vars_probe);
+        g_director->SetDebugVoice(settings.debug_voice);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);

@@ -44,6 +44,13 @@ TITLE_UP = r"coop: native ui: the title's menu is up: no play scene"
 MAP_TITLE = r"coop: map: the title is up: the panes found are forgotten"
 TITLE_HOLD = 600
 BOOT_SCENE = boot_scene(DEFAULT_BOOT)
+# The pause page's own part (left 56 %: tabs, item grid; the right half shows the dimmed live world behind the
+# page, which moves). pause-press-0121-3: the smoke-pause shots of 4 runs (tb-pilot-f9f3b9c2, crawl-337-12
+# run-warpui-1cce48cf, testkit-0120, pause-press-0121 run-021c17f5) score 0.78-0.92 whole (backdrop tiles),
+# 0.974-0.998 in this box. Also the whole tab bar (tabs, R, the rupee count; review-tests-153-3): top 10 %,
+# 0.9987-0.9994 on all 6 candidate-vs-old pairs (12 % reaches the bar's lower edge, where the world shows through:
+# 0.92). The item card text right of the page is not steady (0.87-0.95, the world behind it) and stays out.
+PAUSE_PAGE_BOX = [(0.0, 0.0, 0.56, 1.0), (0.0, 0.0, 1.0, 0.10)]
 
 
 @pytest.mark.budget(60)
@@ -99,7 +106,7 @@ def test_pause(pair):
                lambda: all(pair.state(x).get("not_ready") is not None for x in ("A", "B")), max_frames=120)
     pair.step_both(30)                     # (the page's open animation; the shot is the open page)
     for x in ("A", "B"):
-        pair.check_shot(x, "smoke-pause", tolerance=0.80)
+        pair.check_shot(x, "smoke-pause", tolerance=0.90, box=PAUSE_PAGE_BOX)
     for x in ("A", "B"):
         pair.press(x, ["PLUS"], frames=4)
     pair.until("both games back in play after the second +",

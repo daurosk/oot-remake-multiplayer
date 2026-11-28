@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 27 Nov 2026 11:35:05 -0900
+Subject: [PATCH] Co-op split screen shapes: a window's narrow shape from
+ HOS_ASPECT or HOS_OUTPUT_RES
+
+For oot-remake-multiplayer's local co-op (row 301): one game per player on
+one PC, each window in its half (2 players, about 8:9 on a 16:9 screen) or
+quarter (3 or 4) of the screen. The picture came out tiny in a half:
+- HOS_ASPECT was read with atof, so "8:9" was 8 and "5:4" was 5: both
+  clamped to 48:9, a thin strip in the middle of a tall window.
+- A ratio under 1 was not taken at all, and shapes stopped at 5:4, so even
+  0.8889 gave the 16:9 picture with bars above and below.
+- output_res=1920x2160 is narrower than 5:4: the game's own size.
+Now HOS_ASPECT reads a shape ("8:9", "1920x2100", "8/9") or a number
+(host/hos_wide_size.h hos_aspect_parse), and the two run switches,
+HOS_ASPECT and HOS_OUTPUT_RES, take shapes down to 1:2
+(hos_wide_clamp_split, hos_output_size_valid_split). The picture of such a
+shape is made the way a 4:3 or 5:4 one is (the game's height kept, the
+cameras at its ratio, the HUD and menus fitted to its width). The options
+file, the Insert menu's lists and the monitor's own shape keep 5:4 to 48:9:
+nothing changes for a game started alone.
+---
+ host/hos_main.c      |  9 ++++++---
+ host/hos_wide_size.h | 36 ++++++++++++++++++++++++++++++++++++
+ host/nn_applet.c     | 14 ++++++++++----
+ 3 files changed, 52 insertions(+), 7 deletions(-)
+
+diff --git a/host/hos_main.c b/host/hos_main.c
+index 0000000..0000000 100644
+--- a/host/hos_main.c
++++ b/host/hos_main.c
+@@ -2421,7 +2421,7 @@ static int game_main(int argc, char **argv) {
+            than 16:9 the HUD, menus and movies keep the middle 16:9; narrower they fill the picture's width. Until now the one 16:9
+            constant in the game's data was changed and the 16:9 picture stretched to the window. */
+         const char *e = getenv("HOS_ASPECT");
+-        float want = e ? (float)atof(e) : 0.0f;
++        float want = e ? (float)hos_aspect_parse(e) : 0.0f;   /* (8:9 or 0.8889: host/hos_wide_size.h) */
+         if (!e) {
+             int saved = -1, version = 0;   /* (the Aspect ratio's ultrawide= and options_version=, -1 / 0 without them) */
+             FILE *o = fopen(hos_options_file(), "r");
+@@ -2455,8 +2455,11 @@ static int game_main(int argc, char **argv) {
+         /* (a screen narrower than 16:9 too, 16:10 to 5:4: the picture keeps the game's height and is narrower, the
+            cameras take its ratio, and the HUD fills its width instead of a middle 16:9 wider than the screen. A 4:3 CRT
+            at the 1440 output: picture 1920 x 1440, scene 1440 x 1080, HUD 100%) */
+-        if (want > game * 1.01 || (want > 1.0f && want < game * 0.99)) {
+-            const double r = hos_wide_clamp(want);
++        /* (co-op split screen: a run's HOS_ASPECT or HOS_OUTPUT_RES also takes the narrower shapes of a half of the screen,
++           down to 1:2, hos_wide_clamp_split; a screen's or the options file's shape keeps 5:4 at the narrowest) */
++        const int split = hos_wide_split_asked();
++        if (want > game * 1.01 || (want > (split ? 0.0f : 1.0f) && want < game * 0.99)) {
++            const double r = split ? hos_wide_clamp_split(want) : hos_wide_clamp(want);
+             /* (the height kept, the width at the screen's ratio, at most hos_wide_max_px() pixels (5120 x 2160's, a 21:9 screen's
+                native at the 4K output) with the shape kept: host/hos_wide_size.h, which the Insert menu's Output and Render
+                resolution rows share) */
+diff --git a/host/hos_wide_size.h b/host/hos_wide_size.h
+index 0000000..0000000 100644
+--- a/host/hos_wide_size.h
++++ b/host/hos_wide_size.h
+@@ -7,6 +7,7 @@
+ 
+ #include <math.h>
+ #include <stdint.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ 
+ /* The host and the menu accept the same custom output shapes and pixel budget. */
+@@ -45,6 +46,41 @@ static inline double hos_wide_clamp(double want) {
+     return want >= surround - 0.0001 ? surround : want < 5.0 / 4.0 ? 5.0 / 4.0 : want;
+ }
+ 
++/* (co-op) Split screen on one PC: one game per player, each window in its part of the screen (a half of a 16:9 screen is
++   about 8:9, a quarter about 16:9). A half is narrower than the 5:4 the screens' shapes stop at, and only a run's own
++   switches ask for it: HOS_ASPECT, or an HOS_OUTPUT_RES of that shape (the window's size, which the co-op kit sets for each
++   game). Those two take shapes down to 1:2 (HOS_SPLIT_NARROWEST); the options file's output_res=, the Insert menu's lists
++   and the monitor's shape keep 5:4 to 48:9, so nothing changes for a game started alone. The picture of a narrow shape is
++   made the way a 4:3 or 5:4 one is: the game's height kept, the cameras at its ratio, the HUD and menus fitted to its width
++   (host/hos_wide_ui.c hos_wide_ui_tick, at any ratio under 3:2). */
++#define HOS_SPLIT_NARROWEST 0.5
++
++/* A run's switch asked for the shape (HOS_ASPECT or HOS_OUTPUT_RES is set): 1:2 allowed */
++static inline int hos_wide_split_asked(void) { return getenv("HOS_ASPECT") != NULL || getenv("HOS_OUTPUT_RES") != NULL; }
++
++/* hos_wide_clamp with a run's switch's shapes: 1:2 to 48:9 */
++static inline double hos_wide_clamp_split(double want) {
++    return want < HOS_SPLIT_NARROWEST ? HOS_SPLIT_NARROWEST : want < 5.0 / 4.0 ? want : hos_wide_clamp(want);
++}
++
++/* An HOS_OUTPUT_RES size: hos_output_size_valid's, or a split screen window's narrower one (1:2 to 5:4, at least 320 x 360) */
++static inline int hos_output_size_valid_split(uint32_t w, uint32_t h) {
++    if (hos_output_size_valid(w, h)) return 1;
++    return w >= 320 && h >= 360 && (uint64_t)w * h <= 5120ULL * 2880 && (uint64_t)w * 2 >= h && (uint64_t)w * 4 < (uint64_t)h * 5;
++}
++
++/* HOS_ASPECT's ratio: a number (2.3889) or a shape, "<w>:<h>", "<w>x<h>" or "<w>/<h>" (8:9, 1920x2100). atof alone read
++   "8:9" as 8 and "5:4" as 5: both a 48:9 strip in the window. 0 for none or nothing readable. */
++static inline double hos_aspect_parse(const char *text) {
++    if (!text || !*text) return 0.0;
++    double a = 0.0, b = 0.0;
++    char sep = 0;
++    if (sscanf(text, "%lf%c%lf", &a, &sep, &b) == 3 && (sep == ':' || sep == 'x' || sep == 'X' || sep == '/'))
++        return a > 0.0 && b > 0.0 ? a / b : 0.0;
++    a = atof(text);
++    return a > 0.0 ? a : 0.0;
++}
++
+ /* The most pixels a widescreen picture takes: 5120 x 2160's (a 21:9 screen at the 4K output, native; 7680 x 1440, 48:9 at
+    1440, has as many). The game's render targets come from a pool scaled with the picture's pixels (host/nn_applet.c
+    hos_rt_pool_size): 915 MB for that, from the game's 305 MB for 2560 x 1440. It was 3840 x 2160's: a 32:9 screen at the 4K
+diff --git a/host/nn_applet.c b/host/nn_applet.c
+index 0000000..0000000 100644
+--- a/host/nn_applet.c
++++ b/host/nn_applet.c
+@@ -136,15 +136,18 @@ static int handheld(void) {
+    the system's graphics scaling parameter (10, 20, 30) to it, and 0 is the full picture. 2048x1152 asks for tier 1, the game's
+    own reduced size (what every run drew before, from x0 left at the call before's answer); each other size, and none chosen
+    (hos_output_default), uses tier 0. */
+-int hos_output_parse(const char *text, uint32_t *w, uint32_t *h) {   /* (an explicit size: 1, and *w x *h; the game's own: 0) */
++/* (co-op) narrow: HOS_OUTPUT_RES's text, which also takes a split screen window's narrower size (1:2 to 5:4: host/hos_wide_size.h
++   hos_output_size_valid_split); output_res= and the menu keep 5:4 to 48:9 */
++static int output_parse(const char *text, uint32_t *w, uint32_t *h, int narrow) {
+     static const uint32_t old[][2] = {{0, 0}, {2560, 1440}, {3840, 2160}, {1920, 1080}, {5120, 1440}, {5120, 2880}};
+     unsigned a = 0, b = 0;
+     *w = *h = 0;
+     if (!text) return 0;
+     if (sscanf(text, "%u%*[xX]%u", &a, &b) == 2) {
+         a &= ~7u, b &= ~7u;
+-        if (!hos_output_size_valid(a, b)) {
+-            hos_log("oe: output_res=%s is not a size the game can use (640x360 to 5120x2880's pixels, 5:4 to 48:9): the game's own", text);
++        if (!(narrow ? hos_output_size_valid_split(a, b) : hos_output_size_valid(a, b))) {
++            hos_log("oe: output_res=%s is not a size the game can use (%s to 5120x2880's pixels, %s to 48:9): the game's own", text,
++                    narrow ? "320x360" : "640x360", narrow ? "1:2" : "5:4");
+             return 0;
+         }
+         if (a == 2048 && b == 1152) return 0;   /* (the game's own) */
+@@ -159,6 +162,9 @@ int hos_output_parse(const char *text, uint32_t *w, uint32_t *h) {   /* (an expl
+     *w = old[i][0], *h = old[i][1];
+     return 1;
+ }
++int hos_output_parse(const char *text, uint32_t *w, uint32_t *h) {   /* (an explicit size: 1, and *w x *h; the game's own: 0) */
++    return output_parse(text, w, h, 0);
++}
+ static uint32_t output_w, output_h;   /* (the explicit size; 0: the game's own) */
+ static int output_mode(void) {   /* (an explicit size: 1; the game's own: 0) */
+     static int read;
+@@ -167,7 +173,7 @@ static int output_mode(void) {   /* (an explicit size: 1; the game's own: 0) */
+         char text[80] = "";
+         const char *e = getenv("HOS_OUTPUT_RES");
+         const int chosen = e || ini_text("output_res", text, sizeof text);
+-        if (!handheld() && chosen) hos_output_parse(e ? e : text, &output_w, &output_h);
++        if (!handheld() && chosen) output_parse(e ? e : text, &output_w, &output_h, e != NULL);
+         /* (none chosen, a new install: the game's 2560 x 1440, or the screen's size where that has fewer pixels,
+            hos_output_default; the menu's first start saves the same. A 2048 x 1152 screen: the game's own reduced size, as
+            hos_output_parse reads what the menu saves for it. The window's thread made the window before the game's thread
+-- 
+2.56.0.windows.4
+

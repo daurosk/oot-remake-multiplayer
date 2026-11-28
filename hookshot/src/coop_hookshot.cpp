@@ -731,6 +731,7 @@ void MapIcons(void* ctx) {
 constexpr std::uint64_t kSlowStepMs = 1000;
 std::mutex g_slow_mutex;
 CoopHookshot::SlowStep g_party_slow, g_tags_slow;
+CoopHookshot::TagsNow g_tags_now;   // (g_slow_mutex)
 
 void NoteSlow(CoopHookshot::SlowStep& slot, std::uint64_t& last_ms, std::uint64_t now, int shown) {
     const std::uint64_t gap = last_ms != 0 && now > last_ms ? now - last_ms : 0;
@@ -772,9 +773,16 @@ void NativeTags(void* ctx) {
     static std::uint64_t last_tags_ms = 0;
     if (spots.empty() && g_balloons.shown() == 0) {   // solo, or nobody near: the balloons are not touched
         NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), 0);
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {};
         return;
     }
     const bool up = g_balloons.Step(game, spots, markers ? markers->width : 0.0f, markers ? markers->height : 0.0f);
+    {
+        const auto seen = g_balloons.seen();
+        std::lock_guard lock(g_slow_mutex);
+        g_tags_now = {static_cast<int>(seen.shown), static_cast<int>(seen.open), seen.screen_root};
+    }
     NoteSlow(g_tags_slow, last_tags_ms, SteadyMs(), up ? static_cast<int>(g_balloons.shown()) : 0);
     if (g_balloons.no_memory()) {
         g_tags_drawn.store(true);
@@ -1681,6 +1689,11 @@ SlowStep PartySlow() {
 SlowStep TagsSlow() {
     std::lock_guard lock(g_slow_mutex);
     return g_tags_slow;
+}
+
+TagsNow TagsSeen() {
+    std::lock_guard lock(g_slow_mutex);
+    return g_tags_now;
 }
 
 void SetMapOptions(bool players, bool names) {
@@ -2687,16 +2700,20 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
     }
-    if (id == CoopPlayerInput::kWrapInputOff && CoopLiftPlayerGame::On()) {
+    if (id == CoopPlayerInput::kWrapInputOff) {
         // Native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours, so our Link's
         // own input check answers "off" (both callers skip their pad read), as for an extra player without a
         // controller. Only our Link's check: the reading actor ([[[node+8]+8]+0x1f0], node in x19) is ours.
+        // Row 299 the same way: a game menu in front with the world running under it (the host's "World runs in
+        // menus", CoopPauseWorld::WorldRuns): the pad works the menu, never our Link (phase 0's run: the stick
+        // walked Link under the open menu).
         thread_local bool lift_held_off = false;
         if (phase == 1 && std::exchange(lift_held_off, false)) {
             x[0] = 1;
             return 0;
         }
-        if (phase == 0 && CoopLiftPlayerGame::OurInputOff()) {
+        if (phase == 0 && ((CoopLiftPlayerGame::On() && CoopLiftPlayerGame::OurInputOff()) ||
+                           CoopPauseWorld::WorldRuns())) {
             namespace a = CoopPlayerInput::addr;
             std::uint64_t owner = 0, holder = 0, actor = 0;
             const auto link = CoopObjects::OurLinkActor();
@@ -3550,7 +3567,11 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
     CoopExportGuard::Guard(site, [&] {
         if (g_on) {
             CoopPauseTab::OnScreen(ctx, screen);
-            CoopPauseWorld::OnScreen(ctx);   // (row 299: only a test's `menu hold release N`)
+            {
+                // (row 299: the host's "World runs in menus" lets the menu's holds go; a test's `menu hold release N`)
+                const auto menu_state = CoopMapPage::MenuState();
+                CoopPauseWorld::OnScreen(ctx, (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp());
+            }
             try {
                 // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
                 // choose_focused would press the game's button under our page)
@@ -3684,6 +3705,11 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
             [](uint64_t b) {
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
+                // Break free (row 312, coop_lift_player.h Victim::Struggle): lifted by another player, mashing the face
+                // buttons or pushing the stick about frees our Link. (Its input check is off then, so the game reads none.)
+                namespace pt = CoopPauseTab;
+                CoopLiftPlayerGame::NotePad(b & (pt::kPadA | pt::kPadB | pt::kPadX | pt::kPadY | pt::kPadStickUp |
+                                                 pt::kPadStickDown | pt::kPadStickLeft | pt::kPadStickRight));
             },
             [] {
                 const uint64_t h = CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}

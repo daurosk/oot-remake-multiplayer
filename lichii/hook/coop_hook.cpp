@@ -67,6 +67,7 @@
 #include "coop_teleport_game.h"
 #include "coop_emote_game.h"
 #include "coop_pvp_game.h"
+#include "coop_party_wait_game.h"
 #include "coop_lift_player_game.h"
 #include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
@@ -88,6 +89,7 @@
 #ifdef COOP_HOOKSHOT
 #include "coop_flag_native.h"
 #include "coop_map_page.h"  // patch 0018's menu state: PLAYER_STATUS in_menu/paused (Read)
+#include "coop_pause_world.h"  // row 299: the world runs under the menu (CoopPauseWorld::WorldRuns)
 #include "coop_pause_files.h"   // CoopFiles::CoopIni: the game folder (StuckLoadFrame's record)
 #include "coop_problem_ask.h"   // the stuck load's record, asked about on the next title
 #include "coop_stuck_load.h"    // black-01112: a load that never ends
@@ -878,6 +880,7 @@ public:
         CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopPartyWait::OnEvent(event, client);  // wait for the party (docs/party-wait.md)
         CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
         CoopPvpNativeGame::OnEvent(event, client);  // native puppets phase 4 (LICHII_COOP_PVP_NATIVE=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
@@ -2063,6 +2066,16 @@ public:
         for (auto& line : CoopBoss::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // Wait for the party (docs/party-wait.md), after the boss rooms (it reads whether a fight runs): notices on
+        // our banner, and one line to the others when a wait starts. Off or no session: returns before any read.
+        CoopPartyWait::Frame(view.scene, view.position, report.connected ? session_.get() : nullptr,
+                             report.server_now_us);
+        for (auto& line : CoopPartyWait::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        for (const auto& line : CoopPartyWait::TakeChatLines()) {
+            LOG_INFO(Core, "coop: party wait: said to the others: {}{}", line, SendChat(line) ? "" : " (not sent)");
+        }
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
@@ -2208,6 +2221,9 @@ public:
         if (CoopPvp::OnChat(text, *session_)) {
             return true;  // /pvp: the same
         }
+        if (CoopPartyWait::OnChat(text, *session_)) {
+            return true;  // /wait: the same (docs/party-wait.md)
+        }
         if (CoopEmote::OnChat(text, *session_)) {
             return true;  // /wave, /here, /emote ...: the same (coop_emote.h)
         }
@@ -2276,6 +2292,7 @@ public:
                     row.scene = own_scene;
                 } else if (const auto* other = p.player(player.number)) {
                     row.scene = other->scene();
+                    row.status = other->flags();
                     row.state = "no samples";
                     if (!other->samples().empty() && net.server_now_us) {
                         const auto t = other->samples().back().time.server_time_us;
@@ -2609,6 +2626,9 @@ private:
                 if (quick) {
                     reading->in_menu = true;
                 }
+                // Row 299: the world runs under the menu (the host's "World runs in menus", CoopPauseWorld): not away.
+                reading->menu_world_runs = reading->in_menu.value_or(false) && CoopPauseWorld::WorldRuns();
+                menu_world_runs_ = reading->menu_world_runs;
                 if (quick != quick_switch_) {
                     LOG_INFO(Core, "coop: status: the quick-switch item menu {}",
                              quick ? "is open: in a menu, paused for the others" : "closed");
@@ -3008,6 +3028,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     coop::host::WorldStill world_still_;  // row 164 follow-up: our world standing still with no menu named
     bool quick_switch_ = false;           // the quick-switch item menu was open at the last reading (its log line)
+    bool menu_world_runs_ = false;        // row 299: a menu in front with the world running at the last reading
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
     bool boss_alive_due_ = false;          // row 159: BOSS_ALIVE to send after our own save load (host)
@@ -3301,7 +3322,8 @@ private:
         here.scene = view.scene.value_or(std::string());
         here.link = view.position;
         here.can_start = reading && !running &&
-                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
+                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0 &&
+                         !reading->in_menu.value_or(false);   // (row 299: a menu with the world running sends none)
         here.now_us = now_us;
         // Row 176: who is in our scene now, so a held start whose starter is still here outlasts kHoldUs.
         // Read from presence directly (CoopPuppet::Collect would take the puppets' sounds).
@@ -3552,8 +3574,9 @@ private:
             });
         }
         const bool busy =
-            in_event || (status & (coop::protocol::status::paused | coop::protocol::status::in_menu |
-                                coop::protocol::status::loading)) != 0;
+            in_event || menu_world_runs_ ||   // (row 299: a menu with the world running sends no in_menu)
+            (status & (coop::protocol::status::paused | coop::protocol::status::in_menu |
+                       coop::protocol::status::loading)) != 0;
         ocarina_equip_.arm(*current, CoopObjects::OurLinkActor().has_value(), busy);
         const auto want = coop::host::ocarina_equip_mend(flags.get_int(oc::kFairy).value_or(0),
                                                          flags.get_int(oc::kTime).value_or(0), *current);
@@ -3955,6 +3978,13 @@ void LocalFrameOff(Core::System& system, bool writes) {
         } else {
             mend_since_us.NewLoad();  // the title or a load: nothing to read yet
         }
+    }
+    // map-icons-255-4: the play-test bridge's map change warps (an entrance, a boss stage, the other age) with no
+    // session: CoopTeleport::MapChange only stores the ask, and only CoopTeleport::Frame carries it out (and keeps the
+    // arrival's starter and the event window), which the session's frame calls. Called here while it has one under
+    // way, with no session (as a frame that is not connected); otherwise solo is unchanged.
+    if (CoopTeleport::WantsSoloFrame()) {
+        CoopTeleport::Frame(system, base, full ? full : reader.read(), nullptr);
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step

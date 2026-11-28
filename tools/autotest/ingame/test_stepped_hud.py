@@ -11,10 +11,12 @@ How it is judged (worker-rules TEST SYSTEM: state first, a shot for what a playe
   one): the block under the game's own hearts and the tag over the other Link.
 
 Sources of every value:
+- one game held at a time, the other running (hold_running_other): the real slow PC (its partner's game keeps sending);
+  both held makes the other player fade by the presence rule (see hold_running_other), not the HUD/tags' stale check.
 - HOLD_S 1.5: testkit-0120's frame time (smoke-pause-A.png 16:15:55.15 -> kit-in-play-A.png 16:16:11.85 over presents
   12361 -> 12372, game-out-A.txt:7499/:7587); the module's window is 1000 ms (coop_hookshot.cpp kSlowStepMs, PartyStep's
   CoopFresh::Stale(.., 1000, ..)). The hold is the scenario's input (the game held by the bridge, frames not running),
-  not a wait for anything.
+  not a wait for anything (the other game runs frames meanwhile, CHUNK at a time).
 - the shot runs the held frame: the bridge's `shot` lets 1 frame at a time run until the picture comes (at most 5;
   docs/playtest.md `shot`, coop_playtest.cpp), so its first frame is the one after the hold.
 - HUD_ON: coop_hookshot.cpp PartyStep ("coop: party hud: on the game's HUD"); the tags' lines and the view checks:
@@ -26,6 +28,7 @@ import pytest
 
 from test_regress_ui import (CRASH, TAGS_DIST, TAGS_NO_MEMORY, TAGS_ON, camera_behind_each, other_in_view,
                              seen_not)
+from pair import CHUNK
 from test_rows import need_child_in_play, place_in_front
 
 GAMES = ("A", "B")
@@ -40,6 +43,17 @@ def slow(pair, x):
     s = st.get("slow_steps")
     assert isinstance(s, dict), "%s: no slow_steps in the bridge's state (a module without hud-stepped-0121)" % x
     return s
+
+
+def hold_running_other(pair, x, other):
+    """Game x held (no frame) for HOLD_S while `other` runs CHUNK frames at a time: x's next frame is a slow step, and
+    the other player is still fresh on x. Holding BOTH games stops the other's samples too: on x the other player then
+    fades out 500 ms after its last sample (coop/presence presence.hpp Settings show_delay 100 + extrapolate 150 +
+    fade 250 ms; coop/overlay overlay.cpp skip(Why::faded): no marker, no tag), which is that rule, not hud-fresh-0121
+    (stepped-hud-53d40ab3-2 FAIL 00:19 11-28: both held 4967 ms, A party_hud shown 1, name_tags shown 0)."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < HOLD_S:
+        pair.call(other, "step", frames=CHUNK)
 
 
 @pytest.mark.budget(180)
@@ -59,8 +73,8 @@ def test_stepped_hud_and_tags(pair):
     for x, other in (("A", "B"), ("B", "A")):
         ok, why = other_in_view(pair, x, other)
         assert ok, "%s: the other player is not in view before the held frame: %s" % (x, why)
-    time.sleep(HOLD_S)                                           # both games held: the next frame comes HOLD_S late
-    for x in GAMES:
+    for x, other in (("A", "B"), ("B", "A")):
+        hold_running_other(pair, x, other)                       # x held HOLD_S while the other runs (sends samples)
         res = pair.check_shot(x, "stepped-hud", tolerance=0.80)  # (runs the held frame; 0.80: Kakariko's people move)
         pair.notes.append("%s shot: %s" % (x, res.get("why")))
     for x in GAMES:

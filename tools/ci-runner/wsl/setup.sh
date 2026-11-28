@@ -89,6 +89,9 @@ WorkingDirectory=/opt/squadala-ci/runner-%i
 # Runner.Listener itself, as the runner's own service script starts it: run.sh would copy run-helper.sh into the
 # root-owned runner folder, which squadala-ci cannot write.
 ExecStart=/opt/squadala-ci/runner-%i/bin/Runner.Listener run --startuptype service
+# The shim sudo first (the runner reads .path only through runsvc.sh, which this unit does not use: the first proof
+# Build 46083381220 ran /usr/bin/sudo and failed on NoNewPrivileges). Same line as .path.
+Environment=PATH=/opt/squadala-ci/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Restart=always
 RestartSec=15
 KillMode=process

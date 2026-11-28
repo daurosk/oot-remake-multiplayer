@@ -57,6 +57,18 @@ from test_boss_respawn import back_after   # noqa: E402,F401  (fixture: the way 
 STAGE = "DodongoStage"
 BOSS = "Enemy_DungeonBoss_Dodongo"
 SYNC_ON = r"coop: bosses: %s: native boss sync on \(BSA 0x[0-9a-fA-F]+, %s\)"     # coop_boss_native.cpp
+# The owner's stall note (coop_boss_native.cpp Note "...: ours held '<anim>' (brain B, action A, life L) N s with no hit:
+# stuck", after kStallSteps = 1500 game steps, coop_boss_native.h). Run boss-hit-react-53d40ab3-2 (2026-11-28): A logged
+# it for 'Wait' 3 times and no intro event ran after the warp: the fight never began, so no bomb could stun him.
+STALL_WAIT = r"coop: bosses: %s: ours held 'Wait' \(brain \d+, action [^,]+, life \d+\) \d+ s with no hit: stuck" % BOSS
+# Why: a warp plays no boot event. The game's own rematch boots DodongoStage with Get_StoneOfFire_AppearBoss, which makes
+# him appear (DreamWorld_BossAppear); without it he stays in 'Wait' (docs/boss-multiplayer.md "Boss rush stages reached
+# by a warp", boss-route-01112). Asked on both games after the arrival, as scenarios/kd-roll-hold-325.A/B.txt ('event
+# Get_StoneOfFire_AppearBoss' + 'wait 1800  # the intro, then the fight'; big-run-01113 PASS, judge-c1 21:46 11-26),
+# through the bridge's act (lichii/hook/coop_testinput.cpp ActKinds, Kind::event; logged 'coop: test event NAME: handed').
+APPEAR = "Get_StoneOfFire_AppearBoss"
+HANDED = r"coop: test event %s: handed to the live-event requester" % APPEAR   # coop_testinput.cpp Kind::event
+ANIM = r"coop: objects: anim %s 0x[0-9a-f]+ '([^']+)'" % BOSS                   # coop_objects.cpp (each change, <= 400)
 OWN_REACT = r"coop: bosses: %s: our own hit: the copy runs its own reaction" % BOSS   # NoteOwnHit
 TOOK_LIFE = r"coop: bosses: %s: our own hit took life: its owner's game reacts" % BOSS   # NoteOwnDamage (once)
 OWN_STUN = r"coop: bosses: %s: its own stun in our game" % BOSS                         # NoteOwnStun (allowed)
@@ -121,6 +133,32 @@ def sync_on(pair, start):
             raise P.SetupFail("boss sync: %s has no '%s: native boss sync on (..., %s)' after the intro" % (x, BOSS, role))
 
 
+def appear(pair):
+    """Both games asked his appear event (the stage's boot event a warp does not play); a refusal or no 'handed' line
+    is SETUP-FAIL. Returns each game's log position before the ask."""
+    pos = {x: pair.log[x].size() for x in ("A", "B")}
+    with pair.setup():
+        for x in ("A", "B"):
+            r = pair.act(x, "event %s" % APPEAR)
+            assert r.get("ok", True) is not False, "%s: act event %s: %s" % (x, APPEAR, r)
+        pair.step_both(10)
+        for x in ("A", "B"):
+            if not pair.log[x].find(HANDED, pos[x]):
+                raise P.SetupFail("%s: no '%s' after its act" % (x, HANDED))
+    return pos
+
+
+def awake(pair, since):
+    """After the intro wait: A's boss must not have stalled in 'Wait' since his appear event was asked (the fight never
+    began); a stall is SETUP-FAIL. A's anim names since then go in the notes."""
+    anims = [m.group(1) for ln in pair.log["A"].since(since["A"]) for m in [re.search(ANIM, ln)] if m]
+    pair.notes.append("A's %s anims after the appear event: %s" % (BOSS, anims[:12] or "none logged"))
+    stall = pair.log["A"].find(STALL_WAIT, since["A"])
+    if stall:
+        raise P.SetupFail("%s never woke in A: '%s' after the appear event + %d frames (no fight, so no stun to slash)"
+                          % (BOSS, stall, INTRO_FRAMES))
+
+
 def slashes(pair):
     """B's five slashes; per slash: B's boss life before and after its 40 frames and B's log lines in its window."""
     rows = []
@@ -160,9 +198,11 @@ def test_copy_hit_that_took_life_leaves_the_reaction_to_the_owner(pair, back_aft
     start = {x: pair.log[x].size() for x in ("A", "B")}   # (every line judged below is this test's own)
     BR.boss_arrival(pair, STAGE)
     arm(pair)
+    asked = appear(pair)
     pair.step_both(INTRO_FRAMES)
     sync_on(pair, start)
-    play(pair, "A", BOMB)                     # A's bomb 1: the stun, A's own
+    awake(pair, asked)
+    play(pair, "A", BOMB)                    # A's bomb 1: the stun, A's own
     pair.step_both(TO_SLASH)
     pair.press("B", ["ZL"], stick=UP, frames=LOCK_FRAMES)
     rows = slashes(pair)
@@ -183,7 +223,7 @@ def test_copy_hit_that_took_life_leaves_the_reaction_to_the_owner(pair, back_aft
     took = pair.log["B"].find(TOOK_LIFE, start["B"])
     if not took:
         pair.unproven("B never logged '%s: our own hit took life' (no slash took life: lives %s; the slashes missed A's "
-                      "stun, as run ef002962's K = 0)" % (BOSS, [(r["before"], r["after"]) for r in rows]))
+                      "stun)" % (BOSS, [(r["before"], r["after"]) for r in rows]))
     unjudged = [r["i"] for r in rows if r["own"] and not fell(r) and (r["before"] is None or r["after"] is None)]
     if unjudged:
         pair.unproven("own-reaction lines for slash(es) %s whose life B's world list did not show" % unjudged)

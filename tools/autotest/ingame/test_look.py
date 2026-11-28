@@ -14,6 +14,7 @@ import os
 import pytest
 
 import pair as P
+import sight
 from test_rows import need_child_in_play
 
 # The look of both games (the old row wrote both coop-options.ini: `color = blue`, `look_cap_trim = yellow`).
@@ -56,6 +57,19 @@ DISTANCES = (14.0, 11.0, 8.5, 6.5, 5.0, 3.5, 2.5)
 # the 4 boxes of the band check (both Links and their background boxes) must be apart, else SETUP-FAIL.
 BEARING = 35.0
 SETTLE = 30   # frames after a place: the puppet follows A's samples (the old row waited 90 after each step)
+
+
+# B's turns from its arrival facing, tried in order until A at the far spot is in sight (sight.prove): the arrival
+# facing first (the old row's view), then right, back, left. The test's own choice; each try's numbers go to the notes.
+HEADINGS = (0, 90, 180, 270)
+
+
+def look_along(pair, x, facing):
+    """Game x's Link faces `facing` degrees (the bridge's 'face X Z': a point 1 m that way; facing 0 = +z, 90 = +x)."""
+    p = pair.state(x)["pos"]
+    f = math.radians(facing)
+    pair.act(x, "face %.2f %.2f" % (p[0] + math.sin(f), p[2] + math.cos(f)))
+    pair.step_both(2)
 
 
 def put_in_front(pair, x, of, dist):
@@ -123,7 +137,7 @@ def band_check(pair, path, view, own_pos, puppet_pos, d):
         % (d, pup["net"], pup["area"], own["net"], own["area"], share, BAND_SHARE))
 
 
-@pytest.mark.budget(300)
+@pytest.mark.budget(480)   # (300 + sight proofs: up to 4 headings and 6 nearer spots, 2 shots each)
 @pytest.mark.look
 @pytest.mark.needs_env(*(LOOK_ENV + ROW_ENV))
 @pytest.mark.needs_pack(PACK)
@@ -161,13 +175,30 @@ def test_kokiri_hood_band(pair):
             for x in ("A", "B"):   # (the old gate read the whole log: since the session start)
                 pair.until("%s's own Link wears %s" % (x, TUNIC),
                            lambda: pair.log[x].find(r"your Link's tunic is %s" % TUNIC, pos=0), max_frames=600)
+        # kokiri-band-c124-7 (run kokiri-look-182cd53b): the distance alone put A behind the Kakariko gate wall, out
+        # of B's sight, and the band check called the wall a blue band. B turns (HEADINGS, from its arrival facing)
+        # until A at the far spot is IN SIGHT on B's shot (sight.prove); none = SETUP-FAIL, never a FAIL of the band.
+        # (after the set-up block: two shots per try do not fit SETUP_LIMIT_S; a SetupFail here is still SETUP-FAIL)
+        face0 = pair.state("B")["facing"]
+        tried = []
+        for turn in HEADINGS:
+            look_along(pair, "B", face0 + turn)
             got = put_in_front(pair, "A", of="B", dist=DISTANCES[0])
-            assert abs(got - DISTANCES[0]) < 1.0, "A stands %.1f m from B, not %.1f (something in the way)" % (
-                got, DISTANCES[0])
+            if abs(got - DISTANCES[0]) >= 1.0:
+                tried.append("turn %d: A stands %.1f m, not %.1f" % (turn, got, DISTANCES[0]))
+                continue
             # the camera behind B, along its facing (the old B script: `press ZL`; pair.press's 8 frames): B's own
             # Link near the camera, A's puppet beyond it and to the side (BEARING)
             pair.press("B", ["ZL"], frames=8)
             pair.step_both(30)
+            try:
+                sight.prove(pair, "B", "A", "kokiri-band-turn%03d" % turn)
+                pair.notes.append("B turned %d deg from its arrival facing: A in sight at %.1f m" % (turn, got))
+                break
+            except P.SetupFail as e:
+                tried.append("turn %d: %s" % (turn, e))
+        else:
+            raise P.SetupFail("A's puppet in sight at %.1f m on no heading: %s" % (DISTANCES[0], "; ".join(tried)))
         # each distance: the puppet is there (B's world list), then B's shot; A's own Link at the far and the near spot
         for i, d in enumerate(DISTANCES):
             if i:
@@ -179,6 +210,11 @@ def test_kokiri_hood_band(pair):
             # tolerance 0.80: Kakariko has moving people and birds (docs/ingame-tests.md step 6); the band is a small
             # thing, so the first run's reference candidates (new/) are what a person judges (yellow band on the puppet as on
             # B's own Link; FAIL: the puppet's band blue where B's own is yellow)
+            if i:                  # (the far spot was proven in the set-up; each nearer one is proven here)
+                sight.prove(pair, "B", "A", "kokiri-band-%03ddm" % round(d * 10))
+                a = pair.state("A")["pos"]
+                pup = pair.until("B's puppet of A back at %.1f m" % d, lambda: puppet_near(pair, "B", a), max_frames=120)
+                sb = pair.state("B")
             res = pair.check_shot("B", "kokiri-band-%03ddm" % round(d * 10), tolerance=0.80)
             band_check(pair, res["path"], sb["view"], sb["pos"], pup, d)
             if i in (0, len(DISTANCES) - 1):

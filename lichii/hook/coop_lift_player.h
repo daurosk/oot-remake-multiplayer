@@ -37,6 +37,13 @@
 //   place its Link is its own again (it falls and lands by its own character controller).
 // - The lifted game ends a lift by itself (LIFT_ANSWER freed) when its Link goes into an event or dies, when
 //   the places stop for kPlaceWaitUs (the lifter left or lost the copy), or after kMaxHeldUs (it wriggles free).
+// - Break free (owner 2026-11-27: "players should be able to break free from being grabbed"): the lifted player
+//   struggles as when an enemy holds Link (a Like Like, a ReDead): every new press of a face button and every new
+//   push of the stick in a direction while lifted fills a meter (Struggle), which drains kStruggleDrainPerS a
+//   second; at kStruggleFull the lifted game frees itself (LIFT_ANSWER freed, as every other free), its Link falls
+//   by its own character controller, and for kFreeGraceUs a new ask from anyone is refused (busy), so a freed
+//   player is not caught again the next frame. The counts are ours (the game's own grab escape count is not
+//   read): about 1.5 s of mashing, which a held stick or a held button never fills.
 #pragma once
 
 #include <algorithm>
@@ -66,6 +73,18 @@ inline constexpr int kRestFrames = 8;      // ... this many frames running is at
 inline constexpr std::uint64_t kFlightMaxUs = 2'000'000;   // a flight ends by this anyway
 inline constexpr std::uint64_t kPlaceWaitUs = 1'000'000;   // lifted, no place this long: free
 inline constexpr std::uint64_t kMaxHeldUs = 15'000'000;    // lifted this long: wriggles free
+inline constexpr float kStruggleFull = 10.0f;              // break free: this many presses/pushes ...
+inline constexpr float kStruggleDrainPerS = 2.0f;          // ... less this much a second of the hold
+inline constexpr std::uint64_t kFreeGraceUs = 2'000'000;   // struggled free: no new lift this long
+
+// The new presses in a pad read: bits of `now` that were not set in `before` (the caller gives only the
+// struggle bits: face buttons and the stick's four directions).
+inline int NewPresses(std::uint64_t before, std::uint64_t now) {
+    std::uint64_t edges = now & ~before;
+    int n = 0;
+    for (; edges != 0; edges &= edges - 1) ++n;
+    return n;
+}
 inline constexpr float kFarM = 3.0f;       // the lifter's Link must be this near ours
 // The input-off answer holds only while the lift's frame keeps renewing it: a stamp older than this is "on"
 // (the hook's frame stopped being called while lifted: our Link's input comes back by itself).
@@ -309,6 +328,7 @@ public:
         std::optional<Vec3> put;                   // our Link's place this frame
         bool input_off = false;                    // our Link's own input check answers "off"
         std::optional<proto::LiftAnswer> freed;    // the lift ended here: tell the lifter
+        bool struggled = false;                    // freed by the player's own struggle
     };
 
     // A LIFT_ASK; `lifter_at` is the lifter's Link as presence has it in our place, either era (unset: not known, or
@@ -322,6 +342,8 @@ public:
             a.refusal = proto::LiftRefusal::not_young;  // only a young Link is lifted (owner rule)
         } else if (by_ != 0 && by_ != m.player_number) {
             a.refusal = proto::LiftRefusal::busy;
+        } else if (by_ == 0 && free_us_ != 0 && now_us >= free_us_ && now_us - free_us_ < kFreeGraceUs) {
+            a.refusal = proto::LiftRefusal::busy;  // just struggled free: not caught again at once
         } else if (local.lifting) {
             a.refusal = proto::LiftRefusal::busy;
         } else if (local.down) {
@@ -337,6 +359,8 @@ public:
             place_us_ = now_us;
             at_.reset();
             landed_ = false;
+            meter_ = 0.0f;
+            meter_us_ = now_us;
         }
         return a;
     }
@@ -348,6 +372,17 @@ public:
         place_us_ = now_us;
         landed_ = m.phase == proto::LiftPhase::landed;
     }
+
+    // The new presses and pushes our player made since the last call (while lifted: else nothing).
+    void Struggle(int presses, std::uint64_t now_us) {
+        if (by_ == 0 || landed_) return;
+        if (now_us > meter_us_) {
+            meter_ -= kStruggleDrainPerS * static_cast<float>(now_us - meter_us_) / 1e6f;
+        }
+        meter_us_ = std::max(meter_us_, now_us);
+        meter_ = std::max(0.0f, meter_ + static_cast<float>(std::max(presses, 0)));
+    }
+    float Meter() const { return meter_; }
 
     Step Frame(const Local& local, std::uint64_t now_us) {
         Step s;
@@ -364,6 +399,10 @@ public:
             why = proto::LiftRefusal::freed;
         } else if (now_us - place_us_ >= kPlaceWaitUs || now_us - since_us_ >= kMaxHeldUs) {
             why = proto::LiftRefusal::freed;
+        } else if (meter_ >= kStruggleFull) {
+            why = proto::LiftRefusal::freed;  // struggled free
+            s.struggled = true;
+            free_us_ = now_us;
         }
         if (why != proto::LiftRefusal::none) {
             s.freed = proto::LiftAnswer{proto::kPlayerSelf, by_, why};
@@ -385,6 +424,7 @@ private:
         by_ = 0;
         at_.reset();
         landed_ = false;
+        meter_ = 0.0f;
     }
 
     std::uint8_t by_ = 0;
@@ -392,6 +432,9 @@ private:
     std::uint64_t place_us_ = 0;
     std::optional<Vec3> at_;
     bool landed_ = false;
+    float meter_ = 0.0f;           // the struggle (Struggle)
+    std::uint64_t meter_us_ = 0;
+    std::uint64_t free_us_ = 0;    // when our Link last struggled free (0 never)
 };
 
 } // namespace CoopLiftPlayer

@@ -326,9 +326,11 @@ bool IsOwnFollower(std::string_view name) {
     // - Npc_Hylia_Zelda_Adult (and _Scalable): NpcHyliaZeldaAdult.AISchedulePatrolMove runs her rail and
     //   waits at its points for the player (ReachToPlayerWhenRailPointWait, ReachToPlayerDistance,
     //   IsPlayerGoesFirst). Placed in CrumblingGanonCastle (the escape), FinalBattleField and GanonStage.
-    // - Npc_Zora_Ruto_Child (player report #64): lifted and carried by one Link ('Act_LiftRest'); shared,
-    //   the owner's 'Crouch' was played over the carried Ruto, so she dropped as soon as she was picked up,
-    //   and again when the owner left the room (a new owner). Her room flags stay shared.
+    // Not Jabu-Jabu's child Ruto (Npc_Zora_Ruto_Child, player report #64, then row 304): each game's own, the
+    //   one a Link carried existed only in that game, so on the other screens she was not in the carrier's hands
+    //   (nor anywhere). She is shared again; her carry is the carry claim's (CoopSensorClaim::Carried,
+    //   'Act_LiftRest'), which keeps an owner's 'Crouch' off the copy our Link carries (#64's drop) and hands
+    //   her to the carrier.
     // - Animal_Dog_* (the Market's dogs, Richard in Market and Kakariko): Animal_Dog.brain.FollowPlayer.
     // - Animal_Epona_Adult (CoopRide::kHorse), Animal_Epona_Child, Animal_Horse, Animal_Horse_For_Ingo:
     //   HorseMoveToPlayer / QueryQuadrupedCalcFollowTargetPos (the horse comes to the Link that called it).
@@ -342,8 +344,7 @@ bool IsOwnFollower(std::string_view name) {
     // the event nodes every NPC has, Event*AISchedule*: his flights are events, which the event claim gives to
     // the player in them) and the living Dampe, Npc_Hylia_Dampe_001 (his digging tour's follow is event nodes
     // too, EventFollowToTargetActor; his rounds stay shared, issue 200).
-    return name.starts_with("Npc_Hylia_Zelda_Adult") || name.starts_with("Npc_Zora_Ruto_Child") ||
-           name == "Npc_Hylia_Dampe_002" ||
+    return name.starts_with("Npc_Hylia_Zelda_Adult") || name == "Npc_Hylia_Dampe_002" ||
            name.starts_with("Animal_Dog_") || name.starts_with("Animal_Epona_") || name == "Animal_Horse" ||
            name.starts_with("Animal_Horse_For_Ingo");
 }
@@ -986,6 +987,16 @@ bool IsHideAnimation(std::string_view name) {
 
 bool IsCeilingWait(std::string_view name) {
     return AnimationBase(name).starts_with("CeilingWait");
+}
+
+bool WaitsOnCeilingForLink(std::string_view actor, std::string_view animation) {
+    // Row 303: a boss in its pre-battle wait on the ceiling (Gohma's 'Pre_Battle_Ceiling_Wait', '_Turn', '_Find': her
+    // brain root's PreBattle start event, Enemy_DungeonBoss_Gohma.brain.root.ainb, turns her to the Link its own game
+    // perceives and drops her for it). Its owner's AI fights only the owner's Link, so a copy's player under her waited
+    // for good (lane1 hs-gohma-downed 20261120-085401 A: 'ours held Pre_Battle_Ceiling_Wait' 3 x 25 s, B under her).
+    // Not her 'Sleep' (also a pre-battle word, coop::protocol::anim::IsPreBattle): she sleeps on no ceiling.
+    const std::string_view base = AnimationBase(animation);
+    return IsCeilingWait(base) || (IsBoss(actor) && base.starts_with("Pre_Battle_Ceiling"));
 }
 
 bool UnderCeilingEnemy(const proto::Vec3& enemy, const proto::Vec3& link) {
@@ -3651,7 +3662,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (wake_ && o.reacts && owner != owners_.end() && owner->second.player != 0 &&
                 owner->second.player != self && now_seen.contains(address) && !o.received.empty() &&
                 now_us >= o.received.back().time && now_us - o.received.back().time <= kPoseStaleUs &&
-                o.received.back().animation && IsCeilingWait(o.received.back().animation->name) &&
+                o.received.back().animation && WaitsOnCeilingForLink(o.name, o.received.back().animation->name) &&
                 UnderCeilingEnemy(o.position, *player_)) {
                 ChaseStep(o, now_us);
             }
@@ -3684,7 +3695,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // as an event claims its partners: flagged targeting (the server hands a copy to us, and
         // holds ours as a fight while we stay), and the owner's motion is not put on our copy
         // meanwhile (EventPartner). kSensorKeepUs after our Link leaves, the claim drops.
-        // The carry claim: our Link holds it (our copy's own AS plays the game's `Lifted`, a Cucco), and
+        // The carry claim: our Link holds it (our copy's own AS plays the game's `Lifted`, a Cucco, or
+        // `Act_LiftRest`, child Ruto: row 304), and
         // its owner's does not (the owner's own carry plays `Lifted` on every copy: that one stays theirs,
         // as CoopBombShare::LiftedHere).
         const bool owner_lifts = !o.received.empty() && o.received.back().animation &&

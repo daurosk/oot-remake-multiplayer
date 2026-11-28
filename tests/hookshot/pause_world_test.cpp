@@ -86,3 +86,26 @@ TEST_CASE("pause world: no manager yet, or a count no manager has, is not ok") {
     CHECK_FALSE(P::Take(m.Reader(), kBase).ok);
     CHECK_FALSE(P::Take(m.Reader(), 0).ok);
 }
+
+TEST_CASE("pause world: only the menu's own holds are let go, and the world is free only with none held") {
+    CHECK(P::IsMenuHold(0xba597383u));   // (phase 0's run: the + menu open)
+    CHECK(P::IsMenuHold(0xb584333eu));
+    CHECK(P::IsMenuHold(0x90ddf88bu));
+    CHECK_FALSE(P::IsMenuHold(0x7bf055fcu));   // (a hold screens test: not the menu's)
+    Memory m;
+    m.Manager({0, 1, 1});
+    m.Put32(kArray + P::kHoldSize * 2 + P::kHoldKey, 0xba597383u);
+    P::Snapshot s = P::Take(m.Reader(), kBase);
+    REQUIRE(s.held.size() == 2);
+    const P::Hold* h = P::MenuHeld(s);
+    REQUIRE(h != nullptr);
+    CHECK(h->index == 2);   // never hold 1 (an event's, Game Over's: not in the table)
+    CHECK_FALSE(P::WorldFree(s));
+    m.Put32(kArray + P::kHoldSize * 2 + P::kHoldCount, 0);
+    s = P::Take(m.Reader(), kBase);
+    CHECK(P::MenuHeld(s) == nullptr);
+    CHECK_FALSE(P::WorldFree(s));   // hold 1 still holds the world: the menu player stays paused for the others
+    m.Put32(kArray + P::kHoldSize * 1 + P::kHoldCount, 0);
+    CHECK(P::WorldFree(P::Take(m.Reader(), kBase)));
+    CHECK_FALSE(P::WorldFree(P::Snapshot{}));   // (not read: not free)
+}

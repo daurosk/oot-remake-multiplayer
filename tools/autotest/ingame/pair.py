@@ -114,6 +114,53 @@ OCARINA_PROBE = "LICHII_COOP_OCARINA_PROBE=1"
 OCARINA_PLAYS_FRAMES = 240
 
 
+# The game's own frame-rate line, every ~5 s (Longshot vi: 'vi: 3501 frames presented (1.6 fps over the last 11.1 s,
+# interval 1)', game-out-B.txt of downed-move-53d40ab3-2). STARVED_*: a game is slow when at least STARVED_MIN_SLOW of
+# its samples in the last STARVED_WINDOW_S of its log are under STARVED_FPS. Measured (downed-move-0121-4, same lane, same
+# sha): downed-move-53d40ab3-2 with the WSL CI VM building (12 cpu) A 3.4/0.2, B 0.4/0.1/0.2/4.3 in the last 90 s, both
+# games at once; tunic-look-53d40ab3-2 just before (no CI): A once 1.8/1.3 (alone), B never, so never both at once.
+VI_FPS = re.compile(r"vi: \d+ frames presented \(([0-9.]+) fps over the last ([0-9.]+) s")
+STARVED_FPS = 5.0
+STARVED_WINDOW_S = 90.0
+STARVED_MIN_SLOW = 2
+
+
+def slow_samples(lines, window_s=STARVED_WINDOW_S, fps_under=STARVED_FPS):
+    """(slow fps values, samples read) of one game's log lines: its vi samples covering the last `window_s` seconds of
+    the log, newest last; the slow ones are those under `fps_under`."""
+    got, span = [], 0.0
+    for ln in reversed(lines):
+        m = VI_FPS.search(ln)
+        if not m:
+            continue
+        got.append(float(m.group(1)))
+        span += float(m.group(2))
+        if span >= window_s:
+            break
+    got.reverse()
+    return [f for f in got if f < fps_under], len(got)
+
+
+def starved_note(logs):
+    """What the games' own frame rates say about a frame timeout: `logs` = {game: log lines}. Both (all) games slow at
+    the same time = 'host starved' (a load outside the test: another job, a CI VM; downed-move-53d40ab3-2: the WSL
+    runners); one game slow alone = that game stalled. None when no game is slow or no game logged vi lines."""
+    slow = {}
+    for x in sorted(logs):
+        s, n = slow_samples(logs[x])
+        if n and len(s) >= STARVED_MIN_SLOW:
+            slow[x] = s
+    if not slow:
+        return None
+    fps = ", ".join("%s %s fps" % (x, "/".join("%g" % f for f in slow[x])) for x in sorted(slow))
+    if len(slow) == len(logs) and len(logs) > 1:
+        return ("host starved: every game's frame rate fell under %g fps in its last %.0f s at once (%s): a load "
+                "outside the test (another job, a CI VM) most likely, not the test (fps evidence only: a held game "
+                "dips too)" % (STARVED_FPS, STARVED_WINDOW_S, fps))
+    return ("%s alone slow (%s in its last %.0f s): most likely that game stalled, not the host"
+            % (" and ".join(sorted(slow)), fps, STARVED_WINDOW_S))
+
+
 class SetupFail(Exception):
     """The test could not be set up (the lane, a warp, a give, the set-up took more than 30 s): SETUP-FAIL, not FAIL."""
 
@@ -402,6 +449,19 @@ class Pair:
         # sets it). None: not known (a Pair made outside the plugin), nothing is checked.
         self.has_switch = None
 
+    def starved(self, why, slow=False):
+        """`why` (a set-up or boot failure's text) with the games' frame-rate reading added when it is a frame timeout
+        (the bridge's 'did not run in time' / a reply TimeoutError), or `slow` (a set-up over its time), and the logs show
+        slow games (starved_note)."""
+        logs = getattr(self, "log", None)
+        if not isinstance(logs, dict) or not logs or not slow and not re.search(r"did not run in time|TimeoutError|timed out", why):
+            return why
+        try:
+            note = starved_note({x: lg.since(0) for x, lg in logs.items()})
+        except Exception:      # (a reading that fails never hides the failure itself)
+            note = None
+        return "%s; %s" % (why, note) if note else why
+
     # -- per test ---------------------------------------------------------------------------------------------
     def begin(self, seconds):
         """A new test: its deadline, fresh log marks, no shots yet."""
@@ -433,7 +493,7 @@ class Pair:
         except SetupFail:
             raise
         except Exception as e:
-            raise SetupFail("set-up: %s: %s" % (type(e).__name__, e)) from e
+            raise SetupFail(self.starved("set-up: %s: %s" % (type(e).__name__, e))) from e
         finally:
             self.deadline = outer
             self._setup_ctx = was
@@ -441,7 +501,7 @@ class Pair:
         bound = limit + ctx["warps"] * SETUP_WARP_S
         warps = " incl %d warp(s)" % ctx["warps"] if ctx["warps"] else ""
         if took > bound:
-            raise SetupFail("set-up took %.1f s%s (limit %.0f s)" % (took, warps, bound))
+            raise SetupFail(self.starved("set-up took %.1f s%s (limit %.0f s)" % (took, warps, bound), slow=True))
         self.notes.append("set-up %.1f s%s" % (took, warps))
 
     def _setup_warp(self):
@@ -710,7 +770,7 @@ class Pair:
         except SetupFail:
             raise
         except (AssertionError, pc.BridgeError, OSError, TimeoutError) as e:
-            raise SetupFail("boot: %s: %s" % (type(e).__name__, e)) from e
+            raise SetupFail(self.starved("boot: %s: %s" % (type(e).__name__, e))) from e
         wrong = [self.why_not(x) for x in self.c
                  if scene and (self.state(x).get("scene") or "").lower() != scene.lower()]
         if wrong:
@@ -977,9 +1037,11 @@ class Pair:
             self.warp_one(x, scene, entrance, arrive_in_event)
         return {x: self.state(x) for x in self.c}
 
-    def warp_one(self, x, scene, entrance=None, arrive_in_event=False):
+    def warp_one(self, x, scene, entrance=None, arrive_in_event=False, ui_wait=True):
         """Game x alone to `scene`, by warp_both's rules (entrance, arrive_in_event, waits inside the deadline); the
         other game is stepped to the same frame count after it (row-286-wake-3). Returns x's state.
+        ui_wait=False: no wait for the play UI after the arrival (_until_play_ui); ONLY for a test that forces the
+        'in play with its play UI down' case on purpose (test_pause_ui_down.py), every other caller keeps the wait.
         arrive_in_event=None (boot_ready: a boot's scene may or may not start an event on arrival): the bridge's own
         60 s wait, and a 'timeout' is judged on state like arrive_in_event=True (in the scene, not loading, the event
         running), anything else raises."""
@@ -1030,10 +1092,16 @@ class Pair:
         for y in self.c:
             if y != x and ran:
                 self.step_other(y, ran)
-        if r.get("ok"):
-            # (arrived in free play: the warp ends only when x's play UI is up again; an arrival answered 'timeout' in
-            # its event (arrive_in_event) is left in the event, as the test asked)
+        if r.get("ok") and ui_wait and arrive_in_event is not True:
+            # (arrived in free play: the warp ends only when x's play UI is up again. arrive_in_event=True asked for a
+            # stage whose arrival starts an event (a boss intro): that event holds the play UI down, so x is left in it,
+            # as the test asked, whether the bridge answered 'timeout' in the event or ok in the gap before it
+            # (row-215-confirm-4: probe-intro-53d40ab3-2 A, 'Dm_SY_BancChangeArrive' ended, then 'SageOfSpirit_BossStart'
+            # took the event: 600 frames with the UI down, SETUP-FAIL before the probe ran))
             self._until_play_ui(x, scene, log_at)
+        elif r.get("ok") and ui_wait:
+            self.notes.append("%s: warp %s: arrive_in_event, no play UI wait (the arrival's event holds it down)"
+                              % (x, scene))
         return self.state(x)
 
     def _until_play_ui(self, x, scene, pos):
@@ -1200,15 +1268,17 @@ class Pair:
         return lg
 
     # -- looks ------------------------------------------------------------------------------------------------
-    def check_shot(self, x, name, tolerance=0.90):
+    def check_shot(self, x, name, tolerance=0.90, box=None):
         """A bridge shot of game x (the game's framebuffer, no overlay), compared to refs/<name>-<x>.png by SSIM.
         No reference yet: the shot is kept as <out>/new/<name>-<x>.png, the test goes on, and its result is NO-REF (an
-        owner-approved reference is copied into refs/ by hand; never made a pass by the test itself)."""
+        owner-approved reference is copied into refs/ by hand; never made a pass by the test itself).
+        box (left, top, right, bottom fractions): only that part is compared (imagecheck.ssim); the whole shot and
+        reference are still kept."""
         import imagecheck   # (Pillow + scikit-image: only tests with a look check need them)
         r = self.call(x, "shot", name="%s-%s" % (name, x))
         path = r.get("path")
         ref = os.path.join(self.refs_dir or os.path.join(HERE, "refs"), "%s-%s.png" % (name, x))
-        res = imagecheck.compare(path, ref, tolerance, keep_dir=self.out_dir)
+        res = imagecheck.compare(path, ref, tolerance, keep_dir=self.out_dir, box=box)
         self.shots.append(dict(res, game=x, name=name))
         if res["why"].startswith("NO-REF"):
             return res        # (the test goes on; bt_plugin labels it NO-REF at its end, never PASS)

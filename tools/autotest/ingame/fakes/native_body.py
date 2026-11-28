@@ -9,7 +9,8 @@ testpack.MANIFEST, lists it: put in by --pack native before the boot, taken out 
 - B's first walk: A logs one body summary 300 frames later (moves, setter calls, drift 0.000 m).
 Selftest switch BT_FAKE_NATIVE_BUG (tests/test_ingame_native_body.py): nobody -> no collision and no top (A walks
 through: FAIL); noline -> no `has a body` line (SETUP-FAIL); left -> the body stays at B's old spot after B walks
-(FAIL at step 4); drift -> the summary says 0.250 m (FAIL).
+(FAIL at step 4); drift -> the summary says 0.250 m (FAIL); lowtop -> A comes to rest 0.70 m over B's feet (a
+threshold miss: NO-REF listing it while MEASURED is None).
 """
 import json
 import math
@@ -81,6 +82,6 @@ def act(game, words):
     p = [float(v) for v in words[1:4]]
     b = game.other.pos
     if math.hypot(p[0] - b[0], p[2] - b[2]) < RADII_M and p[1] > b[1] + TOP_M:
-        game.pos = [p[0], b[1] + TOP_M, p[2]]    # (fell onto the copy's top)
+        game.pos = [p[0], b[1] + (0.70 if _bug() == "lowtop" else TOP_M), p[2]]    # (fell onto the copy's top)
         return True
     return False

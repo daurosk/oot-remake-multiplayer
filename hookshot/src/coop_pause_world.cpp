@@ -67,6 +67,13 @@ Snapshot Take(const ReadFn& read, std::uint64_t main_base) {
     return s;
 }
 
+const Hold* MenuHeld(const Snapshot& s) {
+    for (const Hold& h : s.held) {
+        if (IsMenuHold(h.key)) return &h;
+    }
+    return nullptr;
+}
+
 std::string Json(const Snapshot& s) {
     if (!s.ok) return "{\"ok\":false,\"why\":\"" + s.why + "\"}";
     std::string out = "{\"ok\":true,\"manager\":\"" + Hex(s.manager) + "\",\"holds\":" + std::to_string(s.holds) +

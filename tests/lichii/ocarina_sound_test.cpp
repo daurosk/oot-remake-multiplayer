@@ -285,13 +285,23 @@ TEST_CASE("what a sound user plays is read from its event list") {
     Run run;
     snd::State st;
     snd::LogPlaying(st, g, kActor, 1000, "P1", run.say());
-    REQUIRE(run.said.size() == 1);
-    CHECK(run.said[0] == "P1 sounds: Ocarina_D, Player_FootStep");
+    // Row 319: first the name the puppet's sound user was made with (its voice list), once per user.
+    REQUIRE(run.said.size() == 2);
+    CHECK(run.said[0] == "P1 sound user 0x400030000 is 'Player_Child'");  // kUser
+    CHECK(run.said[1] == "P1 sounds: Ocarina_D, Player_FootStep");
     snd::LogPlaying(st, g, kActor, 1100, "P1", run.say());  // too soon, and the same
-    CHECK(run.said.size() == 1);
+    CHECK(run.said.size() == 2);
     g.Put<std::uint64_t>(kUser + snd::addr::kUserFirstLink, kUser + snd::addr::kUserEvents);
     snd::LogPlaying(st, g, kActor, 1300, "P1", run.say());
     CHECK(run.said.back() == "P1 sounds: none");
+    // Made again at the same addresses (heap reuse): the user is named again (row 319 review).
+    const auto before = run.said.size();
+    snd::LogPlaying(st, g, kActor, 1600, "P1", run.say());
+    CHECK(run.said.size() == before);  // same user, nothing new
+    snd::MadeAgain(st);
+    snd::LogPlaying(st, g, kActor, 1900, "P1", run.say());
+    REQUIRE(run.said.size() == before + 1);
+    CHECK(run.said.back() == "P1 sound user 0x400030000 is 'Player_Child'");
 }
 
 TEST_CASE("the notes are searched and played on the game's Ocarina user when a list reaches it") {

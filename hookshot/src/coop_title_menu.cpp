@@ -381,10 +381,12 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.show_players = On(IniGet(options_ini, "LICHII_COOP_SHOW_PLAYERS"));
     o.pvp = On(IniGet(options_ini, "pvp"));
+    o.party_wait = On(IniGet(options_ini, "party_wait"));
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
     o.gold_own = IniGet(options_ini, "gold_skulltulas").value_or("") == "own";
     o.race = On(IniGet(options_ini, "race"));
     o.floor_switches = IniGet(options_ini, "floor_switches").value_or("") != "off";
+    o.pause_world = On(IniGet(options_ini, "pause_world"));
     // The password on this network (row 251, dauro 2026-11-22: LAN joins need none): not needed unless the kit's
     // documented line says so (same_network_password = on, as Host.bat reads it) or an older build's line was
     // hand-set to off (same_network_open = off). The host still lets only a private source address in that way.
@@ -480,12 +482,14 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = chat_key == "T" ? IniUnset(o, "LICHII_COOP_CHAT_KEY") : IniSet(o, "LICHII_COOP_CHAT_KEY", chat_key, false);
     o = show_players ? IniSet(o, "LICHII_COOP_SHOW_PLAYERS", "1", false) : IniUnset(o, "LICHII_COOP_SHOW_PLAYERS");
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
+    o = party_wait ? IniSet(o, "party_wait", "on", true) : IniUnset(o, "party_wait");   // (off: no line, as before)
     if (On(IniGet(o, "approve_joins")) != approve_joins) {   // (Co-op settings' Approve joins; unchanged: as written)
         o = approve_joins ? IniSet(o, "approve_joins", "on", true) : IniUnset(o, "approve_joins");
     }
     o = gold_own ? IniSet(o, "gold_skulltulas", "own", true) : IniUnset(o, "gold_skulltulas");
     o = race ? IniSet(o, "race", "on", true) : IniUnset(o, "race");
     o = floor_switches ? IniUnset(o, "floor_switches") : IniSet(o, "floor_switches", "off", true);
+    o = pause_world ? IniSet(o, "pause_world", "on", true) : IniUnset(o, "pause_world");
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
     o = original_game ? IniSet(o, "original_game", "on", true) : IniUnset(o, "original_game");
     // (one line for it, the kit's own: same_network_password = on while this network needs the password; the older

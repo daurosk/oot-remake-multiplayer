@@ -1,7 +1,9 @@
 """Fake-game reactions for test_vest_link.py (vest-link's file).
 
-Only after a `menu look link_vest=...` line (the test's own verb): the module's lines for it, and on each shot one
-vest block per Link in that Link's vest colour (unset: its tunic's slot colour).
+Only after a `menu look link_vest=...` line (the test's own verb): the module's lines for it, a camera (view.clip:
+fakes/hood_trim.py's VIEW, as fakes/hair_link.py; only when no other fake gave one), and on each of this row's shots
+(named vest-link-*) one vest block per Link in the middle third of that Link's screen box (bandcheck.box: where
+test_vest_link.py's huecheck.solid_count looks), in that Link's vest colour (unset: its tunic's slot colour).
 - Own Link: `coop: look: your Link's tunic is <painting> now (...)` (hookshot coop_look_tunic.cpp Step, host.what
   "tunic"), the painting as CoopLookParts::TunicPainting (`tunic-RRGGBB[-vest-RRGGBB]`, upper-case hex).
 - The other game: `coop: look: the puppets' tunics are <name> now` (coop_look_live.cpp FollowTunics), the name as
@@ -13,7 +15,19 @@ BT_FAKE_VEST=nounset (the unset line is said but the last colour stays drawn: th
 import os
 
 SLOT = {"A": (0x3070FF, "blue"), "B": (0xFF3030, "red")}
-BOX = {"A": 100, "B": 220}   # (x of each Link's vest block in the 320x180 fake shot)
+_VIEW = []
+
+
+def _view():
+    """fakes/hood_trim.py's VIEW (one camera table for the fakes; loaded by path as fakegame does)."""
+    if not _VIEW:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fakes_hood_trim_view_vest",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "hood_trim.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _VIEW.append(mod.VIEW)
+    return _VIEW[0]
 
 
 def setup(game):
@@ -41,15 +55,27 @@ def act(game, w):
     return True
 
 
+def state(game, st):
+    if game.vest_link_seen and st.get("pos") is not None:
+        st.setdefault("view", _view())   # (never over another fake's camera: B #149, a fake acts for its own row only)
+
+
 def after(game, m, r):
     if m.get("cmd") != "shot" or not r.get("path") or not game.vest_link_seen:
         return
+    if not str(m.get("name", "")).startswith("vest-link-"):
+        return   # (only this row's own shots: B #149, a fake never draws on other tests' shots)
+    import bandcheck
+    VIEW = game.state().get("view") or _view()   # (the camera this game's state reports: the test's box uses it)
     from PIL import Image, ImageDraw
     norepaint = os.environ.get("BT_FAKE_VEST") == "norepaint"
     im = Image.open(r["path"]).convert("RGB")
     d = ImageDraw.Draw(im)
     for g in (game, game.other):
+        b = bandcheck.box(VIEW, g.pos, im.size[0], im.size[1])
+        if not b:
+            continue
         c = g.vest_link_drawn if g.vest_link_drawn is not None and not norepaint else SLOT[g.tag][0]
-        x0 = BOX[g.tag]
-        d.rectangle([x0, 120, x0 + 30, 160], fill=((c >> 16) & 255, (c >> 8) & 255, c & 255))
+        h = (b[3] - b[1]) // 3
+        d.rectangle([b[0] + 1, b[1] + h + 1, b[2] - 2, b[1] + 2 * h], fill=((c >> 16) & 255, (c >> 8) & 255, c & 255))
     im.save(r["path"])

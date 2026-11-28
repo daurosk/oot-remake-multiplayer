@@ -26,6 +26,7 @@
 #include "coop_difficulty.h"
 #include "coop_gold_mode.h"
 #include "coop_race_mode.h"
+#include "coop_pause_world_mode.h"
 #include "coop_switch_stand_mode.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
@@ -47,6 +48,7 @@
 #include "coop_pause_tab.h"
 #include "coop_pause_world.h"
 #include "coop_pvp_game.h"
+#include "coop_party_wait_game.h"
 #include "coop_room_list.h"
 #include "coop_runtime.h"
 #include "coop_char_ages.h"
@@ -395,9 +397,11 @@ CoopPauseMenu::Session SessionNow() {
         const CoopDbno::Rules rules = CoopDbno::Current();
         s.rules = true;
         s.pvp = CoopPvp::On();
+        s.party_wait = CoopPartyWait::On();
         s.gold_own = CoopGoldMode::NotShared();
         s.race = CoopRaceMode::InForce();
         s.floor_switches = CoopSwitchStandMode::InForce();
+        s.pause_world = CoopPauseWorldMode::InForce();
         s.dbno = rules.on;
         s.dbno_bleed_s = rules.bleed_s;
         s.dbno_revive_tenths = rules.revive_tenths;
@@ -764,6 +768,7 @@ bool Host(const CoopTitleMenu::Options& o, bool test) {
     CoopGoldMode::SetChoice(o.gold_own ? CoopGoldMode::Mode::own : CoopGoldMode::Mode::shared);   // (row 63)
     CoopRaceMode::SetChoice(o.race);
     CoopSwitchStandMode::SetChoice(o.floor_switches);
+    CoopPauseWorldMode::SetChoice(o.pause_world);
     HosCoopHostOptions h{};
     h.size = sizeof h;
     h.name = o.name.c_str();
@@ -772,6 +777,7 @@ bool Host(const CoopTitleMenu::Options& o, bool test) {
     h.upnp = test ? 0 : 1;             // the router forward (nothing to set up)
     h.invite = test ? 0 : 1;
     h.pvp = o.pvp ? 1 : 0;
+    h.party_wait = o.party_wait ? 1 : 0;
     // The lobby's difficulty, picked on the Host page (or Host settings) as it is made: the server starts with it, and
     // the game lists show it (CoopDifficulty::NextLobby: automatic when none was picked).
     const CoopDifficulty::Choice lobby = CoopDifficulty::NextLobby();
@@ -2652,6 +2658,12 @@ static void OpenAsPlayer(CoopPauseMenu::Page page) {
 bool TestMenu(const std::string& page) {
     if (page.rfind("hold release ", 0) == 0) {   // (row 299 probe: the game's own release of PauseMgr hold N)
         return CoopPauseWorld::TestRelease(page.substr(13));
+    }
+    if (page == "world on" || page == "world off") {   // (row 299 phase 1: the host's "World runs in menus" now)
+        CoopPauseWorldMode::TestSet(page == "world on");
+        LOG_INFO(Core, "coop: test menu: world runs in menus {} (in force: {})", page == "world on" ? "on" : "off",
+                 CoopPauseWorldMode::InForce() ? "on" : "off");
+        return true;
     }
     if (page == "host") {
         return TestHost();

@@ -57,6 +57,7 @@ class KokiriBand(unittest.TestCase):
                          p.stdout[-2000:])
         self.assertIn("the band thresholds are not measured yet", p.stdout)
         self.assertEqual(len(re.findall(r"(?m)^bandcheck \d", p.stdout)), 7, p.stdout[-2000:])   # (one line per distance)
+        self.assertEqual(len(re.findall(r"(?m)^sight kokiri-band-\S+: B sees A", p.stdout)), 7, p.stdout[-3000:])   # (far + 6 nearer)
         s, p = self.run_it("off", [])
         self.assertEqual([d["test"] for d in s["deselected"]], ["test_look.py::test_kokiri_hood_band"], p.stdout[-2000:])
         s, p = self.run_it("nopack", self.ENV, pack=None)   # (the switches but not the fix's cap.bin: not run)
@@ -86,7 +87,29 @@ class KokiriBand(unittest.TestCase):
         """A's puppet drawn over B's own Link (or a background box over the other Link): SETUP-FAIL, never judged."""
         s, p = self.run_it("line", self.ENV, env={"BT_FAKE_KOKIRI_ON_LINE": "1"})
         self.assertEqual(results(s)["test_kokiri_hood_band"], "SETUP-FAIL", p.stdout[-2000:])
-        self.assertIn("the band check's boxes overlap", p.stdout)
+        self.assertIn("boxes overlap", p.stdout)   # (sight.prove's check, before any band check)
+        self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
+
+    def test_puppet_out_of_sight_is_setup_fail(self):
+        """A's puppet not drawn on B's shot (behind a wall: run kokiri-look-182cd53b, 2026-11-28): sight.prove finds it
+        on no heading = SETUP-FAIL with each try's numbers, never a FAIL of the band; the lane's next test still sets up."""
+        s, p = self.run_it("hidden", self.ENV, env={"BT_FAKE_KOKIRI_HIDDEN": "1"})
+        self.assertEqual(results(s)["test_kokiri_hood_band"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertIn("in sight at 14.0 m on no heading", p.stdout)
+        for turn in (0, 90, 180, 270):   # (every heading tried, each with its own reason)
+            self.assertIn("turn %d: sight kokiri-band-turn%03d" % (turn, turn), p.stdout)
+        self.assertIn("NOT in sight on B's shot", p.stdout)
+        self.assertNotIn("bandcheck 14.0", p.stdout)
+        self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
+
+    def test_away_place_refused_is_setup_fail(self):
+        """sight.prove's away place refused or clamped (pair.act does not raise on ok False): A still in view, so the
+        proof says 'did not leave' (SETUP-FAIL), never 'NOT in sight' on a guess; the lane's next test still sets up."""
+        s, p = self.run_it("stuck", self.ENV, env={"BT_FAKE_KOKIRI_STUCK": "1"})
+        self.assertEqual(results(s)["test_kokiri_hood_band"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertIn("did not leave", p.stdout)
+        self.assertNotIn("NOT in sight", p.stdout)
+        self.assertNotIn("bandcheck 14.0", p.stdout)
         self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
 
 

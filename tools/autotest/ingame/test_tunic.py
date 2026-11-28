@@ -35,12 +35,13 @@ CROSS = r"row 198 cross guard"                                         # coop_lo
 
 # The colour check (review-rows-c130 10:38: a stored-look compare alone is no proof of a colour). On each game's shot:
 # tunic-blue and tunic-green pixels in the box of each Link (bandcheck.box: the shot's camera view.clip, feet to
-# bandcheck.HEAD), each less the same-size box beside it (bandcheck.side_box: the background's own). Blue = 3070FF
+# bandcheck.HEADS by age), each less the same-size box beside it (bandcheck.side_box: the background's own). Blue = 3070FF
 # (lichii/hook/coop_colors.cpp:21, hue 222), A's colour; green = the game's own Kokiri tunic (B wears no colour). The
 # Link wearing blue must hold more blue than green and at least COLOUR_MIN blue, the green one the other way round.
 # Each game's own Link is the control (its colour is the module's own line above), the other's puppet is the row.
-# NOT MEASURED: the hue/saturation/value ranges, COLOUR_MIN, BEARING and bandcheck.HEAD (an adult's 1.9 m on a child's
-# Link: the box is taller than the Link, the side box takes the background off). Until MEASURED cites a lane run's
+# bandcheck.HEADS["child"] is measured (1.25 m; the adult 1.9 m made the boxes overlap: run tunic-look-53d40ab3-2);
+# each box takes its Link's age from that game's state.
+# NOT MEASURED: the hue/saturation/value ranges, COLOUR_MIN and BEARING. Until MEASURED cites a lane run's
 # colourcheck lines, a run whose colour checks all hold ends NO-REF, never PASS (worker-rules: no guessed values).
 COLOUR_MIN = 4
 MEASURED = None   # e.g. "run <name>: A own blue .. green .., B's puppet of A blue .. green .., ..."
@@ -66,17 +67,17 @@ def count(px, b, test):
     return sum(1 for y in range(y0, y1) for x in range(x0, x1) if test(px[x, y]))
 
 
-def colours(path, view, pos, other):
-    """{box, side, blue, green} of the Link at `pos` on the shot (net of the side box away from `other`), or None when
-    it is off the shot."""
+def colours(path, view, pos, other, age, other_age):
+    """{box, side, blue, green} of the Link of `age` at `pos` on the shot (net of the side box away from `other`, a Link
+    of `other_age`), or None when it is off the shot."""
     import bandcheck
     from PIL import Image
     im = Image.open(path).convert("RGB")
     w, h = im.size
-    b = bandcheck.box(view, pos, w, h)
+    b = bandcheck.box(view, pos, w, h, age)
     if not b:
         return None
-    ob = bandcheck.box(view, other, w, h)
+    ob = bandcheck.box(view, other, w, h, other_age)
     side = bandcheck.side_box(b, w, (ob[0] + ob[2]) / 2 if ob else None)
     px = im.load()
     out = {"box": b, "side": side}
@@ -109,9 +110,19 @@ def stand_apart(pair):
     pair.step_both(20)
 
 
-def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour):
-    own = colours(path, view, own_pos, pup_pos)
-    pup = colours(path, view, pup_pos, own_pos)
+def prove_apart(pair, viewers, name):
+    """After stand_apart, outside the set-up block (two shots per proof do not fit SETUP_LIMIT_S; a SetupFail is still
+    SETUP-FAIL): each viewer whose shot of the other player's puppet is judged sees it IN SIGHT, not only inside its
+    projected box (sight.prove; kokiri-band-c124-7, run kokiri-look-182cd53b: a place by distance put the other Link
+    behind a wall)."""
+    import sight
+    for x in viewers:
+        sight.prove(pair, x, "B" if x == "A" else "A", "%s-%s" % (name, x))
+
+
+def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour, own_age, pup_age):
+    own = colours(path, view, own_pos, pup_pos, own_age, pup_age)
+    pup = colours(path, view, pup_pos, own_pos, pup_age, own_age)
     line = "colourcheck %s: own %s puppet %s" % (x, own, pup)
     print(line)
     pair.notes.append(line)
@@ -137,6 +148,7 @@ def test_own_colour_no_cross_guard(pair):
     with pair.setup():
         need_child_in_play(pair)
         stand_apart(pair)             # hs-tunic.A.txt: A steps off and stands by B; B.txt: faces A, camera behind
+    prove_apart(pair, ("A", "B"), "tunic")   # (both shots judge the other's puppet: colour_check)
     # the colour is set at the module's start: these lines are from the boot (pos=0), as the old row read them
     for x in ("A", "B"):              # (else the lane file's parts are worn: the lines below would judge them)
         bad = pair.log[x].find(r"LICHII_COOP_LOOK: '", pos=0)
@@ -151,11 +163,12 @@ def test_own_colour_no_cross_guard(pair):
     # Tolerance 0.80: two Links that breathe, Kakariko's people.
     for x, own_colour, pup_colour in (("A", "blue", "green"), ("B", "green", "blue")):
         o = "B" if x == "A" else "A"
-        at = pair.state(o)["pos"]
+        so = pair.state(o)
+        at = so["pos"]
         pup = pair.until("%s's puppet of %s" % (x, o), lambda: puppet_at(pair, x, at), max_frames=120)
         s = pair.state(x)              # (x's camera and Link; the shot runs at most a few frames after it)
         res = pair.check_shot(x, "tunic-blue", tolerance=0.80)
-        colour_check(pair, x, res["path"], s["view"], s["pos"], pup, own_colour, pup_colour)
+        colour_check(pair, x, res["path"], s["view"], s["pos"], pup, own_colour, pup_colour, s["age"], so["age"])
     pair.step_both(120)
     for x in ("A", "B"):               # row 198: the guard must never fire, in either game, from the boot on
         line = pair.log[x].find(CROSS, pos=0)

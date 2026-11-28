@@ -1078,6 +1078,7 @@ TEST_CASE("testinput: the bridge's act allows only the listed kinds and refuses 
     CHECK(NotAllowed(Must("menu customize"), allowed).empty());
     CHECK(NotAllowed(Must("setflag some_flag 1"), allowed).empty());
     CHECK(NotAllowed(Must("verb Enemy_DungeonBoss_PhantomGanon 139"), allowed).empty());   // row 287's knock-down
+    CHECK(NotAllowed(Must("event Get_StoneOfFire_AppearBoss"), allowed).empty());   // DodongoStage's boot event (row 138)
     // an unlisted kind: a wait, a warp, a give, a sync, a dump
     const std::string wait = NotAllowed(Must("wait 1"), allowed);
     CHECK(wait.find("not allowed here") != std::string::npos);

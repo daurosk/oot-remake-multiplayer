@@ -22,7 +22,10 @@ merge_tables.py), after the pack is in, so new table files here are merged as th
 
 Both lane games get the same files (testpack.put_in), so lane A's and lane B's coop_puppet.json must be the same file
 (lanes.make_pack builds both the same way); a lane whose two packs differ is a make failure. A file only the lane's
-pack has under romfs/ (a pack made by another tool, left in) would stay in and is a make failure too; the kit's own
+pack has under romfs/ (a pack made by another tool, left in) would stay in and is a make failure too, except the own
+tunic files the kit's start puts into the pack's romfs (hookshot.py pack_start -> self_tunic.put: self_tunic.FIXED and
+each colour's `self_files` path of either manifest), which the start takes away and puts again from the new
+manifest (dry make on lane1-A 21:1x UTC: 9 such files, Model/Player_*.bfres.zs and Tex/*Angin*/Mt_*). The kit's own
 files beside romfs/ (_coop-archives/, coop-merged.txt, ...) are not the build's and are left alone.
 """
 import hashlib
@@ -102,12 +105,25 @@ def read_json(path):
         return json.loads(f.read().decode("utf-8"))
 
 
-def diff(built, lane_pack):
-    """({rel: built path} of files new or different from the lane's pack, [lane-only rels under romfs/])."""
+def start_files(docs):
+    """The romfs files the kit's start puts into the pack itself (self_tunic.put): its FIXED list and every colour's
+    own `self_files` path (the same match self_tunic uses), of each manifest in docs; as 'romfs/<path>'."""
+    from puppet_pack import self_tunic
+    out = {"romfs/" + p for p in self_tunic.FIXED}
+    for doc in docs:
+        files = doc.get("self_files") if isinstance(doc.get("self_files"), dict) else {}
+        for per in files.values():
+            if isinstance(per, dict):
+                out.update("romfs/" + p for p in per if isinstance(p, str) and self_tunic._OK.match(p))
+    return out
+
+
+def diff(built, lane_pack, keep=()):
+    """({rel: built path} of files new or different from the lane's pack, [lane-only rels under romfs/ not in keep])."""
     mine, theirs = files_under(built), files_under(lane_pack)
     changed = {rel: p for rel, p in sorted(mine.items())
                if rel not in theirs or not same_file(p, theirs[rel])}
-    stale = sorted(rel for rel in theirs if rel not in mine and rel.startswith("romfs/"))
+    stale = sorted(rel for rel in theirs if rel not in mine and rel.startswith("romfs/") and rel not in keep)
     return changed, stale
 
 
@@ -171,7 +187,7 @@ def make(out, ctx):
             raise RuntimeError("the made pack's %s (%s) is not the lane pack's (%s): not built as the lane's" % (
                 key, json.dumps(doc.get(key))[:80], json.dumps(lane_doc.get(key))[:80]))
     bodies = sum(1 for a in doc.get("actors", []) if a.get("body"))
-    changed, stale = diff(built, lane_pack)
+    changed, stale = diff(built, lane_pack, keep=start_files([doc, lane_doc]))
     if stale:
         raise RuntimeError("lane A's pack has %d romfs files this build does not make (%s): a pack of another tool; "
                            "prep the lane on this sha" % (len(stale), ", ".join(stale[:5])))

@@ -570,6 +570,9 @@ bool IsHideAnimation(std::string_view name);
 // Issue 35 (3): an enemy waiting on the ceiling to drop on a Link (the
 // Skulltula's "CeilingWait", any LOD variant).
 bool IsCeilingWait(std::string_view name);
+// Row 303: that, or a boss in its pre-battle wait on the ceiling (Gohma's 'Pre_Battle_Ceiling_*'), whose fight its
+// own game's AI starts only for a Link it perceives: a copy's player under it claims it (the server hands it over).
+bool WaitsOnCeilingForLink(std::string_view actor, std::string_view animation);
 // Our Link at `link` stands under a ceiling enemy at `enemy`: within
 // kCeilingUnderM across (x, z) and below it by at most kCeilingDropM (y up).
 inline constexpr float kCeilingUnderM = 4.0f;

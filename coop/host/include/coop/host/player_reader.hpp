@@ -51,6 +51,10 @@ struct PlayerReading {
   // A game menu is in front: one of the game's menu screens (its update f_802f1380) has a focused button: the pause
   // menu, the Key Items / Threads of Time / Map panel, a dialog (Longshot's patch 0018, hos_coop_menu_state).
   std::optional<bool> in_menu;
+  // Row 299: that menu is in front while the world runs under it (the host's "World runs in menus": the menu's own
+  // pause let go, nothing else holds the world). This game's own checks still see in_menu; PLAYER_STATUS sends
+  // neither in_menu nor paused, so the others keep this player's enemies, counters, switches and bosses with them.
+  bool menu_world_runs = false;
   // Our world stands still while no menu says so (WorldStill, sampler.hpp): the quick-switch item menu, a menu
   // patch 0018 does not track, a stall. The hook sets it; false: running, or not judged.
   bool world_still = false;

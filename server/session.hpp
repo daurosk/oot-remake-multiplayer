@@ -102,6 +102,9 @@ struct SessionConfig {
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
   bool pvp = false;
+  // Wait for the party (docs/party-wait.md): the host's setting at its start; the host may change it in the session
+  // (PARTY_WAIT_MODE). Off by default.
+  bool party_wait = false;
   // Down but not out (coop_server --dbno; docs/protocol.md "Down but not
   // out"): a player at no hearts is downed and can be revived. On unless the
   // server or the host turns it off; every player gets the value at join.
@@ -440,6 +443,7 @@ struct Stats {
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
+  std::uint64_t party_wait_mode_refused = 0;   // PARTY_WAIT_MODE from a player who does not host
   std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
   // Down but not out (docs/protocol.md, "Down but not out").
   std::uint64_t dbno_mode_refused = 0;  // DBNO_MODE from a player who does not host
@@ -550,6 +554,7 @@ struct Stats {
   std::uint64_t kept_by_logic = 0;      // row 212: a hand-over to a game whose logic did not make it, refused
   std::uint64_t back_to_logic = 0;      // row 212: asked back to a game whose logic made it
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
+  std::uint64_t boss_to_finder = 0;      // row 303: a boss in its pre-battle wait asked to the player whose copy claims it
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
@@ -674,6 +679,8 @@ class Session {
   std::string admin(std::string_view line, std::uint64_t now_us);
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
+  // Whether players are told to wait for the party now (config.party_wait, then the host's PARTY_WAIT_MODE).
+  bool party_wait() const { return party_wait_; }
   // Down but not out now (config.dbno, then the host's DBNO_MODE).
   const protocol::DbnoMode& dbno() const { return dbno_; }
   // The difficulty in force now, as every player has been told (DIFFICULTY).
@@ -996,6 +1003,7 @@ class Session {
                          protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
+  void on_party_wait_mode(ConnectionId id, Connection& c, const protocol::PartyWaitMode& m);
   void on_difficulty(ConnectionId id, Connection& c, const protocol::Difficulty& m);
   // After a join or a leave: the automatic scaler's new values, to everyone
   // but `except` (the joiner, told already; the leaver). Nothing when the
@@ -1095,6 +1103,9 @@ class Session {
                     std::uint64_t now_us, std::string why);
   // Row 215: a boss root whose owner's last state says it is at life 0 or plays its death (anim::IsDeath).
   static bool boss_finishing(const Object& o);
+  // Row 303: a boss whose owner's last state plays its wait before the fight (anim::IsPreBattle: Gohma's
+  // 'Pre_Battle_*' on the ceiling, her 'Sleep'), at a life above 0.
+  static bool pre_battle(const Object& o);
   // Row 215: no boss changes owner in its finish (at life 0 or in its death): the game that runs the finish keeps
   // it to the end, whatever rule asks (hitter, turns, near, chase, unfit owner, unready). True: `o` (a boss or a
   // boss's part) stays. A part may still go to its boss's own owner (the group together). Only an owner that
@@ -1257,6 +1268,9 @@ class Session {
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
   std::uint8_t pvp_set_by_ = 0;
+  // Wait for the party now, as pvp_ (docs/party-wait.md).
+  bool party_wait_ = false;
+  std::uint8_t party_wait_set_by_ = 0;
   // Down but not out now: config_.dbno until the host changes it; back to
   // it when the session empties.
   protocol::DbnoMode dbno_;

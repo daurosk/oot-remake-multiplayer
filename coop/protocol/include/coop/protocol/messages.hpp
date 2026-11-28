@@ -38,7 +38,7 @@ namespace coop::protocol {
 // for the whole sync plan. A protocol 17 server drops them from an object's last state, so a new owner or a late
 // player would get none of them; mixed versions are refused at HELLO. Nobody else bumps the version in 0.12.0: new
 // keyed data goes in 25-28 under new keys (docs/protocol.md "Keyed values").
-inline constexpr std::uint16_t kProtocolVersion = 18;
+inline constexpr std::uint16_t kProtocolVersion = 19;
 // A public game (anyone joins without typing a password) lists itself on the relay's room list with this bit
 // on top of kProtocolVersion; the relay repeats the version as given. A listing without it is a private game
 // (or an older kit's): the joiner asks for the host's password and never tries the public one on it.
@@ -201,6 +201,7 @@ enum class MessageType : std::uint16_t {
   local_message = 464,
   player_look = 430,  // 430 to 434: a look of several parts (docs/protocol.md, "Looks")
   link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
+  link_effect = 501,  // the other Links' effects (row 310; docs/protocol.md, "Link effects")
   boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
   boss_heart = 521,
   boss_alive = 522,
@@ -216,6 +217,7 @@ enum class MessageType : std::uint16_t {
   pvp_strike = 540,  // 540 to 544: PvP on real bodies (docs/protocol.md, "PvP on real bodies")
   pvp_result = 541,
   pvp_native = 542,
+  party_wait_mode = 560,  // 560 to 564: wait for the party (docs/party-wait.md, protocol 19)
   emote = 615,  // 615 to 619: emotes and pings (docs/protocol.md, "Emotes")
 };
 
@@ -1377,6 +1379,20 @@ struct LinkSound {
   std::string name;                          // the asset's name
   bool operator==(const LinkSound&) const = default;
 };
+// LINK_EFFECT (501, row 310): an effect the game itself started on the
+// sender's own Link (its ELink user: the spin charge, the sword trail, Din's
+// Fire, Nayru's Love), by its key, relayed to everyone else, who start the same
+// key on that player's puppet with the game's own call. kLinkEffectEnd: the
+// sender's game no longer plays it (a held loop let go): the others stop it.
+// The key follows the LINK_SOUND name rule.
+inline constexpr std::uint8_t kLinkEffectEnd = 0x01;
+inline constexpr std::uint8_t kLinkEffectFlags = kLinkEffectEnd;  // every flag this build knows
+struct LinkEffect {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::uint8_t flags = 0;                    // kLinkEffectEnd
+  std::string name;                          // the effect's key
+  bool operator==(const LinkEffect&) const = default;
+};
 inline bool valid_link_sound_name(std::string_view name) {
   if (name.empty() || name.size() > kMaxLinkSoundChars) return false;
   for (const char ch : name) {
@@ -1653,6 +1669,16 @@ struct PvpMode {
   std::uint8_t set_by = 0;  // 0 the server, 1 to 4 a player
   bool on = false;
   bool operator==(const PvpMode&) const = default;
+};
+
+// PARTY_WAIT_MODE (protocol 19; docs/party-wait.md): whether a player is told to wait for the party before a boss
+// door, a locked combat room or a big chest. Off unless the host turns it on. The same rules as PVP_MODE: from the
+// server to each player when it joins (only while on) and to everyone on a change, `set_by` 0 when the server's start
+// decided it, else the host who changed it; from a player, the host asks for a change (others are ignored).
+struct PartyWaitMode {
+  std::uint8_t set_by = 0;  // 0 the server, else a player
+  bool on = false;
+  bool operator==(const PartyWaitMode&) const = default;
 };
 
 // DIFFICULTY (protocol 11): how hard the enemies are in this session
@@ -2340,10 +2366,10 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, ModData, LobbyAction, LobbyMutes, LobbyResult,
-                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound, LinkEffect,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote, PartyWaitMode>;
 
 MessageType type_of(const Message& message);
 

@@ -176,7 +176,10 @@ class FakeGame:
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
                 reply = self.answer(json.loads(line), sock)
-                sock.sendall((json.dumps(reply) + "\n").encode())
+                try:
+                    sock.sendall((json.dumps(reply) + "\n").encode())
+                except OSError:   # (close() shut this end while a reply was due: CI 46084613753's Errno 9 traceback)
+                    return
 
     def connect(self):
         a, b = socket.socketpair()
@@ -469,7 +472,15 @@ class PipeTest(unittest.TestCase):
                                     1, 65536, 65536, 0, _winapi.NULL)
 
         def game():
-            _winapi.ConnectNamedPipe(h, False)
+            # ERROR_PIPE_CONNECTED (535) = the client opened the pipe before this call: it IS connected (Windows'
+            # ConnectNamedPipe contract). CI 46091979839 windows 3.10: Bridge.connect won that race, this thread died on
+            # the 535, nothing answered: 'wait/status: no reply in 5 s' (scratchpad probe: client first -> 535, the
+            # pipe then reads fine). The test now connects first, so this order runs every time.
+            try:
+                _winapi.ConnectNamedPipe(h, False)
+            except OSError as e:
+                if e.winerror != 535:
+                    raise
             buf, reqs = b"", []
             while len(reqs) < 2:
                 data, _ = _winapi.ReadFile(h, 65536)
@@ -479,9 +490,9 @@ class PipeTest(unittest.TestCase):
                     reqs.append(json.loads(line))
             for r in reversed(reqs):   # the second first: the first was held back until the second came
                 _winapi.WriteFile(h, (json.dumps({"id": r["id"], "ok": True, "cmd": r["cmd"]}) + "\n").encode())
+        bridge = hs.Bridge.connect(name, timeout=5)   # (before the server's ConnectNamedPipe: the order that raced)
         t = threading.Thread(target=game, daemon=True)
         t.start()
-        bridge = hs.Bridge.connect(name, timeout=5)
         got = {}
         w = threading.Thread(target=lambda: got.__setitem__("wait", bridge.request("wait", reply_timeout=5)))
         w.start()
@@ -1004,20 +1015,32 @@ class RunTest(unittest.TestCase):
             def __init__(self, args, **kw):
                 self.env = kw["env"]
                 if "stdout" in kw:   # the game's log: its renderer is ready (run waits for this line)
+                    # (flushed: a real game writes to the fd itself. Unflushed, these bytes sat in run's 'wb' handle
+                    # and its close wrote them at offset 0, over a file line read() had appended first: CI
+                    # 46084613753 'A: no coop: test commands file line in 0 s', a slow runner's thread order)
                     kw["stdout"].write(RendererWaitTest.READY.encode())
+                    kw["stdout"].flush()
                 started.append(self)
                 if module:   # (the module reads its commands file: empties it, as coop_test_commands does)
                     import threading
                     path = self.env["LICHII_COOP_TEST_COMMANDS"]
                     out = getattr(kw.get("stdout"), "name", None)   # (the game's log by path: run closes its handle)
 
-                    def read():
-                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
-                        if reader_after and done.wait(reader_after):
-                            return
+                    def file_line():
                         if isinstance(out, str):
                             with open(out, "ab") as f:
                                 f.write(("[hos Presentation Thread] coop: test commands file %s\n" % path).encode())
+                    if not reader_after:
+                        # (a reader on time says its line before Popen returns, so before run closes its handle:
+                        # the order a slow runner gave by chance, every time now)
+                        file_line()
+
+                    def read():
+                        # (its first test frame: the file line, then the reads; reader_after s late, as gate-hud's A)
+                        if reader_after:
+                            if done.wait(reader_after):
+                                return
+                            file_line()
                         while not done.is_set():
                             try:
                                 if os.path.getsize(path):

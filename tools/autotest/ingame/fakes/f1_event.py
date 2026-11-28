@@ -13,6 +13,9 @@ What a real game logs and shows, each from the module source test_f1.py cites:
 BT_FAKE_F1=title|event: F1 there is Longshot's own (not taken, no co-op tab: the rc-01113 bug); =free: F1 in free play
 takes Longshot's route; =freetabs: co-op's tabs in Longshot's menu in free play. The matching test must FAIL.
 =stale: the 0 tab line is never logged after a title or an event (Longshot's menu does not tick): every test PASSes.
+Scope (B #149/B #164): state sets st["menu"]["coop"] only while F1 opened Longshot's menu (game.f1_tab), never a
+blanket menu for other rows (it replaced st["menu"] on every state: difficulty-menu-0121 CI 46086756382 red); command
+takes F1 only (another key: fakegame's built-in answer); act takes its own chest flag only.
 """
 import math
 import os
@@ -58,7 +61,8 @@ def state(game, st):
     _told(game)
     if game.f1_event and st.get("scene"):
         st["event"] = True
-    st["menu"] = {"coop": {"open": True, "tab": "multiplayer", "page": "main"} if game.f1_tab else {"open": False}}
+    if game.f1_tab:      # (only while F1 opened Longshot's menu on co-op's tab: B #149; closed = another row's menu)
+        st.setdefault("menu", {})["coop"] = {"open": True, "tab": "multiplayer", "page": "main"}
 
 
 def command(game, m):
@@ -68,7 +72,7 @@ def command(game, m):
     if m.get("cmd") != "key":
         return None
     if m.get("key") != "F1":
-        return {"ok": True, "key": m.get("key"), "vk": 0, "taken": False, "longshot": "none"}
+        return None          # (another row's key, or none: fakegame.builtin_answer's Longshot 'none'; B #149)
     head = {"ok": True, "key": "F1", "vk": 0x70}
     if game.f1_tab:
         game.f1_tab = False
@@ -96,7 +100,7 @@ def command(game, m):
 
 
 def act(game, words):
-    if words[:1] == ["setflag"] and len(words) == 3 and words[1].startswith("key64:"):
+    if words[:1] == ["setflag"] and len(words) == 3 and words[1] == CHEST:   # (its chest only: B #149)
         game.flags[words[1]] = int(words[2])
         return True
     return False

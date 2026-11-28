@@ -68,6 +68,13 @@ class BossHitReact(unittest.TestCase):
         self.assertEqual(r, {NAME: "SETUP-FAIL"}, p.stdout[-3000:])
         self.assertIn("boss sync: B has no", p.stdout, p.stdout[-3000:])
 
+    def test_boss_asleep_is_setup_fail(self):
+        """The fight never began (A's stall note for 'Wait' before the bomb, run boss-hit-react-53d40ab3-2): SETUP-FAIL
+        naming it, not a 5-minute NO-REF about missed stuns."""
+        p, r, _ = self.run_file(env={"BT_FAKE_BROKEN": "bhr-asleep"})
+        self.assertEqual(r, {NAME: "SETUP-FAIL"}, p.stdout[-3000:])
+        self.assertIn("never woke in A", p.stdout, p.stdout[-3000:])
+
     def test_counts_at_zero_is_never_pass(self):
         """The took-life line came but no counts line has K > 0: never PASS. On the fake the 1800 frames take less than
         the line's 10 s of wall clock, so it is NO-REF naming that (a game at 30 fps runs them in 60 s: FAIL)."""

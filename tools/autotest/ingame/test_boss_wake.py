@@ -27,8 +27,12 @@ Checks (all from the game's own state or the module's own lines; each pattern ci
     (tolerance 0.80, a scene with moving things, docs/ingame-tests.md step 6, as test_boss_shots.py).
 Judge order: log + state first, looks last (a look miss is never reported in place of a state FAIL).
 
-Waits: 30 frames a second (pair.FPS). The intro + first attack wait, 1800 ticks = 900 frames, is the old row-222 A
-script's 'wait 1800  # the intro, then the fight' (row-222-shots-twinrova.A.txt:27, cited in test_boss_shots.py).
+Waits: the intro is waited out by STATE, never by a frame count: after each arrival the games are stepped until they
+are in play again (Pair.until_in_play: no event, no load, a fresh sample, the play UI up), up to INTRO_MAX frames.
+(Was INTRO_FIGHT = LATE_GAP = 900 frames, the old row-222 A script's free-running 'wait 1800  # the intro, then the
+fight'. Stepped, Twinrova's intro is far longer: row215-309d7180 both games still in it after 2400 stepped frames,
+the free-running end at present +3994..+5048, pair.py BOOT_EVENT_FRAMES; row-215-confirm-2. With 900 the together case
+judged the wake INSIDE the intro and the late case sent B in DURING A's intro: it was not the late path at all.)
 """
 import os
 import re
@@ -48,10 +52,11 @@ BOOT = "live-twinrova-room"      # scenarios/live-twinrova-room.A/B.txt: child s
 SISTERS = ("Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake")   # docs/dungeons-boss.md "One boss": Twinrova's parts
 CRASH = r"exception 0x|FATAL"    # test_boss_shots.py CRASH (no-crash-A/B max=0)
 
-INTRO_FIGHT = 900                # frames: 'wait 1800' ticks // 2 (module docstring)
+INTRO_MAX = P.BOOT_EVENT_FRAMES  # frames: a stepped Twinrova intro's ceiling, the boot proof's own (pair.py, same intro)
 FIGHT_LOOKS = 4                  # paired looks in the fight, one every LOOK_GAP frames
 LOOK_GAP = 300                   # frames (10 s: the boss counts line's own period, coop_hookshot.cpp 'every 10 s')
-LATE_GAP = 900                   # frames A fights alone before B comes in (past A's intro: INTRO_FIGHT)
+A_ALONE = LOOK_GAP               # frames A fights alone after its intro, before B comes in: one counts period (A's
+#                                  verbs + orders running, the reported case: a copy joining a fight already on)
 SHOT_TOLERANCE = 0.80            # test_boss_shots.py Shots.TOLERANCE (moving scene)
 
 
@@ -110,13 +115,38 @@ def look_both(pair, name, missed):
             pair.step_other(x, top - n)
 
 
+def until_intro_over(pair, tag, games=None):
+    """Steps both games until each of `games` (default both) is in play after its arrival (its intro over, or skipped),
+    up to INTRO_MAX frames; notes the frames it took. A miss is a FAIL naming each game's state and event (the
+    module's event lines: Pair.event_note)."""
+    games = tuple(pair.c) if games is None else tuple(games)
+    before = {x: pair.c[x].last_frame or 0 for x in pair.c}
+    try:
+        pair.until_in_play("%s: %s past Twinrova's intro" % (tag, "+".join(games)), games, INTRO_MAX)
+    except AssertionError as e:          # (TestTimeout too: its own type kept)
+        raise type(e)("%s%s" % (e, "".join("; %s%s" % (x, pair.event_note(x)) for x in games))) from None
+    pair.notes.append("%s: %s in play %s frames after the arrival (ceiling %d)" % (
+        tag, "+".join(games), "/".join(str((pair.c[x].last_frame or 0) - before[x]) for x in games), INTRO_MAX))
+
+
 # -- judging ----------------------------------------------------------------------------------------------------
-def roles(pair, boss):
-    """{game: 'ours'|'a copy'} from the sync line since this test began (the newest one: a hand-over says it again)."""
+def arrival(pair, games=("A", "B"), at=None):
+    """{game: its module log's size} just before its warp into the stage (`at`: the dict to add to). Every wake check
+    reads each game's log from ITS OWN arrival: the live-twinrova-room boot already plays this fight, and its lines
+    (sync, verbs, orders, counts) still come after the test began (the boot proof ends at the intro's end, the fight's
+    first lines follow), so 'since the test began' could pass a copy that never took THIS arrival's fight."""
+    at = {} if at is None else at
+    for x in games:
+        at[x] = pair.log[x].size()
+    return at
+
+
+def roles(pair, boss, since):
+    """{game: 'ours'|'a copy'} from the sync line since the game's arrival (the newest one: a hand-over says it again)."""
     rx = re.compile(sync_on(boss))
     out = {}
     for x in ("A", "B"):
-        for ln in pair.log[x].since():
+        for ln in pair.log[x].since(since[x]):
             m = rx.search(ln)
             if m:
                 out[x] = m.group(1)
@@ -183,39 +213,45 @@ def counts(lines):
 
 
 
-def counts_at_begin(pair):
-    """Each game's counts on the last counts line before this test began (zeros: none yet). One boot runs every test."""
+def counts_before(pair, since):
+    """Each game's counts on its last counts line before its arrival (zeros: none yet). One boot runs every test."""
     out = {}
     for x in ("A", "B"):
-        lg = pair.log[x]
-        with open(lg.path, "rb") as f:
-            head = f.read(lg.pos).decode("utf-8", "replace").splitlines()
+        with open(pair.log[x].path, "rb") as f:
+            head = f.read(since[x]).decode("utf-8", "replace").splitlines()
         out[x] = counts(head) or (0, 0, 0, 0)
     return out
 
 
-def judge_wake(pair, base, tag):
-    """Sync, owner's verbs and orders on the copy, one owner, and the fight state moving on both sides. Returns the
-    owner game."""
+def expect_since(pair, x, pattern, since, max_frames=600):
+    """Pair.expect_log, from game x's arrival (since[x]) instead of the test's start."""
+    return pair.until("%s log since its arrival /%s/" % (x, pattern), lambda: pair.log[x].find(pattern, since[x]),
+                      max_frames)
+
+
+def judge_wake(pair, since, tag):
+    """Sync, owner's verbs and orders on the copy, one owner, and the fight state moving on both sides, each game's
+    log read from its arrival (since: arrival()). Returns the owner game."""
+    base = counts_before(pair, since)
     owner = None
     for boss in SISTERS:
         for x in ("A", "B"):
-            pair.expect_log(x, sync_on(boss), max_frames=600)
-        r = roles(pair, boss)
+            expect_since(pair, x, sync_on(boss), since)
+        r = roles(pair, boss, since)
         ours = [x for x, v in r.items() if v == "ours"]
         assert len(ours) == 1, "%s %s: not exactly one owner game (%s)" % (tag, boss, r)
         owner = ours[0]
         copy = "B" if owner == "A" else "A"
-        pair.expect_log(copy, verbs_came(boss), max_frames=600)
-        pair.expect_log(copy, orders_came(boss), max_frames=600)
+        expect_since(pair, copy, verbs_came(boss), since)
+        expect_since(pair, copy, orders_came(boss), since)
     judge_world(pair, tag, owner)
     copy = "B" if owner == "A" else "A"
     try:                               # LogBossNative says its counts every 10 s while they change
-        pair.until("a boss counts line in both games since the test began",
-                   lambda: all(counts(pair.log[x].since()) for x in ("A", "B")), max_frames=600)
+        pair.until("a boss counts line in both games since their arrivals",
+                   lambda: all(counts(pair.log[x].since(since[x])) for x in ("A", "B")), max_frames=600)
     except AssertionError:
         pass                           # (judged below: no line = nothing sent or put in)
-    now = {x: counts(pair.log[x].since()) or base[x] for x in ("A", "B")}
+    now = {x: counts(pair.log[x].since(since[x])) or base[x] for x in ("A", "B")}
     sent = now[owner][1] - base[owner][1]
     put = now[copy][3] - base[copy][3]
     pair.notes.append("%s: owner %s sent %d action verbs; copy %s put %d in" % (tag, owner, sent, copy, put))
@@ -252,44 +288,46 @@ def back_after(pair):
 
 
 @pytest.mark.needs_boot(BOOT)
-@pytest.mark.budget(600)        # ESTIMATED, no old run: ~2100 frames (70 s) + warps, shots, reads; the first lane run's time replaces it
+@pytest.mark.budget(900)        # INTRO_MAX 6000 + judge 3000 max + fight 1200 frames at pair.BOOT_STEP_FPS 11.9 = 857 s + 1 warp (31 s), 10 shots
 @pytest.mark.look
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#286 Twinrova's sisters wake in both games, one fight (entering together)")
 def test_twinrova_wake_together(pair, back_after):
-    base = counts_at_begin(pair)
     missed = []
     with pair.setup():
         need_in_play(pair)
+        since = arrival(pair)
         st = pair.warp_both(STAGE, entrance=STAGE, arrive_in_event=True)   # test_boss_shots.py warp_in
         for x, s in st.items():
             assert (s.get("scene") or "").lower() == STAGE.lower() and not s.get("loading"), "%s after the warp: %s" % (
                 x, s.get("scene"))
-    pair.step_both(INTRO_FIGHT)
-    owner = judge_wake(pair, base, "together")
+    until_intro_over(pair, "together")
+    owner = judge_wake(pair, since, "together")
     look_both(pair, "wake-together-awake", missed)
     fight_and_look(pair, "wake-together", owner, missed)
     end_checks(pair, missed)
 
 
 @pytest.mark.needs_boot(BOOT)
-@pytest.mark.budget(700)        # ESTIMATED, no old run: ~3000 frames (100 s) + warps, shots, reads; the first lane run's time replaces it
+@pytest.mark.budget(1080)       # INTRO_MAX 6000 (A) + 300 alone + B's skipped intro (600) + judge 3000 max + fight 1200 frames at pair.BOOT_STEP_FPS 11.9 = 933 s + 3 warps (93 s), 12 shots
 @pytest.mark.look
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#286 Twinrova's sisters wake in a game that comes in after the intro (the play path)")
 def test_twinrova_wake_late(pair, back_after):
-    base = counts_at_begin(pair)
     missed = []
     with pair.setup():
         need_in_play(pair)
         warp_one(pair, "B", AWAY[0], entrance=AWAY[1], in_event=False)   # (the boot left B in the stage too)
+        since = arrival(pair, ("A",))
         warp_one(pair, "A", STAGE)
-    pair.step_both(LATE_GAP)        # A: its intro, then the fight alone (B elsewhere)
+    until_intro_over(pair, "late A", ("A",))   # A: its intro (B elsewhere, stepped alike)
+    pair.step_both(A_ALONE)                    # A's fight alone
     with pair.setup():
+        arrival(pair, ("B",), since)
         warp_one(pair, "B", STAGE)  # B in after A's intro ended: its own intro is force-skipped (module docstring)
     look_both(pair, "wake-late-arrive", missed)
-    pair.step_both(INTRO_FIGHT)
-    owner = judge_wake(pair, base, "late")
+    until_intro_over(pair, "late B", ("B",))
+    owner = judge_wake(pair, since, "late")
     look_both(pair, "wake-late-awake", missed)
     fight_and_look(pair, "wake-late", owner, missed)
     end_checks(pair, missed)

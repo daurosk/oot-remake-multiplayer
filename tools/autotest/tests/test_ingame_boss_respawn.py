@@ -53,6 +53,32 @@ class BossRespawn(unittest.TestCase):
         import boss_respawn as F
         self.assertEqual(F.BOSS_ROOMS, tuple(lists["BOSS_ROOMS"]))
         self.assertEqual(F.STAGES, tuple(lists["STAGES"] + lists["BOSS_ROOMS"]))
+        fight = {t.id: ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                 for t in n.targets if getattr(t, "id", None) == "FIGHT_ROOM"}["FIGHT_ROOM"]
+        self.assertEqual(rows.get(fight), "true", "%s: the boss-fight room's own start row" % fight)
+        self.assertEqual(F.FIRE, fight)
+
+    def test_boss_fight_path_passes(self):
+        """B #168 pick 3: FireTemple room 33 in a live fight: B's beside refused by the fight, the entrance shown."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_fight"])
+        self.assertEqual(list(r.values()), ["PASS"], p.stdout[-2000:])
+
+    def test_no_boss_fight_is_setup_fail(self):
+        """The fight check: 'in the boss room' but no fight line = SETUP-FAIL 'no boss fight' (never FAIL/PASS)."""
+        p, r = self.run_file(self.OBJ + ["-k", "boss_fight"], env={"BT_FAKE_BROKEN": "no-fight"})
+        self.assertEqual(list(r.values()), ["SETUP-FAIL"], p.stdout[-2000:])
+        self.assertIn("in 'no boss fight A'", p.stdout, p.stdout[-2000:])
+
+    def test_a_not_in_an_event_is_setup_fail(self):
+        """A's warp into the stage again started no event: B's entrance path is not certain = SETUP-FAIL."""
+        p, r = self.run_file(self.OBJ + ["-k", "shows and VolvagiaStage"], env={"BT_FAKE_BROKEN": "a-free"})
+        self.assertEqual(list(r.values()), ["SETUP-FAIL"], p.stdout[-2000:])
+        self.assertIn("A in an event for B's respawn: A is not in an event", p.stdout, p.stdout[-2000:])
+
+    def test_a_idle_takes_beside_no_ref(self):
+        """The real game's A-idle answer (br289-6-keep-182cd53b-2): B beside A = NO-REF, never PASS."""
+        p, r = self.run_file(self.OBJ + ["-k", "shows and DodongoStage"], env={"BT_FAKE_BROKEN": "beside"})
+        self.assertEqual(list(r.values()), ["NO-REF"], p.stdout[-2000:])
 
     def test_party_wipe_is_no_ref_never_fail(self):
         """review-tests-153 MUST 1: A downed in the fight too (a wipe) and B never respawns = a fight result, NO-REF
@@ -106,7 +132,7 @@ class BossRespawn(unittest.TestCase):
     def test_no_arrival_is_setup_fail_naming_the_step(self):
         """B #130 09:43: the boss-stage arrival is its own bounded step after the 30 s set-up check; a miss there is
         SETUP-FAIL 'boss arrival in <S>' (never FAIL: the row's own check did not run)."""
-        p, r = self.run_file(self.OBJ, env={"BT_FAKE_BROKEN": "no-arrival"})
+        p, r = self.run_file(self.OBJ + ["-k", "not boss_fight"], env={"BT_FAKE_BROKEN": "no-arrival"})
         self.assertEqual(set(r.values()), {"SETUP-FAIL"}, p.stdout[-2000:])
         for stage in ("VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage", "GohmaStage", "GanondorfStage"):
             self.assertIn("boss arrival in %s" % stage, p.stdout, p.stdout[-2000:])
@@ -122,7 +148,7 @@ class BossRespawn(unittest.TestCase):
     def test_default_run_deselects_them(self):
         p, r = self.run_file([])
         self.assertEqual(r, {}, p.stdout[-2000:])
-        self.assertEqual(p.stdout.count("deselected: needs_env LICHII_COOP_DEBUG_OBJECTS=1 "), 14, p.stdout[-2000:])
+        self.assertEqual(p.stdout.count("deselected: needs_env LICHII_COOP_DEBUG_OBJECTS=1 "), 15, p.stdout[-2000:])
 
 
 if __name__ == "__main__":

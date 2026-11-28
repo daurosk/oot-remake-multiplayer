@@ -6,6 +6,19 @@ boss-respawn-289-run.ps1, preflight CLEAN review-c123-4 06:57 UTC 2026-11-26, ne
 | test_respawn_shows_the_stage[<Stage>] | volvagia, dodongo, lizalfos, ganon | row 289 fixed: after a bleed-out in a boss stage the respawn "to the entrance" shows the stage and gives control back |
 | test_respawn_black_with_starter_kept | volvkeep | the cause (report boss-respawn-289.md point 7): the same steps with the game's reservation kept (LICHII_COOP_ARRIVAL_STARTER=keep) stay BLACK |
 | test_volvagia_rocks_each_game | rocks234 (hs-volvagia-rocks) | row 234: each game makes its own falling rocks in the Volvagia fight, both Links alive (ten heart gives) |
+| test_respawn_in_a_boss_fight | (new, B #168 pick 3) | the same respawn in the real boss room (FireTemple room 33) in a live boss fight: B's beside move is refused ('not during your boss fight'), the entrance shows, control back |
+
+Why A is put in an event (boss-respawn-289-7, br289-6-keep-182cd53b-2 NO-REF 05:05 UTC 2026-11-27): with A idle B's
+respawn goes BESIDE A, never to the entrance. The entrance comes only when the beside move fails (coop_dbno.cpp:418-424,
+Moved::failed or late): A answers busy while its game runs an event (coop_teleport.cpp:208 AnswerFor, local.event) or
+cannot_warp in a boss fight (:213; CoopBoss::Fighting(), coop_boss_game.cpp:585 = the boss sync phase, set only in the 8
+dungeons' own boss rooms, coop_boss.cpp kRooms, never in a <Boss>Stage). So in a <Boss>Stage A is put in the game's own
+event the way a player is: right after B's bleed-out A warps into the stage again (the bridge warp with an entrance =
+the game's map change event Dm_SY_BancChangeGo, its arrival event on landing: arrive_in_event, as boss_arrival), and B's
+beside ask (>= kSpectateMinUs 3 s + kQuietUs 3 s after the bleed-out, coop_dbno.cpp:430, coop_dbno.h:217-219) meets it:
+'teleport: <A> is busy (loading, a cutscene, a talk or in the air)' (coop_teleport.cpp:232) or no answer in
+kRespawnWaitUs (coop_dbno.h:231, 'no answer from', :536), then 'dbno: respawn: not beside them: to the entrance'
+(coop_dbno_game.cpp:557).
 
 volvkeep BLACK and the fixed test's picture on the same steps = cause point 7 proven (only the switch differs).
 
@@ -57,7 +70,30 @@ STAGES = ["VolvagiaStage", "DodongoStage", "LizalfosStage", "GanonStage"]   # co
 # job can run the old pass list and these apart.
 BOSS_ROOMS = ["GohmaStage", "BigOctoStage", "BarinadeStage", "PhantomGanonStage", "MorphaStage", "BongoBongoStage",
               "TwinrovaStage", "GanondorfStage"]
-BOTTLES = hookshot.BOTTLE_ITEMS   # nofairy's bottles (the scripts' list; checked == coop_testinput.cpp kBottleItems)
+# B #168 pick (3): the real boss room where CoopBoss::Fighting() works. kRooms row 4 (coop_boss.cpp): FireTemple, room 33,
+# circle centre (-82, 0) radius 38, height 88-125, arrive (-64.5, 102.6, 0.0). StartPos_SageOfFire is NOT a
+# coop_start_points.inc row (only {"FireTemple", "FireTemple", 0.05, 100.00, 24.68, true}, :34), so the bridge warp goes to
+# the dungeon's own start and a 'place' puts Link in the room (tools/playtest/data/presets/before-volvagia.json: the same
+# point, -64.51 102.58 -0.01). A place with no event: after kNoIntroUs (10 s, coop_boss.h:192) the room's phase is fight
+# ('no intro: the fight has begun here', coop_boss.cpp Phase::waiting). The respawn's entrance there is NearestStart =
+# the dungeon's only start 'FireTemple' (coop_teleport_game.cpp:471).
+FIGHT_ROOM = "FireTemple"
+FIGHT_AT = {"A": (-64.51, 102.58, -0.01), "B": (-64.51, 102.58, 1.49)}   # the preset's point; B kArrivalSpread 1.5 m off
+FIGHT_FLAGS = [("setenum", "0xeea87aec", "DefeatBoss"),          # before-volvagia.json 'flags' (the boss alive: SageOfFire
+               ("setflag", "Volvagia_TemporaryDelete", "0"),     # quest back to DefeatBoss, the room's played flags off)
+               ("setflag", "HavePlayedEvent.SageOfFire_DefeatBoss", "0"),
+               ("setflag", "HavePlayedEvent.Dm_FireTemple_BossOut", "0"),
+               ("setflag", "HavePlayedEvent.Dm_FireTemple_BossIn", "0")]
+AGE_FRAMES = 30         # Sequence_IsChildhood 0, then 30 frames before the warp (before-volvagia.json notes; playtest.md warp)
+IN_ROOM = r"coop: boss: in the boss room of FireTemple: Enemy_DungeonBoss_Volvagia"   # coop_boss.cpp:469, logged :390
+FIGHT_ON = r"coop: boss: (no intro: the fight has begun here|intro started \(Dm_FireTemple_BossIn\))"   # coop_boss.cpp
+FIGHT_FRAMES = 1800     # kNoIntroUs 10 s = 600 frames at 60, x3 (a ceiling: a miss is SETUP-FAIL 'no boss fight')
+FIGHT_REFUSED = r"coop: teleport: not during your boss fight"   # coop_teleport.cpp:425 (B's own trip, refused at once)
+A_BUSY_REFUSED = r"coop: teleport: (\S.* is busy \(loading, a cutscene, a talk or in the air\)|no answer from )"   # :232/:536
+AT_ENTRANCE_M = 10.0    # a BOUND (not a measure): B's place after the respawn within this of the start; the run notes it
+START_POINTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(HERE))), "lichii", "hook",
+                            "coop_start_points.inc")
+BOTTLES = hookshot.BOTTLE_ITEMS  # nofairy's bottles (the scripts' list; checked == coop_testinput.cpp kBottleItems)
 KEEP = "LICHII_COOP_ARRIVAL_STARTER=keep"     # coop_teleport_game.cpp:68-71
 OBJECTS = "LICHII_COOP_DEBUG_OBJECTS=1"
 BACK_TO = "KakarikoVillage_Child"            # test_smoke.WARP_TO: the lane's boot map, so later tests start in play
@@ -172,6 +208,77 @@ def boss_arrival(pair, stage, then=None):
     pair.notes.append("boss arrival in %s %.1f s (%s)" % (stage, outer.clock() - t0, "; ".join(took)))
 
 
+def start_point(scene):
+    """The module's start of `scene` at its own name: (x, y, z, has an entrance actor), read from coop_start_points.inc
+    (the ONE table; never copied here)."""
+    with open(START_POINTS, encoding="utf-8") as f:
+        for s, e, x, y, z, actor in re.findall(
+                r'\{"(\w+)", "(\w+)", (-?[\d.]+)f, (-?[\d.]+)f, (-?[\d.]+)f, (true|false)\}', f.read()):
+            if s == scene and e == scene:
+                return float(x), float(y), float(z), actor == "true"
+    raise AssertionError("%s: no {\"%s\", \"%s\", ...} row in %s" % (scene, scene, scene, START_POINTS))
+
+
+def a_in_event(pair, stage):
+    """A put in the game's own event while B is spectating (module docstring 'Why A is put in an event'): A warps into
+    `stage` again (the map change event, its arrival event on landing). A not in an event after it is SETUP-FAIL: the
+    row's entrance path would not be certain."""
+    try:
+        st = pair.warp_one("A", stage, entrance=stage, arrive_in_event=True)
+    except Exception as e:                    # noqa: BLE001  (a refused warp, a timeout)
+        raise P.SetupFail("A in an event for B's respawn: A's warp into %s again failed: %s: %s"
+                          % (stage, type(e).__name__, e)) from e
+    if not st.get("event"):
+        raise P.SetupFail("A in an event for B's respawn: A is not in an event after its warp into %s again (%s)"
+                          % (stage, pair.why_not("A", st)))
+    pair.notes.append("A in its arrival event in %s for B's beside ask" % stage)
+
+
+def boss_room_fight(pair):
+    """Both games adult in FireTemple room 33 in a live boss fight (B #168 pick 3): the boss made alive
+    (FIGHT_FLAGS), adult (Sequence_IsChildhood 0), the bridge warp to the dungeon's start, placed in the room, then
+    each game's own 'in the boss room' and fight lines. Bounded (BOSS_ARRIVAL_S); a miss is SETUP-FAIL
+    'boss room fight in FireTemple: ...' ('no boss fight' when the room's phase never became the fight)."""
+    outer = pair.deadline
+    pair.deadline = P.Deadline(max(0.0, min(BOSS_ARRIVAL_S, outer.left())), clock=outer.clock)
+    phase = "flags"
+    try:
+        marks = {x: pair.log[x].size() for x in ("A", "B")}   # (size, not mark: the test's own base stays)
+        for x in ("A", "B"):
+            for kind, name, value in FIGHT_FLAGS:
+                pair.act(x, "%s %s %s" % (kind, name, value))
+        phase = "adult"
+        for x in ("A", "B"):
+            pair.flag(x, "Sequence_IsChildhood", 0)   # (the bridge's flag write, read back: did_not_stick = SETUP-FAIL)
+        pair.step_both(AGE_FRAMES)
+        for x in ("A", "B"):
+            phase = "warp %s" % x
+            s = pair.warp_one(x, FIGHT_ROOM, entrance=FIGHT_ROOM)
+            assert (s.get("scene") or "").lower() == FIGHT_ROOM.lower(), "%s is in %s" % (x, s.get("scene"))
+            assert s.get("age") == "adult", "%s is %s, not adult (Sequence_IsChildhood 0)" % (x, s.get("age"))
+        phase = "place"
+        for x in ("A", "B"):
+            pair.act(x, "place %.2f %.2f %.2f" % FIGHT_AT[x])
+        for x in ("A", "B"):
+            phase = "in the boss room %s" % x
+            pair.until("%s: '%s'" % (x, IN_ROOM), lambda x=x: pair.log[x].find(IN_ROOM, pos=marks[x]),
+                       max_frames=FIGHT_FRAMES)
+        for x in ("A", "B"):
+            phase = "no boss fight %s" % x
+            pair.until("%s: the room's fight line" % x, lambda x=x: pair.log[x].find(FIGHT_ON, pos=marks[x]),
+                       max_frames=FIGHT_FRAMES)
+        phase = "both in play"
+        pair.until("both games in play in the boss room", lambda: all(pair.ready(x) for x in ("A", "B")),
+                   max_frames=FIGHT_FRAMES)
+    except Exception as e:                    # noqa: BLE001
+        why = str(e) if isinstance(e, P.SetupFail) else "%s: %s" % (type(e).__name__, e)
+        raise P.SetupFail("boss room fight in %s: in '%s': %s" % (FIGHT_ROOM, phase, why)) from e
+    finally:
+        pair.deadline = outer
+    pair.notes.append("boss room fight in %s: %s" % (FIGHT_ROOM, "; ".join(
+        "%s %r" % (x, pair.log[x].find(FIGHT_ON, pos=marks[x])[-90:]) for x in ("A", "B"))))
+
+
 def rest_from(pair, x, pattern):
     """Game x's log lines from the first one matching `pattern` (that line first) since the test began; [] if none."""
     lines = pair.log[x].since()
@@ -210,14 +317,17 @@ def fight_result(pair, stage, step, e):
     raise e
 
 
-def bleed_out_and_respawn(pair, stage):
+def bleed_out_and_respawn(pair, stage, a_busy=True):
     """The old row's steps after both are in the stage: A (host) sets the bleed-out to 10 s, B is downed, bleeds out,
     respawns; returns B's log lines from 'respawn at the entrance' (the row 289 path) on, and the load's end in them.
+    a_busy (a <Boss>Stage): right after B's bleed-out A is put in the game's own event (a_in_event), so B's beside ask
+    is refused (module docstring); False in the boss room, where the fight refuses it (boss_room_fight). The respawn's
+    entrance is the stage's own start (NearestStart: each stage and FireTemple have one row of their own name).
     A miss of B's lines while A is down too is NO-REF (fight_result), not the row's FAIL."""
     S = re.escape(stage)
     pair.act("A", "chat /dbno time 10")
     pair.expect_log("A", r"coop: test chat '/dbno time 10': sent", max_frames=300)
-    pair.step_both(1800)                      # br289 a-in -> b-before: the stage's fight under way (A busy, :2)
+    pair.step_both(1800)                      # br289 a-in -> b-before: the stage's fight under way
     pair.act("B", "hurt 80")                  # br289-volvagia.B.txt: downed (16 quarters on the lane save)
     for step, pat, frames in (("down", r"coop: dbno: our Link: event 0 ", 600),          # down
                               ("bleed-out", r"coop: dbno: our Link: event 2 ", 1500),    # bled out (10 s + spectate)
@@ -226,6 +336,8 @@ def bleed_out_and_respawn(pair, stage):
             pair.expect_log("B", pat, max_frames=frames)
         except AssertionError as e:           # (TestTimeout too)
             fight_result(pair, stage, step, e)
+        if step == "bleed-out" and a_busy:
+            a_in_event(pair, stage)           # (before B's beside ask: >= 6 s after the bleed-out; B held meanwhile)
     try:
         way = pair.until("B's respawn route line", lambda: pair.log["B"].find(
             r"coop: teleport: (respawn at the entrance %s of %s|next to \w+|move to )" % (S, S)), max_frames=300)
@@ -234,6 +346,8 @@ def bleed_out_and_respawn(pair, stage):
     if "respawn at the entrance" not in way:
         pair.unproven("B's respawn did not go to the entrance (A took the beside move: %r); the row 289 path "
                       "was not taken" % way[-160:])     # (NO-REF, never PASS: old row 'UNPROVEN ... not taken')
+    refused = pair.log["B"].find(A_BUSY_REFUSED if a_busy else FIGHT_REFUSED)
+    pair.notes.append("B's beside move refused: %r" % (refused[-120:] if refused else None))
     pair.expect_log("B", r"asking the game's map change event Dm_SY_BancChangeGo for %s at %s" % (S, S), max_frames=300)
     pair.expect_log("B", r"live event Dm_SY_BancChangeGo asked of the game \(result 1\)", max_frames=300)
     pair.until("B's load after the respawn ended ('control: state loading -> play' after the ask)",
@@ -264,29 +378,63 @@ def respawn_shows(pair, stage, request):
     """The fixed path in one stage (row 289): bleed-out, respawn to the entrance, the stage shown, control back."""
     if bt_plugin.env_has(bt_plugin.boot_env(request.config), KEEP):
         pytest.skip("this boot keeps the starter (%s): the fixed path is not on it" % KEEP)
-    S = re.escape(stage)
     with pair.setup():
         start_check(pair)
     boss_arrival(pair, stage)
-    rest = bleed_out_and_respawn(pair, stage)
+    bleed_out_and_respawn(pair, stage)
+    respawn_judged(pair, stage)
+
+
+def respawn_judged(pair, stage):
+    """After the respawn's load: the fix's lines (a stage with no entrance actor: the row 289 cause), B's screen the
+    stage (no black), B in play there near its start (start_point, within AT_ENTRANCE_M) and the stick moving B."""
+    S = re.escape(stage)
     pair.step_both(1200)                      # br289 b-arrived -> b-later: the arrival event begun and over
     rest = rest_from(pair, "B", r"respawn at the entrance %s of %s" % (S, S))
     load = [i for i, ln in enumerate(rest) if "control: state loading -> play" in ln][0]
-    assert has(rest, r"coop: teleport: %s has no entrance actor named %s: the arrival event's starter emptied" % (S, S)), \
-        "fix: no '%s has no entrance actor named %s: the arrival event's starter emptied' line" % (stage, stage)
-    assert has(rest[load:], r"coop: event: our Link's event began"), "fix: our Link's arrival event never began after the load"
+    sx, sy, sz, actor = start_point(stage)
+    if not actor:
+        assert has(rest, r"coop: teleport: %s has no entrance actor named %s: the arrival event's starter emptied"
+                   % (S, S)), "fix: no '%s has no entrance actor named %s: the arrival event's starter emptied' line" % (
+                       stage, stage)
+        assert has(rest[load:], r"coop: event: our Link's event began"), \
+            "fix: our Link's arrival event never began after the load"
     later = screen(pair, "B", "br289-%s-b-later" % stage)
-    p0 = pair.state("B")["pos"]
+    st = pair.state("B")
+    p0 = st.get("pos")
+    assert pair.ready("B", st) and (st.get("scene") or "").lower() == stage.lower(), \
+        "fix: B is not in play in %s after the respawn (%s)" % (stage, pair.why_not("B", st))
+    assert p0, "B has no position after the arrival (%s)" % p0
+    off = math.dist((p0[0], p0[2]), (sx, sz))
+    pair.notes.append("B %.1f m from the start %s of %s after the respawn" % (off, stage, stage))
+    assert off <= AT_ENTRANCE_M, "fix: B is %.1f m from the entrance %s (%.2f %.2f %.2f) after the respawn (<= %.0f)" % (
+        off, stage, sx, sy, sz, AT_ENTRANCE_M)
     pair.press("B", stick=[0, 1], frames=60)  # 'hold LSTICK_UP 60' (STICK_KEYS LSTICK_UP = up: angle 0, full)
     pair.step_both(600)
     end = screen(pair, "B", "br289-%s-b-end" % stage)
     screen(pair, "A", "br289-%s-a-end" % stage)   # (A's screen, kept for the owner; not judged, as the old a-after)
     assert later > PICTURE and end > PICTURE, "fix: B's screen after the respawn is not the stage (mean b-later %.1f, " \
         "b-end %.1f; > %.0f)" % (later, end, PICTURE)
-    p1 = pair.state("B")["pos"]
-    assert p0 and p1, "B has no position after the arrival (%s, %s)" % (p0, p1)
+    p1 = pair.state("B").get("pos")
+    assert p1, "B has no position after the stick (%s)" % p1
     moved = math.dist(p0[::2], p1[::2])
     assert moved >= 0.5, "fix: B has no control after the arrival (%.2f m with the stick 1 s; >= 0.5)" % moved
+
+
+@pytest.mark.budget(900)
+@pytest.mark.look
+@pytest.mark.needs_env(OBJECTS)
+@pytest.mark.row("#289 in a live boss fight (FireTemple room 33): beside refused, the respawn to the entrance shows (B #168)")
+def test_respawn_in_a_boss_fight(pair, back_after, request):
+    if bt_plugin.env_has(bt_plugin.boot_env(request.config), KEEP):
+        pytest.skip("this boot keeps the starter (%s): the fixed path is not on it" % KEEP)
+    with pair.setup():
+        start_check(pair)
+    boss_room_fight(pair)
+    bleed_out_and_respawn(pair, FIGHT_ROOM, a_busy=False)
+    assert pair.log["B"].find(FIGHT_REFUSED), "fight: B's beside move was not refused by the boss fight (%r)" % (
+        FIGHT_REFUSED)
+    respawn_judged(pair, FIGHT_ROOM)
 
 
 @pytest.mark.budget(900)

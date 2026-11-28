@@ -57,8 +57,9 @@ class RegressUi(unittest.TestCase):
     def test_title_no_ref(self):
         p, s = self.run_fake("title", TITLE)
         self.assertEqual(T.results(s), {TITLE: "NO-REF"}, p.stdout[-1500:])
-        self.assertIn("DIALOG_MEASURED is not set", s["tests"][0]["why"])
-        self.assertIn("Return to the title screen?", s["tests"][0]["why"])
+        # DIALOG_MEASURED cites gate-title-182cd53b: the text no longer holds it back, only the missing references do
+        self.assertNotIn("DIALOG_MEASURED is not set", s["tests"][0]["why"])
+        self.assertIn("no stored reference for regress-sys-tab", s["tests"][0]["why"])
 
     def test_title_no_question_not_pass(self):
         p, s = self.run_fake("title-bug", TITLE, bug="title")

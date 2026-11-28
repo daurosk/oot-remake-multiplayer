@@ -142,7 +142,9 @@ TAP_GAP = 30       # frames after a tap (ToTitleStep's gaps: R 500 ms, Down 250 
 # patch 0041/0042's setters. Until DIALOG_MEASURED cites a lane run's 'dialog text' note, a run that does not see it ends
 # NO-REF (the shot regress-title-dialog is then the proof), never PASS on the text.
 DIALOG_LAYOUT, DIALOG_PANE = "SystemWindow_00", "T_Text_00"
-DIALOG_MEASURED = None   # e.g. "run <name>: A text 'Return to the title screen?' (SystemWindow_00/T_Text_00 wrap 25)"
+DIALOG_MEASURED = ("run gate-title-182cd53b (2026-11-28 01:32 UTC, lane 1 module 182cd53b5): A and B text "
+                   "'Return to the title screen?\\nAny unsaved progress will be lost.' (T_Text_00), the same on "
+                   "the shots regress-title-dialog-A/B")
 
 
 def read_test_state(pair, x):

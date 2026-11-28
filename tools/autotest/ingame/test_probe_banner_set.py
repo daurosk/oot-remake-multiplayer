@@ -13,6 +13,9 @@ Its result (notes + <out>/probe-banner-set/frames.json): for each set the frames
 ('blank after set'), and the dark frames with no set before them. Blank runs after each set = the set itself blanks the
 text (candidate (a) re-layout, or (b) the in-place rewrite under the box's kept pointer: probe 2 tells them apart).
 No blank after a set = the blink comes from the set RATE while revived, not from one set.
+
+Runs only with --env BT_PROBE_BANNER_SET=1 (needs_env, as test_probe_ocarina.py: every other run deselects it, so no rc
+pass and no default fake suite carries an always-NO-REF test; the game reads no such switch).
 """
 import json
 import os
@@ -26,6 +29,7 @@ PROBE_FRAMES = 180     # 3 s at 60 fps: at least two clock changes of B's line (
 KEEP_EVERY = 20        # a bright frame's shot kept this often (every dark frame's shot is kept)
 AWAY_M = 6.0           # A this far from B: no 'Hold A to revive' for A, no reviver for B (dc.REACH_M is far less)
 OUT = "probe-banner-set"
+PROBE_ENV = "BT_PROBE_BANNER_SET=1"   # (the opt-in switch: see the docstring)
 
 
 def runs(samples, top, set_before=False):
@@ -56,6 +60,7 @@ def runs(samples, top, set_before=False):
 
 
 @pytest.mark.budget(600)   # (no look mark: no check_shot, its kept shots are the owner's copies only)
+@pytest.mark.needs_env(PROBE_ENV)
 @pytest.mark.row("PROBE revive-flicker-0121: does one set of the banner's text blank its line, and for how many frames (B downed, no reviver)")
 def test_probe_banner_set(pair):
     with dc.restored(pair, {}):

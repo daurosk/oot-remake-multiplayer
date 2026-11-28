@@ -23,6 +23,19 @@
 //   result. Such an asker is class asker: our performer (the one of its name at its placement) plays that AS through
 //   the game's AS play request (0x2022a0, as the object sync's copies), once each, before our asker's outputs are set.
 //   A performer not in our room (already its end state, or moved away) is skipped with a log line.
+// - performer swaps (row 335): the AS alone moves the model, not the room: the performer keeps its own collision and
+//   its end actor is not made (the partner saw the stair lowered and could not walk up it). Its room makes that swap
+//   only at load because the graph node between the played flag and the performer is fixed after the room's first
+//   frames: OperateORFixInputTrue (main+0x31eec20) keeps a state at node+0x60 (0 open, 1 seen, 2 fixed) and, fixed,
+//   never writes its outputs again (Dodongo's stair: #3 = ORFix(NOT played), pillar Logic_Delete <- #3.False, down
+//   stair Logic_Create <- #3.False); HoldGameDataGetBoolSimple holds the same way (the Forest Temple boxes' and Ganon's
+//   Castle lift rock's Logic_Delete <- #N.Bool; run hs-dc-break: its live flag deleted nothing). That fixed output is
+//   one byte: the node writes it through one pointer and every reader's input plug points at it (their value address);
+//   the game's placement check (vtable main+0x4c5b0c8 slots 4/5, main+0x3acceb0/0x3accf40) reads Logic_Create and
+//   Logic_Delete through it each time it asks (main+0x3ace170). So once the AS is done (slot 0 no longer shows it, or
+//   kSwapAfterMs), we write 1 into the byte our performer's Logic_Delete input points at: the game deletes the
+//   performer and makes its end actor itself, live, as its load would (the room's own graph, no replay, no spawn).
+//   Refused when that address is not a node's (no address, a change-marked plug, or in the game's static image).
 // - result guards: a shared flag that deletes a class-asker asker (Logic_Delete, read live). The other player's game
 //   sets it during or at the end of its event; landing first, it would delete our asker before our result is set (the
 //   Deku ladder never fell). It waits in its scene until our result is set this visit or our game played the event.
@@ -45,6 +58,7 @@
 #include <vector>
 
 #include "coop_eye_switch.h"
+#include "coop_logic_probe.h"
 #include "coop_puppet.h"
 
 namespace CoopEventResult {
@@ -238,6 +252,13 @@ std::set<std::uint64_t> FollowKeepers(std::string_view scene, const std::functio
 
 // Frames an output must read back 1 (after our set, or already) to count as set; and how long one event is tried.
 inline constexpr int kApplyFrames = 3;
+// Row 335: the latest swap after a performer's AS showed (it may hold its last frame in slot 0), and how long a swap
+// waits for the performer's logic (its Logic_Delete input) or for the game to delete it after our write.
+inline constexpr std::uint64_t kSwapAfterMs = 6000;
+inline constexpr std::uint64_t kSwapWaitMs = 4000;
+// Row 335: why the byte `plug` (our performer's Logic_Delete input) reads is not a room graph node's output we may
+// set, or nullptr when it is. `main` is the game's image base.
+const char* SwapByteNot(const CoopLogicProbe::Plug& plug, std::uint64_t main);
 inline constexpr std::uint64_t kTryMs = 3000;
 
 // The svc caller: one event's result at a time.
@@ -273,7 +294,19 @@ private:
         int play_calls = 0;          // our play requests of it
         int play_ones = 0;           // frames its slot 0 showed the AS in a row
     };
-    std::optional<CoopPuppet::Call> PlayStep(CoopPuppet::Guest& guest, Try& t, std::uint64_t main);
+    // Row 335: one performer to swap for its end actor once its AS is done.
+    struct Swap {
+        std::string event;
+        std::string_view actor_name;
+        std::array<float, 3> at{};
+        std::string_view as;
+        std::uint64_t actor = 0;
+        std::uint64_t since_ms = 0;    // its AS showed (or our plays gave up)
+        std::uint64_t written_ms = 0;  // our 1 went in (0: not yet)
+    };
+    std::optional<CoopPuppet::Call> PlayStep(CoopPuppet::Guest& guest, Try& t, std::uint64_t main,
+                                             std::uint64_t now_ms);
+    void SwapStep(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms);
     std::optional<CoopPuppet::Call> Frame(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms);
     void End(const std::string& why, bool applied);
     static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
@@ -281,6 +314,7 @@ private:
     CoopEyeSwitch::Finder find_;
     std::mutex mutex_;
     std::deque<Try> wanted_;  // front: the one being set
+    std::vector<Swap> swaps_;  // row 335: this visit's performers waiting for their swap
     std::vector<std::string> notes_;
     std::string scene_;
     std::set<std::string> applied_;  // this visit

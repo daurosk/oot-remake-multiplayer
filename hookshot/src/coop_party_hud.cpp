@@ -3,6 +3,7 @@
 #include "coop_party_hud.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -108,17 +109,46 @@ float BlockHeight(int hearts) {
     return kLabelHeight + kStepY * static_cast<float>(rows) + kBlockGap;
 }
 
-float TopFrom(std::optional<double> game_hud_bottom, bool own) {
-    const float own_line = own ? kLabelHeight + kBlockGap : 0.0f;
-    if (!game_hud_bottom || !(*game_hud_bottom > 0.0) || !(*game_hud_bottom < 1.0)) return kDefaultTop;
-    // (never so low that our own line, one block of two rows and the "+N" line leave the picture; more blocks are
-    // shown as they fit, BlocksThatFit)
-    const float lowest = -kLayoutHeight + kBlockGap + own_line + BlockHeight(kHearts) + kLabelHeight + kBlockGap;
-    return std::max(-static_cast<float>(*game_hud_bottom) * kLayoutHeight - kBlockGap, lowest);
+ParentFrame FrameFrom(const float m[12]) {
+    ParentFrame f;
+    const float sx = m[0], sy = m[4], tx = m[9], ty = m[10];
+    const auto scale_ok = [](float s) { return std::isfinite(s) && s >= 0.25f && s <= 4.0f; };
+    // (its origin is the picture's top-left corner: left of the canvas's middle and above it, on the canvas or past it)
+    if (!scale_ok(sx) || !scale_ok(sy) || !std::isfinite(tx) || !std::isfinite(ty) || !(tx < 0.0f) || !(ty > 0.0f)) return f;
+    f.left = tx, f.top = ty, f.scale_x = sx, f.scale_y = sy;
+    return f;
 }
 
-std::string FitLabel(const std::string& text) {
-    const std::size_t room = static_cast<std::size_t>(kLabelRoom / kLabelEm * 100.0f);   // (CoopNativeUi::Width units)
+float PictureHeight(const ParentFrame& f) {
+    // (the picture's top is the parent's, or the canvas's 16:9 top if the parent sits lower: a HUD moved down by hand)
+    return (f.top + std::max(f.top, kLayoutHeight / 2)) / f.scale_y;
+}
+
+float PictureWidth(const ParentFrame& f) {
+    return -2.0f * f.left / f.scale_x;   // (the picture centred: its right edge as far right as its left one is left)
+}
+
+float TopFrom(std::optional<double> game_hud_bottom, bool own, const ParentFrame& frame) {
+    const float own_line = own ? kLabelHeight + kBlockGap : 0.0f;
+    if (!game_hud_bottom || !std::isfinite(*game_hud_bottom)) return kDefaultTop;
+    // (the HUD's bottom on the canvas, y up from its middle, then in the parent's frame; row 326: before, the parent
+    // was taken to sit at the canvas's 16:9 top, so on a narrower picture the blocks went up into the game's hearts)
+    const float on_canvas = kLayoutHeight / 2 - static_cast<float>(*game_hud_bottom) * kLayoutHeight;
+    const float bottom = (on_canvas - frame.top) / frame.scale_y;
+    const float floor = -PictureHeight(frame);
+    if (!(bottom < 0.0f) || !(bottom > floor)) return kDefaultTop;   // (not on the picture: not believable)
+    // (never so low that our own line, one block of two rows and the "+N" line leave the picture; more blocks are
+    // shown as they fit, BlocksThatFit)
+    const float lowest = floor + kBlockGap + own_line + BlockHeight(kHearts) + kLabelHeight + kBlockGap;
+    return std::max(bottom - kBlockGap, lowest);
+}
+
+float LabelRoom(const ParentFrame& frame) {
+    return 0.3f * PictureWidth(frame);   // (kLabelRoom on the 16:9 picture)
+}
+
+std::string FitLabel(const std::string& text, float room_units) {
+    const std::size_t room = static_cast<std::size_t>(room_units / kLabelEm * 100.0f);   // (CoopNativeUi::Width units)
     if (CoopNativeUi::Width(text) <= room) return text;
     const std::size_t dots = CoopNativeUi::Width("...");
     std::string out;
@@ -144,8 +174,8 @@ std::string MoreText(std::size_t hidden) {
     return hidden > 0 ? "+" + std::to_string(hidden) : std::string();
 }
 
-std::size_t BlocksThatFit(float top, const std::vector<int>& hearts, std::size_t slots) {
-    const float floor = -kLayoutHeight + kBlockGap;
+std::size_t BlocksThatFit(float top, const std::vector<int>& hearts, std::size_t slots, const ParentFrame& frame) {
+    const float floor = -PictureHeight(frame) + kBlockGap;
     for (std::size_t n = std::min(hearts.size(), slots);; --n) {
         float need = n < hearts.size() ? kLabelHeight + kBlockGap : 0.0f;   // (the "+N" line)
         for (std::size_t i = 0; i < n; ++i) need += BlockHeight(hearts[i]);
@@ -277,6 +307,7 @@ bool Hud::Find(Game& game, std::uint64_t layout, std::vector<std::string>* log) 
         parent_ = pane("N_ScaleL_00");
     }
     if (parent_ == 0) gauge_part_ = 0;
+    frame_pane_ = pane("N_ScaleL_00");   // (row 326: the frame our panes are placed in, clones or not)
     const bool could_clone = gauge_part_ != 0;
     if (!clones_) gauge_part_ = parent_ = 0;   // (run-time clones off: AllowRunTimeClones)
     live_layout_ = layout;
@@ -647,7 +678,7 @@ void Hud::SetLabel(Game& game, std::size_t index, const std::string& line, float
     Label& l = labels_[index];
     if (l.pane == 0) return;
     // Fitted each frame (cheap: one Width unless cut), so a font measured after the line was first set counts too.
-    const std::string text = FitLabel(line);
+    const std::string text = FitLabel(line, LabelRoom(frame_));
     const std::array<float, 2> at{LabelX(text), y};
     if (!l.placed || l.at != at) {
         if (MovePane(game, l.pane, at)) l.placed = true, l.at = at;
@@ -717,7 +748,19 @@ bool Hud::Step(Game& game, const std::vector<Block>& blocks, std::optional<doubl
     if (layout != layout_ && !Find(game, layout, log)) return false;
     if (!native_) return false;
     const bool own_shown = !own.empty() && !blocks.empty();
-    float top = TopFrom(game_hud_bottom, own_shown);
+    // Row 326: N_ScaleL_00's frame as Longshot placed it for the picture's shape (moved to the corner of a narrower one)
+    frame_ = ParentFrame{};
+    if (float m[12] = {}; frame_pane_ != 0 && game.Read(frame_pane_ + addr::kPaneMatrix, m, sizeof m)) frame_ = FrameFrom(m);
+    if (log && frame_says_ < 8 && (!frame_said_ || said_frame_.left != frame_.left || said_frame_.top != frame_.top ||
+                said_frame_.scale_x != frame_.scale_x || said_frame_.scale_y != frame_.scale_y)) {
+        frame_said_ = true, said_frame_ = frame_, ++frame_says_;   // (at most 8 lines: a HUD sliding in moves it)
+        char b[200];
+        std::snprintf(b, sizeof b, "frame: N_ScaleL_00 at (%.1f, %.1f) scale (%.3f, %.3f): picture %.0f x %.0f of our units "
+                      "(16:9: (-1920.0, 1080.0) scale 1, 3840 x 2160)", frame_.left, frame_.top, frame_.scale_x,
+                      frame_.scale_y, PictureWidth(frame_), PictureHeight(frame_));
+        log->push_back(std::string(kSay) + b);
+    }
+    float top = TopFrom(game_hud_bottom, own_shown, frame_);
     if (own_shown) {
         SetLabel(game, kSelf, own, top - kLabelHeight / 2.0f, 1.0f, log);
         top -= kLabelHeight + kBlockGap;
@@ -727,7 +770,7 @@ bool Hud::Step(Game& game, const std::vector<Block>& blocks, std::optional<doubl
     std::vector<int> counts;
     for (const Block& b : blocks) counts.push_back(PlanHearts(b.hearts).hearts);
     // The pack's slots first, then a run-time gauge for each player past them (R2/R3).
-    const std::size_t shown = BlocksThatFit(top, counts, static_cast<std::size_t>(gauge_part_ != 0 ? kSlots : slots_));
+    const std::size_t shown = BlocksThatFit(top, counts, static_cast<std::size_t>(gauge_part_ != 0 ? kSlots : slots_), frame_);
     std::size_t shown_now = shown;
     for (int s = 0; s < kSlots; ++s) {
         auto& hearts = hearts_[static_cast<std::size_t>(s)];

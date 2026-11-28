@@ -167,6 +167,30 @@ class SolidCount(unittest.TestCase):
         self.assertEqual(huecheck.covered(box, [(100, 140, 200, 220)]), 0.0)   # (below the top third: the body only)
         self.assertEqual(huecheck.covered(box, [(0, 0, 999, 999)]), 1.0)
 
+    def test_partly_hidden_hair_is_blind_not_fail(self):
+        """hair-measure-1ccc2b2f test_hair_adult[r3]: B's near-camera box covered A's head (covered 0.43 <= HIDDEN_MAX)
+        though B was not drawn there; the count left the red hair out: before 0 after 0, a false 'not repainted'.
+        A hair partly under the other's box with too little gain is blind (NO-REF); unhidden, it still FAILs; enough
+        gain counts as before."""
+        import test_hair_link as T
+        red = 0xDD4527
+        pic = self.pic("adult", lambda im, d: d.rectangle([140, 100, 160, 110], fill=(0xDD, 0x45, 0x27)))
+        empty = self.pic("empty", lambda im, d: None)
+
+        class P:
+            notes = []
+        shot = lambda p: {"A": {"path": p, "box": (100, 100, 200, 220)}}   # noqa: E731
+        head = {"A": [(130, 95, 170, 115)]}    # the other Link's box over the hair (top third share 0.4 <= 0.5)
+        blind, low = [], []
+        T.gained(P(), shot(empty), shot(pic), red, "adult", low, blind, hide=head)
+        self.assertEqual(len(blind), 1, blind)
+        self.assertIn("judged only when none of it is", blind[0])
+        with self.assertRaises(AssertionError):   # nothing hidden: still the row's FAIL
+            T.gained(P(), shot(empty), shot(empty), red, "adult", [], [], hide={"A": [(0, 0, 1, 1)]})
+        blind = []
+        T.gained(P(), shot(empty), shot(pic), red, "adult", [], blind, hide={"A": [(100, 200, 120, 220)]})
+        self.assertEqual(blind, [])   # hidden part off the hair area: counted (gain > 0), no blind
+
     def test_lit(self):
         import huecheck
         self.assertFalse(huecheck.lit(self.pic("black", lambda im, d: None, ground=(0, 0, 0))))

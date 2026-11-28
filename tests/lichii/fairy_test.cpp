@@ -533,17 +533,21 @@ TEST_CASE("navi sample: their Navi not out parks ours of them, her puppet's own 
     CHECK(out.targets[0].position[1] == doctest::Approx(1.0f));
 }
 
-TEST_CASE("navi sample: no sample (an older build) is the shoulder place, logged once per change") {
+TEST_CASE("navi sample: no sample (an older build) is the shoulder place, said nothing about, then each change logged") {
     std::vector<std::string> lines;
     Follower f(Still(), {}, [&](const std::string& l) { lines.push_back(l); });
     auto out = f.Follow(Puppets(2, {10, 0, 5}), 1000);
     CHECK(out.targets[0].position[0] == doctest::Approx(10 + Still().offset[0]));
     f.Follow(Puppets(2, {10, 0, 5}), 1033);
-    REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("no fresh NAVI_SAMPLE from P2") != std::string::npos);
+    CHECK(lines.empty());  // never sent one: as before, no new line in the older fairy logs
     f.Follow(Puppets(2, {10, 0, 5}), 1066, ~0u, std::nullopt, {{2, Sampled(2, {0, 1, 0})}});
+    f.Follow(Puppets(2, {10, 0, 5}), 1100, ~0u, std::nullopt, {{2, Sampled(2, {0, 1, 0})}});
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("P2's Navi placed from their game") != std::string::npos);
+    f.Follow(Puppets(2, {10, 0, 5}), 1800);  // her samples stale
+    f.Follow(Puppets(2, {10, 0, 5}), 1833);
     REQUIRE(lines.size() == 2);
-    CHECK(lines[1].find("P2's Navi placed from their game") != std::string::npos);
+    CHECK(lines[1].find("no fresh NAVI_SAMPLE from P2") != std::string::npos);
 }
 
 TEST_CASE("navi sample: a call still flies her up over their head") {

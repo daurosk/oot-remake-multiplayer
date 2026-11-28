@@ -210,14 +210,19 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         // Row 316: her player's game says where she is (a call still flies her up over their head).
         const auto navi = navis.find(p.number);
         const bool sampled = navi != navis.end() && !calling;
-        if (log_ && !calling) {
+        // The log: her first sample, and each change after it. A player who never sent one (an older build or
+        // server, or a load not over yet) is the shoulder place as before, said nothing about.
+        if (!calling) {
             const auto was = sampled_logged_.find(p.number);
-            if (was == sampled_logged_.end() || was->second != sampled) {
-                log_(sampled ? "P" + std::to_string(p.number) + "'s Navi placed from their game (NAVI_SAMPLE)"
-                             : "no fresh NAVI_SAMPLE from P" + std::to_string(p.number) +
-                                   " (0.6 s): their Navi hovers by the shoulder (older build or server, or lost)");
-                sampled_logged_[p.number] = sampled;
+            const bool first = was == sampled_logged_.end();
+            if ((first && sampled) || (!first && was->second != sampled)) {
+                if (log_) {
+                    log_(sampled ? "P" + std::to_string(p.number) + "'s Navi placed from their game (NAVI_SAMPLE)"
+                                 : "no fresh NAVI_SAMPLE from P" + std::to_string(p.number) +
+                                       " for 0.6 s: their Navi hovers by the shoulder");
+                }
             }
+            sampled_logged_[p.number] = sampled;
         }
         const Vec3 goal = sampled ? SampledGoal(p, navi->second) : Goal(p, t, p.number, calling);
         Track track{goal, now_ms};

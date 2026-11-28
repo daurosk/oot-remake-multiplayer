@@ -26,6 +26,7 @@ AWAY_M = 12.0     # m behind the viewer: past its camera (a camera behind a Link
 DIFF = 40         # a pixel changed: some channel moved by more than this (0-255)
 MIN_SEEN = 0.08   # changed share in the target's box, less the side box's, for 'in sight'
 SETTLE = 30       # frames after a place before a shot (test_look.SETTLE: the puppet follows the samples)
+MIN_FREE = 0.25   # behind=True: share of the target's box NOT covered by the viewer's own Link's box, at least
 
 
 def _shot(pair, x, name):
@@ -42,20 +43,38 @@ def _shot(pair, x, name):
     return path
 
 
-def changed_share(a, b, box):
-    """Share of box's pixels where some channel differs by more than DIFF between images a and b."""
+def _inside(x, y, m):
+    return m is not None and m[0] <= x < m[2] and m[1] <= y < m[3]
+
+
+def free_share(box, mask):
+    """Share of box's pixels outside the box `mask` (None: all of them)."""
+    if not box:
+        return 0.0
+    x0, y0, x1, y1 = box
+    n = sum(1 for y in range(y0, y1) for x in range(x0, x1) if not _inside(x, y, mask))
+    return n / float(max(1, (x1 - x0) * (y1 - y0)))
+
+
+def changed_share(a, b, box, mask=None):
+    """Share of box's pixels (less those inside `mask`: the viewer's own Link) where some channel differs by more
+    than DIFF between images a and b."""
     if not box:
         return 0.0
     pa, pb = a.load(), b.load()
     x0, y0, x1, y1 = box
-    n = sum(1 for y in range(y0, y1) for x in range(x0, x1)
-            if max(abs(pa[x, y][i] - pb[x, y][i]) for i in range(3)) > DIFF)
-    return n / float(max(1, (x1 - x0) * (y1 - y0)))
+    px = [(x, y) for y in range(y0, y1) for x in range(x0, x1) if not _inside(x, y, mask)]
+    n = sum(1 for x, y in px if max(abs(pa[x, y][i] - pb[x, y][i]) for i in range(3)) > DIFF)
+    return n / float(max(1, len(px)))
 
 
-def prove(pair, viewer, target, name):
+def prove(pair, viewer, target, name, behind=False):
     """The target game's Link (the viewer's puppet of it) is in sight on the viewer's shot. Returns the numbers
-    (dict, also a note); SetupFail when it is off the shot or not in sight. Leaves the target where it was."""
+    (dict, also a note); SetupFail when it is off the shot or not in sight. Leaves the target where it was.
+    behind=True: a set-up that puts the target AHEAD of the viewer's own Link on purpose (test_regress_ui's hilt:
+    A's back seen past B's own Link), so the boxes may overlap: the viewer's own box is left out of both shares
+    (the target must keep MIN_FREE of its box outside it, else SetupFail) instead of the overlap SetupFail, which
+    stays for side-by-side set-ups (test_look's band check, test_tunic's colour check)."""
     from PIL import Image
     s, t = pair.state(viewer), pair.state(target)
     view, vpos, tpos, tface = s.get("view"), s.get("pos"), t.get("pos"), t.get("facing")
@@ -71,7 +90,11 @@ def prove(pair, viewer, target, name):
     if not tb:
         raise P.SetupFail("sight %s: %s's Link is off %s's shot (box None at %s)" % (name, target, viewer, tpos))
     vb = bandcheck.box(view, vpos, w, h)
-    if vb and bandcheck.overlaps(vb, tb):
+    mask = vb if behind else None
+    if behind and vb and free_share(tb, vb) < MIN_FREE:
+        raise P.SetupFail("sight %s: %s's Link is hidden behind %s's own (only %.2f of its box %s free of %s): "
+                          "cannot prove sight" % (name, target, viewer, free_share(tb, vb), tb, vb))
+    if not behind and vb and bandcheck.overlaps(vb, tb):
         raise P.SetupFail("sight %s: the boxes overlap (%s's own Link %s, %s's %s): %s is on %s's line of sight" % (
             name, viewer, vb, target, tb, target, viewer))
     if bandcheck.box(view, away, w, h):
@@ -93,10 +116,10 @@ def prove(pair, viewer, target, name):
     pair.step_both(SETTLE)
     b = Image.open(without).convert("RGB")
     side = bandcheck.side_box(tb, w, (vb[0] + vb[2]) / 2 if vb else None)
-    box_ch, side_ch = changed_share(a, b, tb), changed_share(a, b, side)
+    box_ch, side_ch = changed_share(a, b, tb, mask), changed_share(a, b, side, mask)
     seen = box_ch - side_ch
     out = {"box": tb, "side": side, "changed": round(box_ch, 3), "side_changed": round(side_ch, 3),
-           "seen": round(seen, 3), "min": MIN_SEEN}
+           "seen": round(seen, 3), "min": MIN_SEEN, "behind": behind}
     pair.notes.append("sight %s: %s sees %s: %s" % (name, viewer, target, out))
     print("sight %s: %s sees %s: %s" % (name, viewer, target, out))
     back = pair.state(target).get("pos") or tpos

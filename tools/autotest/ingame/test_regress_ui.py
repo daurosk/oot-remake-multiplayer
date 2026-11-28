@@ -340,7 +340,9 @@ def test_sword_handle(pair):
         assert pair.log["A"].find(A_PARTS, pos=0), "A: no '%s' since the boot (the switch did not reach the look)" % A_PARTS
         assert pair.log["B"].find(B_SLOTS, pos=0), "B: other players' gear colours are not on (%s)" % B_SLOTS
         ahead_back_turned(pair, "A", of="B")   # A ahead of B facing away: both cameras see A's back (the sheath)
-    prove_apart(pair, ("B",), "regress-hilt")   # (B's shots are of A's puppet: in sight, not only in view; kokiri-sight)
+    # B's shots are of A's puppet: in sight, not only in view (kokiri-sight); A stands ahead of B's own Link on
+    # purpose (ahead_back_turned), so B's own box is left out of the proof instead of an overlap SETUP-FAIL
+    prove_apart(pair, ("B",), "regress-hilt", behind=True)
     seen_once(pair, "A", A_SENT, max_frames=300)
     seen_once(pair, "B", B_GOT, max_frames=300)
     seen_not(pair, "B", B_PAINTED, B_NOT_PAINTED, max_frames=300)

@@ -42,6 +42,9 @@ class Decide(unittest.TestCase):
             self.assertTrue(cs.kit_read(f), f)
             self.assertTrue(cs.decide(D, WORK, ["tools/autotest/a.py", f])[0], f)
             self.assertTrue(cs.longshot_needed(["docs/plan.md", f]), f)
+        # a deleted or renamed kit doc: gone from the tree, still named by make_kit_linux.sh (review-mod-153-2 00:28)
+        self.assertTrue(cs.kit_named("docs/known-issues.md", cs.kit_scan_text()))
+        self.assertFalse(cs.kit_named("docs/no-such-doc-xyz.md", cs.kit_scan_text()))
         self.assertFalse(cs.kit_read("docs/plan.md"))
         self.assertFalse(cs.kit_read("tools/autotest/README.md"))
 
@@ -151,6 +154,15 @@ class RealGit(unittest.TestCase):
     def test_windows_only_test_skips_longshot(self):
         self.commit("tools/release/tests/launch_test.ps1")
         self.assertEqual(self.main_out()[0], "full=true\nlongshot=false")
+
+    def test_deleted_kit_doc_is_full_and_runs_longshot(self):
+        # review-mod-153-2 00:28: the doc is gone from HEAD, the real kit scripts still name it
+        self.commit("docs/known-issues.md")
+        run(self.repo, "git", "push", "-q", "origin", "HEAD:refs/heads/integrate-0120")
+        run(self.repo, "git", "rm", "-q", "docs/known-issues.md")
+        run(self.repo, "git", "commit", "-q", "-m", "rm")
+        self.assertEqual(cs.changed_files("integrate-0120"), ["docs/known-issues.md"])
+        self.assertEqual(self.main_out()[0], "full=true\nlongshot=true")
 
     def test_cpp_outside_hookshot_runs_longshot(self):
         self.commit("coop/net/x.cpp")

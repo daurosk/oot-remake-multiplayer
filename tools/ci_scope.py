@@ -66,50 +66,57 @@ BASE_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 KIT_SCAN = ("tools/release/", "tools/hookshot/", "tools/puppet_pack/", "cmake/", "CMakeLists.txt",
             ".github/workflows/build.yml")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_kit_read = None
+_kit_blob = {}
 
 
-def kit_read_paths(repo=None):
-    """Repo paths (docs/** and repo-root files) that a kit script or kit test names; cached for the default repo."""
-    global _kit_read
-    if repo is None and _kit_read is not None:
-        return _kit_read
+def kit_scan_text(repo=None):
+    """The lower-cased text of every tracked file under KIT_SCAN (cached per repo); None when git lists nothing."""
     root = repo or REPO
+    if root in _kit_blob:
+        return _kit_blob[root]
     try:
         files = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True, check=True).stdout.splitlines()
     except (OSError, subprocess.CalledProcessError):
         files = []
     text = []
     for f in files:
-        if f and (f.startswith(KIT_SCAN) or f in KIT_SCAN):
+        if f.startswith(KIT_SCAN) or f in KIT_SCAN:
             try:
                 with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
                     text.append(fh.read())
             except OSError:
                 pass
-    blob = "\n".join(text).lower()
-    found = set()
-    for f in files:
-        if not f or not (f.startswith("docs/") or "/" not in f):
-            continue
-        lf = f.lower()
-        name = lf.rsplit("/", 1)[-1]
-        if lf in blob or lf.replace("/", "\\") in blob or \
-                re.search(r"(?<![a-z0-9_.-])" + re.escape(name) + r"(?![a-z0-9_-])", blob):
-            found.add(f)
-    if not files:
-        found = None   # no listing: every docs/root file counts as kit-read (see scoped_path)
-    if repo is None:
-        _kit_read = found
-    return found
+    blob = "\n".join(text).lower() if files else None
+    _kit_blob[root] = blob
+    return blob
 
 
-def kit_read(path):
-    """True when a kit script or kit test may read path (docs/** or a repo-root file); no git listing = True."""
+def kit_named(path, blob):
+    """True when blob names path: its repo path (/ or \), or its bare name (any case) as one token."""
+    lp = path.lower()
+    name = lp.rsplit("/", 1)[-1]
+    return lp in blob or lp.replace("/", "\\") in blob or \
+        re.search(r"(?<![a-z0-9_.-])" + re.escape(name) + r"(?![a-z0-9_-])", blob) is not None
+
+
+def kit_read(path, repo=None):
+    """True when a kit script or kit test may read path (docs/** or a repo-root file). The CHANGED path itself is
+    matched, so a deleted or renamed kit doc (gone from the tree, still named by a kit script) counts too
+    (review-mod-153-2 00:28). No git listing = True."""
     if not (path.startswith("docs/") or "/" not in path):
         return False
-    paths = kit_read_paths()
-    return paths is None or path in paths
+    blob = kit_scan_text(repo)
+    return blob is None or kit_named(path, blob)
+
+
+def kit_read_paths(repo=None):
+    """The tracked docs/** and repo-root files kit_read() says yes to (for the drift test and the report)."""
+    root = repo or REPO
+    try:
+        files = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True, check=True).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {f for f in files if kit_read(f, repo)}
 
 
 def scoped_path(path):

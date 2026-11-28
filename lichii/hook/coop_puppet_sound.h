@@ -100,6 +100,7 @@ struct State {
     bool ocarina_looked = false;
     std::string module_said;  // the last module line logged (said again only when it changes)
     std::string playing;         // the names last logged (debug)
+    std::uint64_t named_user = 0;  // the sound user whose list name was last logged (debug, row 319)
     std::uint64_t playing_ms = 0;
 };
 
@@ -177,7 +178,8 @@ inline constexpr const char* kOcarinaUser = "Ocarina";
 // The asset names a user plays now (at most kMaxEvents), joined with ", ".
 std::string Playing(CoopPuppet::Guest& guest, std::uint64_t user);
 // Debug (LICHII_COOP_DEBUG_ANIM): every kPlayingEveryMs, a line when what the
-// puppet's sound user plays changed ("P1 sounds: Ocarina_D" / "none").
+// puppet's sound user plays changed ("P1 sounds: Ocarina_D" / "none"), and one
+// when its sound user changed ("P1 sound user 0x... is 'Player_Child'", row 319).
 void LogPlaying(State& state, CoopPuppet::Guest& guest, std::uint64_t actor,
                 std::uint64_t now_ms, const std::string& who, const Say& say);
 

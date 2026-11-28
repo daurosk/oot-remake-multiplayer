@@ -945,10 +945,18 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
         // seen) the whole song; the notes must sound then too.
+        const bool voice_lines = anim_ || debug_voice_;
+        if (voice_lines && CoopLinkSound::OurUser() != our_user_named_) {
+            // Row 319: our own Link's sound user and the name it was made with (the mod's voice hook changes the
+            // archive list it loads, not this name: the run compares it with the puppets' lines).
+            our_user_named_ = CoopLinkSound::OurUser();
+            Say("our sound user " + Hex(our_user_named_) + " is '" +
+                (our_user_named_ != 0 ? CoopPuppetSound::UserName(guest, our_user_named_) : std::string()) + "'");
+        }
         if (t->show != Show::hide) {
             const std::string who = "P" + std::to_string(slot.number);
             const auto say = [this](const std::string& line) { Say(line); };
-            if (anim_) {
+            if (voice_lines) {
                 CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
             }
             if (!OcarinaSoundOn()) {
@@ -967,7 +975,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 if (auto c = CoopLinkSound::Next(
                         slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
                         slot.block, now_ms,
-                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, voice_lines)) {
                     pending_ = Pending::link_sound;
                     return c;
                 }
@@ -2991,6 +2999,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        g_director->SetDebugVoice(settings.debug_voice);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);

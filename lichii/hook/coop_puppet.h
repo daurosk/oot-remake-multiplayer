@@ -436,6 +436,9 @@ public:
     // The Link puppets' director runs the pose copy (coop_pose.h); others, such
     // as the fairies', do not.
     void SetPoseCopy(bool on) { pose_copy_ = on; }
+    // Row 319 (LICHII_COOP_DEBUG_VOICE, reads only): each puppet's and our Link's sound user name, what the
+    // puppet plays and each of the player's sounds started on it (the lines LICHII_COOP_DEBUG_ANIM also gives).
+    void SetDebugVoice(bool on) { debug_voice_ = on; }
     // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
     // offset 0: none, no colours on a character's puppet.
     // The sound list each puppet's row names (PackSoundLists): added to its "spawned" line.
@@ -764,6 +767,7 @@ private:
     bool verbose_;
     bool anim_;
     bool pose_copy_ = false;
+    bool debug_voice_ = false;  // SetDebugVoice
     std::uint64_t character_apply_ = 0;
     std::map<std::string, std::string, std::less<>> sound_lists_;
     std::array<std::uint8_t, 16> character_apply_head_{};
@@ -789,6 +793,7 @@ private:
     CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even (coop_follow.h)
     std::vector<Slot> slots_;
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
+    std::uint64_t our_user_named_ = 0;    // debug: our Link's sound user last logged (row 319)
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
@@ -852,6 +857,7 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
+    bool debug_voice = false;     // LICHII_COOP_DEBUG_VOICE (row 319, reads only)
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;

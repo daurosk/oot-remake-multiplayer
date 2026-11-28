@@ -21,6 +21,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     // second Link in the game (Alex's run of 2026-11-09 with the logs on).
     settings.debug = On(env("LICHII_COOP_TEST_PUPPET"));
     settings.debug_anim = On(env("LICHII_COOP_DEBUG_ANIM"));
+    settings.debug_voice = On(env("LICHII_COOP_DEBUG_VOICE"));
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = std::move(actor);
     }

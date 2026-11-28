@@ -41,8 +41,10 @@ CROSSINGS = 3
 # 3600 frames (~2 min of game at pair.FPS 30) for the next one, so a run that ended between two lines still sees one.
 MEMORY_WAIT_FRAMES = 3600
 # A test-only switch (the real module reads no BT_* name; test_dropin_longshot.py's BT_DROPIN=1 the same way): this
-# row's tests run only with --env BT_ROW321=1 (needs_env: every other run deselects them), and fakes/market_field_321.py
-# reacts only there (B #149: a fake acts only while its own row runs).
+# row's PAIR test runs only with --env BT_ROW321=1 (needs_env: every other run deselects it). The solo test needs no switch
+# (a --solo run deselects only pair tests: tests/test_ingame.py test_solo_run_of_the_real_suite, CI 46121940512), so it
+# runs in every --solo run; fakes/market_field_321.py reacts only with the switch or in a --solo boot, and only to this
+# row's Market -> Field warp (B #149: a fake acts only while its own row runs).
 ROW_ENV = "BT_ROW321=1"
 STAY_FRAMES = 300
 
@@ -133,7 +135,6 @@ def test_market_field_guest_crosses(pair):
 
 @solo.MARK
 @pytest.mark.budget(420)
-@pytest.mark.needs_env(ROW_ENV)
 @pytest.mark.row("321 adult Link Market -> Hyrule Field solo (co-op idle), no crash or stall")
 def test_market_field_solo(pair):
     with pair.setup():

@@ -21,12 +21,12 @@ class MarketField(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_fake(self, name, key, bug=None, solo=False):
+    def run_fake(self, name, key, bug=None, solo=False, switch=True):
         out = os.path.join(self.tmp, name)
         env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")}
         if bug:
             env["BT_FAKE_MARKET_FIELD"] = bug
-        p = T.pytest_run([".", "--fake", "--env", "BT_ROW321=1", "--out", out] + (["--solo"] if solo else []) +
+        p = T.pytest_run([".", "--fake"] + (["--env", "BT_ROW321=1"] if switch else []) + ["--out", out] + (["--solo"] if solo else []) +
                          (["--no-rerun"] if bug else []) + ["-q", "-p", "no:cacheprovider", "-k", key], env=env)
         s = T.summary(out)
         return p, [(t["result"], t["why"]) for t in s["tests"] if t["test"].endswith(key)], s
@@ -49,7 +49,7 @@ class MarketField(unittest.TestCase):
         self.assertIn("needs_env BT_ROW321=1", p.stdout + p.stderr)
 
     def test_solo_passes(self):
-        p, r, s = self.run_fake("solo", SOLO, solo=True)
+        p, r, s = self.run_fake("solo", SOLO, solo=True, switch=False)   # (the solo test carries no switch)
         self.assertEqual(len(r), 1, (p.stdout, s))
         self.assertEqual(r[0][0], "PASS", r)
 

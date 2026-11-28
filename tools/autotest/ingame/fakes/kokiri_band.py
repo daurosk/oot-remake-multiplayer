@@ -41,6 +41,9 @@ def setup(game):
 
 
 def state(game, st):
+    if getattr(game, "kb_lost", False):
+        st.update({"pos": None, "facing": None, "loading": True, "not_ready": "scene load (fake loading zone)"})
+        return
     if not _on(game) or st.get("pos") is None:
         return
     # (the age comes from FakeGame.age(): its warp sets Sequence_IsChildhood for an _Adult/_Child name, as the real verb)
@@ -52,14 +55,20 @@ def state(game, st):
 
 
 def act(game, w):
-    """BT_FAKE_KOKIRI_STUCK: a place to a spot the fake camera does not show is refused (the game keeps Link)."""
-    if not (_on(game) and os.environ.get("BT_FAKE_KOKIRI_STUCK") and w[:1] == ["place"] and len(w) >= 4):
+    """BT_FAKE_KOKIRI_STUCK: a place behind B (z < 0: sight.prove's away spots; the fake camera looks along +z from
+    behind B) is refused (the game keeps Link). BT_FAKE_KOKIRI_LOADZONE: such a place starts a scene load that never
+    ends (A's Link gone, as kokiri-look2-182cd53b's Kakariko gate) until the next warp."""
+    if not (_on(game) and w[:1] == ["place"] and len(w) >= 4 and float(w[3]) < 0):
         return False
-    import bandcheck
-    return bandcheck.box(_view(), [float(v) for v in w[1:4]], 320, 180) is None
+    if os.environ.get("BT_FAKE_KOKIRI_LOADZONE"):
+        game.kb_lost = True
+        return True
+    return bool(os.environ.get("BT_FAKE_KOKIRI_STUCK"))
 
 
 def after(game, m, r):
+    if m.get("cmd") == "warp":
+        game.kb_lost = False
     if m.get("cmd") != "shot" or not _on(game) or not r.get("path"):
         return
     import bandcheck

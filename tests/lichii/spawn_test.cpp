@@ -2278,3 +2278,83 @@ TEST_CASE("bomb share: a Lifted copy away from our Link, or with our Link not re
     run.Tick({BombAt(0x9000, "Lifted")});
     CHECK(Of<proto::BombTake>(run.send).size() == 1);
 }
+
+// Row 332: another player's bomb flower was never seen picked. The fruit is a placed actor (on the list from
+// the first walk), so it is ours only from our Link's lift, and goes out as an Item_Bomb.
+namespace {
+Seen Flower(float x, const char* animation) {
+    Seen s = Made(0x8000, x);
+    s.flower = true;  // the walk names it Item_Bomb (Obj_BombFlower_A_01)
+    s.animation = proto::Animation{animation, 0.0f, 1.0f};
+    return s;
+}
+} // namespace
+
+TEST_CASE("spawn: a bomb flower is shared from our Link's lift until it goes off (row 332)") {
+    CHECK(CoopSpawn::IsBombFlower("Obj_BombFlower_A_01"));
+    CHECK(CoopSpawn::IsBombFlower("Obj_BombFlower_A_04"));
+    CHECK(CoopSpawn::IsBombFlower("Obj_BombFlower_Fruit_For_Break_Obj_DeathMtTrail_BrokenRock_A_01"));
+    CHECK_FALSE(CoopSpawn::IsBombFlower("Obj_BombFlower_Grass_For_Break_Obj_DeathMtTrail_BrokenRock_A_01"));
+    CHECK_FALSE(CoopSpawn::IsBombFlower("BombFlowerChainExplosionManager"));
+    CHECK(CoopSpawn::FlowerEnd("Explode") == proto::RemoveReason::exploded);
+    CHECK(CoopSpawn::FlowerEnd("Regrow") == proto::RemoveReason::exploded);
+    CHECK_FALSE(CoopSpawn::FlowerEnd("Thrown").has_value());
+    CHECK_FALSE(CoopSpawn::FlowerEnd("Bomb_Blink").has_value());
+
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.SetLink(proto::Vec3{0.0f, 0.0f, 2.0f});
+
+    // On its plant: nobody's.
+    sync.Tick(kScene, 1, now, {Flower(0.0f, "Wait")}, none, send, copies);
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(0.0f, "Wait")}, none, send, copies);
+    CHECK(send.empty());
+    // Lifted, but far from our Link (another Link's in this game: a puppet never lifts): not ours.
+    sync.SetLink(proto::Vec3{20.0f, 0.0f, 2.0f});
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(0.0f, "Lifted")}, none, send, copies);
+    CHECK(send.empty());
+    // Our Link lifts it: one spawn of an Item_Bomb, held.
+    sync.SetLink(proto::Vec3{0.0f, 0.0f, 2.0f});
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(0.0f, "Lifted")}, none, send, copies);
+    auto spawns = Of<proto::ObjectSpawn>(send);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].actor == "Item_Bomb");
+    CHECK(spawns[0].id.maker == 1);
+    CHECK(spawns[0].state.state == proto::object_state::held);
+    const proto::ObjectId id = spawns[0].id;
+    // Thrown: sampled as it flies.
+    send.clear();
+    now += 40 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(1.0f, "Thrown")}, none, send, copies);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    CHECK(samples[0].id == id);
+    CHECK(Of<proto::ObjectSpawn>(send).empty());
+    // It goes off: removed as exploded where it is.
+    send.clear();
+    now += 40 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(3.0f, "Explode")}, none, send, copies);
+    auto removes = Of<proto::ObjectRemove>(send);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].reason == proto::RemoveReason::exploded);
+    CHECK(removes[0].position[0] == doctest::Approx(3.0f));
+    CHECK(sync.Mine() == 0);
+    // Grown back on its plant: nothing more, until the next lift.
+    send.clear();
+    for (const char* a : {"Explode", "Regrow", "Wait"}) {
+        now += 33 * kMs;
+        sync.Tick(kScene, 1, now, {Flower(0.0f, a)}, none, send, copies);
+    }
+    CHECK(send.empty());
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Flower(0.0f, "Lifted")}, none, send, copies);
+    REQUIRE(Of<proto::ObjectSpawn>(send).size() == 1);
+    CHECK(Of<proto::ObjectSpawn>(send)[0].id != id);
+}

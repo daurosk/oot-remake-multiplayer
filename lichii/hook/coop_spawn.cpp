@@ -104,6 +104,15 @@ bool Flies(std::string_view name) {
     const Kind* k = Find(name);
     return (k != nullptr && k->flies) || CoopEnemyShots::IsEnemyShot(name);
 }
+bool IsBombFlower(std::string_view name) {
+    return name.starts_with("Obj_BombFlower_A_0") || name.starts_with("Obj_BombFlower_Fruit");
+}
+std::optional<proto::RemoveReason> FlowerEnd(std::string_view animation) {
+    if (animation == "Explode" || animation == "Regrow" || animation == "Regrow_Bomb") {
+        return proto::RemoveReason::exploded;
+    }
+    return std::nullopt;
+}
 
 // ---------------------------------------------------------------- Sync
 
@@ -319,6 +328,33 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
 
     for (const Seen& s : seen) {
+        if (s.flower) {
+            // Row 332: a bomb flower's fruit is placed (on the list since the first walk). It is ours from
+            // our Link's lift (its own animation says Lifted, beside our Link) until it goes off or grows
+            // back on its plant; the others see it as an Item_Bomb in our puppet's hands, thrown, exploding.
+            const auto it = mine_.find(s.address);
+            const bool ours = it != mine_.end() && it->second.flower;
+            const std::string_view anim = s.animation ? std::string_view(s.animation->name) : std::string_view{};
+            if (!ours) {
+                if (self == 0 || !Finite(s.position) || CoopProjectiles::HeldByAnimation(anim) != true ||
+                    !CoopBombShare::NearOurLink(link_, s.position)) {
+                    continue;
+                }
+                old_.erase(s.address);  // made ours below, as a new one
+                bomb_notes_.push_back("lifted a bomb flower: shared as a bomb");
+            } else if (const auto end = FlowerEnd(anim)) {
+                proto::ObjectRemove out;
+                out.id = it->second.id;
+                out.reason = *end;
+                out.epoch = it->second.epoch;
+                // Explode: where it is now; grown back: where it last was before (its plant is elsewhere).
+                out.position = anim == "Explode" && Finite(s.position) ? s.position : it->second.position;
+                send.emplace_back(out);
+                mine_.erase(it);
+                old_.insert(s.address);  // back on its plant: nobody's until the next lift
+                continue;
+            }
+        }
         if (bomb_share_ && s.animation && CoopBombShare::IsBomb(s.name) &&
             copy_addresses_.count(s.address) != 0) {
             // Phase 2: our Link lifted the copy of another player's bomb (the
@@ -346,7 +382,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 break;
             }
         }
-        if (old_.count(s.address) != 0 || copy_addresses_.count(s.address) != 0 ||
+        if ((old_.count(s.address) != 0 && !s.flower) || copy_addresses_.count(s.address) != 0 ||
             !Finite(s.position)) {
             continue;
         }
@@ -472,8 +508,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // unclaimed copy of that name.
         bool claimed = false;
         for (auto& [id, r] : copies_) {
-            if (enemy_shot) {
-                break;
+            if (enemy_shot || s.flower) {
+                break;  // (row 332: a lifted bomb flower is ours, never another player's copy)
             }
             if (r.address == 0 && r.actor == s.name && Distance(r.Position(), s.position) < kClaimDistance) {
                 r.address = s.address;
@@ -483,7 +519,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
         }
         for (Carrier& c : carriers_) {  // issue 166: made, not reported yet
-            if (!claimed && !enemy_shot && c.address == 0 && c.actor == s.name &&
+            if (!claimed && !enemy_shot && !s.flower && c.address == 0 && c.actor == s.name &&
                 Distance(c.position, s.position) < kClaimDistance) {
                 c.address = s.address;
                 copy_addresses_.insert(s.address);
@@ -508,7 +544,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         m.animation = s.animation;
         m.vtable = s.vtable;
-        if (bomb_share_ && CoopBombShare::IsBomb(s.name)) {
+        m.flower = s.flower;
+        if (bomb_share_ && CoopBombShare::IsBomb(s.name) && !s.flower) {
             CoopBombShare::TheOwnBombs().Note(m.id, true);  // its HANDOVER_ASK is ours to answer
         }
         Hands(m, true);
@@ -581,7 +618,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             out.reason = CoopBombShare::GoneReason(true, lit, pouch_.RoseNear(now_us), otherwise);
             bomb_notes_.push_back("our taken bomb #" + Hex(m.id.value) + " gone, reason " +
                                   std::to_string(static_cast<int>(out.reason)));
-        } else if (out.reason == proto::RemoveReason::exploded && CoopProjectiles::Find(m.name)->fused) {
+        } else if (out.reason == proto::RemoveReason::exploded && CoopProjectiles::Find(m.name)->fused &&
+                   !m.flower) {
             fuse_.Lived(lived);  // the game's fuse, for our next bombs' copies
         }
         if (bomb_share_) {
@@ -816,7 +854,9 @@ void Sync::Bombs(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             const std::string who = "asked for our bomb #" + Hex(ask->id.value) + " by P" +
                                     std::to_string(ask->to_player);
-            if (auto answer = CoopBombShare::Answer(*ask, own->second.held, StateOf(own->second, now_us))) {
+            // Row 332: a bomb flower's fruit is a placed actor of our game: never handed on (never deleted).
+            if (auto answer = CoopBombShare::Answer(*ask, own->second.held || own->second.flower,
+                                                    StateOf(own->second, now_us))) {
                 send.emplace_back(std::move(*answer));
                 bomb_notes_.push_back(who + ": handed over");
             } else {
@@ -845,7 +885,7 @@ void Sync::Bombs(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             const auto own = own_of(owner->id);
-            if (own == mine_.end() || !CoopBombShare::IsBomb(own->second.name)) {
+            if (own == mine_.end() || !CoopBombShare::IsBomb(own->second.name) || own->second.flower) {
                 continue;
             }
             // Another player has our bomb now: our actor goes without an
@@ -2494,10 +2534,12 @@ private:
                 const u64 a = *owner;
                 auto it = names_.find(a);
                 std::string name = it != names_.end() ? it->second : Name(memory, a);
-                if (IsShared(name)) {
+                const bool flower = IsBombFlower(name);
+                if (IsShared(name) || flower) {
                     Seen s;
                     s.address = a;
-                    s.name = name;
+                    s.name = flower ? std::string("Item_Bomb") : name;  // row 332: shared as a bomb
+                    s.flower = flower;
                     for (std::size_t i = 0; i < 3; ++i) {
                         s.position[i] =
                             Get<float>(memory, a + CoopPuppet::addr::kActorPosition + 4 * i)

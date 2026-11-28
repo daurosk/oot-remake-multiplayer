@@ -45,7 +45,7 @@ State on `main` at 99332d9 (chunk 4 merged, protocol 6). Later branches changed 
 | Field grass | foliage, no actor | grass `GRASS_CUT` | ? | unit | - | P3 |
 | Signs and signposts | `Obj_SignBoard_*`, `Obj_*_Signboard_*`, `Obj_GuidePost_*`, `Obj_*_GuidePost_*` | world `WORLD_HIT` + `SIGN_CUT` | ? | logs (sign 20261110-122750: 11 of 11 words written in B; pieces not in view) | - | P3 |
 | Beehives | `Obj_Kokiri_Beehive_*` | objects + world | ? | unit | - | P3 |
-| Bomb flowers | `Obj_BombFlower_*` (4), its fruit | none (the fruit has no placement) | - | - | Each player picks their own; the rock it breaks is a *Bomb rock* row | P2 |
+| Bomb flowers | `Obj_BombFlower_*` (4), its fruit | spawns (row 332): our lifted fruit goes out as an `Item_Bomb` (held stand-in, flight, explosion) | live | - | The plant is each game's own (it regrows); the rock it breaks is a *Bomb rock* row | P2 |
 | Falling floors (Deku Tree) | `Obj_InsideTheDekuTree_FallingFloor_*` (`FallingFloor_A_03` has no saved key in the game, so it cannot be keyed) | *keys* + *take* | live via *take* | unit | B cannot fall to the next floor | **P1** to check |
 | Falling floor (Shadow Temple) | `Obj_ShadowTemple_FallingFloor_*` (`FallingFloor_A_03` has no saved key in the game, so it cannot be keyed) | *keys*, kept (stays as ground); the unkeyed `_A_03` a world *shifter* (breakables-2) | reload; `_A_03` live | unit | Shown fallen only after a reload | P2 |
 | Path pieces that move when hit | Fire Temple `HammerDropFloor`, `HammerDropPillar`, `HammerStair` (7, no key), Deku Tree `FallingLadder_A_01`, `FallingFloor_A_03` (no key) | world *shifter*: `WORLD_MOVE`/`WORLD_PLACE`, held in B (breakables-2) | live; late joiner by the server's place | unit | Before: not shared at all | **P1** |

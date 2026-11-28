@@ -1713,6 +1713,18 @@ TEST_CASE("rando: a seed file that places shop items (coop_shop_sale.h)") {
     CHECK_FALSE(SeedShops(""));
 }
 
+TEST_CASE("rando: a seed file that places Gold Skulltula tokens off the Skulltulas (row 331)") {
+    CHECK(SeedTokensOffSkulltulas("{\"placements\": {\"KF GS Know It All House\": \"Bow\", "
+                                  "\"KF Midos Top Left Chest\": \"Gold Skulltula Token\"}}"));
+    CHECK(SeedTokensOffSkulltulas("{\"placements\" :\r\n\t{ \"Kak 10 Gold Skulltula Reward\" :\n \"Gold Skulltula Token\" }}"));
+    // Tokens only on Skulltula spots (shuffled among them), none, or no placements: tokens come only from Skulltulas.
+    CHECK_FALSE(SeedTokensOffSkulltulas("{\"placements\": {\"Deku Tree GS Basement Back Room\": \"Gold Skulltula Token\", "
+                                        "\"SFM GS\": \"Gold Skulltula Token\", \"KF Midos Top Left Chest\": \"Bow\"}}"));
+    CHECK_FALSE(SeedTokensOffSkulltulas("{\"placements\": {\"KF Midos Top Left Chest\": \"Bow\"}}"));
+    CHECK_FALSE(SeedTokensOffSkulltulas("{\"hint\": \"Gold Skulltula Token\"}"));
+    CHECK_FALSE(SeedTokensOffSkulltulas(""));
+}
+
 TEST_CASE("rando: the item a seed file places at a location (row 237, coop_story.h GiftShuffled)") {
     // OOTRR settings/seed.rs: "placements" is an object, location name -> item name.
     const std::string seed = "{\n  \"format\": \"ootrr-seed\",\n  \"settings\": \"OOTRR1-AB\",\n  \"placements\": {\n"

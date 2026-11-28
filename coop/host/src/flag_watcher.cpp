@@ -458,7 +458,9 @@ void FlagWatcher::note_for_others(FlagStore& store, const FlagEntry& entry) {
   // Another player took it, live (a join snapshot is no take now): our game
   // counting its pickup again soon after is a second count (guard_count).
   if (source != guard_source_.end() && received_kind_ == ReceivedKind::live) {
-    guards_[source->second].others_at = frames_ + 1;  // never 0
+    Guard& g = guards_[source->second];
+    g.others.push_back(frames_ + 1);  // row 331: one put-back at most for this take
+    while (g.others.size() > kMaxWrittenForOthers) g.others.pop_front();
   }
   if (written_for_others_.size() < kMaxWrittenForOthers) written_for_others_.push_back(key);
 }
@@ -541,7 +543,8 @@ void FlagWatcher::reset() {
   // session. A held gain stays held, so it is still sent or put back.
   for (auto& [key, g] : guards_) {
     g.credit = 0;
-    g.others_at = 0;
+    g.others.clear();
+    g.other_credit = 0;
     g.put_back = 0;
   }
   for (RewardGuard& g : reward_guards_) {  // row 272: a reward given now belongs to the old session
@@ -1713,6 +1716,12 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       Guard& guard = guards_[s->second];
       if (guard.credit == 0) guard.credit_since = frames_;
       ++guard.credit;  // taken in our own game: a gain of its count is real
+    } else if (!guards_.empty() && before.value == 0 && now->value != 0 && pickups_.contains(key)) {
+      // Row 331: another one-time pickup of ours (a randomizer's chest, pot or freestanding spot may hold a token).
+      for (auto& [count, g] : guards_) {
+        g.other_credit = std::min(g.other_credit + 1, 64);
+        g.other_credit_since = frames_;
+      }
     }
     if (role_ == FlagRole::player && containers_.contains(key) && !restate_.contains(key) &&
         !max_caps_.contains(key) && doubled_ == 0 && before.kind == protocol::FlagKind::int32 &&
@@ -1893,15 +1902,31 @@ void FlagWatcher::settle_guards(FlagStore& store, Table& changes) {
     g.held -= matched;
     g.credit -= matched;
     send += matched;
+    // Row 331: our own other one-time pickup just before (or within the hold) pays for a gain too: any gain when
+    // the seed places tokens elsewhere, else only the gains beyond the takes still pending (those are put back).
+    if (g.other_credit > 0 && frames_ - g.other_credit_since > kOtherPickupFrames + kGuardHoldFrames) g.other_credit = 0;
+    while (!g.others.empty() && frames_ + 1 - g.others.front() > kGuardRecentFrames) g.others.pop_front();
+    const std::int32_t payable =
+        tokens_anywhere_ ? g.held
+                         : std::max<std::int32_t>(0, g.held - static_cast<std::int32_t>(g.others.size()));
+    if (payable > 0 && g.other_credit > 0 && g.held_since + kOtherPickupFrames >= g.other_credit_since) {
+      const std::int32_t paid = std::min(payable, g.other_credit);
+      g.held -= paid;
+      g.other_credit -= paid;
+      send += paid;
+    }
     if (g.held > 0 && frames_ - g.held_since >= kGuardHoldFrames) {
-      const bool taken_elsewhere = g.others_at != 0 && frames_ + 1 - g.others_at <= kGuardRecentFrames;
+      // Row 331: one put-back per take written here for another player (the one copy of that token that stayed).
       const std::int32_t gain = g.held;
+      const std::int32_t back = std::min<std::int32_t>(gain, static_cast<std::int32_t>(g.others.size()));
       g.held = 0;  // before shift(): the write is ours, not a held gain
-      if (taken_elsewhere && shift(-gain)) {
+      if (back > 0 && shift(-back)) {
+        for (std::int32_t i = 0; i < back; ++i) g.others.pop_front();
         ++stats_.counts_guarded;
-        counts_guarded_.push_back(CountGuarded{key, gain});
-        g.put_back = gain;
+        counts_guarded_.push_back(CountGuarded{key, back});
+        g.put_back = back;
         g.put_back_at = frames_;
+        send += gain - back;  // more gains than takes: the rest are real
       } else {
         send += gain;  // no take we know of: as any count
       }

@@ -837,6 +837,7 @@ public:
             }
             session_->guard_count(coop::protocol::FlagKey(coop::host::kGoldTokenCount, std::uint16_t{0}),
                                   skulltulas);
+            session_->set_tokens_anywhere(CoopShopSale::SeedTokensElsewhere());  // row 331
         }
         if (sharing_) {  // row 272: once-per-save rewards (bottles, upgrades) given once for the group
             for (const auto family : coop::host::rewards::kFamilies) {  // each family on its own

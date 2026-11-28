@@ -62,6 +62,16 @@ inline bool IsReturnShot(std::string_view name) {
 bool IsShared(std::string_view name);
 bool Explodes(std::string_view name);
 bool Flies(std::string_view name);  // shot or thrown: the projectile flag
+// Row 332: a bomb flower's fruit (Obj_BombFlower_A_01..04 and the Death Mountain trail's
+// Obj_BombFlower_Fruit_For_Break_*: each pack's own LiftableParam Obj_BombFlower_Fruit, AS
+// Obj_BombFlower_A_01/03 with Lifted, Thrown, Bomb_Blink, Explode, Regrow). The fruit is the placed
+// actor itself (AlwaysRespawn: it regrows on its plant), so it is on the list from the scene's first
+// walk and no spawn rule ever sent it. Our Link's lift makes it ours and it goes out as an Item_Bomb.
+bool IsBombFlower(std::string_view name);
+// The end of our lifted fruit, from its own AS slot 0 command: Explode (it went off) and Regrow /
+// Regrow_Bomb (back on its plant, so it went off between two walks) end it as exploded; anything
+// else (Lifted, Thrown, Bomb_Wait, Bomb_Blink) keeps it ours.
+std::optional<coop::protocol::RemoveReason> FlowerEnd(std::string_view animation);
 
 // One made actor of one walk.
 struct Seen {
@@ -76,6 +86,8 @@ struct Seen {
     // Enemy shots (coop_enemy_shots.h): the actor's vtable, so a delete
     // later is sure it is still the same actor.
     std::uint64_t vtable = 0;
+    // Row 332: a bomb flower's fruit, seen as "Item_Bomb" (name) but placed, not made.
+    bool flower = false;
 };
 
 // An enemy shot of a copy enemy here (CoopEnemyShots::Verdict::hide): the
@@ -337,6 +349,7 @@ private:
         std::optional<std::uint64_t> blow_at;
         bool blown = false;
         std::uint64_t vtable = 0;
+        bool flower = false;  // row 332: a lifted bomb flower fruit (placed: never handed on, never deleted)
     };
     struct Remote {
         std::uint64_t key = 0;

@@ -250,6 +250,10 @@ class Session {
     watcher_->guard_count(count, sources);
     return true;
   }
+  // Emulator thread only: FlagWatcher::set_tokens_anywhere (row 331: the seed places a token off a Skulltula).
+  void set_tokens_anywhere(bool on) {
+    if (watcher_) watcher_->set_tokens_anywhere(on);
+  }
   // Emulator thread only: FlagWatcher::guard_reward (row 272, a once-per-save
   // reward got in two games at once). False when flags are not shared.
   bool guard_reward(std::span<const std::vector<FlagKey>> units, std::span<const FlagKey> sources) {

@@ -402,8 +402,9 @@ another scene than the bomb's, or no fresh sample position.
 
 ### Other liftable and shared things (named here, later phases)
 
-- **Bomb flowers** (`Obj_BombFlower_*`, [sync-coverage.md](sync-coverage.md) P2): an unshared world object today
-  (each player picks their own fruit; one picked and thrown in one game is not seen in the other). Not a made `Item_Bomb`,
+- **Bomb flowers** (`Obj_BombFlower_*`, [sync-coverage.md](sync-coverage.md) P2): since row 332 a fruit our Link
+  lifts goes out as an `Item_Bomb` (the others see it in the puppet's hands, thrown and going off); the plant is
+  still each game's own, and a fruit is never handed over (it is a placed actor). Not a made `Item_Bomb`,
   so phase 2's hand-over does not cover it. Later phase: share the plant's pick (a world object with an owner,
   as grass cuts and world breaks) and the picked bomb as phase 2's bomb.
 - **Pots and rocks** (scene objects Link lifts and throws): their break is shared today ([world.md](world.md)); who

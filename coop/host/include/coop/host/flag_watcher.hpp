@@ -296,6 +296,18 @@ class FlagWatcher {
   static constexpr std::uint64_t kGuardHoldFrames = 90;
   static constexpr std::uint64_t kRaceFrames = 2 * kGuardHoldFrames;
   static constexpr std::uint64_t kGuardRecentFrames = 5 * 60 * 60;
+  // Row 331 (a randomizer's Gold Skulltula token not counted): a seed puts tokens in chests, pots, freestanding
+  // spots and rewards (OOTRR shuffle_skulltulas, on in its open_world preset), so a token can come with no
+  // Skulltula key at all. Two rules keep such a token: (1) another one-time pickup of ours (a pickup key or named
+  // pickup going 0 to 1 in our own game, not one of `sources`) within kOtherPickupFrames before the gain pays for
+  // it like a source does (a chest's key is set when it opens, the item a few seconds later); (2) each source
+  // written here for another player puts back at most ONE gain (the one token copy that stayed here), not every
+  // unmatched gain for kGuardRecentFrames. Rule (1) pays a gain before the put-back only when tokens can lie
+  // elsewhere (set_tokens_anywhere: the seed places a token off a Skulltula); otherwise (no seed, or a seed with
+  // the Skulltulas vanilla) a token comes only from a Skulltula, so a pending take is used first and (1) pays only
+  // the gains beyond the pending takes: the copy taken again right after a chest is still put back, as before.
+  static constexpr std::uint64_t kOtherPickupFrames = 10 * 60;
+  void set_tokens_anywhere(bool on) { tokens_anywhere_ = on; }
   struct CountGuarded {
     FlagKey count;
     std::int32_t amount = 0;  // the gain put back
@@ -661,12 +673,15 @@ class FlagWatcher {
     std::uint64_t held_since = 0;   // frame the oldest held gain was seen
     std::int32_t credit = 0;        // own source 0 to 1 not matched yet
     std::uint64_t credit_since = 0;
-    std::uint64_t others_at = 0;    // frame a source was last written 0 to 1 for another player
+    std::deque<std::uint64_t> others;  // frames a source was written 0 to 1 for another player, not used by a put-back yet (row 331)
+    std::int32_t other_credit = 0;  // row 331: own other one-time pickups 0 to 1 not matched yet
+    std::uint64_t other_credit_since = 0;
     std::int32_t put_back = 0;      // gain just put back: an own drop cancels against it
     std::uint64_t put_back_at = 0;
     std::int32_t own = 0;           // that change, ours only
   };
   std::map<FlagKey, Guard> guards_;          // guard_count, by count
+  bool tokens_anywhere_ = false;             // row 331: set_tokens_anywhere
   struct Raced {
     std::int32_t gains = 0;  // a player's gains of the count still to drop
     std::uint64_t at = 0;    // the frame the last raced source came

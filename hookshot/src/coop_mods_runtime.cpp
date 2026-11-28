@@ -359,6 +359,16 @@ void Start() {
     g_rando->Start();  // before the list for co-op is made: it may switch seeds
     CoopShopSale::SetSeedHasShops(g_rando->SeedHasShops());  // docs/items.md "One-time sales": read at Host/Join
     {
+        // Row 331 (docs/items.md, "Randomizer tokens"): a seed that places a token off a Skulltula (or one whose
+        // placements are not read: a hand-put folder) lets another one-time pickup pay for a token gain first.
+        const bool tokens = g_rando->PlaysSeed() && (!g_rando->SeedRead() || g_rando->SeedTokensElsewhere());
+        CoopShopSale::SetSeedTokensElsewhere(tokens);
+        if (tokens) {
+            CoopRuntime::Log("coop: randomizer: the seed places Gold Skulltula tokens off the Skulltulas: a token "
+                             "from a chest, pot or reward counts as that pickup's");
+        }
+    }
+    {
         // Row 237 (coop_story.h GiftShuffled): a story gift whose spot this run's seed gives another item is neither
         // held nor mended; a seed whose placements are not read (a hand-put folder) counts as shuffled everywhere.
         const auto gifts = CoopStory::Gifts();

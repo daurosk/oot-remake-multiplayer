@@ -126,3 +126,54 @@ def act(game, words):
     else:
         return False
     return True
+
+
+# -- bow probe mode (BT_PROBE_PG_BOW=1: test_probe_pg_bow_287.py only) ---------------------------------------------
+# The ride-outs as pganon-probe-8bf5f256 logged them (game-out-A.txt:6555-6786): on the owner's game every BOW_CYCLE
+# frames 'Appear' in one of three paintings, then 'RideJumpAttack_Start', '_Attack' (out of the painting), '_End'.
+# `give bow` fills 30 arrows; the state shows `body` (the age) and the arrows. No camera view: the probe's aim cannot
+# turn (kit_move.aim_view 'no camera view'), so no arrow flies here. BT_FAKE_PG_CHILD=1 (selftest): `body` stays child.
+BOW_CYCLE = 300
+PAINTINGS = ([10.9, 82.2, -56.1], [-12.0, 82.2, -50.0], [0.0, 82.2, -70.0])
+OUT_AT = [0.9, 85.1, -63.0]
+
+
+def bowing(game):
+    return game.env_on("BT_PROBE_PG_BOW=1")
+
+
+def ride_out(game, n):
+    b = game.pg_boss
+    if game.scene != SCENE or not b["alive"]:
+        return
+    if b["owner"] == game.tag:
+        p = PAINTINGS[n % len(PAINTINGS)]
+        b["pos"] = list(p)
+        game.say("coop: objects: anim %s 0x80000007 'Appear' (ours)" % PG)
+        game.later(30, lambda: game.say("coop: objects: anim %s 0x80000007 'RideJumpAttack_Start' (ours)" % PG))
+        game.later(60, lambda: (b.update(pos=list(OUT_AT)),
+                                game.say("coop: objects: anim %s 0x80000007 'RideJumpAttack_Attack' (ours)" % PG)))
+        game.later(100, lambda: (b.update(pos=list(p)),
+                                 game.say("coop: objects: anim %s 0x80000007 'RideJumpAttack_End' (ours)" % PG)))
+    game.later(BOW_CYCLE, lambda: ride_out(game, n + 1))
+
+
+def state(game, st):
+    b = getattr(game, "pg_boss", None)
+    if b is None or not bowing(game) or game.scene != SCENE:
+        return
+    if not getattr(game, "pg_cycling", False):
+        game.pg_cycling = True
+        game.later(BOW_CYCLE, lambda: ride_out(game, 0))
+    st["body"] = "child" if os.environ.get("BT_FAKE_PG_CHILD") else game.age()
+    st["inventory"] = {"PouchData.Item_Arrow.StockNum": getattr(game, "pg_arrows", 0)}
+    if b.get("pos"):
+        for a in st["world"]["actors"]:
+            if a.get("name") == PG:
+                a["pos"] = list(b["pos"])
+
+
+def command(game, m):
+    if m.get("cmd") == "give" and m.get("item") == "bow" and bowing(game):
+        game.pg_arrows = 30
+    return None

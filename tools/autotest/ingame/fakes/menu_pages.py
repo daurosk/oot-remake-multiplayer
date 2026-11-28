@@ -16,6 +16,9 @@ play (LongshotTabs 0; vk_menu.cpp takes a want only below its tab count), so in 
 BT_FAKE_MENU=nopage: a page step is asked but no page comes; =wrong: every page step opens the main page;
 =longshot: in free play the page shows in Longshot's tab (a second home). test_every_page_opens_on_its_own must FAIL in
 all four.
+B #171: co-op's - menu page is drawn over the Map page DRAWN frames after it shows (the module's FollowMapUnder hides the
+Map's content then: state menu.map_page {up, panes 6, shown 0}; before it, shown 6). BT_FAKE_MENU=undrawn: the Map's
+content never hides (the page's shot would be the Map tab): open_page must SETUP-FAIL.
 """
 import os
 import sys
@@ -27,9 +30,18 @@ MINUS_VIEW = {"main": "main", "join": "join", "host": "host", "find": "lan",
               "customize": "menu", "settings": "menu", "commands": "menu", "local": "menu"}
 
 
+MAP_PANES = 6   # (the game's six Map content panes, coop_pause_tab_module.cpp kMapContent; as map_back_295.py)
+DRAWN = 14      # (kMapUnderAfterMs 450 at 30 fps)
+
+
 def setup(game):
     game.mp_page = None        # co-op's tab of Longshot's menu: its page, or None (shut)
     game.mp_minus = None       # the - menu's Multiplayer tab: (view, page), or None (shut)
+    game.mp_minus_at = 0       # the frame it showed (its page drawn over the Map DRAWN frames later)
+
+
+def _show_minus(game, shown):
+    game.mp_minus, game.mp_minus_at = (MINUS_VIEW[shown], shown), game.frame
 
 
 def _free_play(game):
@@ -47,7 +59,7 @@ def _open(game, page, said):
     elif mode == "longshot":
         game.later(3, lambda: setattr(game, "mp_page", shown))
     elif mode != "old":   # (old: the want is dropped, nothing shows)
-        game.later(10, lambda: setattr(game, "mp_minus", (MINUS_VIEW[shown], shown)))
+        game.later(10, lambda: _show_minus(game, shown))
 
 
 def act(game, words):
@@ -82,6 +94,8 @@ def state(game, st):
     if game.mp_minus and st.get("scene"):
         view, page = game.mp_minus
         menu["minus"] = {"open": True, "tab": "multiplayer", "view": view}
+        drawn = os.environ.get("BT_FAKE_MENU", "") != "undrawn" and game.frame >= game.mp_minus_at + DRAWN
+        menu["map_page"] = {"up": True, "panes": MAP_PANES, "shown": 0 if drawn else MAP_PANES}
         if view == "menu":   # (Settings and look: co-op's own page shown natively, CoopPause::OpenNative)
             menu["coop"] = {"open": True, "tab": "multiplayer", "page": page}
     if game.mp_page and st.get("scene"):

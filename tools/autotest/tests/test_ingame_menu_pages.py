@@ -71,6 +71,14 @@ class MenuPages(unittest.TestCase):
         self.assertEqual(results(s), {TEST: "FAIL"}, p.stdout[-2000:])
         self.assertIn("on its main page in the - menu (state menu.minus)", p.stdout)
 
+    def test_setup_fail_while_the_map_shows(self):
+        """B #171 (gate-host170-182cd53b-2, B's host page shot = the Map tab): the page's state came while the Map
+        page's content still showed under it; until the module hides it (menu.map_page shown 0) no page is drawn, so
+        the step is a SETUP-FAIL (a shot then is the Map), never a PASS."""
+        p, s = self.run_it("undrawn", env={"BT_FAKE_MENU": "undrawn"})
+        self.assertEqual(results(s), {TEST: "SETUP-FAIL"}, p.stdout[-2000:])
+        self.assertIn("page not drawn", p.stdout)
+
     def test_fail_on_a_second_home(self):
         """A page that shows in Longshot's tab while the game is in free play: not co-op's home there (one home)."""
         p, s = self.run_it("longshot", env={"BT_FAKE_MENU": "longshot"})

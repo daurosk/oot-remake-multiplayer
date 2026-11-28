@@ -50,8 +50,11 @@ EPONA = "Animal_Epona_Adult"                      # the horse actor's name (ever
 EPONA_FIELD = (-100.47, 150.60, 264.55)           # hs-epona.B.txt header: the field Epona of a save that has not won her
 BESIDE = 1.5                                      # hs-epona.B.txt 'place -99.0 151.0 264.5 # beside Epona (1.5 m east)'
 WATCH = 10.0                                      # hs-epona-sync.A.txt 'place -100.5 151.0 254.5 # 10 m south'
-GET_EPONA = "Get_Epona"                           # 0x92431c55 (docs/flags.md; hs-epona-sync.B.txt setenum)
-COMPLETE, COMPLETE_HASH = "Complete", "0x4c0a63f4"   # epona-seen-run.ps1 header (the game's own quest line)
+# The quest's Enum by its GameData name (test_epona_294.QUEST, hash 0x92431c55, docs/flags.md). Was "Get_Epona": the
+# bridge knows no flag of that name ('coop: test setenum Get_Epona Complete: unknown (was -)', probe0121e-16ac9701
+# 2026-11-28 05:07, and flag_read value None), so its reads were None and its 'won' writes did nothing.
+GET_EPONA = "Step_Get_Epona"
+COMPLETE, COMPLETE_HASH = "Complete", "0x4c0a63f4"   # flag_read's enum value is the hash (test_epona_294.COMPLETE)
 SONG_ITEM = "Item_Melody_EponaSong"              # IsGet.Item_Melody_EponaSong (epona-seen-run.ps1 header, docs/items.md)
 # the rows' '#! switches' (hs-epona-sync.A/B.txt, hs-epona-seen.A/B.txt); LICHII_COOP_CHEATS=1 is the default boot's
 # own (scenarios/live-kakariko-child.A.txt), as test_gear.test_adult_gear_shown says.
@@ -90,7 +93,7 @@ def horse_pos(pair, x="B"):
 
 def face_rider(pair):
     """A faces B, camera behind A (hs-epona-*.A.txt 'face' + 'press ZL'), so A's shot holds B and the horse."""
-    b = pair.state("B")["pos"]
+    b = pair.pos("B")   # (fresh: right after a place the snapshot may be old; gate-epona-182cd53b 05:03)
     pair.act("A", "face %.2f %.2f" % (b[0], b[2]))
     pair.press("A", ["ZL"], frames=8)
 
@@ -131,7 +134,9 @@ def to_field(pair):
 
 
 def quest(pair, x):
-    return pair.flag_read(x, GET_EPONA).get("value")
+    r = pair.flag_read(x, GET_EPONA)
+    assert r.get("kind") == "enum", "%s: %s reads as %s (not the quest's Enum)" % (x, GET_EPONA, r.get("kind"))
+    return r.get("value")
 
 
 B_ON = r"coop: ride: (?:we ride Animal_Epona_Adult|our Epona has us on her again)"   # coop_ride.cpp:493, 500-503

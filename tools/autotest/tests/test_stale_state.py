@@ -80,6 +80,17 @@ class PosTest(unittest.TestCase):
         self.assertIn("Link sample older than the frame", str(c.exception))
         self.assertEqual(p.steps, 30)
 
+    def test_pos_keeps_test_timeout(self):
+        p = StubPair([STALE])
+
+        def over(frames):
+            raise P.TestTimeout("the test ran past its deadline")
+        p.step_both = over
+        with self.assertRaises(P.TestTimeout) as c:
+            p.pos("B")
+        self.assertNotIsInstance(c.exception, P.StaleState)
+        self.assertIn("past its deadline", str(c.exception))
+
     def test_state_wraps(self):
         p = StubPair([STALE])
         st = p.state("B")

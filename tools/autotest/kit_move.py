@@ -60,7 +60,7 @@ AIM_STILL = 0.001         # the target's move on the screen in a frame below thi
 
 ITEMS = {                 # the name a tester types -> (the `assign` name, the ammo item or None)
     "slingshot": ("SlingShot", "Item_DekuSeed"),
-    "bow": ("Bow", "Item_Arrow"),
+    "bow": ("Bow", "Item_Arrow_Normal"),   # the arrows' pouch item: lichii/hook/coop_cheat_items.cpp:27, docs/items.md:74
     "boomerang": ("Boomerang", None),
     "hookshot": ("Hookshot", None),
     "longshot": ("Longshot", None),

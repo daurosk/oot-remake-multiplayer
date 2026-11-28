@@ -13,14 +13,20 @@ Set-up (each value cited):
 - adult: Sequence_IsChildhood 0 after the load, 60 frames, then the warp (test_gear.py AGE_FLAG, hs-gear-adult.A.txt;
   test_epona.py to_field), the warp = test_boss_shots.warp_in(PhantomGanonStage) (the map change event, start point
   coop_start_points.inc:112); SETUP-FAIL unless both games' `body` is "adult" (docs/playtest.md state.body).
-- the bow: bridge `give bow` = the bow, the small quiver and 30 arrows (docs/playtest.md `give`), on A and B; SETUP-FAIL
-  unless A's inventory shows PouchData.Item_Arrow.StockNum > 0 (kit_move.ammo_of). Topped up the same way under 10.
+- the bow: bridge `give bow` (docs/playtest.md:123 `give`; lichii/hook/coop_cheat_give.cpp:88 Names: 'bow' ->
+  PouchData.Weapon_Range_Bow.StockNum; coop_cheat_items.cpp:25-28 kIntItems: Weapon_Range_Bow 1, Item_Quiver_Small 1,
+  Item_Arrow_Normal 30, capacity Arrow 30) = the Fairy Bow, the Forest Temple's own item, on A and B; SETUP-FAIL unless
+  A's inventory shows PouchData.Item_Arrow_Normal.StockNum > 0 (kit_move.ammo_of). Topped up the same way under 10.
 - his intro: 3900 frames after the arrival (live-phantom-ganon.A.txt 'wait 3900'), then the row's 600 (test_bosses.py).
 - Links kept at full life every chunk (test_enemy_turn.keep_up: the game's own setter): a downed shooter holds nothing.
 Shooting = the player's way (kit_move: `assign Bow` on ZR, turn, ZL, ZR held to draw, kit_move.aim_view turns the view
 with a stick until the point sits under the reticle, let go) plus the test `aim X Y Z` assist (coop_testinput.h:48-54,
-coop_objects.cpp AimStep: the arrow is moved sideways onto the point only when its own flight is within 4 degrees,
-CoopTestInput::kAimNudgeDeg). The bridge wrapper _Both steps the other game every frame A runs (Pair.press rules).
+coop_objects.cpp AimStep:1576-1630: the arrow is moved sideways onto the point only when its own flight is within 4
+degrees, CoopTestInput::kAimNudgeDeg). The assist ONLY POINTS THE ARROW: its one write is the arrow's position
+(coop_objects.cpp:1616 guest.Write(arrow + kActorPosition)) and the set-matrix call; no life, damage or boss state is
+written; the game's own NormalArrow flies on with its own way and speed and hits him (or not) by the game's collision,
+and his life / phase change is the game's own. In c2 the `hit PG N` life-only hits are a test means to reach life 1;
+the real arrow afterwards decides phase 2 or a soft-lock. The bridge wrapper _Both steps the other game every frame A runs (Pair.press rules).
 Where to aim is MEASURED in this run, never typed: his world-list place when A's log shows his 'Appear' (in the
 painting) and his 'RideJumpAttack_Attack' (out of it), per painting (a new painting = an Appear place more than PAINT_M
 from every known one). Height over that place: the candidates DY_LADDER in turn (the probe's question, each shot's dy
@@ -65,6 +71,7 @@ WATCH = 60              # frames after a let-go before his life and anims are re
 PAINT_M = 3.0           # Appear places closer than this are the same painting (the 3 are ~10 m+ apart: end-A.png)
 DY_LADDER = (1.5, 2.5, 0.5)   # metres over his place, tried in turn (the probe's question, not a known value)
 LOW_ARROWS = 10
+ARROWS = "Item_Arrow_Normal"   # the arrows' pouch item (lichii/hook/coop_cheat_items.cpp:27, docs/items.md:74)
 HOLD_MAX = 2400         # frames drawn waiting for his painting before trying another target
 CHECK_EVERY = 60        # frames between two checks that the draw still points at the target
 DRIFT = 0.1             # screen units off the reticle (kit_move.AIM_TOL 0.02 x 5): the draw was knocked away
@@ -179,7 +186,7 @@ class _Hunt:
         if self.since_keep >= KEEP_EVERY:
             self.since_keep = 0
             keep_up(self.p)
-            arrows = km.ammo_of(self.p.state("A"), "Item_Arrow")
+            arrows = km.ammo_of(self.p.state("A"), ARROWS)
             if arrows is not None and arrows < LOW_ARROWS:
                 self.p.give("A", "bow")
 
@@ -300,9 +307,9 @@ def _fresh_fight(pair):
             raise P.SetupFail("%s's Link is %s (body), not adult, after the age flag and the warp" % (x, st.get("body")))
         r = pair.give(x, "bow")
         pair.notes.append("%s give bow: %s" % (x, (r or {}).get("result")))
-    arrows = km.ammo_of(pair.state("A"), "Item_Arrow")
+    arrows = km.ammo_of(pair.state("A"), ARROWS)
     if not arrows:
-        raise P.SetupFail("A has no arrows after 'give bow' (PouchData.Item_Arrow.StockNum %s)" % arrows)
+        raise P.SetupFail("A has no arrows after 'give bow' (PouchData.%s.StockNum %s)" % (ARROWS, arrows))
     keep_up(pair)
     pair.step_both(ROW_START)
     if dead(boss(pair, "A")):

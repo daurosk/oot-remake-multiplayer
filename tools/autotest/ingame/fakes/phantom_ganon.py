@@ -166,7 +166,7 @@ def state(game, st):
         game.pg_cycling = True
         game.later(BOW_CYCLE, lambda: ride_out(game, 0))
     st["body"] = "child" if os.environ.get("BT_FAKE_PG_CHILD") else game.age()
-    st["inventory"] = {"PouchData.Item_Arrow.StockNum": getattr(game, "pg_arrows", 0)}
+    st["inventory"] = {"PouchData.Item_Arrow_Normal.StockNum": getattr(game, "pg_arrows", 0)}
     if b.get("pos"):
         for a in st["world"]["actors"]:
             if a.get("name") == PG:

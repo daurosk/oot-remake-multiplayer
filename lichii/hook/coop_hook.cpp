@@ -2277,6 +2277,7 @@ public:
                     row.scene = own_scene;
                 } else if (const auto* other = p.player(player.number)) {
                     row.scene = other->scene();
+                    row.status = other->flags();
                     row.state = "no samples";
                     if (!other->samples().empty() && net.server_now_us) {
                         const auto t = other->samples().back().time.server_time_us;

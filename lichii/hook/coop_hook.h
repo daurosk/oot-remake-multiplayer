@@ -136,6 +136,7 @@ struct PlayerRow {
     std::string state;                  // connected, reconnecting, quiet, ...
     std::optional<std::uint32_t> ms;    // self: round trip; others: sample delay
     std::optional<std::string> scene;
+    std::optional<std::uint8_t> status;  // others: PLAYER_STATUS bits as last received (protocol::status)
 };
 std::vector<PlayerRow> PlayerList();
 

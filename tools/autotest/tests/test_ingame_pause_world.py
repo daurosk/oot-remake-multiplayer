@@ -49,5 +49,53 @@ class PauseWorldProbe(unittest.TestCase):
         self.assertIn("took no PauseMgr hold", p.stdout, p.stdout[-3000:])
 
 
+MODE = "test_pause_world_mode"
+BOOT = "live-stalfos-weak-room"          # (test_enemy_turn.BOOT, the test's needs_boot)
+SWITCHES = ["--env", "LICHII_COOP_DEBUG_OBJECTS=1", "--env", "LICHII_COOP_CHEATS=1"]   # (its needs_env)
+
+
+class PauseWorldMode(unittest.TestCase):
+    """Row 299 phase 1 (fakes/pause_world_mode.py, BT_FAKE_PAUSE_WORLD_MODE): NO-REF on a good game (its shots have no
+    reference: never PASS before the owner approves refs) with each reading in its notes; FAIL naming each fault."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_mode(self, mode):
+        out = os.path.join(self.tmp, "o%d" % len(os.listdir(self.tmp)))
+        e = {"BT_FAKE_REFS": os.path.join(self.tmp, "norefs"), "BT_FAKE_PAUSE_WORLD_MODE": mode}
+        p = pytest_run(["test_pause_world.py", "--fake", "--no-rerun", "--out", out, "-q", "--boot", BOOT,
+                        "-k", MODE] + SWITCHES, env=e)
+        return p, results(summary(out)), out
+
+    def test_good_game_no_ref_with_the_readings(self):
+        p, r, out = self.run_mode("1")
+        self.assertEqual(r, {MODE: "NO-REF"}, p.stdout[-3000:])
+        notes = " ".join(summary(out)["tests"][0].get("notes") or [])
+        self.assertIn('"label": "option on, + menu open"', notes, notes)
+        self.assertIn("phase1: B's status bits of A, option off, + menu: 9", notes, notes)
+        self.assertIn("phase1: B's status bits of A, option on, + menu: 0", notes, notes)
+        self.assertIn('probe: - menu holds (option off): {"2": ["0x6b6b", 1]}', notes, notes)
+        self.assertIn('"name": "World runs in menus"', notes, notes)
+
+    def test_hold_kept_fails(self):
+        p, r, _ = self.run_mode("held")
+        self.assertEqual(r, {MODE: "FAIL"}, p.stdout[-3000:])
+        self.assertIn("the + menu's hold still held", p.stdout, p.stdout[-3000:])
+
+    def test_link_walking_under_the_menu_fails(self):
+        p, r, _ = self.run_mode("walks")
+        self.assertEqual(r, {MODE: "FAIL"}, p.stdout[-3000:])
+        self.assertIn("Link moved under the + menu", p.stdout, p.stdout[-3000:])
+
+    def test_status_still_in_menu_fails(self):
+        p, r, _ = self.run_mode("status")
+        self.assertEqual(r, {MODE: "FAIL"}, p.stdout[-3000:])
+        self.assertIn("neither in a menu nor paused", p.stdout, p.stdout[-3000:])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -168,3 +168,14 @@ nothing changes (solo, co-op idle and today's co-op pause stay exactly as they a
   item 4 needs no code. The test still proves the menu acts with the hold let go (pages, cursor, shut).
 - So `kMenuHolds` is that table's three keys, all from code (none guessed). The test's probe step logs which of them
   the - menu and the quick-switch menu take; a menu that takes a key not in the table stays paused as today.
+
+### Phase 1 test (`test_pause_world.py` `test_pause_world_mode`, boot live-stalfos-weak-room)
+
+Game A, two Stalfos walking at Link. A probe step first (notes only): which holds the - menu and the quick-switch
+menu (R held) take with the option off. Option off: the + menu takes a hold, `world_runs` false, Link's snapshot
+stale, B reads A's status with in_menu or paused. `act menu world on`: the Settings page lists "World runs in menus"
+(a shot on each game); the + menu's 'menu hold' release line comes, its hold is gone, `world_runs` true, Link's
+snapshot fresh, a Stalfos moved, B reads A's status without in_menu/paused, Link stands under a held stick (shots on
+each game); the - menu with the option on: world runs, Map, R Multiplayer, L Map, MINUS shuts (`menu_up` false).
+`act menu world off`: the + menu holds the world again. State it reads: `pause_world` {in_force, world_runs,
+menu_up}, `coop.players[].status` (the other player's last PLAYER_STATUS bits, docs/playtest.md).

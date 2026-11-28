@@ -20,6 +20,7 @@ const HosCoopApi* g_api = nullptr;
 std::atomic<bool> g_listed{false};
 std::atomic<std::int64_t> g_release{-1};   // the hold index a test asked to release, -1 none
 std::atomic<bool> g_world_runs{false};     // WorldRuns
+std::atomic<bool> g_menu_up{false};        // OnScreen's menu_up last time (state `menu_up`, for the test)
 bool g_let_go = false;                     // a menu hold let go since the menu last came up (the game's thread)
 bool g_was_up = false;
 
@@ -97,7 +98,8 @@ std::string StateJson() {
     std::string json = Json(Take(Read, Base()));
     if (!json.empty() && json.back() == '}') json.pop_back();
     return json + ",\"in_force\":" + (CoopPauseWorldMode::InForce() ? "true" : "false") +
-           ",\"world_runs\":" + (WorldRuns() ? "true" : "false") + "}";
+           ",\"world_runs\":" + (WorldRuns() ? "true" : "false") +
+           ",\"menu_up\":" + (g_menu_up.load(std::memory_order_relaxed) ? "true" : "false") + "}";
 }
 
 bool TestRelease(const std::string& index) {
@@ -117,6 +119,7 @@ void OnScreen(void* ctx, bool menu_up) noexcept {
                 Release(ctx, Take(Read, Base()), static_cast<std::uint32_t>(index), "test release");
             }
         }
+        g_menu_up.store(menu_up, std::memory_order_relaxed);
         if (menu_up != g_was_up) {
             g_was_up = menu_up;
             if (menu_up) g_let_go = false;   // (a release just before the menu read as up counts: it is this menu's)

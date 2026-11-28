@@ -30,7 +30,11 @@ def menu_now(pair, x):
                        "in_play": pair.in_play(s)}, sort_keys=True)[:600]
 
 
+PROBE = "BT_PROBE_MAP_295=1"   # never in a default run (CI 46109945809: an always-NO-REF probe broke the Suite selftests)
+
+
 @pytest.mark.budget(200)
+@pytest.mark.needs_env(PROBE)
 @pytest.mark.row("probe gate-ui-epona-0121-4: menu.map_page after L from co-op's main page (test_map_back_295) - "
                  "measures only")
 def test_probe_map_back(pair):

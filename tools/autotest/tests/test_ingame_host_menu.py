@@ -116,9 +116,17 @@ class Run170(unittest.TestCase):
         self.pair.in_play = lambda st: True
         # (in play, F1's rule: `menu open main` shows the - menu's Multiplayer tab, main view; B shuts it: C #145)
         self.minus = {"A": None, "B": None}
-        self.pair.state = lambda x: {"menu": {"coop": {"open": False},
-                                              "minus": ({"open": True, "tab": "multiplayer", "view": self.minus[x]}
-                                                        if self.minus[x] else {"open": False})}}
+        # (B #171: the page counts as drawn once the Map's content under it is hidden, menu.map_page shown 0; map_shown
+        # holds it at 6 for the not-drawn case)
+        self.map_shown = 0
+
+        def state(x):
+            menu = {"coop": {"open": False},
+                    "minus": ({"open": True, "tab": "multiplayer", "view": self.minus[x]} if self.minus[x] else {"open": False})}
+            if self.minus[x]:
+                menu["map_page"] = {"up": True, "panes": 6, "shown": self.map_shown}
+            return {"menu": menu}
+        self.pair.state = state
         acted = self.pair.act
 
         def act(x, line):
@@ -181,6 +189,15 @@ class Run170(unittest.TestCase):
         self.assertEqual(self.shots, [("B", "row170-host-page")])
         self.assertEqual(self.pressed, [("B", ["B"])])            # (the - menu shut as a player shuts it)
         self.assertIsNone(self.minus["B"])
+
+    def test_page_not_drawn_is_setup_fail_and_no_shot(self):
+        """B #171 (gate-host170-182cd53b-2: B's host page shot was the Map tab): the Map's content still shows under the
+        page (menu.map_page shown 6): SETUP-FAIL before any shot."""
+        self.map_shown = 6
+        with self.assertRaises(self.T.SetupFail) as e:
+            self.go()
+        self.assertIn("page not drawn", str(e.exception))
+        self.assertEqual(self.shots, [])
 
     def test_page_in_longshots_menu_in_play_fails(self):
         """The f9f3b9c26 gate's path: in play the page wanted in Longshot's tab (a second home): FAIL, never PASS."""

@@ -110,14 +110,14 @@ def stand_apart(pair):
     pair.step_both(20)
 
 
-def prove_apart(pair, viewers, name):
+def prove_apart(pair, viewers, name, behind=False):
     """After stand_apart, outside the set-up block (two shots per proof do not fit SETUP_LIMIT_S; a SetupFail is still
     SETUP-FAIL): each viewer whose shot of the other player's puppet is judged sees it IN SIGHT, not only inside its
     projected box (sight.prove; kokiri-band-c124-7, run kokiri-look-182cd53b: a place by distance put the other Link
-    behind a wall)."""
+    behind a wall). behind=True: the other Link stands ahead of the viewer's own on purpose (sight.prove's behind)."""
     import sight
     for x in viewers:
-        sight.prove(pair, x, "B" if x == "A" else "A", "%s-%s" % (name, x))
+        sight.prove(pair, x, "B" if x == "A" else "A", "%s-%s" % (name, x), behind=behind)
 
 
 def colour_check(pair, x, path, view, own_pos, pup_pos, own_colour, pup_colour, own_age, pup_age):

@@ -82,7 +82,10 @@ def put_in_front(pair, x, of, dist):
     pair.act(x, "place %.2f %.2f %.2f" % (px + dist * math.sin(yaw), py, pz + dist * math.cos(yaw)))
     pair.act(x, "face %.2f %.2f" % (px, pz))
     pair.step_both(SETTLE)
-    ax, _, az = pair.state(x)["pos"]
+    got = pair.state(x).get("pos")
+    if not got:
+        raise P.SetupFail("%s has no place after 'place' (not in play: %s)" % (x, pair.state(x).get("not_ready")))
+    ax, _, az = got
     return math.hypot(ax - px, az - pz)
 
 
@@ -195,6 +198,8 @@ def test_kokiri_hood_band(pair):
                 sight.prove(pair, "B", "A", "kokiri-band-turn%03d" % turn)
                 pair.notes.append("B turned %d deg from its arrival facing: A in sight at %.1f m" % (turn, got))
                 break
+            except sight.LeftPlay as e:   # (A is gone: no other heading can run)
+                raise P.SetupFail("turn %d: %s; tried before: %s" % (turn, e, "; ".join(tried) or "none"))
             except P.SetupFail as e:
                 tried.append("turn %d: %s" % (turn, e))
         else:
@@ -203,7 +208,8 @@ def test_kokiri_hood_band(pair):
         for i, d in enumerate(DISTANCES):
             if i:
                 got = put_in_front(pair, "A", of="B", dist=d)
-                assert abs(got - d) < 1.0, "A stands %.1f m from B, not %.1f" % (got, d)
+                if abs(got - d) >= 1.0:   # (a refused or clamped place: set-up, never a band verdict at the wrong distance)
+                    raise P.SetupFail("A stands %.1f m from B, not %.1f (the place was refused or clamped)" % (got, d))
             a = pair.state("A")["pos"]
             pup = pair.until("B's puppet of A at %.1f m" % d, lambda: puppet_near(pair, "B", a), max_frames=120)
             sb = pair.state("B")   # (B's camera and Link for the band check; the shot runs at most 5 frames after it)

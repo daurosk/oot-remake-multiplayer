@@ -112,6 +112,16 @@ class KokiriBand(unittest.TestCase):
         self.assertNotIn("bandcheck 14.0", p.stdout)
         self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
 
+    def test_away_spot_in_a_loading_zone_is_setup_fail(self):
+        """sight.prove's away place loads a scene (kokiri-look2-182cd53b 09:47: behind B at the Kakariko gate): SETUP-FAIL
+        'left play' at once, no other heading tried, no TypeError; the lane's next test still sets up."""
+        s, p = self.run_it("loadzone", self.ENV, env={"BT_FAKE_KOKIRI_LOADZONE": "1"})
+        self.assertEqual(results(s)["test_kokiri_hood_band"], "SETUP-FAIL", p.stdout[-2000:])
+        self.assertIn("left play at the away spot", p.stdout)
+        self.assertNotIn("turn 90", p.stdout)
+        self.assertNotIn("TypeError", p.stdout)
+        self.assertEqual(results(s)["test_puppets_spawn"], "PASS", p.stdout[-2000:])
+
 
 if __name__ == "__main__":
     unittest.main()

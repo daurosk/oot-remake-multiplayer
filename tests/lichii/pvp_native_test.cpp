@@ -60,12 +60,14 @@ Tables KokiriTables() {
 
 }  // namespace
 
-TEST_CASE("pvp native: the _Pvp copy only when PvP is on, the glue on, a pvp pack and a native peer") {
+TEST_CASE("pvp native: the _Pvp copy only when PvP is on, the glue on, a pvp pack and a native peer that is up") {
     CopyMode m{true, true, true, true};
+    CHECK(m.peer_up);  // up unless DBNO says otherwise
     CHECK(WantedCopy(m) == CopyActor::pvp);
-    for (int off = 0; off < 4; ++off) {
+    for (int off = 0; off < 5; ++off) {
         CopyMode n = m;
-        (off == 0 ? n.pvp_on : off == 1 ? n.glue_on : off == 2 ? n.pack_pvp : n.peer_native) = false;
+        (off == 0 ? n.pvp_on : off == 1 ? n.glue_on : off == 2 ? n.pack_pvp : off == 3 ? n.peer_native : n.peer_up) =
+            false;
         CHECK(WantedCopy(n) == CopyActor::plain);
     }
     CHECK(WantedCopy(CopyMode{}) == CopyActor::plain);  // PvP off by default: the plain copy

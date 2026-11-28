@@ -49,12 +49,16 @@ struct CopyMode {
     bool glue_on = false;      // LICHII_COOP_PVP_NATIVE=1 in our game
     bool pack_pvp = false;     // the pack's manifest says "pvp": true
     bool peer_native = false;  // the copy's player said PVP_NATIVE 1
+    // The copy's player is up (CoopDbno::StateOfPlayer: not downed, out or spectating). docs/native-puppets.md
+    // 5.1: nobody locks on to, or hits, a downed player; their copy is the plain one until they are up again
+    // (the game's own re-make, as a PvP mode change), so Z, aim assist and every sensor let go of it.
+    bool peer_up = true;
 };
 
 // The _Pvp copy only when everything says so; else the plain one (no sensor,
 // no Life, no attention sender: nothing to lock on to or hit).
 inline CopyActor WantedCopy(const CopyMode& m) {
-    return m.pvp_on && m.glue_on && m.pack_pvp && m.peer_native ? CopyActor::pvp : CopyActor::plain;
+    return m.pvp_on && m.glue_on && m.pack_pvp && m.peer_native && m.peer_up ? CopyActor::pvp : CopyActor::plain;
 }
 
 // Whether a copy of `have` is re-made now. A copy that is lifted (phase 3) or

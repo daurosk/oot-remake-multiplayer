@@ -905,7 +905,8 @@ SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::
     return up && strip_seen_ms > edge_ms ? SnailEdge::kOpen : SnailEdge::kWait;
 }
 
-SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms) {
+SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t reads) {
+    if (reads <= kSnailStaleReads) return SnailPadState::kDrive;   // (the game held still, not his screen gone)
     const std::uint64_t since = now_ms >= seen_ms ? now_ms - seen_ms : 0;   // (a clock that went back: just seen)
     if (since > kSnailGoneMs) return SnailPadState::kGone;
     return since > kSnailPauseMs ? SnailPadState::kPause : SnailPadState::kDrive;

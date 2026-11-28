@@ -2589,6 +2589,12 @@ public:
             // Row 149 (coop_brain_state.h): the same bosses for their blackboard move state, then the owner's.
             {
                 CoopBrainState::Table& board = CoopBrainState::TheTable();
+                static const bool probe_323 = [&board] {  // row 323 probe: Gohma's climb keys (debug log only)
+                    const bool on = EnvFlag("LICHII_COOP_DEBUG_BOSS");
+                    board.SetProbe(on);
+                    return on;
+                }();
+                (void)probe_323;
                 std::vector<CoopBrainState::Member> members;
                 members.reserve(list.size());
                 for (const CoopBossNative::Boss& b : list) {

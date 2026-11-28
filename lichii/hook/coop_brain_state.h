@@ -316,7 +316,29 @@ public:
     // may go on with a move chosen from the stale ones (CoopBossNative::Table::StateChanged).
     std::vector<std::uint64_t> TakeChanged();
 
+    // Row 323 probe (LICHII_COOP_DEBUG_BOSS only; reads, never writes): Gohma's climb keys that kKeys does not
+    // carry, found by scanning her blackboard's groups for their names (so the vec3 group's place is read, not
+    // assumed), noted at each owner change and once a second, on owner and copy alike.
+    void SetProbe(bool on);
+
 private:
+    struct ProbeKey {
+        std::string_view name;
+        std::uint64_t group = 0;  // the group's offset in the blackboard (0: not found)
+        std::uint32_t index = 0;
+    };
+    struct ProbeEntry {
+        std::uint64_t blackboard = 0;
+        std::vector<ProbeKey> keys;
+        Role role = Role::copy;
+        std::uint32_t owner = 0;
+        bool seen = false;
+        std::string last;  // the last values noted
+    };
+    void ProbeStep(CoopPuppet::Guest& guest);  // (mutex_ held)
+    bool probe_ = false;
+    std::uint64_t probe_frames_ = 0;
+    std::map<std::uint64_t, ProbeEntry> probes_;  // by actor
     struct Slot {
         Key key;
         std::uint64_t name_at = 0;  // where the group's names array holds this key's name pointer (0: not found)

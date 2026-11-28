@@ -726,3 +726,63 @@ TEST_CASE("row 149: the hand-over goes before the boss table's caller") {
     CHECK(CoopCallerOrders::kBrainState < CoopCallerOrders::kBossTable);
     CHECK(Table::kCallerOrder == CoopCallerOrders::kBrainState);
 }
+
+TEST_CASE("row 323 probe: Gohma's climb keys are found by name in any group, noted at an owner change, read only") {
+    constexpr std::uint64_t kGohmaActor = 0x1400000;
+    constexpr std::uint64_t kGohmaBoard = 0x2400000;
+    constexpr char kGohma[] = "Enemy_DungeonBoss_Gohma";
+    const auto run = [&](bool probe) {
+        Table t;
+        t.SetProbe(probe);
+        FakeGuest g;
+        g.Blackboard(kGohmaActor, kGohmaBoard, {{"DungeonBossGohma_EggIndex", 2}},
+                     {{"DungeonBossGohma_IsForceClimb", 0}, {"DungeonBossGohma_IsFinishClimb", 1}});
+        // A vec3 group at an offset the probe does not know: names, then values of 12 bytes each.
+        constexpr std::uint64_t kGroup = 0x128;
+        const std::uint64_t names = kGohmaBoard + 0x60000;
+        const std::uint64_t values = kGohmaBoard + 0x68000;
+        g.Put<std::int32_t>(kGohmaBoard + kGroup, 2);
+        g.Put<std::uint64_t>(kGohmaBoard + kGroup + 8, names);
+        g.Put<std::int32_t>(kGohmaBoard + kGroup + 0x10, 2);
+        g.Put<std::uint64_t>(kGohmaBoard + kGroup + 0x18, values);
+        const char* keys[] = {"DungeonBossGohma_ContactWallNormal", "DungeonBossGohma_ContactWallPoint"};
+        for (std::uint64_t i = 0; i < 2; ++i) {
+            g.Put<std::uint64_t>(names + i * 8, names + 0x1000 + i * 0x80);
+            g.Write(names + 0x1000 + i * 0x80, keys[i], std::strlen(keys[i]) + 1);
+        }
+        const float point[3] = {1.0f, 2.0f, 3.0f};
+        g.Write(values + 12, point, sizeof point);
+        const auto before = g.bytes;
+        Publish(t, Member{kGohmaActor, Role::owner, 1, kGohma});
+        Frame(t, g);
+        std::vector<std::string> notes = t.TakeNotes();
+        Publish(t, Member{kGohmaActor, Role::copy, 2, kGohma});
+        Frame(t, g);
+        for (std::string& n : t.TakeNotes()) {
+            notes.push_back(std::move(n));
+        }
+        // (only our value block, made by the game's malloc, is written)
+        for (const auto& [address, byte] : g.bytes) {
+            if (address < kBlock || address >= kBlock + addr::kBlockSize) {
+                const auto it = before.find(address);
+                CHECK((it != before.end() && it->second == byte));
+            }
+        }
+        return notes;
+    };
+    const auto has = [](const std::vector<std::string>& notes, std::string_view part) {
+        return std::any_of(notes.begin(), notes.end(),
+                           [part](const std::string& n) { return n.find(part) != std::string::npos; });
+    };
+    const std::vector<std::string> off = run(false);
+    CHECK_FALSE(has(off, "probe 323"));
+    const std::vector<std::string> on = run(true);
+    CHECK(has(on, "key DungeonBossGohma_ContactWallPoint in group +0x128 index 1 of 2"));
+    CHECK(has(on, "key DungeonBossGohma_IsFinishClimb in group +0x188 index 1 of 2"));
+    CHECK(has(on, "key DungeonBossGohma_IsLeaveMove NOT found"));
+    CHECK(has(on, "owner frame 1: ContactWallPoint=v12(1.0,2.0,3.0)"));
+    CHECK(has(on, "IsFinishClimb=1"));
+    CHECK(has(on, "IsForceClimb=0"));
+    CHECK(has(on, "role copy owner 2 (changed)"));
+    CHECK(has(on, "copy frame 2:"));
+}

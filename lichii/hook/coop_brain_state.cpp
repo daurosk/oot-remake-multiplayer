@@ -358,6 +358,9 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
     if (main_base == 0 || entries_.empty()) {
         return std::nullopt;
     }
+    if (probe_ && !after_call) {
+        ProbeStep(guest);  // row 323 probe: reads only
+    }
     if (block_ == 0 && !allocating_ && !malloc_failed_ &&
         std::any_of(entries_.begin(), entries_.end(), [&guest](const auto& listed) {
             // (an actor with a blackboard key of ours, or a CCT: the others carry nothing, so no block for them)
@@ -469,6 +472,7 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
 
 void Table::DropGame() {
     entries_.clear();
+    probes_.clear();
     block_ = 0;
     allocating_ = false;
     malloc_failed_ = false;
@@ -498,6 +502,134 @@ std::vector<std::string> Table::TakeNotes() {
 std::vector<std::uint64_t> Table::TakeChanged() {
     std::lock_guard lock(mutex_);
     return std::exchange(changed_, {});
+}
+
+void Table::SetProbe(bool on) {
+    std::lock_guard lock(mutex_);
+    probe_ = on;
+}
+
+// Row 323 probe. A blackboard group is (name count s32, names char**, value count s32, values): the s32 group at
+// +0x98 and the bool group at +0x188 (addr above); the others are found here by the names they hold.
+void Table::ProbeStep(CoopPuppet::Guest& guest) {
+    static constexpr std::string_view kGohma = "Enemy_DungeonBoss_Gohma";
+    static constexpr std::array<std::string_view, 9> kNames{
+        "DungeonBossGohma_ContactWallPoint", "DungeonBossGohma_ContactWallNormal", "DungeonBossGohma_IsFinishClimb",
+        "DungeonBossGohma_IsLeaveMove",      "DungeonBossGohma_IsStartSpawnEgg",   "DungeonBossGohma_IsEnabledGuard",
+        "DungeonBossGohma_IsForceClimb",     "DungeonBossGohma_IsForceCeilingBattle",
+        "DungeonBossGohma_IsClimbFromOutside"};
+    static constexpr std::uint64_t kScanEnd = 0x300;
+    const bool second = ++probe_frames_ % 60 == 0;
+    for (auto it = probes_.begin(); it != probes_.end();) {
+        it = entries_.count(it->first) == 0 ? probes_.erase(it) : std::next(it);
+    }
+    for (const auto& [actor, e] : entries_) {
+        if (e.member.name != kGohma) {
+            continue;
+        }
+        ProbeEntry& p = probes_[actor];
+        const bool changed = !p.seen || p.role != e.member.role || p.owner != e.member.owner;
+        if (!changed && !second) {
+            continue;
+        }
+        if (changed) {
+            Note("probe 323: Gohma " + Hex(actor) + " role " + (e.member.role == Role::owner ? "owner" : "copy") +
+                 " owner " + std::to_string(e.member.owner) + (p.seen ? " (changed)" : " (first seen)"));
+        }
+        p.seen = true;
+        p.role = e.member.role;
+        p.owner = e.member.owner;
+        std::uint64_t components = 0;
+        std::uint64_t holder = 0;
+        std::uint64_t board = 0;
+        if (!guest.Read(actor + addr::kActorComponents, &components, sizeof components) || components == 0 ||
+            !guest.Read(components, &holder, sizeof holder) || holder == 0 ||
+            !guest.Read(holder + addr::kHolderBlackboard, &board, sizeof board) || board == 0 ||
+            board == ~std::uint64_t{0}) {
+            continue;
+        }
+        if (board != p.blackboard) {
+            p.blackboard = board;
+            p.keys.clear();
+            for (const std::string_view n : kNames) {
+                p.keys.push_back(ProbeKey{n});
+            }
+            for (std::uint64_t off = 0; off + 0x18 < kScanEnd; off += 8) {
+                std::int32_t names = 0;
+                std::int32_t values = 0;
+                std::uint64_t names_at = 0;
+                if (!guest.Read(board + off, &names, sizeof names) || names <= 0 || names > addr::kMaxNames ||
+                    !guest.Read(board + off + 0x10, &values, sizeof values) || values != names ||
+                    !guest.Read(board + off + 8, &names_at, sizeof names_at) || names_at == 0) {
+                    continue;
+                }
+                std::vector<std::uint64_t> at(static_cast<std::size_t>(names));
+                if (!guest.Read(names_at, at.data(), at.size() * sizeof(std::uint64_t))) {
+                    continue;
+                }
+                for (ProbeKey& k : p.keys) {
+                    if (k.group != 0) {
+                        continue;
+                    }
+                    std::string text(k.name.size() + 1, '\1');
+                    for (std::size_t i = 0; i < at.size(); ++i) {
+                        if (at[i] != 0 && guest.Read(at[i], text.data(), text.size()) &&
+                            std::memcmp(text.data(), k.name.data(), k.name.size()) == 0 && text.back() == '\0') {
+                            k.group = off;
+                            k.index = static_cast<std::uint32_t>(i);
+                            Note("probe 323: Gohma " + Hex(actor) + " key " + std::string(k.name) + " in group +" +
+                                 Hex(off) + " index " + std::to_string(i) + " of " + std::to_string(names));
+                            break;
+                        }
+                    }
+                }
+            }
+            for (const ProbeKey& k : p.keys) {
+                if (k.group == 0) {
+                    Note("probe 323: Gohma " + Hex(actor) + " key " + std::string(k.name) + " NOT found (scan to +" +
+                         Hex(kScanEnd) + ")");
+                }
+            }
+        }
+        std::string line;
+        for (const ProbeKey& k : p.keys) {
+            if (k.group == 0) {
+                continue;
+            }
+            std::uint64_t values_at = 0;
+            if (!guest.Read(board + k.group + 0x18, &values_at, sizeof values_at) || values_at == 0) {
+                continue;
+            }
+            const std::string_view shortname = k.name.substr(std::string_view("DungeonBossGohma_").size());
+            char text[160];
+            if (k.group == addr::kBoolNameCount) {
+                std::uint8_t v = 0;
+                guest.Read(values_at + k.index, &v, sizeof v);
+                std::snprintf(text, sizeof text, " %.*s=%u", static_cast<int>(shortname.size()), shortname.data(),
+                              static_cast<unsigned>(v));
+            } else if (k.group == addr::kS32NameCount) {
+                std::int32_t v = 0;
+                guest.Read(values_at + k.index * 4u, &v, sizeof v);
+                std::snprintf(text, sizeof text, " %.*s=%d", static_cast<int>(shortname.size()), shortname.data(),
+                              static_cast<int>(v));
+            } else {
+                // Not the s32 or bool group (a vec3's): its element size is not known here, so both readings.
+                float a[3] = {};
+                float b[3] = {};
+                guest.Read(values_at + k.index * 12u, a, sizeof a);
+                guest.Read(values_at + k.index * 16u, b, sizeof b);
+                std::snprintf(text, sizeof text, " %.*s=v12(%.1f,%.1f,%.1f)/v16(%.1f,%.1f,%.1f)",
+                              static_cast<int>(shortname.size()), shortname.data(), a[0], a[1], a[2], b[0], b[1],
+                              b[2]);
+            }
+            line += text;
+        }
+        if (changed || line != p.last) {
+            Note("probe 323: Gohma " + Hex(actor) + " " + (e.member.role == Role::owner ? "owner" : "copy") +
+                 " frame " + std::to_string(probe_frames_) + ":" + line);
+            p.last = std::move(line);
+        }
+    }
 }
 
 Table& TheTable() {

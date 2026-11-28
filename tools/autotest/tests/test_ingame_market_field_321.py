@@ -26,7 +26,7 @@ class MarketField(unittest.TestCase):
         env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")}
         if bug:
             env["BT_FAKE_MARKET_FIELD"] = bug
-        p = T.pytest_run([".", "--fake", "--out", out] + (["--solo"] if solo else []) +
+        p = T.pytest_run([".", "--fake", "--env", "BT_ROW321=1", "--out", out] + (["--solo"] if solo else []) +
                          (["--no-rerun"] if bug else []) + ["-q", "-p", "no:cacheprovider", "-k", key], env=env)
         s = T.summary(out)
         return p, [(t["result"], t["why"]) for t in s["tests"] if t["test"].endswith(key)], s
@@ -41,6 +41,12 @@ class MarketField(unittest.TestCase):
         self.assertEqual(len(r), 1, (p.stdout, s))
         self.assertEqual(r[0][0], "FAIL", r)
         self.assertIn("CRASH: exception", r[0][1])
+
+    def test_without_switch_deselected(self):
+        out = os.path.join(self.tmp, "noenv")
+        p = T.pytest_run([".", "--fake", "--out", out, "-q", "-p", "no:cacheprovider", "-k", PAIR],
+                         env={"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")})
+        self.assertIn("needs_env BT_ROW321=1", p.stdout + p.stderr)
 
     def test_solo_passes(self):
         p, r, s = self.run_fake("solo", SOLO, solo=True)

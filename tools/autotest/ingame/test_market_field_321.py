@@ -37,6 +37,13 @@ AGE_FLAG = "Sequence_IsChildhood"
 BOOT_SCENE, BOOT_START = "KakarikoVillage_Child", "Kakariko_WellSide"
 MEMORY = r"coop: memory: process: private (\d+) MB"
 CROSSINGS = 3
+# The memory line is due once a minute of WALL clock (CoopHostMenu::MemoryLineDue, coop_hookshot.cpp Frame): at most
+# 3600 frames (~2 min of game at pair.FPS 30) for the next one, so a run that ended between two lines still sees one.
+MEMORY_WAIT_FRAMES = 3600
+# A test-only switch (the real module reads no BT_* name; test_dropin_longshot.py's BT_DROPIN=1 the same way): this
+# row's tests run only with --env BT_ROW321=1 (needs_env: every other run deselects them), and fakes/market_field_321.py
+# reacts only there (B #149: a fake acts only while its own row runs).
+ROW_ENV = "BT_ROW321=1"
 STAY_FRAMES = 300
 
 
@@ -75,10 +82,14 @@ def cross(pair, x, watch):
 
 
 def memory_seen(pair, x, since):
-    """Game x's memory lines since the test began: at least one, the private MB of each into the notes."""
+    """Game x's memory lines since the test began: waited for (the line is wall-clock, once a minute: a short run may
+    end before its next one), at most MEMORY_WAIT_FRAMES; the private MB of each into the notes."""
     rx = re.compile(MEMORY)
-    got = [int(m.group(1)) for m in (rx.search(ln) for ln in pair.log[x].since(since)) if m]
-    assert got, "%s: no memory line (/%s/) since the test began: the 0.12.0 memory line is not active" % (x, MEMORY)
+
+    def lines():
+        return [int(m.group(1)) for m in (rx.search(ln) for ln in pair.log[x].since(since)) if m]
+    got = pair.until("%s: a memory line (/%s/) since the test began (the 0.12.0 memory line active)" % (x, MEMORY),
+                     lines, max_frames=MEMORY_WAIT_FRAMES)
     pair.notes.append("%s: memory private MB over the crossings: %s" % (x, ", ".join(str(v) for v in got)))
 
 
@@ -96,7 +107,8 @@ def way_back(pair, games, done):
         pair.notes.append("way back failed after the test's FAIL: %s: %s" % (type(e).__name__, e))
 
 
-@pytest.mark.budget(420)
+@pytest.mark.budget(540)
+@pytest.mark.needs_env(ROW_ENV)
 @pytest.mark.row("321 adult Link Market -> Hyrule Field, a co-op guest crossing it (and the host), no crash or stall")
 def test_market_field_guest_crosses(pair):
     with pair.setup():
@@ -120,7 +132,8 @@ def test_market_field_guest_crosses(pair):
 
 
 @solo.MARK
-@pytest.mark.budget(300)
+@pytest.mark.budget(420)
+@pytest.mark.needs_env(ROW_ENV)
 @pytest.mark.row("321 adult Link Market -> Hyrule Field solo (co-op idle), no crash or stall")
 def test_market_field_solo(pair):
     with pair.setup():

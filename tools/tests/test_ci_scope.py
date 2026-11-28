@@ -113,16 +113,20 @@ class RealGit(unittest.TestCase):
         out, err = self.main_out()
         self.assertEqual(out, "full=false\nlongshot=false")
         self.assertEqual(err, "scope: python-only (files: tools/autotest/x.py) (base integrate-0120); "
-                              "linux-longshot skipped (no hookshot/, lichii/ or patches change)")
+                              "linux-longshot skipped (every file is one it never reads)")
 
     def test_cpp_branch(self):
         self.commit("tools/autotest/x.py")
         self.commit("hookshot/src/b.cpp")
         self.assertEqual(self.main_out()[0], "full=true\nlongshot=true")
 
-    def test_cpp_outside_longshot_paths_skips_longshot(self):
-        self.commit("src/net/x.cpp")
+    def test_windows_only_test_skips_longshot(self):
+        self.commit("tools/release/tests/launch_test.ps1")
         self.assertEqual(self.main_out()[0], "full=true\nlongshot=false")
+
+    def test_cpp_outside_hookshot_runs_longshot(self):
+        self.commit("coop/net/x.cpp")
+        self.assertEqual(self.main_out()[0], "full=true\nlongshot=true")
 
     def test_auto_base_picks_the_newest_integrate(self):
         # integrate-0120 = the base commit; integrate-0121 = one commit later, and work branches off integrate-0121:
@@ -161,7 +165,16 @@ class RealGit(unittest.TestCase):
     def test_longshot_paths(self):
         for f in ("hookshot/src/a.cpp", "lichii/hook/coop_hook.cpp", "patches/x.ips", "hookshot/patches/0012.ips", "x/patches/y"):
             self.assertTrue(cs.longshot_needed([f]), f)
-        for f in ("src/net/x.cpp", "tools/autotest/a.py", "cmake/enet.cmake", "tools/hookshot/x.py"):
+        # every path the job builds or reads (review-mod-153-2 00:23), and anything unknown
+        for f in ("coop/host/a.hpp", "coop/net/b.cpp", "server/main.cpp", "cmake/enet.cmake", "CMakeLists.txt",
+                  "tools/release/make_kit_linux.sh", "tools/release/x.sh", "tools/release/kit/scripts/kit-paths.ps1",
+                  "tools/release/tests/fixtures/linux-longshot-v0.11.2/x.ps1", "tools/release/tests/kit_pack_check.py",
+                  "tools/puppet_pack/charsel/data/x", "tools/hookshot/x.py", "tools/hookshot/host_compile_check.sh",
+                  ".github/workflows/build.yml", "tests/hookshot/load_module.c", "src/net/x.cpp", "newdir/x"):
+            self.assertTrue(cs.longshot_needed([f]), f)
+            self.assertTrue(cs.longshot_needed(["docs/a.md", f]), f)
+        for f in ("tools/autotest/a.py", "docs/x.md", "README.md", "tools/release/tests/launch_test.ps1",
+                  ".github/workflows/content-guard.yml"):
             self.assertFalse(cs.longshot_needed([f]), f)
         self.assertTrue(cs.longshot_needed(None))
         self.assertTrue(cs.longshot_needed([]))

@@ -10,9 +10,9 @@ build.yml's windows/linux/linux-longshot steps, tools/release/*.ps1|*.sh and CMa
 tools/puppet_pack, tools/release, tools/nucleus, tools/ci-runner, tools/coop_test and tools/playtest are NOT in it:
 the kit or a C++/windows job uses them. Adding a folder here needs that same check.
 
-BRANCH TIER (OWNER 2026-11-27 00:16 UTC via B #160): a manual run on a work branch is the branch tier (build.yml: scope,
-python-tools ubuntu+windows 3.12, windows, linux (clang), and linux-longshot only when the diff touches LONGSHOT_PATHS:
-hookshot/, lichii/ or a patches folder). asan, tsan, gcc and Python 3.10 run only on integrate-*/main/release-*/tag Builds.
+BRANCH TIER (OWNER 2026-11-28 00:16 UTC via B #160): a manual run on a work branch is the branch tier (build.yml: scope,
+python-tools ubuntu+windows 3.12, windows, linux (clang), and linux-longshot unless EVERY changed file is one that job
+never reads: LONGSHOT_NEVER_READ). asan, tsan, gcc and Python 3.10 run only on integrate-*/main/release-*/tag Builds.
 `longshot=true|false` says whether linux-longshot runs (any doubt = true).
 
 BASE (same go): --base auto (the default) picks the origin/integrate-* whose merge-base with HEAD is the newest commit
@@ -46,8 +46,14 @@ SCOPED = (
 )
 
 ALWAYS_FULL_REF = re.compile(r"^refs/(heads/(main|integrate-.*|release-.*)|tags/.*)$")
-# A diff touching any of these runs linux-longshot in the branch tier (the module, its hook code, the game patches).
-LONGSHOT_PREFIXES = ("hookshot/", "lichii/", "patches/")
+# linux-longshot is skipped in the branch tier only when EVERY changed file is one it never reads (review-mod-153-2
+# 2026-11-28 00:23: it builds CMakeLists.txt, cmake/, coop/, server/, hookshot/, reads tools/release (make_kit_linux.sh,
+# linux_longshot_kit_test.sh, kit-paths.ps1, tests/fixtures), tools/puppet_pack, tools/hookshot and build.yml itself).
+# The SCOPED python-only paths, plus: the Windows-only test scripts directly in tools/release/tests (*.ps1, none named by
+# make_kit_linux.sh, linux_longshot_kit_test.sh, host_compile_check.sh or kit_pack_check.py; fixtures/ excluded), and the
+# content guard workflow. Adding a path here needs that same check; any doubt = linux-longshot runs.
+LONGSHOT_NEVER_READ_FILES = (".github/workflows/content-guard.yml",)
+LONGSHOT_NEVER_READ_DIR_EXT = (("tools/release/tests", ".ps1"),)
 BASE_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
@@ -81,12 +87,19 @@ def decide(event, ref, files):
     return False, "python-only (files: %s)" % ", ".join(files[:20]) + (" +%d more" % (len(files) - 20) if len(files) > 20 else "")
 
 
+def longshot_never_read(path):
+    """True when linux-longshot never reads path (see LONGSHOT_NEVER_READ_*)."""
+    if scoped_path(path) or path in LONGSHOT_NEVER_READ_FILES:
+        return True
+    d, _, name = path.rpartition("/")
+    return any(d == folder and name.lower().endswith(ext) for folder, ext in LONGSHOT_NEVER_READ_DIR_EXT)
+
+
 def longshot_needed(files):
-    """True when linux-longshot must run in the branch tier: unknown/empty diff, or a file under LONGSHOT_PREFIXES or any
-    patches/ folder."""
+    """True when linux-longshot must run in the branch tier: unknown/empty diff, or any file it may read."""
     if not files:
         return True
-    return any(f.startswith(LONGSHOT_PREFIXES) or "/patches/" in "/" + f for f in files)
+    return not all(longshot_never_read(f) for f in files)
 
 
 def git(*args):
@@ -142,7 +155,7 @@ def main(argv=None):
     full, reason = decide(a.event, a.ref, files)
     longshot = (not branch) or longshot_needed(files)
     line = "scope: %s (base %s%s); linux-longshot %s" % (reason, base, " auto" if a.base in ("", "auto") and branch else "",
-                                                       "runs" if longshot else "skipped (no hookshot/, lichii/ or patches change)")
+                                                       "runs" if longshot else "skipped (every file is one it never reads)")
     print("full=%s" % ("true" if full else "false"))
     print("longshot=%s" % ("true" if longshot else "false"))
     print(line, file=sys.stderr)

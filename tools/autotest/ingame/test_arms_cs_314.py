@@ -90,13 +90,6 @@ def go(pair, yaw, strength, frames):
         left -= n
 
 
-def yaw_to(pair, x, y):
-    """World yaw (docs/playtest.md: 0 toward +z, 90 toward +x) from game x's Link to game y's Link."""
-    import math
-    a, b = pair.state(x)["pos"], pair.state(y)["pos"]
-    return math.degrees(math.atan2(b[0] - a[0], b[2] - a[2])) % 360.0
-
-
 def shots(pair, name):
     for x in sorted(pair.c):
         pair.check_shot(x, name, tolerance=TOL)
@@ -188,13 +181,18 @@ def test_arms_adult_pair(pair, tag, number, file):
                 return None
             actor = pair.until("B: A's puppet made as %s ('%s')" % (tag, want), seen, max_frames=CHAR_WAIT)
             pair.notes.append("%s: B made A's puppet as %s" % (tag, actor))
-            place_in_front(pair, "A", of="B", dist=8.0)   # A 8 m in front of B, facing B
-            a = pair.state("A")["pos"]
-            pair.act("B", "face %.2f %.2f" % (a[0], a[2]))
-            pair.press("B", ["ZL"], frames=8)              # B's camera behind B (test_gear.face_each_other)
+            # A keeps its arrival facing: down the open corridor (arms-314-pair-link-run1-A.png of run-182cd53b,
+            # 04:40 UTC 11-28: Link from behind, a long corridor ahead). B 2.5 m BEHIND A (test_gear's 2.5 m,
+            # place_in_front's default), facing the way A faces; both cameras behind their Link (ZL,
+            # test_gear.face_each_other). The 04:40 run put A 8 m in front of B, past the wall B faced, and A
+            # walked toward its own camera: no shot held the arms.
+            ahead = pair.state("A").get("facing") or 0.0
+            place_in_front(pair, "B", of="A", dist=-2.5)
+            for x in ("A", "B"):
+                pair.press(x, ["ZL"], frames=8)
             pair.step_both(20)
         marks = {x: pair.log[x].mark() for x in pair.c}
-        moves(pair, "pair-" + tag, yaw_to(pair, "A", "B"))   # A comes toward B: both views keep A in frame
+        moves(pair, "pair-" + tag, ahead)   # A runs away from both cameras: both views keep A's back and arms in frame
         pose_notes(pair, tag, marks)
         done = True
     finally:
@@ -216,6 +214,8 @@ def test_arms_adult_solo(pair, tag, number, file):
             pair.need_boot_place("child")
             was = pair.flag_read("A", CHAR_FLAG).get("value")
             to_adult_as(pair, number)
+            pair.press("A", ["ZL"], frames=8)   # camera behind A, as in the pair test (A then moves away from it)
+            pair.step_both(20)
         marks = {"A": pair.log["A"].mark()}
         moves(pair, "solo-" + tag, (pair.state("A").get("facing") or 0.0))
         pose_notes(pair, tag, marks)

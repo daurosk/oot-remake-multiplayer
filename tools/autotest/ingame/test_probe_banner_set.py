@@ -28,9 +28,10 @@ AWAY_M = 6.0           # A this far from B: no 'Hold A to revive' for A, no revi
 OUT = "probe-banner-set"
 
 
-def runs(samples, top):
-    """(after_set, stray): for each set, the frames from it until the line is seen again; dark frames with no set at
-    or before them in their dark run."""
+def runs(samples, top, set_before=False):
+    """(after_set, stray): for each set, the frames from it until the line is seen again; dark frames whose dark run
+    has no set in it or on the frame just before it (a set is read after its frame's shot: its blank starts at the
+    next shot). `set_before`: the read just before the first shot had a set."""
     seen = lambda s: s["words"] >= max(rb.MIN_WORDS, rb.SEEN * top)   # noqa: E731
     after_set, stray = [], []
     for k, s in enumerate(samples):
@@ -42,19 +43,19 @@ def runs(samples, top):
                 n += 1
             after_set.append({"i": s["i"], "frame": s["frame"], "dark_here": not seen(s), "blank_after": n,
                               "text": (s["texts"] or [""])[-1]})
-    dark_run_has_set = False
+    dark_run_has_set, prev_set = False, set_before
     for s in samples:
         if seen(s):
-            dark_run_has_set = False
+            dark_run_has_set, prev_set = False, bool(s["sets"])
             continue
-        dark_run_has_set = dark_run_has_set or bool(s["sets"])
+        dark_run_has_set = dark_run_has_set or prev_set or bool(s["sets"])
+        prev_set = False
         if not dark_run_has_set:
             stray.append(s["i"])
     return after_set, stray
 
 
-@pytest.mark.budget(600)
-@pytest.mark.look
+@pytest.mark.budget(600)   # (no look mark: no check_shot, its kept shots are the owner's copies only)
 @pytest.mark.row("PROBE revive-flicker-0121: does one set of the banner's text blank its line, and for how many frames (B downed, no reviver)")
 def test_probe_banner_set(pair):
     with dc.restored(pair, {}):
@@ -73,7 +74,7 @@ def test_probe_banner_set(pair):
         assert apart > dc.REACH_M, "A not away from B (%.2f m)" % apart
         since = rb.banner_sets(pair, "B", 0)[1]
         pair.step_both(10)         # (a set just read has had its frames before the first shot)
-        since = rb.banner_sets(pair, "B", since)[1]
+        pre, since, _ = rb.banner_sets(pair, "B", since)
         before = pair.state("B").get("banner")
         samples, paths, hooked = [], {}, False
         for i in range(PROBE_FRAMES):
@@ -86,7 +87,7 @@ def test_probe_banner_set(pair):
                             "set_frames": [t.get("frame") for t in texts][-3:]})
         after = pair.state("B").get("banner")
         top = max(s["words"] for s in samples)
-        after_set, stray = runs(samples, top)
+        after_set, stray = runs(samples, top, set_before=bool(pre))
         if pair.out_dir:
             os.makedirs(os.path.join(pair.out_dir, "revive-banner", OUT), exist_ok=True)
         for s in samples:          # every dark frame's shot, and a bright one every KEEP_EVERY, kept for the owner

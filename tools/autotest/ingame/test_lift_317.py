@@ -3,7 +3,7 @@
 | Test | Probe | Boot | Kind |
 |---|---|---|---|
 | test_probe_lift_prompt_317 | P1: the A prompt at a young copy and at Ruto, near and carrying; the first lift of a player in a game (N2) | --pack native (NATIVE_PUPPETS=body,lift) + LICHII_COOP_LIFT_PLAYER=1 | state `prompt` + module log + LOOK shots |
-| test_probe_revive_button_317 | P2: which buttons do nothing beside a downed copy (the revive button's pick) | any | state before/after each press + LOOK shots of A |
+| test_probe_revive_button_317 | P2: which buttons do nothing beside a downed copy (the revive button's pick) | any | state before/after each press + LOOK shots of both games after B and X |
 
 Both are PROBES: their result is NO-REF with every value in the notes (never PASS), unless the set-up fails
 (SETUP-FAIL) or the module logs a refusal it should not (FAIL). The values they find are cited by the 317 code.
@@ -47,6 +47,7 @@ TAKEN = r"coop: lift: P1 lifts our Link: (.*)"                                  
 INPUT = r"coop: lift: our Link's input (off|back) \(held by P1\)"                  # :301
 CARRIED = r"coop: lift: carried: our own Link plays '([^']*)'"                    # :115
 PRESSES = ("B", "X", "L", "R", "DDOWN", "DUP")   # coop_testinput.cpp kNames; Y is the sword (docs/playtest.md:505)
+SHOT_BUTTONS = ("B", "X")   # the revive button's first picks: shots of both games after these (4 of the 8 allowed)
 MOVED_M = 0.1         # = test_dbno_crawl CRAWL_MIN_M ("moved at all")
 TURNED_DEG = 5.0      # ESTIMATED: a facing change smaller than this is the sample's noise
 WATCH = ("pos", "facing", "equips", "prompt", "event", "life", "rupees")
@@ -179,7 +180,8 @@ def test_probe_revive_button_317(pair):
                 changed.append("facing")
             changed += [k for k in WATCH[2:] if a0.get(k) != a1.get(k)]
             rows.append((button, changed, a1.get("prompt"), a1.get("event")))
-            pair.check_shot("A", "revive317-press-%s" % button.lower(), tolerance=0.80)
+            if button in SHOT_BUTTONS:   # each game (tests/test_ingame.py Suite: a look test shoots A and B)
+                dc.shots(pair, "revive317-press-%s" % button.lower(), twice=False)
             pair.never_log("B", dc.event(dc.EV_REVIVED))
             pair.never_log("B", dc.event(dc.EV_BLED_OUT))
     inert = [r[0] for r in rows if not r[1]]

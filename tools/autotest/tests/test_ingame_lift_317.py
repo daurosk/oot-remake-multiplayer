@@ -93,7 +93,8 @@ class Lift317(unittest.TestCase):
         r = self.one(p, s, P2)
         self.assertEqual(r["result"], "NO-REF", (r, p.stdout[-3000:]))
         self.assertIn("P2 inert beside a downed copy: B, X, L, R, DDOWN, DUP", self.notes(r))
-        self.assertEqual({sh["game"] for sh in r["shots"]}, {"A"})
+        self.assertEqual({sh["game"] for sh in r["shots"]}, {"A", "B"})
+        self.assertEqual(len(r["shots"]), 4)
 
 
 if __name__ == "__main__":

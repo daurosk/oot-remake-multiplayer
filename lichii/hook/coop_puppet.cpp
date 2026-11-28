@@ -534,7 +534,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 }
                 if (t->show == Show::show || t->show == Show::hold) {
                     DrawAt(slot, guest, *t, now_ms);
-                    if (++slot.cloth_frames >= kClothProbeFrames) {
+                    if (ClothProbeOn() && ++slot.cloth_frames >= kClothProbeFrames) {
                         slot.cloth_frames = 0;
                         const std::string who = "P" + std::to_string(slot.number);
                         ClothProbe(guest, slot.actor, who);
@@ -2086,12 +2086,16 @@ void Director::BodyProbe(Guest& guest, std::uint64_t actor, const std::string& w
 // of each entry's u64 at +0x18 (and clears it where bit 3 is set). A puppet built without its cloth
 // (pack --no-cloth) has C == 0 while our own Link's is set; with the cloth the first entry's floats change
 // while the copy moves and settle while it stands.
-void Director::ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+bool Director::ClothProbeOn() {
     static const bool on = [] {
         const char* v = std::getenv("LICHII_COOP_DEBUG_CLOTH");
         return v != nullptr && std::string_view(v) == "1";
     }();
-    if (!on || actor == 0) {
+    return on;
+}
+
+void Director::ClothProbe(Guest& guest, std::uint64_t actor, const std::string& who) const {
+    if (!ClothProbeOn() || actor == 0) {
         return;
     }
     constexpr std::uint64_t kComponents = 0x270;  // actor -> component table

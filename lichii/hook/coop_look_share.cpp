@@ -63,32 +63,6 @@ std::uint16_t Share::CharacterOf(std::uint8_t number) const {
     return it == their_character_.end() ? std::uint16_t{0} : it->second;
 }
 
-std::uint64_t OwnPick::Update(std::uint64_t read, bool on_host_save, std::uint64_t loads) {
-    if (!on_host_save) {
-        own_ = read;
-        loads_.reset();
-        repicked_ = false;
-        return read;
-    }
-    if (loads_ != loads) {
-        loads_ = loads;
-        at_load_ = read;
-        repicked_ = false;
-    } else if (CharacterIn(read) != CharacterIn(at_load_)) {
-        repicked_ = true;   // (only a new pick: the options are unsaved Ints, 0 after any load, so a change of them
-                            // on the host's save is the guest's own for the character it sees, not a pick of its own)
-    }
-    return repicked_ ? read : own_;
-}
-
-std::optional<std::uint64_t> OwnPick::TakeOwnChange() {
-    if (kept_ == own_) {
-        return std::nullopt;
-    }
-    kept_ = own_;
-    return own_;
-}
-
 bool Share::OnEvent(const coop::net::Event& event) {
     switch (event.kind) {
     case EventKind::welcomed: {

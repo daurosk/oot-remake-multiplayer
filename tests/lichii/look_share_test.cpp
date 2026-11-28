@@ -388,42 +388,39 @@ TEST_CASE("look share: a new pick of character alone paints no copy again") {
     CHECK(s.Jobs(CoopLookShare::kCopyDwellMs * 4).empty());
 }
 
-TEST_CASE("look share: a guest on the host's save sends its own pick, not the host's") {
-    // Review of #299 (5): the host's save carries the host's pick.
-    CoopLookShare::OwnPick p;
-    CHECK(p.Update(0, false, 0) == 0);
-    CHECK(p.Update(12, false, 0) == 12);       // our own save: what we picked
-    CHECK(p.TakeOwnChange() == std::optional<std::uint64_t>(12));
-    CHECK_FALSE(p.TakeOwnChange());            // once
-    CHECK(p.Update(30, true, 1) == 12);        // the host's save loads with the host's 30: ours goes out
-    CHECK(p.Update(30, true, 1) == 12);
-    CHECK_FALSE(p.TakeOwnChange());            // the host's pick is never kept as ours
-    CHECK(p.Update(44, true, 1) == 44);        // the guest picks on the host's save: that one
-    CHECK(p.Update(30, true, 1) == 30);        // even back to the host's number: it is the guest's pick now
-    CHECK(p.Update(30, true, 2) == 12);        // a new load of the host's save: its number is the host's again
-    CHECK(p.Update(0, true, 3) == 12);         // a host as Link: still ours
-    CHECK(p.Update(0, false, 3) == 0);         // back on our own save (as Link): that
-    CoopLookShare::OwnPick seeded;
-    seeded.Seed(7);                            // kept from the last start (coop-character.txt)
-    CHECK_FALSE(seeded.TakeOwnChange());
-    CHECK(seeded.Update(30, true, 0) == 7);    // a guest that joined before playing its own save
-    CoopLookShare::OwnPick fresh;
-    CHECK(fresh.Update(30, true, 0) == 0);     // nothing known: Link, never the host's
-    // The Customize options are in the save too: they go with the pick (OwnPick::Of), the guest's own until it
-    // changes either on the host's save (review of 07de2fe2, MUST 1).
-    using CoopLookShare::OwnPick;
-    CHECK(OwnPick::CharacterIn(OwnPick::Of(9, 0x123456)) == 9);
-    CHECK(OwnPick::CustomIn(OwnPick::Of(9, 0x123456)) == 0x123456u);
-    CHECK(OwnPick::CustomIn(OwnPick::Of(9, 0xFF123456u)) == 0x123456u);
-    OwnPick g;
-    CHECK(g.Update(OwnPick::Of(9, 0x000011), false, 0) == OwnPick::Of(9, 0x000011));
-    CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 1) == OwnPick::Of(9, 0x000011));   // the host's pick and options
-    // The options are unsaved (0 after a load): one changed on the host's save is no pick of the guest's own.
-    CHECK(g.Update(OwnPick::Of(30, 0x222223), true, 1) == OwnPick::Of(9, 0x000011));
-    CHECK(g.Update(OwnPick::Of(44, 0x222223), true, 1) == OwnPick::Of(44, 0x222223));  // a pick: it and its options
-    CHECK(g.Update(OwnPick::Of(44, 0x000005), true, 1) == OwnPick::Of(44, 0x000005));  // then each option change
-    CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 2) == OwnPick::Of(9, 0x000011));   // a new load: ours again
-    CHECK(g.TakeOwnChange() == std::optional<std::uint64_t>(OwnPick::Of(9, 0x000011)));
+TEST_CASE("look share: the pick sent is the one the game shows, on any save (row 327)") {
+    // Row 327 (0.12.0): a guest on the host's save showed the save's NPC while it sent its own-save pick (Link):
+    // after a join or any new load the others saw Link. The pick sent is the save's Int as it is now.
+    using CoopLookShare::PickShown;
+    CHECK(PickShown(std::nullopt) == 0);       // no Character Select: Link
+    CHECK(PickShown(0) == 0);
+    CHECK(PickShown(-1) == 0);
+    CHECK(PickShown(12) == 12);
+    CHECK(PickShown(CoopLookShare::kCharacterMax) == CoopLookShare::kCharacterMax);
+    CHECK(PickShown(CoopLookShare::kCharacterMax + 1) == 0);
+    // A save loaded as a character (the host's save too, a new load each time): that character goes out at once,
+    // with no gear look chosen, and again for a newcomer.
+    CoopLookShare::Share s;
+    s.SetCharacter(PickShown(30));
+    auto sent = s.TakeSend();
+    REQUIRE(sent);
+    REQUIRE(sent->parts.size() == 1);
+    CHECK(sent->parts[0].part == CoopLookShare::kCharacterPart);
+    CHECK(sent->parts[0].colour == (CoopLookShare::kCharacterMark | 30u));
+    CHECK_FALSE(s.TakeSend());
+    s.OnEvent(Kind(EventKind::player_joined, 2));
+    CHECK(s.TakeSend());                       // a newcomer gets it too
+    s.SetCharacter(PickShown(30));             // the same pick read again: nothing new
+    CHECK_FALSE(s.TakeSend());
+    s.SetCharacter(PickShown(44));             // another save loaded with another character: that one
+    sent = s.TakeSend();
+    REQUIRE(sent);
+    REQUIRE(sent->parts.size() == 1);
+    CHECK(sent->parts[0].colour == (CoopLookShare::kCharacterMark | 44u));
+    s.SetCharacter(PickShown(0));              // a save as Link: Link goes out (no character part)
+    sent = s.TakeSend();
+    REQUIRE(sent);
+    CHECK(sent->parts.empty());
 }
 
 TEST_CASE("look share: a character's Customize options ride along as a part of their own") {

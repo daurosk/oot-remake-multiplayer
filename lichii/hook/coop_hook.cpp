@@ -1975,31 +1975,10 @@ public:
             const auto picked = coop::host::GameFlags(flag_memory).get_int(picked_hash);
             // (The mod's own options held at 0, ModPresent and ShownCharacter: OwnCharacterFrame, every 30th frame of
             // the module, co-op on or off. Here: the pick sent to the others.)
-            const std::uint32_t custom = 0;   // (none of the mod's own: nothing of them goes to the others)
-            // A guest on the host's save sends its own pick and options, not the host's (CoopLookShare::OwnPick).
-            using CoopLookShare::OwnPick;
-            static OwnPick own_pick;
-            const auto kept = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop-character.txt";
-            static const bool seeded = [&] {
-                std::ifstream in(kept);
-                std::uint64_t value = 0;
-                if (in >> value && OwnPick::CharacterIn(value) <= CoopLookShare::kCharacterMax) {
-                    own_pick.Seed(value);
-                }
-                return true;
-            }();
-            (void)seeded;
-            const std::uint16_t character =
-                picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax ? static_cast<std::uint16_t>(*picked)
-                                                                                 : std::uint16_t{0};
-            const std::uint64_t sent = own_pick.Update(OwnPick::Of(character, custom),
-                                                       CoopSave::UseCoopFolder() || CoopSave::HostSaveReady(),
-                                                       CoopSave::SaveLoadStarts());
-            CoopLookShare::SetCharacter(OwnPick::CharacterIn(sent));
-            CoopLookShare::SetCustom(OwnPick::CustomIn(sent));
-            if (const auto own = own_pick.TakeOwnChange()) {
-                std::ofstream(kept, std::ios::trunc) << *own << '\n';   // the next start (a guest that joins at once)
-            }
+            // Row 327: the pick this game shows (the save's Int as it is now, the host's save too), never a guess at
+            // another (CoopLookShare::PickShown); none of the mod's own options goes to the others (held at 0).
+            CoopLookShare::SetCharacter(CoopLookShare::PickShown(picked));
+            CoopLookShare::SetCustom(0);
         }
         // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).
         CoopLookShare::Frame(report.connected ? session_.get() : nullptr);

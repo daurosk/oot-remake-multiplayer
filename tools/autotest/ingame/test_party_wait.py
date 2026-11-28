@@ -52,7 +52,7 @@ ANY = r"coop: party wait: (Waiting|Everyone|Not everyone)"   # coop_party_wait_g
 WAIT_1_2 = r"coop: party wait: Waiting for the other players to sync\.\.\. \(1/2 here\)"   # :191, WaitLine
 #           (coop_party_wait.cpp:10: here_with_us 1 = A alone of 2)
 SAID = r"coop: party wait: said to the others: Waiting for the party at the boss door \(Queen Gohma\)"
-#        coop_hook.cpp:2076 (out.chat, coop_party_wait.cpp:95 + WhereText :15; 'Queen Gohma' coop_boss_scenes.cpp:21)
+#        coop_hook.cpp:2055 (out.chat, coop_party_wait.cpp:95 + WhereText :15; 'Queen Gohma' coop_boss_scenes.cpp:21)
 ALL_HERE = r"coop: party wait: Everyone is here\."     # :191 (coop_party_wait.cpp:68)
 GAVE_UP = r"coop: party wait: Not everyone is here: going on\."   # :191 (coop_party_wait.cpp:72)
 SHOT_AFTER = 15                    # frames after the line: the notice is on the banner (chat_.Add(line, true))

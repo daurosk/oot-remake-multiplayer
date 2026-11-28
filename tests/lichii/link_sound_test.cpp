@@ -3,6 +3,7 @@
 // that start a sound on a puppet. Guest memory is fake pages.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <map>
@@ -564,4 +565,43 @@ TEST_CASE("link effect: the effect cells sit after the dress cells, inside the p
     CHECK(block::kEffectAsset >= CoopPuppet::block::kDress + 0x100);
     CHECK(block::kEffectEnd <= CoopPuppet::block::kSize);
     CHECK(EffectCells().handle != Player{}.cells.handle);
+}
+
+TEST_CASE("link effect: a full received queue drops the oldest non-end, never an effect's end (review-mod-153)") {
+    std::vector<Sound> q;
+    q.push_back(Sound{"Charge_RotationCut", 1, true, true});  // the held charge's end, oldest
+    for (std::uint64_t i = 0; i < 5; ++i) {
+        q.push_back(Sound{"Pl_Voice_Attack_0" + std::to_string(i), 2 + i, false, false});
+    }
+    MakeRoom(q, 6);
+    REQUIRE(q.size() == 5);
+    CHECK(q.front().name == "Charge_RotationCut");  // the end stays
+    CHECK(q[1].name == "Pl_Voice_Attack_01");        // the oldest sound went
+    std::vector<Sound> ends;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        ends.push_back(Sound{"E" + std::to_string(i), i, true, true});
+    }
+    MakeRoom(ends, 3);  // only ends: the oldest goes
+    REQUIRE(ends.size() == 2);
+    CHECK(ends.front().name == "E1");
+    std::vector<Sound> small{Sound{"A", 0, false, false}};
+    MakeRoom(small, 4);  // room already: nothing goes
+    CHECK(small.size() == 1);
+}
+
+TEST_CASE("link effect: ends waiting are kept once each, and a full list drops an end for a key not started first") {
+    Player p = EffectPlayer();
+    p.started[0] = {"Charge_RotationCut", 0};
+    End(p, "Charge_RotationCut");
+    End(p, "Charge_RotationCut");
+    CHECK(p.ended.size() == 1);  // once
+    for (std::size_t i = 1; i < kEndedMax; ++i) {
+        End(p, "NotStarted_" + std::to_string(i));
+    }
+    REQUIRE(p.ended.size() == kEndedMax);
+    End(p, "Blur_Default");
+    REQUIRE(p.ended.size() == kEndedMax);
+    CHECK(p.ended.front() == "Charge_RotationCut");  // the started key's end is kept, though the oldest
+    CHECK(std::find(p.ended.begin(), p.ended.end(), "NotStarted_1") == p.ended.end());
+    CHECK(p.ended.back() == "Blur_Default");
 }

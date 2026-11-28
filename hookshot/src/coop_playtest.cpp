@@ -397,7 +397,8 @@ std::string StateMembers(bool full_world = false, std::optional<Value> status = 
     for (const auto& p : CoopHook::PlayerList()) {
         out += std::string(first ? "" : ",") + "{\"number\":" + std::to_string(p.number) + ",\"name\":" +
                Quote(p.name) + ",\"self\":" + (p.self ? "true" : "false") + ",\"state\":" + Quote(p.state) +
-               ",\"scene\":" + (p.scene ? Quote(*p.scene) : "null") + "}";
+               ",\"scene\":" + (p.scene ? Quote(*p.scene) : "null") +
+               ",\"status\":" + (p.status ? std::to_string(*p.status) : std::string("null")) + "}";
         first = false;
     }
     out += "]}";

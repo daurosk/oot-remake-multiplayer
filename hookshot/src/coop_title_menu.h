@@ -102,6 +102,7 @@ struct Options {
     bool gold_own = false;         // gold_skulltulas = own (the host's: Gold Skulltulas not shared; no line: shared)
     bool race = false;             // race = on (the host's race mode, coop_race_mode.h; no line: off)
     bool floor_switches = true;    // floor_switches = off (the host's: coop_switch_stand_mode.h; no line: on)
+    bool pause_world = false;      // pause_world = on (the host's: coop_pause_world_mode.h; no line: off)
     bool same_network_open = true;    // the host's: on, the default, players from a private address join without
                                       // the join password; off (same_network_password = on), they need it too
     bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)

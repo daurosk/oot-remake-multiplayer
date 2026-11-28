@@ -15,6 +15,7 @@
 
 #include "coop_gold_mode.h"
 #include "coop_race_mode.h"
+#include "coop_pause_world_mode.h"
 #include "coop_switch_stand_mode.h"
 #include "coop_name_privacy.h"
 #include "coop_runtime.h"
@@ -243,6 +244,7 @@ CoopTitleMenu::Options ReadOptions() {
     CoopGoldMode::SetChoice(o.gold_own ? CoopGoldMode::Mode::own : CoopGoldMode::Mode::shared);
     CoopRaceMode::SetChoice(o.race);   // (race mode, the same way)
     CoopSwitchStandMode::SetChoice(o.floor_switches);   // (shared floor switches too)
+    CoopPauseWorldMode::SetChoice(o.pause_world);       // (and the world runs in menus, row 299)
     if (o.name.empty() && !g_fallback_name.empty()) {
         o.name = g_fallback_name;
     }

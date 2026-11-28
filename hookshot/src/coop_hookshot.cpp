@@ -2700,16 +2700,20 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
     }
-    if (id == CoopPlayerInput::kWrapInputOff && CoopLiftPlayerGame::On()) {
+    if (id == CoopPlayerInput::kWrapInputOff) {
         // Native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours, so our Link's
         // own input check answers "off" (both callers skip their pad read), as for an extra player without a
         // controller. Only our Link's check: the reading actor ([[[node+8]+8]+0x1f0], node in x19) is ours.
+        // Row 299 the same way: a game menu in front with the world running under it (the host's "World runs in
+        // menus", CoopPauseWorld::WorldRuns): the pad works the menu, never our Link (phase 0's run: the stick
+        // walked Link under the open menu).
         thread_local bool lift_held_off = false;
         if (phase == 1 && std::exchange(lift_held_off, false)) {
             x[0] = 1;
             return 0;
         }
-        if (phase == 0 && CoopLiftPlayerGame::OurInputOff()) {
+        if (phase == 0 && ((CoopLiftPlayerGame::On() && CoopLiftPlayerGame::OurInputOff()) ||
+                           CoopPauseWorld::WorldRuns())) {
             namespace a = CoopPlayerInput::addr;
             std::uint64_t owner = 0, holder = 0, actor = 0;
             const auto link = CoopObjects::OurLinkActor();
@@ -3563,7 +3567,11 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
     CoopExportGuard::Guard(site, [&] {
         if (g_on) {
             CoopPauseTab::OnScreen(ctx, screen);
-            CoopPauseWorld::OnScreen(ctx);   // (row 299: only a test's `menu hold release N`)
+            {
+                // (row 299: the host's "World runs in menus" lets the menu's holds go; a test's `menu hold release N`)
+                const auto menu_state = CoopMapPage::MenuState();
+                CoopPauseWorld::OnScreen(ctx, (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp());
+            }
             try {
                 // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
                 // choose_focused would press the game's button under our page)

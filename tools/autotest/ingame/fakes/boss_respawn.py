@@ -15,7 +15,9 @@ BT_FAKE_BROKEN values:
   BT_FAKE_INTRO=<frames>             (selftest) a warp to a boss room (BOSS_ROOMS) starts an intro event of that length
   BT_FAKE_BROKEN=a-free              (selftest) A's warp into the stage again starts no event (A not busy)
   BT_FAKE_BROKEN=no-fight            (selftest) FireTemple room 33: 'in the boss room' but the fight never begins
-Every other stage warp starts the arrival event (ARRIVAL frames), as the game's map change event does. B's beside ask
+With BT_FAKE_BR289=1 (set only by this row's selftests, B #149: never for other rows' boss-stage tests, e.g.
+test_bosses' Phantom Ganon set-up, CI 46112947651) every other stage warp starts the arrival event (ARRIVAL frames),
+as the game's map change event does. B's beside ask
 (ASK frames after the hurt) is refused when A is in an event ('is busy') or, in FireTemple, when B's room is in its fight
 ('not during your boss fight'); else B goes beside A (the real game with A idle: br289-6-keep-182cd53b-2 NO-REF).
 After the respawn's load B stands at the stage's start (coop_start_points.inc, read, never copied).
@@ -86,7 +88,7 @@ def after(game, m, r):
         game.event = True                        # (the room's intro: the game is in an event this long)
         game.later(int(os.environ["BT_FAKE_INTRO"]), lambda: setattr(game, "event", False))
     a_free = broken() == "a-free" and game.tag == "A" and getattr(game, "br_down_seen", False)
-    if cmd == "warp" and m.get("scene") in STAGES and not game.event and not a_free:
+    if cmd == "warp" and m.get("scene") in STAGES and not game.event and not a_free and os.environ.get("BT_FAKE_BR289"):
         game.event = True                        # (the map change event's arrival)
         game.later(ARRIVAL, lambda: setattr(game, "event", False))
     if cmd == "warp":
@@ -103,7 +105,8 @@ def act(game, words):
         game.other.br_down_seen = True
         downed(game)
         return True
-    if words[:1] == ["place"] and game.scene == FIRE and in_room([float(v) for v in words[1:4]]):
+    if words[:1] == ["place"] and game.scene == FIRE and os.environ.get("BT_FAKE_BR289") \
+            and in_room([float(v) for v in words[1:4]]):
         game.later(30, lambda: game.say("coop: boss: in the boss room of FireTemple: Enemy_DungeonBoss_Volvagia"))
         if broken() != "no-fight":
             game.later(630, lambda: (setattr(game, "br_fight", True),

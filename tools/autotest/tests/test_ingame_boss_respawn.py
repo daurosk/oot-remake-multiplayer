@@ -28,6 +28,7 @@ class BossRespawn(unittest.TestCase):
 
     def run_file(self, extra, env=None):
         out = os.path.join(self.tmp, "o%d" % len(os.listdir(self.tmp)))
+        env = dict(env or {}, BT_FAKE_BR289="1")   # (this row's fake behaviour only; fakes/boss_respawn.py, B #149)
         p = pytest_run(["test_boss_respawn.py", "--fake", "--no-rerun", "--out", out, "-q"] + extra, env=env)
         return p, results(summary(out))
 

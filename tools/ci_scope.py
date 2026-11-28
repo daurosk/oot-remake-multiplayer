@@ -10,7 +10,16 @@ build.yml's windows/linux/linux-longshot steps, tools/release/*.ps1|*.sh and CMa
 tools/puppet_pack, tools/release, tools/nucleus, tools/ci-runner, tools/coop_test and tools/playtest are NOT in it:
 the kit or a C++/windows job uses them. Adding a folder here needs that same check.
 
-Prints `full=true|false` (for $GITHUB_OUTPUT) on stdout and one `scope: ...` line on stderr and in $GITHUB_STEP_SUMMARY.
+BRANCH TIER (OWNER 2026-11-27 00:16 UTC via B #160): a manual run on a work branch is the branch tier (build.yml: scope,
+python-tools ubuntu+windows 3.12, windows, linux (clang), and linux-longshot only when the diff touches LONGSHOT_PATHS:
+hookshot/, lichii/ or a patches folder). asan, tsan, gcc and Python 3.10 run only on integrate-*/main/release-*/tag Builds.
+`longshot=true|false` says whether linux-longshot runs (any doubt = true).
+
+BASE (same go): --base auto (the default) picks the origin/integrate-* whose merge-base with HEAD is the newest commit
+(committer time), so a branch off integrate-0121 is not diffed against a stale integrate-0120 (that sent every tests-only
+branch to the full Build). A named --base (the workflow's `base` input) overrides it.
+
+Prints `full=true|false` and `longshot=true|false` (for $GITHUB_OUTPUT) on stdout and one `scope: ...` line on stderr and in $GITHUB_STEP_SUMMARY.
 Any doubt (unknown event, no merge-base, git error, empty diff) = full.
 """
 import argparse
@@ -37,6 +46,8 @@ SCOPED = (
 )
 
 ALWAYS_FULL_REF = re.compile(r"^refs/(heads/(main|integrate-.*|release-.*)|tags/.*)$")
+# A diff touching any of these runs linux-longshot in the branch tier (the module, its hook code, the game patches).
+LONGSHOT_PREFIXES = ("hookshot/", "lichii/", "patches/")
 BASE_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
@@ -70,6 +81,14 @@ def decide(event, ref, files):
     return False, "python-only (files: %s)" % ", ".join(files[:20]) + (" +%d more" % (len(files) - 20) if len(files) > 20 else "")
 
 
+def longshot_needed(files):
+    """True when linux-longshot must run in the branch tier: unknown/empty diff, or a file under LONGSHOT_PREFIXES or any
+    patches/ folder."""
+    if not files:
+        return True
+    return any(f.startswith(LONGSHOT_PREFIXES) or "/patches/" in "/" + f for f in files)
+
+
 def git(*args):
     return subprocess.run(["git"] + list(args), capture_output=True, text=True, check=True).stdout
 
@@ -87,16 +106,45 @@ def changed_files(base):
         return None
 
 
+def auto_base():
+    """The integrate-* branch whose merge-base with HEAD is the newest commit (committer time), or None."""
+    try:
+        heads = [l.split("refs/heads/", 1)[1] for l in git("ls-remote", "--heads", "origin", "integrate-*").splitlines()
+                 if "refs/heads/" in l]
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    best = None
+    for b in heads:
+        if not BASE_NAME.match(b):
+            continue
+        try:
+            git("fetch", "--no-tags", "--filter=blob:none", "origin", "+refs/heads/%s:refs/remotes/origin/%s" % (b, b))
+            mb = git("merge-base", "HEAD", "origin/" + b).strip()
+            t = int(git("show", "-s", "--format=%ct", mb).strip())
+        except (subprocess.CalledProcessError, OSError, ValueError):
+            continue
+        if best is None or t > best[0] or (t == best[0] and b > best[1]):
+            best = (t, b)
+    return best[1] if best else None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", ""))
     p.add_argument("--ref", default=os.environ.get("GITHUB_REF", ""))
-    p.add_argument("--base", default="integrate-0120")
+    p.add_argument("--base", default="auto", help="integrate-* branch to diff against; auto = newest merge-base")
     a = p.parse_args(argv)
-    files = changed_files(a.base) if a.event == "workflow_dispatch" and not ALWAYS_FULL_REF.match(a.ref) else []
+    branch = a.event == "workflow_dispatch" and not ALWAYS_FULL_REF.match(a.ref)
+    base = a.base
+    if branch and base in ("", "auto"):
+        base = auto_base() or "?"
+    files = changed_files(base) if branch else []
     full, reason = decide(a.event, a.ref, files)
-    line = "scope: %s (base %s)" % (reason, a.base)
+    longshot = (not branch) or longshot_needed(files)
+    line = "scope: %s (base %s%s); linux-longshot %s" % (reason, base, " auto" if a.base in ("", "auto") and branch else "",
+                                                       "runs" if longshot else "skipped (no hookshot/, lichii/ or patches change)")
     print("full=%s" % ("true" if full else "false"))
+    print("longshot=%s" % ("true" if longshot else "false"))
     print(line, file=sys.stderr)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

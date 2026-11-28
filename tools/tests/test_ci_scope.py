@@ -95,14 +95,14 @@ class RealGit(unittest.TestCase):
         run(self.repo, "git", "add", "-A")
         run(self.repo, "git", "commit", "-q", "-m", rel)
 
-    def main_out(self):
+    def main_out(self, base="integrate-0120"):
         from io import StringIO
         out, err = StringIO(), StringIO()
         old = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = out, err
         os.environ.pop("GITHUB_STEP_SUMMARY", None)
         try:
-            cs.main(["--event", D, "--ref", "refs/heads/work", "--base", "integrate-0120"])
+            cs.main(["--event", D, "--ref", "refs/heads/work", "--base", base])
         finally:
             sys.stdout, sys.stderr = old
         return out.getvalue().strip(), err.getvalue().strip()
@@ -111,13 +111,37 @@ class RealGit(unittest.TestCase):
         self.commit("tools/autotest/x.py")
         self.assertEqual(cs.changed_files("integrate-0120"), ["tools/autotest/x.py"])
         out, err = self.main_out()
-        self.assertEqual(out, "full=false")
-        self.assertEqual(err, "scope: python-only (files: tools/autotest/x.py) (base integrate-0120)")
+        self.assertEqual(out, "full=false\nlongshot=false")
+        self.assertEqual(err, "scope: python-only (files: tools/autotest/x.py) (base integrate-0120); "
+                              "linux-longshot skipped (no hookshot/, lichii/ or patches change)")
 
     def test_cpp_branch(self):
         self.commit("tools/autotest/x.py")
         self.commit("hookshot/src/b.cpp")
-        self.assertEqual(self.main_out()[0], "full=true")
+        self.assertEqual(self.main_out()[0], "full=true\nlongshot=true")
+
+    def test_cpp_outside_longshot_paths_skips_longshot(self):
+        self.commit("src/net/x.cpp")
+        self.assertEqual(self.main_out()[0], "full=true\nlongshot=false")
+
+    def test_auto_base_picks_the_newest_integrate(self):
+        # integrate-0120 = the base commit; integrate-0121 = one commit later, and work branches off integrate-0121:
+        # auto must diff against integrate-0121 (only the work commit), not the stale integrate-0120 (both commits).
+        self.commit("hookshot/src/later.cpp")
+        run(self.repo, "git", "push", "-q", "origin", "HEAD:refs/heads/integrate-0121")
+        self.commit("tools/autotest/x.py")
+        self.assertEqual(cs.auto_base(), "integrate-0121")
+        out, err = self.main_out("auto")
+        self.assertEqual(out, "full=false\nlongshot=false")
+        self.assertIn("(base integrate-0121 auto)", err)
+        # the named base still overrides auto
+        self.assertEqual(self.main_out("integrate-0120")[0], "full=true\nlongshot=true")
+
+    def test_auto_base_none_is_full(self):
+        run(self.repo, "git", "push", "-q", "origin", ":refs/heads/integrate-0120")
+        self.commit("tools/autotest/x.py")
+        self.assertIsNone(cs.auto_base())
+        self.assertEqual(self.main_out("auto")[0], "full=true\nlongshot=true")
 
     def test_base_moved_on_counts_only_own_commits(self):
         self.commit("tools/autotest/x.py")
@@ -132,7 +156,15 @@ class RealGit(unittest.TestCase):
         run(self.repo, "git", "mv", "hookshot/src/a.cpp", "tools/autotest/a.cpp")
         run(self.repo, "git", "commit", "-q", "-m", "move")
         self.assertEqual(sorted(cs.changed_files("integrate-0120")), ["hookshot/src/a.cpp", "tools/autotest/a.cpp"])
-        self.assertEqual(self.main_out()[0], "full=true")
+        self.assertEqual(self.main_out()[0].splitlines()[0], "full=true")
+
+    def test_longshot_paths(self):
+        for f in ("hookshot/src/a.cpp", "lichii/hook/coop_hook.cpp", "patches/x.ips", "hookshot/patches/0012.ips", "x/patches/y"):
+            self.assertTrue(cs.longshot_needed([f]), f)
+        for f in ("src/net/x.cpp", "tools/autotest/a.py", "cmake/enet.cmake", "tools/hookshot/x.py"):
+            self.assertFalse(cs.longshot_needed([f]), f)
+        self.assertTrue(cs.longshot_needed(None))
+        self.assertTrue(cs.longshot_needed([]))
 
     def test_missing_base_is_full(self):
         self.commit("tools/autotest/x.py")

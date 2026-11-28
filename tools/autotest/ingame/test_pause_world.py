@@ -213,7 +213,9 @@ def stood_under_stick(pair):
         l0, before = life(pair, "A"), pair.state("A").get("pos")
         pair.press("A", [], stick=[0, 1.0], frames=STICK)
         l1, after = life(pair, "A"), pair.state("A").get("pos")
-        hit = isinstance(l0, int) and isinstance(l1, int) and l1 < l0
+        # (review-rows-c130-12 nit: a Life that does not read as a number would make every window "no hit")
+        assert isinstance(l0, int) and isinstance(l1, int), "A: PlayerStatus.Life not read as a number: %r -> %r" % (l0, l1)
+        hit = l1 < l0
         pair.notes.append("phase1: stick try %d under the + menu, option on: Life %s -> %s, pos %s -> %s%s" % (
             i + 1, l0, l1, before, after, " (hit: again)" if hit else ""))
         if not hit:

@@ -181,6 +181,12 @@ class PerformerPlaysTest(unittest.TestCase):
         self.assertEqual(eye_switches.asker_class(key, {"results": [lift], "delete": []}, SHARED)[0], "live")
         self.assertEqual(eye_switches.classify(("Ev", "Cave", "", key[2], "", key[2]),
                                                {"on": [], "results": [lock], "delete": []}, SHARED)[0], "A")
+        # lock_only: class asker only for the lock (live without the rule): the bounded fallback's events (kLocks)
+        self.assertTrue(eye_switches.lock_only(key, w, SHARED))
+        own = {"results": [lock, ("flag", "Gimmick_Water", "set")], "delete": []}  # also an unshared flag: asker anyway
+        self.assertEqual(eye_switches.asker_class(key, own, SHARED)[0], "asker")
+        self.assertFalse(eye_switches.lock_only(key, own, SHARED))
+        self.assertFalse(eye_switches.lock_only(key, {"results": [lift], "delete": []}, SHARED))
 
 
 if __name__ == "__main__":

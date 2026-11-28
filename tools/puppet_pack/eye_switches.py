@@ -617,6 +617,18 @@ def performer_plays(event, scene, performers, plays):
                   for asname in by_name.get(actor, ()))
 
 
+def lock_only(key, wire, shared, plays=()):
+    """True when the asker is class asker ONLY for a shutter's lock (row 336): without the LOCK_INPUTS rule it would be
+    class live (as in 0.12.0). Such an event's set has a bounded fallback (coop_event_result.cpp kLocks): given up, its
+    flags land as a class-live event's did."""
+    if plays:
+        return False
+    event, scene, at = key
+    w = {"on": [], "results": wire["results"], "delete": wire["delete"]}
+    line = (event, scene, "", at, "", at)
+    return classify(line, w, shared)[0] == "A" and classify(line, w, shared, locks=True)[0] == "B"
+
+
 def asker_class(key, wire, shared, plays=()):
     """(class, why) of one asker for result only (row 98(2), owner 07:40 UTC 2026-11-17: a gimmick event another
     player played is never replayed here). "live": every room result of the asker reaches the room through a shared
@@ -848,7 +860,7 @@ def main(argv=None):
     if args.results:
         plays = event_plays(args.romfs, {e for _, e in performers} & {e for e, _, _ in askers})
         print("// kResults (event, scene, asker place, the outputs to set: none for class live)")
-        guarded, all_plays = [], set()
+        guarded, all_plays, locks = [], set(), []
         for key in sorted(askers):
             event, scene, at = key
             if keep is not None and (event, scene) not in keep:
@@ -861,10 +873,15 @@ def main(argv=None):
                   f'// {cls} ({askers[key]["actor"]}): {why}')
             if cls == "asker":
                 guarded += [(f, scene, event) for f in askers[key]["delete"] if shared is None or f in shared]
+                if lock_only(key, askers[key], shared or set(), mine):
+                    locks.append((event, scene))
         # An event of a live place with no asker actor (a shutter's or door's own field asks it): nothing of ours to
         # set, its results are the room's shared flags (class live).
         for event, scene in sorted((keep or set()) - {(e, s) for e, s, _ in askers}):
             print(f'    {{"{event}", "{scene}", {{0.0f, 0.0f, 0.0f}}, ""}},  // live (no asker actor: a field asks it)')
+        print("// kLocks (class asker only for a shutter's lock, row 336: a set given up lands their flags as class live)")
+        for event, scene in sorted(set(locks)):
+            print(f'    {{"{event}", "{scene}"}},')
         print("// kPlays (event, scene, performer, its place, the AS our performer plays: row 165)")
         for event, scene, actor, place, asname in sorted(all_plays):
             print(f'    {{"{event}", "{scene}", "{actor}", {{{place[0]}f, {place[1]}f, {place[2]}f}}, "{asname}"}},')

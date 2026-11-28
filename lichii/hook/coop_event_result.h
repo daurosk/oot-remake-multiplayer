@@ -89,6 +89,11 @@ std::vector<const Result*> AskerLines(std::string_view event, std::string_view s
                                       const std::optional<std::array<float, 3>>& link = std::nullopt);
 // Whether every asker of `event` is class live (and it has at least one line): its played flag is not held.
 bool IsLive(std::string_view event);
+// Row 336: a class-asker event that is class asker ONLY for a shutter's lock (eye_switches.py lock_only; class live in
+// 0.12.0). Its set has a bounded fallback: given up (not set, or not set within kLockFallbackMs of another player's
+// played flag waiting here), its played flag and result guards land as a class-live event's did, never worse.
+bool IsLockOnly(std::string_view event);
+inline constexpr std::uint64_t kLockFallbackMs = 10000;
 // The names in `outputs` ("EventBool+EventFinish"), in order.
 std::vector<std::string_view> SplitOutputs(std::string_view outputs);
 
@@ -136,9 +141,11 @@ struct Hold {
     bool Waits(std::uint32_t hash) const;
     bool WaitsKey(std::uint64_t key) const;
 };
+// `given_up` (row 336, Setter::GivenUp): lock-only events whose set was given up this visit: released like `applied`.
 Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
              const std::function<bool(const std::string&)>& played,
-             const std::function<bool(std::uint64_t)>& have_key = nullptr);
+             const std::function<bool(std::uint64_t)>& have_key = nullptr,
+             const std::set<std::string>& given_up = {});
 
 // The kill triggers' keepers in `scene` (pure): for each event our game has not played, the largest placement hash
 // of its kill actors that `alive` says is alive in our walk and that our game does not own (`ours`). The object sync
@@ -253,6 +260,10 @@ public:
     void Visit(const std::string& scene, const std::function<bool(const std::string&)>& played = nullptr);
     // The events whose result was set this visit.
     std::set<std::string> Applied();
+    // Row 336 (pure but for the clock): the lock-only events (IsLockOnly) of this visit whose set is given up: ended
+    // without a set, or `held` (their played flag waits here: another player played them) for kLockFallbackMs from the
+    // first frame seen held without a set. Each is noted once ("its flags land as a class-live event's").
+    std::set<std::string> GivenUp(const std::vector<std::string>& held, std::uint64_t now_ms);
     // The calc thread (CoopSvc caller contract).
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                          std::uint64_t main, std::uint64_t now_ms);
@@ -285,6 +296,8 @@ private:
     std::string scene_;
     std::set<std::string> applied_;  // this visit
     std::set<std::string> ended_;    // this visit: tried and not set (asked again on the next visit)
+    std::map<std::string, std::uint64_t> held_since_;  // this visit: a lock-only event first seen held (row 336)
+    std::set<std::string> given_up_;                   // this visit: lock-only events given up (row 336)
     std::uint64_t block_ = 0;
     enum class Next { none, malloc, execute, play };
     Next next_ = Next::none;

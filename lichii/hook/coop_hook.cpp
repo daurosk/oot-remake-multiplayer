@@ -1167,7 +1167,9 @@ public:
                     return coop::host::GameFlags(*memory).get_key64(k).value_or(false);
                 };
                 event_result_.Visit(hold_scene_, played);
-                result_hold = CoopEventResult::HoldFor(hold_scene_, event_result_.Applied(), played, have_key);
+                // Row 336: a lock-only event (class live in 0.12.0) whose set is given up lands as it did there.
+                result_hold = CoopEventResult::HoldFor(hold_scene_, event_result_.Applied(), played, have_key,
+                                                       event_result_.GivenUp(result_held_events_, SteadyMs()));
                 const std::pair<std::size_t, std::size_t> waits{result_hold.waiting_keys.size(),
                                                                 result_hold.waiting.size()};
                 if (waits != trigger_wait_logged_) {
@@ -1389,6 +1391,7 @@ public:
         if (!(hold && live_events_)) {
             std::lock_guard lock(dungeon_events_mutex_);
             dungeon_events_in_.clear();  // nothing takes them now: none applied late
+            result_held_events_.clear();  // co-op idle or no hold: nothing of others waits (row 336 clock stops)
         }
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
@@ -1449,6 +1452,7 @@ public:
                     held_events.emplace_back(e);
                 }
             }
+            result_held_events_ = held_events;
             const bool running = reading && reading->event_running.value_or(false);
             std::optional<std::array<float, 3>> link;
             if (view.position) {
@@ -3145,6 +3149,7 @@ private:
     // Row 98(2) (owner 07:40 UTC 2026-11-17): a held gimmick event another player played sets our asker's result
     // outputs (coop_event_result.h) instead of replaying it here; only with live events on (in a session).
     CoopEventResult::Setter event_result_;
+    std::vector<std::string> result_held_events_;  // last frame's held played events (row 336: GivenUp's clock)
     // The trigger guards' wait last logged (coop_event_result.h): placement keys, flags (hook thread).
     std::pair<std::size_t, std::size_t> trigger_wait_logged_{0, 0};
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).

@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -761,4 +762,52 @@ TEST_CASE("event result: row 160 (b): a kept kill's copy holds our key while kep
     CHECK_FALSE(shield.Next({0x100}, live));
     CHECK(CoopEventResult::kKeptShieldKey != 0xC0DB0D01u);  // not dbno's
     CHECK(CoopEventResult::kKeptShieldKey != 0xC0DB0D02u);  // not the PvP copies'
+}
+
+TEST_CASE("row 336: a lock-only event's set given up lands its flags as class live did (bounded fallback)") {
+    using CoopEventResult::HoldFor;
+    const std::string event = "DodongoCavern_Gimmick_DefeatLizalfos02";
+    const std::uint32_t clear = coop::protocol::flag_hash("Gimmick_DefeatEnemy_Open_DodongoCave_02");
+    const std::uint32_t played = coop::protocol::flag_hash("HavePlayedEvent." + event);
+    REQUIRE(CoopEventResult::IsLockOnly(event));
+    const auto none = [](const std::string&) { return false; };
+    // not set yet: the clear flag waits for our asker's result
+    CHECK(HoldFor("DodongoCavern", {}, none).Waits(clear));
+    // given up: the clear flag and the played flag land, as in 0.12.0 (class live)
+    const auto h = HoldFor("DodongoCavern", {}, none, nullptr, {event});
+    CHECK_FALSE(h.Waits(clear));
+    CHECK(h.Releases(clear));
+    CHECK(h.Releases(played));
+    // a class-asker event that was class asker before row 336 keeps its old floor (held until a leave or a load)
+    for (const auto& g : CoopEventResult::Guards()) {
+        const std::string e(g.event);
+        if (CoopEventResult::IsLockOnly(e)) continue;
+        CAPTURE(e);
+        const std::uint32_t f = coop::protocol::flag_hash(std::string(g.flag));
+        CHECK(HoldFor(g.scene, {}, none).Waits(f) == HoldFor(g.scene, {}, none, nullptr, {e}).Waits(f));
+    }
+}
+
+TEST_CASE("row 336: Setter::GivenUp gives a lock-only event up kLockFallbackMs after it waits, per visit") {
+    CoopEventResult::Setter s([](CoopPuppet::Guest&, std::uint64_t, std::span<const std::string_view>,
+                                 const std::array<float, 3>&, float) { return std::vector<std::uint64_t>{}; });
+    const std::string lock = "DodongoCavern_Gimmick_DefeatLizalfos02";
+    const std::string other = "DodongoCavern_Gimmick_EyeSwitch";  // class asker before row 336
+    REQUIRE_FALSE(CoopEventResult::IsLockOnly(other));
+    s.Visit("DodongoCavern");
+    const std::vector<std::string> held{lock, other};
+    CHECK(s.GivenUp(held, 1000).empty());
+    CHECK(s.GivenUp(held, 1000 + CoopEventResult::kLockFallbackMs - 1).empty());
+    const auto up = s.GivenUp(held, 1000 + CoopEventResult::kLockFallbackMs);
+    CHECK(up == std::set<std::string>{lock});
+    CHECK(s.TakeNotes().size() == 1);  // noted once
+    CHECK(s.GivenUp(held, 99999) == std::set<std::string>{lock});
+    CHECK(s.TakeNotes().empty());
+    // nothing waits (co-op idle, solo): nothing is given up, the clock never starts
+    s.Visit("FireTemple");
+    CHECK(s.GivenUp({}, 50000).empty());
+    CHECK(s.GivenUp({}, 99999).empty());
+    // a new visit starts the clock again
+    s.Visit("DodongoCavern");
+    CHECK(s.GivenUp(held, 200000).empty());
 }

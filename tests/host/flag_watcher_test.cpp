@@ -2415,6 +2415,66 @@ TEST_CASE("token guard: a token another player took, counted again here, is put 
   CHECK(has(entries(w.frame(store)), token_delta(1)));
 }
 
+// Row 331 (local co-op randomizer: a Gold Skulltula token did not raise the count): a seed puts tokens in
+// chests and pots, so a token comes with no Skulltula key, and the guard put it back for 5 minutes after
+// another player's Skulltula.
+TEST_CASE("token guard: a randomizer token from a chest after another player's Skulltula counts") {
+  TokenStore store = token_game();
+  const FlagKey chest = FlagKey::key64_flag(0x11223344aabbccddull);
+  store.set(chest, 0);
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  CHECK(w.share_pickup(chest));
+  w.frame(store);
+  w.receive(state({entry(kSkull, 1), token_total(6)}));  // another player's Skulltula
+  w.frame(store);
+  CHECK(store.tokens() == 6);
+  // Our Link opens a chest; the token comes out a few seconds later.
+  store.set(chest, 1);
+  CHECK(has(entries(w.frame(store)), entry(chest, 1)));
+  for (int f = 0; f < 4 * 60; ++f) w.frame(store);
+  store.tokens(7);
+  const auto sent = run_hold(w, store);
+  CHECK(sent == std::vector{token_delta(1)});
+  CHECK(store.tokens() == 7);
+  CHECK(w.stats().counts_guarded == 0);
+}
+
+TEST_CASE("token guard: one take elsewhere puts back one gain only") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  w.receive(state({entry(kSkull, 1), token_total(6)}));
+  w.frame(store);
+  // The copy of that token stayed here and our Link takes it: put back.
+  store.tokens(7);
+  CHECK(run_hold(w, store).empty());
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().counts_guarded == 1);
+  // A minute later a token with no key we know of (a randomizer's reward): that take is used up, it counts.
+  for (int f = 0; f < 60 * 60; ++f) w.frame(store);
+  store.tokens(7);
+  CHECK(run_hold(w, store) == std::vector{token_delta(1)});
+  CHECK(store.tokens() == 7);
+  CHECK(w.stats().counts_guarded == 1);
+}
+
+TEST_CASE("token guard: two gains at once after one take: one is put back, one counts") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  w.receive(state({entry(kSkull, 1), token_total(6)}));
+  w.frame(store);
+  store.tokens(8);
+  CHECK(run_hold(w, store) == std::vector{token_delta(1)});
+  CHECK(store.tokens() == 7);
+  const auto told = w.take_counts_guarded();
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].amount == 1);
+}
+
 TEST_CASE("token guard: a give-back while the gain is held cancels it") {
   TokenStore store = token_game();
   FlagWatcher w(token_shared(), FlagRole::player);

@@ -2765,6 +2765,63 @@ TEST_CASE("player ride: type 385, samples channel, horse and offset, both ways")
   CHECK(decode(flag_two, back) != Error::none);
 }
 
+TEST_CASE("navi sample: type 545, samples channel, offset and turn in its Link's frame, both ways (row 316)") {
+  CHECK(static_cast<std::uint16_t>(MessageType::navi_sample) == 545);
+  CHECK(channel_of(MessageType::navi_sample) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::navi_sample, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::navi_sample, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::navi_sample));
+  CHECK(may_send(Sender::server, MessageType::navi_sample));
+
+  Message back;
+  const NaviSample navi{2, kNaviShown, {0.3f, 0.9f, -0.2f}, {0.0f, 0.38f, 0.0f, 0.92f}};
+  const Bytes b = must_encode(Message{navi});
+  CHECK(b.size() == 4 + 2 + 28);  // type, length; u8 player, u8 flags, 7 floats
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{navi});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{2});
+
+  const NaviSample hidden{0, 0, {}, {0, 0, 0, 1}};
+  REQUIRE(decode(must_encode(Message{hidden}), back) == Error::none);
+  CHECK(back == Message{hidden});
+  CHECK(check_received(Message{hidden}, Sender::client, kChannelPlayerSamples) == Error::none);
+  CHECK(check_received(Message{navi}, Sender::client, kChannelPlayerSamples) == Error::wrong_sender);
+  CHECK(check_received(Message{navi}, Sender::server, kChannelPlayerSamples) == Error::none);
+
+  Bytes out;
+  NaviSample bad = navi;
+  bad.flags = 0x02;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // unknown flag bit
+  bad = navi;
+  bad.offset[1] = kMaxNaviOffset + 0.5f;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // farther than any Z-target
+  bad = navi;
+  bad.rotation[3] = std::numeric_limits<float>::infinity();
+  CHECK(encode(Message{bad}, out) == Error::bad_value);
+  bad = navi;
+  bad.offset[0] = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(Message{bad}, out) == Error::bad_value);
+  bad = hidden;
+  bad.offset[2] = 1.0f;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // a hidden fairy has no place
+  bad = hidden;
+  bad.rotation = {0.0f, 0.7f, 0.0f, 0.7f};
+  CHECK(encode(Message{bad}, out) == Error::bad_value);
+  bad = navi;
+  bad.player_number = kMaxPlayers + 1;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);
+  Bytes short_navi = b;
+  short_navi.pop_back();
+  CHECK(decode(short_navi, back) != Error::none);
+  // A flags byte with an unknown bit is refused on the way in too.
+  Bytes odd = b;
+  odd[5] = 0x03;
+  CHECK(decode(odd, back) == Error::bad_value);
+  // An older reader (0.12.0 knows types up to 564 but not 545) skips it by its header length.
+  Message old;
+  CHECK(stage0_decode(b, old) == Error::unknown_type);
+}
+
 TEST_CASE("platform clock: type 400, object samples channel, checked keys and floats (platforms-b)") {
   CHECK(static_cast<int>(MessageType::platform_clock) == 400);
   CHECK(channel_of(MessageType::platform_clock) == kChannelObjectSamples);

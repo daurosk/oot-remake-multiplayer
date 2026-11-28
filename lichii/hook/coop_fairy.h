@@ -11,25 +11,41 @@
 // included. The game's own Navi AI is not used: the director writes the
 // fairy's pose every game frame, like the puppet's.
 //
-// Follower is plain logic and is tested on its own; Publish is the emulator
-// glue (built only with LICHII_COOP).
+// Row 316: each fairy is where her player's own Navi is in their game. That
+// game sends NAVI_SAMPLE (NaviSender: its Npc_Navi's place and turn in its
+// Link's own frame, and whether she is out); the others put the fairy at the
+// puppet plus that offset, turned with the puppet (NaviSamples, Follower). A
+// player with no fresh sample (an older build or server) gets the shoulder
+// place below, as before.
+//
+// Follower, NaviSender and NaviSamples are plain logic and are tested on
+// their own; Publish and ShareNavi are the emulator glue (built only with
+// LICHII_COOP).
 #pragma once
 
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "coop/protocol/messages.hpp"
 #include "coop_puppet.h"
 #include "coop_caller_orders.h"
 #include "coop_rooms.h"
 
 namespace coop::host {
 class Session;
+}
+namespace coop::net {
+struct Event;
+}
+namespace Core {
+class System;
 }
 
 namespace CoopFairy {
@@ -72,6 +88,59 @@ struct Settings {
 // The svc cave's order for the fairy director (puppets first, CoopSpawn 10).
 inline constexpr int kCallerOrder = CoopCallerOrders::kFairy;
 
+// Row 316, our side: our own Navi (the game's Npc_Navi) as read this frame.
+struct NaviSeen {
+    bool present = false;  // on the actor list and present (state 4): she is out
+    Vec3 position{};
+    CoopPuppet::Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
+};
+
+// What to send of her (NAVI_SAMPLE): about 30 a second while she or our Link
+// moves, about 7 while both are still, and the same while she is not out (so
+// the others' fallback, after NaviSamples::kStaleMs, never shows a fairy we
+// do not have). A change of out/not out is sent at once.
+class NaviSender {
+public:
+    static constexpr std::uint64_t kEveryMs = 33;
+    static constexpr std::uint64_t kStillEveryMs = 150;
+    static constexpr float kStillM = 0.01f;
+
+    // `link_rotation` unset: identity. Our Link's place unread: nothing sent
+    // (her place would be a guess). Returns the message to send now, if any.
+    std::optional<coop::protocol::NaviSample> Tick(const NaviSeen& navi,
+                                                   const std::optional<Vec3>& link_position,
+                                                   const std::optional<CoopPuppet::Quat>& link_rotation,
+                                                   std::uint64_t now_ms);
+    void Reset() { *this = NaviSender{}; }
+
+private:
+    bool sent_ = false;
+    std::uint64_t last_ms_ = 0;
+    coop::protocol::NaviSample last_{};
+    Vec3 link_at_{};
+};
+
+// Theirs: the last NAVI_SAMPLE of each player. Receive and Forget on the
+// network thread, Fresh on the present thread.
+class NaviSamples {
+public:
+    // Older than this, a player's sample is not used (the samples channel is
+    // unreliable, and a player whose build sends none must still get a fairy).
+    static constexpr std::uint64_t kStaleMs = 600;
+
+    void Receive(const coop::protocol::NaviSample& m, std::uint64_t now_ms);
+    void Forget(std::uint8_t number);
+    std::map<std::uint8_t, coop::protocol::NaviSample> Fresh(std::uint64_t now_ms) const;
+
+private:
+    struct Kept {
+        coop::protocol::NaviSample m;
+        std::uint64_t ms = 0;
+    };
+    mutable std::mutex mutex_;
+    std::map<std::uint8_t, Kept> kept_;  // guarded
+};
+
 // Turns the puppets' targets into fairy targets. The present thread only.
 class Follower {
 public:
@@ -89,9 +158,15 @@ public:
     // gone) is parked under the floor (issue 145).
     // `local`: our Link's position; with it, a fairy whose player is in
     // another room of our dungeon is parked too (Settings::rooms).
+    // `navis` (row 316): each player's fresh NAVI_SAMPLE (NaviSamples::Fresh).
+    // A player in it gets her place and turn from their game, at the puppet
+    // (no bob, circle or adult scale: their game's Navi already sits by an
+    // adult's shoulder), and is parked while their Navi is not out. A player
+    // not in it gets Goal below (one log line each time that changes).
     CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
                              std::uint32_t live = ~0u,
-                             const std::optional<Vec3>& local = std::nullopt);
+                             const std::optional<Vec3>& local = std::nullopt,
+                             const std::map<std::uint8_t, coop::protocol::NaviSample>& navis = {});
 
     const Settings& settings() const { return settings_; }
 
@@ -104,6 +179,12 @@ public:
     // the offset turned by its rotation, plus the bob at `t` seconds. While
     // `calling`, call_offset and the call's quicker bob instead.
     Vec3 Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t number, bool calling = false) const;
+
+    // Row 316: where her player's game has her: the puppet's position plus the
+    // sample's offset turned by the puppet's rotation; her turn the puppet's
+    // turned by the sample's.
+    static Vec3 SampledGoal(const CoopPuppet::Target& puppet, const coop::protocol::NaviSample& m);
+    static CoopPuppet::Mat3 SampledTurn(const CoopPuppet::Target& puppet, const coop::protocol::NaviSample& m);
 
 private:
     struct Track {
@@ -118,6 +199,7 @@ private:
     Log log_;
     std::map<std::uint8_t, bool> room_parked_;  // per player: parked by the room rule (for the log)
     std::set<std::uint8_t> called_logged_;      // per player: this call's log line written
+    std::map<std::uint8_t, bool> sampled_logged_;  // row 316, per player: placed from a sample, as last logged
     static constexpr std::uint32_t kLocalKey = 0x100;  // our Link in rooms_
 };
 
@@ -199,5 +281,14 @@ std::uint64_t FairyActor(std::uint8_t number);
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, bool local_event,
              coop::host::Session* session, std::uint64_t server_now_us);
+
+// Row 316, CoopHook::OnFrame after Publish: our own Npc_Navi read and sent as
+// NAVI_SAMPLE (NaviSender) while we are in a session. `link_position` and
+// `link_rotation`: our Link's, as the PLAYER sample has them. Runs with the
+// fairies off too (the others may have them on).
+void ShareNavi(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
+               const std::optional<Vec3>& link_position, const std::optional<CoopPuppet::Quat>& link_rotation);
+// The network thread: NAVI_SAMPLE kept, a player who left forgotten.
+void OnEvent(const coop::net::Event& event);
 
 } // namespace CoopFairy

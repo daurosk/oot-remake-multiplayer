@@ -217,6 +217,7 @@ enum class MessageType : std::uint16_t {
   pvp_strike = 540,  // 540 to 544: PvP on real bodies (docs/protocol.md, "PvP on real bodies")
   pvp_result = 541,
   pvp_native = 542,
+  navi_sample = 545,  // 545 to 549: the players' fairies (docs/protocol.md, "Navi")
   party_wait_mode = 560,  // 560 to 564: wait for the party (docs/party-wait.md, protocol 19)
   emote = 615,  // 615 to 619: emotes and pings (docs/protocol.md, "Emotes")
 };
@@ -495,6 +496,23 @@ struct PlayerRide {
   std::optional<Animation> animation;
   Vec3 place{};                               // kRideFree only: the horse's place in the world
   bool operator==(const PlayerRide&) const = default;
+};
+
+// NAVI_SAMPLE (row 316, 0.12.1): where a player's own fairy (its game's Npc_Navi) is, sent with its samples
+// (channel 3, unreliable) about 30 times a second while she moves, about 7 while she sits still. The others put
+// their copy of that player's fairy at the player's puppet plus `offset` (her place minus her Link's, metres,
+// turned back by her Link's turn: her Link's own frame), turned `rotation` (her turn relative to her Link's).
+// With kNaviShown off the player has no fairy out (a cutscene, the C-up view, child Link before Navi, adult
+// Navi hidden): the others hide theirs; offset and rotation are then zero and identity. Same player field rules
+// as PLAYER_STATUS. Floats must be finite. Relayed like PLAYER_RIDE; an older reader skips the type.
+inline constexpr std::uint8_t kNaviShown = 0x01;
+inline constexpr float kMaxNaviOffset = 50.0f;  // each axis: she flies to what her Link Z-targets
+struct NaviSample {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::uint8_t flags = 0;                     // kNaviShown; other bits refused
+  Vec3 offset{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+  bool operator==(const NaviSample&) const = default;
 };
 
 // PLAYER_SAMPLE. The time component is always sent; the others only when the
@@ -2369,7 +2387,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound, LinkEffect,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote, PartyWaitMode>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote, PartyWaitMode, NaviSample>;
 
 MessageType type_of(const Message& message);
 

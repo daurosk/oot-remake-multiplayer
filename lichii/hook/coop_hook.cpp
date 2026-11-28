@@ -911,6 +911,7 @@ public:
             }
         }
         CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
+        CoopFairy::OnEvent(event);  // their Navis (NAVI_SAMPLE, row 316)
         CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
         // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
         if (const auto* v = event.kind == coop::net::EventKind::message
@@ -2011,6 +2012,9 @@ public:
                                                             .count()));
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Row 316: our own Navi's place, for the others' fairies of us (coop_fairy.h ShareNavi).
+        CoopFairy::ShareNavi(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
+                             view.position, reading ? reading->rotation : std::nullopt);
         // Issue 199: our horse sent while we ride; a copy of theirs under each
         // riding puppet (coop_ride.h).
         CoopRide::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,

@@ -190,6 +190,8 @@ inline std::vector<Message> every_message() {
   all.push_back(PlayerRide{2, 0, "", {}, {0, 0, 0, 1}, std::nullopt});
   all.push_back(PlayerRide{5, kRideFree, "Animal_Epona_Adult", {}, {0, 0.7f, 0, 0.7f}, Animation{"Wait", 1.5f, 1.0f},
                            {12.5f, -3.0f, 840.25f}});
+  all.push_back(NaviSample{0, kNaviShown, {0.2f, 0.8f, -0.1f}, {0, 0.38f, 0, 0.92f}});
+  all.push_back(NaviSample{3, 0, {}, {0, 0, 0, 1}});
   for (Message& m : object_messages()) all.push_back(std::move(m));
   all.push_back(Refused{RefuseReason::kicked});
   all.push_back(Refused{RefuseReason::banned});

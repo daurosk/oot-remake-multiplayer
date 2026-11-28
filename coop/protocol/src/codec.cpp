@@ -1334,6 +1334,37 @@ Error decode_body(Reader& r, PlayerRide& m) {
   return check_player_ride(m);
 }
 
+Error check_navi_sample(const NaviSample& m) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if ((m.flags & ~kNaviShown) != 0) return Error::bad_value;
+  if (!all_finite(m.offset) || !all_finite(m.rotation)) return Error::bad_value;
+  const bool shown = (m.flags & kNaviShown) != 0;
+  for (float f : m.offset) {
+    if (std::fabs(f) > kMaxNaviOffset || (!shown && f != 0.0f)) return Error::bad_value;
+  }
+  if (!shown && m.rotation != Quat{0.0f, 0.0f, 0.0f, 1.0f}) return Error::bad_value;
+  return Error::none;
+}
+
+// NAVI_SAMPLE: u8 player, u8 flags, offset 3 x f32, rotation 4 x f32.
+Error encode_body(const NaviSample& m, Writer& w) {
+  COOP_TRY(check_navi_sample(m));
+  w.u8(m.player_number);
+  w.u8(m.flags);
+  for (float f : m.offset) w.f32(f);
+  for (float f : m.rotation) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, NaviSample& m) {
+  m = NaviSample{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.flags));
+  for (float& f : m.offset) COOP_READ(r.f32(f));
+  for (float& f : m.rotation) COOP_READ(r.f32(f));
+  return check_navi_sample(m);
+}
+
 Error decode_body(Reader& r, Chat& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
@@ -3771,6 +3802,7 @@ MessageType type_of(const Message& message) {
       MessageType::boss_alive,
       MessageType::emote,
       MessageType::party_wait_mode,
+      MessageType::navi_sample,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -3783,6 +3815,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::player_sample:
     case MessageType::player_pose:
     case MessageType::player_ride:
+    case MessageType::navi_sample:
     case MessageType::test_payload:
     case MessageType::local_sample:
     case MessageType::lift_place:
@@ -3898,6 +3931,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_sample:
     case MessageType::player_pose:
     case MessageType::player_ride:
+    case MessageType::navi_sample:
     case MessageType::local_sample:
     case MessageType::lift_place:
       return channel == kChannelPlayerSamples;
@@ -3980,6 +4014,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::player_sample:
     case MessageType::player_pose:
     case MessageType::player_ride:
+    case MessageType::navi_sample:
     case MessageType::test_payload:
     case MessageType::join_partner:
     case MessageType::flag_set:
@@ -4070,7 +4105,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
                       std::is_same_v<T, DungeonEvent> || std::is_same_v<T, SwitchState> ||
-                      std::is_same_v<T, PlayerRide> ||
+                      std::is_same_v<T, PlayerRide> || std::is_same_v<T, NaviSample> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
                       std::is_same_v<T, PlatformCounter> ||
@@ -4210,6 +4245,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::player_ride: return decode_as<PlayerRide>(body, out);
+    case MessageType::navi_sample: return decode_as<NaviSample>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
     case MessageType::object_group: return decode_as<ObjectGroup>(body, out);
     case MessageType::fish_lure: return decode_as<FishLure>(body, out);

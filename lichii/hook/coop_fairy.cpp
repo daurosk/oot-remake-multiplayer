@@ -10,6 +10,7 @@
 #include <string_view>
 #include <utility>
 
+#include "coop_objects_sync.h"
 #include "coop_pose.h"
 
 namespace CoopFairy {
@@ -23,7 +24,112 @@ float Distance(const Vec3& a, const Vec3& b) {
     return std::sqrt(x * x + y * y + z * z);
 }
 
+using CoopPuppet::Mat3;
+constexpr Mat3 kIdentity{1, 0, 0, 0, 1, 0, 0, 0, 1};
+
+// Rows of 3, as the actors hold their matrices.
+Vec3 Apply(const Mat3& m, const Vec3& v) {
+    return {m[0] * v[0] + m[1] * v[1] + m[2] * v[2], m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+            m[6] * v[0] + m[7] * v[1] + m[8] * v[2]};
+}
+
+Mat3 Transpose(const Mat3& m) {
+    return {m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]};
+}
+
+Mat3 Mul(const Mat3& a, const Mat3& b) {
+    Mat3 out{};
+    for (int r = 0; r < 3; ++r) {
+        for (int k = 0; k < 3; ++k) {
+            out[r * 3 + k] = a[r * 3] * b[k] + a[r * 3 + 1] * b[3 + k] + a[r * 3 + 2] * b[6 + k];
+        }
+    }
+    return out;
+}
+
+template <std::size_t N>
+bool Finite(const std::array<float, N>& v) {
+    return std::all_of(v.begin(), v.end(), [](float f) { return std::isfinite(f); });
+}
+
 } // namespace
+
+// ---------------------------------------------------------------- row 316: our Navi, sent
+
+std::optional<coop::protocol::NaviSample> NaviSender::Tick(const NaviSeen& navi,
+                                                           const std::optional<Vec3>& link_position,
+                                                           const std::optional<CoopPuppet::Quat>& link_rotation,
+                                                           std::uint64_t now_ms) {
+    namespace proto = coop::protocol;
+    if (!link_position || !Finite(*link_position)) {
+        return std::nullopt;
+    }
+    proto::NaviSample m;
+    if (navi.present && Finite(navi.position) && Finite(navi.rotation)) {
+        // Her place and turn in our Link's own frame: the others turn them with our puppet, so she stays where
+        // she is beside us whatever the network delay.
+        const Mat3 frame = link_rotation && Finite(*link_rotation) ? CoopPuppet::QuatToMatrix(*link_rotation)
+                                                                    : kIdentity;
+        m.offset = Apply(Transpose(frame), {navi.position[0] - (*link_position)[0],
+                                            navi.position[1] - (*link_position)[1],
+                                            navi.position[2] - (*link_position)[2]});
+        m.rotation = CoopObjects::QuatOf(Mul(Transpose(frame), navi.rotation));
+        if (Finite(m.offset) && Finite(m.rotation)) {
+            m.flags = proto::kNaviShown;
+            for (float& f : m.offset) {
+                f = std::fmax(-proto::kMaxNaviOffset, std::fmin(proto::kMaxNaviOffset, f));
+            }
+        } else {
+            m = proto::NaviSample{};  // not readable as a turn: sent as not out, never a bad message
+        }
+    }
+    const bool changed = !sent_ || m.flags != last_.flags;
+    const bool moved = Distance(*link_position, link_at_) > kStillM || Distance(m.offset, last_.offset) > kStillM;
+    const std::uint64_t every = moved ? kEveryMs : kStillEveryMs;
+    if (!changed && now_ms < last_ms_ + every) {
+        return std::nullopt;
+    }
+    sent_ = true;
+    last_ms_ = now_ms;
+    last_ = m;
+    link_at_ = *link_position;
+    return m;
+}
+
+// ---------------------------------------------------------------- row 316: theirs, kept
+
+void NaviSamples::Receive(const coop::protocol::NaviSample& m, std::uint64_t now_ms) {
+    if (m.player_number == coop::protocol::kPlayerSelf) {
+        return;  // only relayed ones name a player
+    }
+    std::lock_guard lock(mutex_);
+    kept_[m.player_number] = Kept{m, now_ms};
+}
+
+void NaviSamples::Forget(std::uint8_t number) {
+    std::lock_guard lock(mutex_);
+    kept_.erase(number);
+}
+
+std::map<std::uint8_t, coop::protocol::NaviSample> NaviSamples::Fresh(std::uint64_t now_ms) const {
+    std::map<std::uint8_t, coop::protocol::NaviSample> out;
+    std::lock_guard lock(mutex_);
+    for (const auto& [number, k] : kept_) {
+        if (now_ms < k.ms + kStaleMs) {
+            out.emplace(number, k.m);
+        }
+    }
+    return out;
+}
+
+Vec3 Follower::SampledGoal(const CoopPuppet::Target& puppet, const coop::protocol::NaviSample& m) {
+    const Vec3 d = Apply(puppet.rotation, m.offset);
+    return {puppet.position[0] + d[0], puppet.position[1] + d[1], puppet.position[2] + d[2]};
+}
+
+CoopPuppet::Mat3 Follower::SampledTurn(const CoopPuppet::Target& puppet, const coop::protocol::NaviSample& m) {
+    return Mul(puppet.rotation, CoopObjects::MatOf(m.rotation));
+}
 
 void Follower::Call(std::uint8_t number, std::uint64_t now_ms) {
     calls_[number] = now_ms + settings_.call_ms;
@@ -59,7 +165,8 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
 }
 
 CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
-                                   std::uint32_t live, const std::optional<Vec3>& local) {
+                                   std::uint32_t live, const std::optional<Vec3>& local,
+                                   const std::map<std::uint8_t, coop::protocol::NaviSample>& navis) {
     CoopPuppet::Input out;
     out.main_base = puppets.main_base;
     out.scene = puppets.scene;
@@ -100,9 +207,22 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         } else if (!calling) {
             called_logged_.erase(p.number);
         }
-        const Vec3 goal = Goal(p, t, p.number, calling);
+        // Row 316: her player's game says where she is (a call still flies her up over their head).
+        const auto navi = navis.find(p.number);
+        const bool sampled = navi != navis.end() && !calling;
+        if (log_ && !calling) {
+            const auto was = sampled_logged_.find(p.number);
+            if (was == sampled_logged_.end() || was->second != sampled) {
+                log_(sampled ? "P" + std::to_string(p.number) + "'s Navi placed from their game (NAVI_SAMPLE)"
+                             : "no NAVI_SAMPLE from P" + std::to_string(p.number) +
+                                   ": their Navi hovers by the shoulder (an older build or server)");
+                sampled_logged_[p.number] = sampled;
+            }
+        }
+        const Vec3 goal = sampled ? SampledGoal(p, navi->second) : Goal(p, t, p.number, calling);
         Track track{goal, now_ms};
-        if (const auto it = tracks_.find(p.number); it != tracks_.end()) {
+        // A sampled place is already where she trails in her own game: drawn there, at the puppet as it is now.
+        if (const auto it = tracks_.find(p.number); !sampled && it != tracks_.end()) {
             const Track& was = it->second;
             const float dt =
                 now_ms > was.ms ? static_cast<float>(now_ms - was.ms) / 1000.0f : 0.0f;
@@ -118,9 +238,14 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         f.number = p.number;
         f.actor = settings_.actor;
         f.position = track.at;
-        f.rotation = p.rotation;
+        f.rotation = sampled ? SampledTurn(p, navi->second) : p.rotation;
         f.show = p.show;  // hidden, held or shown with her puppet
         f.why = p.why;
+        // Row 316: their Navi is not out (a cutscene, the C-up view, no Navi yet): neither is ours of them.
+        if (sampled && (navi->second.flags & coop::protocol::kNaviShown) == 0 && f.show != CoopPuppet::Show::hide) {
+            f.show = CoopPuppet::Show::hide;
+            f.why = "her player's Navi is not out";
+        }
         // Issue 145: never without her puppet. Placed from the puppet's
         // current spot either way (parked under it), so she shows there
         // when she may.
@@ -157,6 +282,9 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     tracks_ = std::move(kept);
     for (auto it = room_parked_.begin(); it != room_parked_.end();) {
         it = tracks_.count(it->first) != 0 ? std::next(it) : room_parked_.erase(it);
+    }
+    for (auto it = sampled_logged_.begin(); it != sampled_logged_.end();) {
+        it = tracks_.count(it->first) != 0 ? std::next(it) : sampled_logged_.erase(it);
     }
     return out;
 }
@@ -285,10 +413,15 @@ void Wings::Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
 #include <memory>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop/host/session.hpp"
+#include "coop/net/client.hpp"
 #include "coop/presence/presence.hpp"
+#include "core/core.h"
+#include "core/memory.h"
 #include "coop_emote_game.h"
 #include "coop_navi_probe.h"
 #include "coop_svc.h"
@@ -450,6 +583,44 @@ Glue& TheGlue() {
     return glue;
 }
 
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+// Row 316: our Navi sent, theirs kept. Apart from Glue: sent and kept with the fairies off too.
+struct NaviShare {
+    NaviSender sender;           // the present thread
+    NaviSamples samples;         // Receive: the network thread; Fresh: the present thread
+    std::uint64_t navi = 0;      // our Npc_Navi as last found (the present thread)
+    std::uint64_t search_ms = 0;
+    bool searched = false;
+    std::optional<bool> logged_out;  // her out / not out, as last logged
+};
+
+NaviShare& TheShare() {
+    static NaviShare share;
+    return share;
+}
+
+// The application memory as a CoopPuppet::Guest, read only (as coop_ride.cpp reads it on this thread).
+class MemoryGuest final : public CoopPuppet::Guest {
+public:
+    explicit MemoryGuest(Core::Memory::Memory& memory) : memory_(memory) {}
+    bool Read(std::uint64_t address, void* out, std::size_t size) override {
+        if (address < 0x1000 || !memory_.IsValidVirtualAddressRange(address, size)) {
+            return false;
+        }
+        memory_.ReadBlockUnsafe(address, out, size);
+        return true;
+    }
+    bool Write(std::uint64_t, const void*, std::size_t) override { return false; }
+
+private:
+    Core::Memory::Memory& memory_;
+};
+
 } // namespace
 
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
@@ -472,8 +643,63 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     glue.main_base.store(main_base);
     auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     CoopPuppet::StampDrawing(puppets, now_ms);
-    glue.director->SetInput(
-        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets(), position));
+    glue.director->SetInput(glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets(), position,
+                                                  TheShare().samples.Fresh(SteadyMs())));
+}
+
+void ShareNavi(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
+               const std::optional<Vec3>& link_position, const std::optional<CoopPuppet::Quat>& link_rotation) {
+    static const bool off = Env("LICHII_COOP_NAVI_SHARE") == "0";
+    NaviShare& s = TheShare();
+    if (off || session == nullptr || main_base == 0) {
+        s.sender.Reset();
+        s.navi = 0;
+        return;
+    }
+    MemoryGuest guest(system.ApplicationMemory());
+    const std::uint64_t now_ms = SteadyMs();
+    if (s.navi != 0 && !ActorNamed(guest, s.navi, "Npc_Navi")) {
+        s.navi = 0;  // a load made a new one (or none)
+    }
+    if (s.navi == 0 && (!s.searched || now_ms - std::min(now_ms, s.search_ms) >= Wings::kSearchMs)) {
+        s.searched = true;
+        s.search_ms = now_ms;
+        s.navi = FindActor(guest, main_base, "Npc_Navi");
+    }
+    NaviSeen seen;
+    if (s.navi != 0) {
+        namespace pa = CoopPuppet::addr;
+        seen.present = ActorPresent(guest, s.navi) &&
+                       guest.Read(s.navi + pa::kActorPosition, seen.position.data(), sizeof seen.position) &&
+                       guest.Read(s.navi + pa::kActorRotation, seen.rotation.data(), sizeof seen.rotation);
+    }
+    const auto m = s.sender.Tick(seen, link_position, link_rotation, now_ms);
+    if (!m) {
+        return;
+    }
+    const bool sent = session->with_client([&](coop::net::Client& c) { return c.send(*m); });
+    const bool out = (m->flags & coop::protocol::kNaviShown) != 0;
+    if (s.logged_out != out) {
+        s.logged_out = out;
+        LOG_INFO(Core, "coop: navi: our Npc_Navi {}, sending NAVI_SAMPLE{}",
+                 out ? fmt::format("is out at {:.2f} {:.2f} {:.2f} from our Link", m->offset[0], m->offset[1],
+                                   m->offset[2])
+                     : std::string(s.navi != 0 ? "is not out" : "is not on the actor list"),
+                 sent ? "" : " (not sent)");
+    }
+}
+
+void OnEvent(const coop::net::Event& event) {
+    if (event.kind == coop::net::EventKind::player_left) {
+        TheShare().samples.Forget(event.player);
+        return;
+    }
+    if (event.kind != coop::net::EventKind::message) {
+        return;
+    }
+    if (const auto* m = std::get_if<coop::protocol::NaviSample>(&event.message)) {
+        TheShare().samples.Receive(*m, SteadyMs());
+    }
 }
 
 std::uint64_t FairyActor(std::uint8_t number) {

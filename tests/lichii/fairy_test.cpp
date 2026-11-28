@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_fairy.h"
 #include "coop_pose.h"
 
@@ -452,4 +453,167 @@ TEST_CASE("fairy: another room but within room_near of us is shown (a doorway)")
     s.room_near = 0.0f;
     Follower strict(s, Dungeon());
     CHECK(strict.Follow(in, 1000, ~0u, ours).targets[0].show == CoopPuppet::Show::hide);
+}
+
+// ---------------------------------------------------------------- row 316: NAVI_SAMPLE
+
+namespace {
+namespace proto = coop::protocol;
+using CoopFairy::NaviSamples;
+using CoopFairy::NaviSeen;
+using CoopFairy::NaviSender;
+
+proto::NaviSample Sampled(std::uint8_t number, CoopPuppet::Vec3 offset,
+                          proto::Quat turn = {0.0f, 0.0f, 0.0f, 1.0f}) {
+    return proto::NaviSample{number, proto::kNaviShown, offset, turn};
+}
+}  // namespace
+
+TEST_CASE("navi sample: the fairy sits where her player's game has her, turned with the puppet (row 316)") {
+    Follower f;  // the real settings: bob and circle on, which a sampled place never gets
+    const std::map<std::uint8_t, proto::NaviSample> navis{{2, Sampled(2, {0.5f, 1.2f, -0.4f})}};
+    auto out = f.Follow(Puppets(2, {10, 0, 5}), 1000, ~0u, std::nullopt, navis);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].position[0] == doctest::Approx(10.5f));
+    CHECK(out.targets[0].position[1] == doctest::Approx(1.2f));
+    CHECK(out.targets[0].position[2] == doctest::Approx(4.6f));
+    CHECK(out.targets[0].show == CoopPuppet::Show::show);
+    // Half a turn about y: the offset turns with the puppet, and so does she.
+    out = f.Follow(Puppets(2, {10, 0, 5}, {-1, 0, 0, 0, 1, 0, 0, 0, -1}), 1500, ~0u, std::nullopt, navis);
+    CHECK(out.targets[0].position[0] == doctest::Approx(9.5f));
+    CHECK(out.targets[0].position[1] == doctest::Approx(1.2f));
+    CHECK(out.targets[0].position[2] == doctest::Approx(5.4f));
+    CHECK(out.targets[0].rotation[0] == doctest::Approx(-1.0f));
+    CHECK(out.targets[0].rotation[8] == doctest::Approx(-1.0f));
+    // No trailing on top of hers: a moved puppet has her at once where its game has her.
+    out = f.Follow(Puppets(2, {13, 0, 5}), 1533, ~0u, std::nullopt, navis);
+    CHECK(out.targets[0].position[0] == doctest::Approx(13.5f));
+}
+
+TEST_CASE("navi sample: her turn is the puppet's turned by the sample's") {
+    // A quarter turn about y for her, relative to her Link; the puppet unturned: hers exactly.
+    const float h = std::sqrt(0.5f);
+    const auto m = Sampled(1, {0, 1, 0}, {0.0f, h, 0.0f, h});
+    Target p;
+    const auto r = Follower::SampledTurn(p, m);
+    CHECK(r[0] == doctest::Approx(0.0f).epsilon(1e-5));
+    CHECK(r[2] == doctest::Approx(1.0f));
+    CHECK(r[6] == doctest::Approx(-1.0f));
+    // The puppet half turned: both turns, three quarters.
+    p.rotation = {-1, 0, 0, 0, 1, 0, 0, 0, -1};
+    const auto r2 = Follower::SampledTurn(p, m);
+    CHECK(r2[2] == doctest::Approx(-1.0f));
+    CHECK(r2[6] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("navi sample: an adult's fairy gets no shoulder scale, only her own place") {
+    Follower f;
+    Input in = Puppets(3, {0, 0, 0});
+    in.targets[0].actor = "CoopPuppet_Adult";
+    const auto out = f.Follow(in, 1000, ~0u, std::nullopt, {{3, Sampled(3, {0.3f, 1.6f, 0.2f})}});
+    CHECK(out.targets[0].position[0] == doctest::Approx(0.3f));
+    CHECK(out.targets[0].position[1] == doctest::Approx(1.6f));
+    CHECK(out.targets[0].position[2] == doctest::Approx(0.2f));
+}
+
+TEST_CASE("navi sample: their Navi not out parks ours of them, her puppet's own hide still wins") {
+    Follower f(Still());
+    const std::map<std::uint8_t, proto::NaviSample> hidden{{2, proto::NaviSample{2, 0, {}, {0, 0, 0, 1}}}};
+    auto out = f.Follow(Puppets(2, {10, 0, 5}), 1000, ~0u, std::nullopt, hidden);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+    CHECK(std::string(out.targets[0].why) == "her player's Navi is not out");
+    Input in = Puppets(2, {10, 0, 5});
+    in.targets[0].show = CoopPuppet::Show::hide;
+    in.targets[0].why = "our cutscene";
+    out = f.Follow(in, 1100, ~0u, std::nullopt, hidden);
+    CHECK(std::string(out.targets[0].why) == "our cutscene");
+    // Out again: shown at her place.
+    out = f.Follow(Puppets(2, {10, 0, 5}), 1200, ~0u, std::nullopt, {{2, Sampled(2, {0, 1, 0})}});
+    CHECK(out.targets[0].show == CoopPuppet::Show::show);
+    CHECK(out.targets[0].position[1] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("navi sample: no sample (an older build) is the shoulder place, logged once per change") {
+    std::vector<std::string> lines;
+    Follower f(Still(), {}, [&](const std::string& l) { lines.push_back(l); });
+    auto out = f.Follow(Puppets(2, {10, 0, 5}), 1000);
+    CHECK(out.targets[0].position[0] == doctest::Approx(10 + Still().offset[0]));
+    f.Follow(Puppets(2, {10, 0, 5}), 1033);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("no NAVI_SAMPLE from P2") != std::string::npos);
+    f.Follow(Puppets(2, {10, 0, 5}), 1066, ~0u, std::nullopt, {{2, Sampled(2, {0, 1, 0})}});
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].find("P2's Navi placed from their game") != std::string::npos);
+}
+
+TEST_CASE("navi sample: a call still flies her up over their head") {
+    Settings s = Still();
+    s.call_bob = 0.0f;
+    Follower f(s);
+    f.Call(2, 1000);
+    float y = 0.0f;
+    for (std::uint64_t ms = 1000; ms < 3000; ms += 50) {
+        y = f.Follow(Puppets(2, {0, 0, 0}), ms, ~0u, std::nullopt, {{2, Sampled(2, {0.4f, 0.9f, 0})}})
+                .targets[0].position[1];
+    }
+    CHECK(y == doctest::Approx(s.call_offset[1]).epsilon(0.02));
+}
+
+TEST_CASE("navi samples: kept per player, stale after kStaleMs, forgotten when the player leaves") {
+    NaviSamples k;
+    k.Receive(Sampled(2, {0, 1, 0}), 1000);
+    k.Receive(Sampled(0, {0, 1, 0}), 1000);  // our own (unrelayed): never kept
+    k.Receive(Sampled(4, {1, 1, 0}), 1200);
+    auto fresh = k.Fresh(1000 + NaviSamples::kStaleMs - 1);
+    CHECK(fresh.size() == 2);
+    CHECK(fresh.count(0) == 0);
+    fresh = k.Fresh(1000 + NaviSamples::kStaleMs);
+    CHECK(fresh.size() == 1);
+    CHECK(fresh.count(4) == 1);
+    k.Forget(4);
+    CHECK(k.Fresh(1300).empty() == false);  // player 2 still fresh at 1300
+    CHECK(k.Fresh(1300).count(4) == 0);
+}
+
+TEST_CASE("navi sender: her place and turn in our Link's frame, out or not, at its rates") {
+    NaviSender s;
+    NaviSeen seen;
+    seen.present = true;
+    seen.position = {10.0f, 1.0f, 4.0f};  // 1 m up, 1 m behind (world -z) our Link at (10, 0, 5)
+    seen.rotation = {-1, 0, 0, 0, 1, 0, 0, 0, -1};  // turned as our Link is
+    // Our Link turned half about y: world -z is his forward +z, world x his -x.
+    const CoopPuppet::Quat half{0.0f, 1.0f, 0.0f, 0.0f};
+    auto m = s.Tick(seen, CoopPuppet::Vec3{10, 0, 5}, half, 0);
+    REQUIRE(m);
+    CHECK(m->flags == proto::kNaviShown);
+    CHECK(m->offset[0] == doctest::Approx(0.0f).epsilon(1e-5));
+    CHECK(m->offset[1] == doctest::Approx(1.0f));
+    CHECK(m->offset[2] == doctest::Approx(1.0f));
+    // Her own turn the same as his: identity relative to him.
+    CHECK(std::fabs(m->rotation[3]) == doctest::Approx(1.0f).epsilon(1e-4));
+    // The same again within kStillEveryMs: nothing; moving: every kEveryMs.
+    CHECK_FALSE(s.Tick(seen, CoopPuppet::Vec3{10, 0, 5}, half, NaviSender::kEveryMs));
+    CHECK(s.Tick(seen, CoopPuppet::Vec3{10, 0, 5}, half, NaviSender::kStillEveryMs));
+    const std::uint64_t t = NaviSender::kStillEveryMs;
+    CHECK_FALSE(s.Tick(seen, CoopPuppet::Vec3{10.5f, 0, 5}, half, t + NaviSender::kEveryMs - 1));
+    CHECK(s.Tick(seen, CoopPuppet::Vec3{10.5f, 0, 5}, half, t + NaviSender::kEveryMs));
+    // Not out: sent at once, as zero offset and identity (a message the codec takes), then at the still rate.
+    seen.present = false;
+    m = s.Tick(seen, CoopPuppet::Vec3{10.5f, 0, 5}, half, t + NaviSender::kEveryMs + 1);
+    REQUIRE(m);
+    CHECK(m->flags == 0);
+    CHECK(m->offset == CoopPuppet::Vec3{0, 0, 0});
+    CHECK(m->rotation == proto::Quat{0, 0, 0, 1});
+    CHECK_FALSE(s.Tick(seen, CoopPuppet::Vec3{10.5f, 0, 5}, half, t + 100));
+    CHECK(s.Tick(seen, CoopPuppet::Vec3{10.5f, 0, 5}, half, t + NaviSender::kEveryMs + 1 + NaviSender::kStillEveryMs));
+    // Our place unread: nothing (her place would be a guess).
+    seen.present = true;
+    CHECK_FALSE(s.Tick(seen, std::nullopt, half, 100000));
+    // Far (a Z-target beyond kMaxNaviOffset): held at the bound, never a refused message.
+    seen.position = {10.0f, 0.0f, 500.0f};
+    m = s.Tick(seen, CoopPuppet::Vec3{10, 0, 5}, std::nullopt, 200000);
+    REQUIRE(m);
+    CHECK(m->offset[2] == doctest::Approx(proto::kMaxNaviOffset));
+    std::vector<std::uint8_t> bytes;
+    CHECK(proto::encode(proto::Message{*m}, bytes) == proto::Error::none);
 }

@@ -81,6 +81,15 @@ class PauseWorldMode(unittest.TestCase):
         self.assertIn('probe: - menu holds (option off): {"2": ["0x6b6b", 1]}', notes, notes)
         self.assertIn('"name": "World runs in menus"', notes, notes)
 
+    def test_a_hit_in_the_stick_window_is_done_again(self):
+        """A Stalfos hit (Life fell) in the stick window is not 'Link moved': the window is done again (review-rows-c130-12
+        FIX 1), and the good game still ends NO-REF."""
+        p, r, out = self.run_mode("hit")
+        self.assertEqual(r, {MODE: "NO-REF"}, p.stdout[-3000:])
+        notes = " ".join(summary(out)["tests"][0].get("notes") or [])
+        self.assertIn("(hit: again)", notes, notes)
+        self.assertIn("phase1: stick try 2 under the + menu", notes, notes)
+
     def test_hold_kept_fails(self):
         p, r, _ = self.run_mode("held")
         self.assertEqual(r, {MODE: "FAIL"}, p.stdout[-3000:])

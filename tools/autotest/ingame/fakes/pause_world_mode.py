@@ -14,7 +14,8 @@ test sees a change (B #149). Then:
 - the Settings page (fakes/menu_pages.py's menu.coop page "settings") lists the "World runs in menus" row.
 BT_FAKE_PAUSE_WORLD_MODE=held: the option in force lets no hold go (the test must FAIL "still held");
 =walks: Link walks under the menu with the option on (FAIL "Link moved"); =status: B still reads A in a menu (FAIL
-"neither in a menu nor paused"). Any other value: the good game.
+"neither in a menu nor paused"); =hit: a Stalfos hits Link (Life -4) in the first stick window under the menu, and
+knocks him 1 m (the test must do the window again and end NO-REF, not FAIL). Any other value: the good game.
 """
 import os
 
@@ -70,6 +71,10 @@ def press(game, buttons):
     if not _on(game):
         return False
     p = game.pwm
+    if not buttons and _runs(game) and _mode() == "hit" and not p.get("hit"):
+        p["hit"] = True
+        game.link_life["PlayerStatus.Life"] -= 4
+        p["drift"] += 1.0   # (the knockback: not the pad)
     if "PLUS" in buttons and not game.menu_pause:   # (fakegame toggles menu_pause after the hooks: this one opens it)
         _say_release(game, PLUS_HOLD)
     if "MINUS" in buttons:

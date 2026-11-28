@@ -145,7 +145,8 @@ SHUT_FRAMES = 150                  # test_map_back_295 SHUT_FRAMES (MINUS shuts 
 # (coop/host/src/sampler.cpp); one second of frames is far over a sample's gap.
 STATUS_FRAMES = 60
 STILL_M = 0.05                     # Link "stood": under 5 cm over the held stick (as MOVED_M)
-QUICK = 20                         # frames R is held for the quick-switch probe
+QUICK = 20                         # frames R is held for the quick-switch probe: NOTES ONLY, any length (no assert)
+STICK_TRIES = 3                    # stick windows at most: one with a Stalfos hit (Life fell) is done again
 
 
 def world_line(pair, x, label):
@@ -197,6 +198,27 @@ def map_up(pair, x):
 def minus_tab(pair, x):
     m = ((pair.state(x).get("menu") or {}).get("minus")) or {}
     return m.get("tab") if m.get("open") else None
+
+
+def life(pair, x):
+    return pair.flag_read(x, "PlayerStatus.Life").get("value")
+
+
+def stood_under_stick(pair):
+    """Link's place over STICK frames of held stick under the open menu, on a window with no hit: a Stalfos hit's
+    knockback moves Link for a reason that is not the pad (review-rows-c130-12 FIX 1), so a window where Life fell is
+    done again after keep_up (STICK_TRIES at most). Returns (before, after); asserts a window without a hit came."""
+    for i in range(STICK_TRIES):
+        keep_up(pair)
+        l0, before = life(pair, "A"), pair.state("A").get("pos")
+        pair.press("A", [], stick=[0, 1.0], frames=STICK)
+        l1, after = life(pair, "A"), pair.state("A").get("pos")
+        hit = isinstance(l0, int) and isinstance(l1, int) and l1 < l0
+        pair.notes.append("phase1: stick try %d under the + menu, option on: Life %s -> %s, pos %s -> %s%s" % (
+            i + 1, l0, l1, before, after, " (hit: again)" if hit else ""))
+        if not hit:
+            return before, after
+    raise AssertionError("A: a Stalfos hit Link in each of %d stick windows: Link's standing not judged" % STICK_TRIES)
 
 
 def a_status_on_b(pair, num_a, menu):
@@ -277,10 +299,7 @@ def test_pause_world_mode(pair):
     s = pair.until("B sees A neither in a menu nor paused (option on)", lambda: a_status_on_b(pair, num_a, False),
                    max_frames=STATUS_FRAMES)
     pair.notes.append("phase1: B's status bits of A, option on, + menu: %d" % s["bits"])
-    before = pair.state("A").get("pos")
-    pair.press("A", [], stick=[0, 1.0], frames=STICK)
-    after = pair.state("A").get("pos")
-    pair.notes.append("phase1: stick under the + menu, option on: %s -> %s" % (before, after))
+    before, after = stood_under_stick(pair)
     assert before and after and math.dist(before, after) < STILL_M, (
         "A: Link moved under the + menu with the option on: %s -> %s" % (before, after))
     for x in ("A", "B"):

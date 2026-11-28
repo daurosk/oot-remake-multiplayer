@@ -62,6 +62,11 @@ class SplitFillLayoutHelper(unittest.TestCase):
         self.assertEqual(s["HOS_ASPECT"], "%d:%d" % (cw, ch))
         self.assertEqual(s["HOS_OUTPUT_RES"], "%dx%d" % (cw // 8 * 8, ch // 8 * 8))
 
+    def test_relaunch_asks_shots_at_the_output_size(self):
+        env = S.relaunch_env({"HOS_ASPECT": "944:1041", "HOS_OUTPUT_RES": "944x1040", "HOS_WINDOW_SIZE": "944x1041"})
+        self.assertEqual(env, ["HOS_ASPECT=944:1041", "HOS_OUTPUT_RES=944x1040", "HOS_WINDOW_SIZE=944x1041",
+                               "RX_VK_SHOT_W=944", "RX_VK_SHOT_H=1040"])
+
     def test_place_without_a_game_says_why(self):
         with self.assertRaises(AssertionError) as e:
             S.helper("-Mode", "place", "-GamePid", "1", "-Rect", "0,0,10,10")

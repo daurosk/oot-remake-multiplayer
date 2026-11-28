@@ -233,6 +233,12 @@ inline constexpr std::uint64_t kRespawnWaitUs = 20'000'000;
 // counts this long, and while their scene loads (a door, a loading zone), so
 // a door's load does not flap between nearby and not.
 inline constexpr std::uint64_t kNearbyGraceUs = 1'000'000;
+// Row 330: a downed player who holds A this long gives up (row 317 c): the
+// co-op death at once (as a bleed-out: watch the one nearby, back beside them
+// once no enemy is near), never the game's Game Over and its Try Again at the
+// last save while a teammate stands. A fresh press: A held as he went down
+// (an attack) does not count until it is let go.
+inline constexpr std::uint64_t kGiveUpUs = 2'000'000;
 
 // How the respawn's move went (coop_teleport_game.h Beside / ToEntrance).
 enum class Moved : std::uint8_t { none, done, failed };
@@ -281,6 +287,8 @@ struct Input {
     // life lets it revive us, as in the solo game, so a lethal hit is not held
     // back (the guard is off while we hold one) and we are not downed.
     bool bottled_fairy = false;
+    // Row 330: downed, A held this frame (our own pad, before DownedPad takes it).
+    bool give_up = false;
 };
 
 enum class Event : std::uint8_t {
@@ -295,6 +303,9 @@ enum class Event : std::uint8_t {
     // Rows 318 + 334: a lethal hit or a bleed-out with no teammate nearby: no
     // downed wait, no spectating; straight to the entrance, then respawned.
     alone,
+    // Row 330: we held A to give up while downed: spectating at once, as a
+    // bleed-out (Output::by: whom we watch); with nobody up, the wipe.
+    gave_up,
 };
 
 struct Output {
@@ -316,6 +327,10 @@ struct Output {
     // scene start). The respawn follows once Input::moved says done.
     std::uint8_t move_beside = 0;
     bool move_entrance = false;
+    // Row 330, downed: a teammate is up, so holding A gives up; how far the
+    // hold is (0 to 1).
+    bool can_give_up = false;
+    float give_up = 0.0f;
 };
 
 class Machine {
@@ -331,6 +346,9 @@ public:
 private:
     std::uint8_t PickReviver(const Input& in) const;
     std::uint8_t PickWatch(const Input& in) const;
+    // Row 330: any teammate up and in the game to be moved beside (the
+    // nearest in our scene, else the lowest number); 0 none.
+    std::uint8_t PickBeside(const Input& in) const;
     // Rows 318 + 334: who is nearby now (Teammate::here, kNearbyGraceUs).
     void Notice(const Input& in);
     bool Nearby(const Teammate& t, std::uint64_t now_us) const;
@@ -360,6 +378,12 @@ private:
     std::uint64_t move_since_us_ = 0;
     std::uint64_t dying_since_us_ = 0;  // up at no life: since when; 0 not
     std::uint64_t alone_retry_us_ = 0;  // spectating alone: the entrance not before this
+    std::uint64_t give_up_us_ = 0;      // downed: how long A has been held to give up
+    bool give_up_armed_ = false;        // downed: A was let go since we went down
+    // Row 330: out by the game's own death while a teammate stood (not the
+    // wipe): its Game Over's Try Again loads the last save, maybe far away;
+    // once back, our Link is moved beside a teammate.
+    bool out_alone_ = false;
     std::array<std::uint64_t, proto::kMaxPlayers + 1> near_us_{};  // last time each was nearby; 0 never
     std::array<std::uint64_t, proto::kMaxPlayers + 1> hold_us_{};  // last hold per player; 0 none
     std::optional<proto::DbnoStatus> sent_;

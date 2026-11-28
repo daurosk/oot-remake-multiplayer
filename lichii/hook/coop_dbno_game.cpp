@@ -381,6 +381,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     // Spectating: A (as the player pressed it) watches the next player.
     const bool button = g.button.load();
     in.next = g.machine.Now() == State::spectating && button && !g.was_button;
+    in.give_up = g.machine.Now() == State::downed && button;  // row 330: hold A to give up
     g.was_button = button;
     // The respawn's move (asked by an earlier frame): how it went.
     if (const auto moved = CoopTeleport::TakeRespawnMove()) {
@@ -538,6 +539,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             }
             if (out.state == State::downed) {
                 view = View{View::Kind::downed, NameOf(client, out.reviver), out.left_us, out.progress, false};
+                view->can_give_up = out.can_give_up;
+                view->give_up = out.give_up;
             } else if (out.state == State::spectating) {
                 view = View{View::Kind::spectating, NameOf(client, out.watching), 0, 0.0f, false};
                 view->elsewhere = out.watching != 0 && !watched_here;

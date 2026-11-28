@@ -707,6 +707,17 @@ TEST_CASE("dbno line: the caption says who, the line adds the clock and the revi
           "Hold A to revive Saria  0:05");
     View watch{View::Kind::spectating, "Saria", 0, 0, false};
     CHECK(CoopDbnoDraw::Line(watch) == "Watching Saria  A: next player");
+    // Row 330: downed, nobody reviving, a teammate up: the give up hold, then its share.
+    View down{View::Kind::downed, "", 32'000'000, 0.0f, false};
+    down.can_give_up = true;
+    CHECK(CoopDbnoDraw::Line(down) == "You are down  0:32  Hold A: give up");
+    down.give_up = 0.5f;
+    CHECK(CoopDbnoDraw::Line(down) == "You are down  0:32  Giving up 50%");
+    CHECK(CoopDbnoDraw::BannerLine(down, 10000) == "You are down  0:32  Giving up 50%");
+    // Being revived: no give up shown.
+    View helped{View::Kind::downed, "Saria", 32'000'000, 0.25f, false};
+    helped.can_give_up = true;
+    CHECK(CoopDbnoDraw::Line(helped) == "Saria is reviving you  0:32  25%");
 }
 
 TEST_CASE("dbno banner line: always fits the game's banner, the clock / share / next player never cut") {

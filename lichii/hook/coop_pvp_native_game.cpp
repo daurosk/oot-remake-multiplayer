@@ -220,11 +220,13 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         }
     }
 
-    // Which copies are the _Pvp actor: PvP on (the session's value), our glue and pack, their PVP_NATIVE.
+    // Which copies are the _Pvp actor: PvP on (the session's value), our glue and pack, their PVP_NATIVE, and
+    // the player up (a downed, out or spectating player is no target: docs/native-puppets.md 5.1).
     const bool pvp_on = CoopPvp::On();
     std::uint32_t wants = 0;
     for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
-        const CoopPvpNative::CopyMode mode{pvp_on, true, pack_pvp, (peers & Bit(n)) != 0};
+        const bool up = CoopDbno::StateOfPlayer(n) == CoopDbno::State::up;
+        const CoopPvpNative::CopyMode mode{pvp_on, true, pack_pvp, (peers & Bit(n)) != 0, up};
         if (CoopPvpNative::WantedCopy(mode) == CoopPvpNative::CopyActor::pvp) wants |= Bit(n);
     }
     CoopPuppet::SetPvpCopies(wants);  // the director makes those copies the _Pvp actor

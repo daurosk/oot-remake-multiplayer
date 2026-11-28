@@ -100,6 +100,9 @@ class Copy(NamedTuple):
     # The copy's scale (x, y) in place of the source's (the pane's +0x10 and +0x14, 1.0 on the game's own parts): a
     # part layout drawn smaller where it goes than where the game uses it (the Options toggle in the title's column).
     scale: Optional[tuple] = None
+    # The copy's own z turn word (the pane's +0x18, f32 radians) as these 4 bytes' u32 in place of the source's: the
+    # map icons' turn mark (map_icons.TURN_MARK_BITS), an exact word the co-op module looks for on the loaded pane.
+    turn_bits: Optional[int] = None
 
 
 def _q(d, o):
@@ -434,6 +437,10 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
         if c.scale is not None:
             r[0x10:0x14] = _f32(c.scale[0], "the scale of %s" % c.name)
             r[0x14:0x18] = _f32(c.scale[1], "the scale of %s" % c.name)
+        if c.turn_bits is not None:
+            if isinstance(c.turn_bits, bool) or not isinstance(c.turn_bits, int) or not 0 <= c.turn_bits <= 0xFFFFFFFF:
+                raise UiPackError("the turn word of %s is not a u32" % c.name)
+            struct.pack_into("<I", r, 0x18, c.turn_bits)
         if c.size is not None:
             r[0x2c:0x30] = _f32(c.size[0], "the size of %s" % c.name)
             r[0x30:0x34] = _f32(c.size[1], "the size of %s" % c.name)

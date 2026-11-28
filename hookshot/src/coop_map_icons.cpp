@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <utility>
@@ -238,6 +239,8 @@ bool Icons::Ready(CoopNativeTags::Game& game, std::size_t i) {
     // their own pane, as the pause tab's)
     if (c.pane == 0) c.pane = Own(game, table_, CopyName(i).c_str());
     if (c.pane == 0) return why_ = "no " + CopyName(i), false;
+    // (copy 0 carries the pack's turn mark: put back to 0 on this screen before it is ever shown)
+    if (i == 0 && !TurnMark(game)) return why_ = CopyName(0) + ": its turn mark not read", false;
     if (c.icon == 0) c.icon = PartIn(game, table_, CopyName(i).c_str());
     if (c.icon == 0) return why_ = CopyName(i) + ": no part layout", false;
     if (c.player == 0) c.player = PartIn(game, c.icon, "Pa_Player_00");
@@ -267,7 +270,7 @@ std::uint64_t Icons::Own(CoopNativeTags::Game& game, std::uint64_t table, const 
     return pane ? *pane : 0;
 }
 
-bool Icons::Step(CoopNativeTags::Game& game, const Frame& frame) {
+bool Icons::Screen(CoopNativeTags::Game& game) {
     const std::uint64_t screen = CoopNativeTags::ScreenByVtable(game, CoopNativeTags::kMapMenuVtable);
     // A new screen, or the same address holding another layout (a load whose new screen reuses the old one's memory):
     // its panes are new, the old ones may be freed. Forget them without a game call.
@@ -278,8 +281,49 @@ bool Icons::Step(CoopNativeTags::Game& game, const Frame& frame) {
         screen_ = screen;
         layout_ = layout_now;
     }
-    if (screen == 0) return why_ = "no map screen", up_ = false;
-    if (layout_ == 0 || !Block(game)) return why_ = layout_ == 0 ? "no map layout" : "no memory", up_ = false;
+    if (screen == 0) return why_ = "no map screen", false;
+    if (layout_ == 0 || !Block(game)) return why_ = layout_ == 0 ? "no map layout" : "no memory", false;
+    return true;
+}
+
+bool Icons::TurnMark(CoopNativeTags::Game& game) {
+    Copy& c = copies_[0];
+    if (c.mark_checked) return true;
+    if (table_ == 0) {
+        const auto t = game.Call(game.MainBase() + kPaneTable, {layout_ + 0x40, 0, 0, 0, 0});
+        table_ = t ? *t : 0;
+    }
+    if (table_ == 0) return false;
+    if (c.pane == 0) c.pane = Own(game, table_, CopyName(0).c_str());
+    std::uint32_t word = 0;
+    if (c.pane == 0 || !game.Read(c.pane + kTurnMarkAt, &word, sizeof word)) return false;
+    if (word == kTurnMarkBits) {
+        const float zero = 0.0f;
+        if (!game.Write(c.pane + kTurnMarkAt, &zero, sizeof zero)) return false;
+        CoopNativeTags::MarkPaneMoved(game, c.pane);
+        turn_proven_ = true;
+    } else if (!turn_proven_) {
+        turn_proven_ = false;
+    }
+    turn_seen_ = word;
+    c.mark_checked = true;
+    return true;
+}
+
+std::optional<bool> Icons::CheckTurn(CoopNativeTags::Game& game) {
+    if (turn_proven_) return turn_proven_;
+    if (!Screen(game) || !TurnMark(game)) return std::nullopt;
+    return turn_proven_;
+}
+
+std::uint64_t TurnPlace(const std::string& turn_env, std::optional<bool> proven) {
+    if (!turn_env.empty()) return std::strtoull(turn_env.c_str(), nullptr, 16);
+    if (kPaneTurn != 0) return kPaneTurn;
+    return proven.value_or(false) ? kTurnMarkAt : 0;
+}
+
+bool Icons::Step(CoopNativeTags::Game& game, const Frame& frame) {
+    if (!Screen(game)) return up_ = false;
     if (clip_ == 0) clip_ = Find(game, layout_, kClipPane);
     float m[12] = {};
     const auto inverse = clip_ != 0 && game.Read(clip_ + kPaneMatrix, m, sizeof m) ? Inverse(m) : std::nullopt;

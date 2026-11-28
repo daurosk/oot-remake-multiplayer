@@ -693,8 +693,8 @@ void MapIcons(void* ctx) {
     static const bool on = Env("LICHII_COOP_MAP_NATIVE") != "0";
     // (set, 0 included: 0 = not turned, the escape from the inferred kPaneTurn without a rebuild)
     static const std::string turn_env = Env("LICHII_COOP_MAP_TURN_AT");
-    static const std::uint64_t turn_at = std::strtoull(turn_env.c_str(), nullptr, 16);
     static std::string said;
+    static std::uint32_t check_tick = 0;
     if (!on) return;
     // A load: every pane the copies knew may be freed; forgotten before anything else (also while nothing is shown,
     // so a load between two co-op map views is seen: the party-hud-crash-c126 rule, as CoopMapPage's).
@@ -702,10 +702,25 @@ void MapIcons(void* ctx) {
         g_map_icons.Forget();
         return;
     }
-    // No turn place known (kPaneTurn 0 and no trial, or TURN_AT=0): the game's copies would show the others' arrows
-    // unturned, so they stay down and the overlay keeps drawing the turned arrows (G2a; no loss against 0.11.12).
-    static const std::uint64_t place = turn_env.empty() ? CoopMapIcons::kPaneTurn : turn_at;
     const auto frame = CoopMapIcons::Taken();
+    // The turn place (CoopMapIcons::TurnPlace): with no trial and kPaneTurn 0, the pack's turn mark on copy 0 is read
+    // on the game's own loaded pane (CheckTurn, every 30 frames while someone is on the map and it is not decided).
+    // Mark seen: the copies turn their arrows at kTurnMarkAt. Not seen (an old pack), or TURN_AT=0: no place, the
+    // game's copies would show the others' arrows unturned, so they stay down and the overlay keeps drawing the turned
+    // arrows (the v0.12.0 path; G2a, no loss against 0.11.12).
+    std::optional<bool> proven = g_map_icons.TurnProven();
+    if (turn_env.empty() && CoopMapIcons::kPaneTurn == 0 && !proven && !frame.marks.empty() && ++check_tick % 30 == 0) {
+        TagsGame game(ctx);
+        proven = g_map_icons.CheckTurn(game);
+        if (proven) {
+            LOG_INFO(Core, "coop: map icons: turn place {}", *proven
+                ? fmt::format("+{:#x} proven (the pack's mark {:#x} read on Pa_CoopMapIcon_00): the game's arrows turn",
+                              CoopMapIcons::kTurnMarkAt, g_map_icons.TurnMarkSeen())
+                : fmt::format("not proven (+{:#x} holds {:#x}, not the mark {:#x}): the overlay's turned arrows stay",
+                              CoopMapIcons::kTurnMarkAt, g_map_icons.TurnMarkSeen(), CoopMapIcons::kTurnMarkBits));
+        }
+    }
+    const std::uint64_t place = CoopMapIcons::TurnPlace(turn_env, proven);
     const bool stepping = place != 0 && !(frame.marks.empty() && g_map_icons.shown() == 0);
     // The turn place's probe (play-test bridge only, test_map_turn_probe.py): while the copies are not stepped (no
     // place known, solo, nobody on the map) the game's own arrow's words still go into map_native, every 30 frames,

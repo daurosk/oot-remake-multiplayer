@@ -322,6 +322,85 @@ TEST_CASE("map icons: no turn place known (kPaneTurn 0, or TURN_AT=0): the arrow
     CHECK_FALSE(st.shown[0].wrote_turn.has_value());
 }
 
+namespace {
+std::uint64_t CopyZero(FakeGame& g) { return g.panes.at({g.tables.at(kLayout), "Pa_CoopMapIcon_00"}); }
+std::uint32_t WordAt(FakeGame& g, std::uint64_t a) {
+    std::uint32_t w = 0;
+    g.Read(a, &w, sizeof w);
+    return w;
+}
+}  // namespace
+
+TEST_CASE("map icons: the pack's turn mark on copy 0 proves kTurnMarkAt, is put back to 0, then the arrows turn") {
+    FakeGame g;
+    SetUp(g, 2);
+    g.Put<std::uint32_t>(CopyZero(g) + M::kTurnMarkAt, M::kTurnMarkBits);   // (map_icons.py TURN_MARK_BITS at +0x18)
+    M::Icons icons;
+    CHECK_FALSE(icons.TurnProven().has_value());
+    const auto proven = icons.CheckTurn(g);
+    REQUIRE(proven.has_value());
+    CHECK(*proven);
+    CHECK(icons.TurnMarkSeen() == M::kTurnMarkBits);
+    CHECK(WordAt(g, CopyZero(g) + M::kTurnMarkAt) == 0);   // the copy keeps no turn of its own
+    CHECK(g.shown.empty());                                // nothing shown by the check
+    CHECK(g.texts.empty());
+    CHECK(M::TurnPlace("", proven) == M::kTurnMarkAt);
+    icons.TurnAt(M::TurnPlace("", proven));
+    M::Frame f;
+    f.marks = {At(2, 2020, 980, "Saria")};
+    f.marks[0].angle = 0.0f;
+    REQUIRE(icons.Step(g, f));
+    const M::State st = icons.Snapshot(g);
+    REQUIRE(st.shown.size() == 1);
+    REQUIRE(st.shown[0].wrote_turn.has_value());
+    CHECK(*st.shown[0].wrote_turn == doctest::Approx(-1.5707963f));
+    CHECK(st.turn_at == 0x68);
+    // a new screen (a load: the layout read from the file again, the mark back): Step's copy 0 clears it again, before
+    // anything is shown, and the boot stays proven
+    icons.Forget();
+    g.Put<std::uint32_t>(CopyZero(g) + M::kTurnMarkAt, M::kTurnMarkBits);
+    REQUIRE(icons.Step(g, f));
+    CHECK(WordAt(g, CopyZero(g) + M::kTurnMarkAt) == 0);
+    CHECK(icons.TurnProven() == std::optional<bool>(true));
+}
+
+TEST_CASE("map icons: no turn mark (an old pack) is the v0.12.0 path: no place, nothing of the game's written or shown") {
+    FakeGame g;
+    SetUp(g, 2);   // (copy 0's +0x68 is the file's own 0: the pack before map-icons-255-5)
+    M::Icons icons;
+    const auto proven = icons.CheckTurn(g);
+    REQUIRE(proven.has_value());
+    CHECK_FALSE(*proven);
+    CHECK(icons.TurnMarkSeen() == 0);
+    CHECK(g.shown.empty());
+    CHECK(g.texts.empty());
+    CHECK(g.touched.empty());   // (no pane shown, hidden or marked moved)
+    // no place: MapIcons does not step the copies, the overlay's turned arrows stay (as kPaneTurn 0 in v0.12.0)
+    CHECK(M::TurnPlace("", proven) == 0);
+    CHECK(M::TurnPlace("", std::nullopt) == 0);   // (not decided yet: the same)
+    // decided once for the boot: a later screen is not read again
+    g.Put<std::uint32_t>(CopyZero(g) + M::kTurnMarkAt, M::kTurnMarkBits);
+    CHECK(icons.CheckTurn(g) == std::optional<bool>(false));
+    // another word than the mark is no mark (a near float is not it)
+    FakeGame g2;
+    SetUp(g2, 1);
+    g2.Put<std::uint32_t>(CopyZero(g2) + M::kTurnMarkAt, M::kTurnMarkBits + 1);
+    M::Icons other;
+    CHECK(other.CheckTurn(g2) == std::optional<bool>(false));
+    CHECK(WordAt(g2, CopyZero(g2) + M::kTurnMarkAt) == M::kTurnMarkBits + 1);   // left as it was
+}
+
+TEST_CASE("map icons: the turn mark is not decided with no map screen or no copy 0, the trial env wins") {
+    FakeGame none;   // (no UI manager: no map screen)
+    M::Icons icons;
+    CHECK_FALSE(icons.CheckTurn(none).has_value());
+    FakeGame g;
+    SetUp(g, 0);     // (a map screen, no pack: no Pa_CoopMapIcon_00)
+    CHECK_FALSE(icons.CheckTurn(g).has_value());
+    CHECK(M::TurnPlace("68", std::nullopt) == 0x68);   // LICHII_COOP_MAP_TURN_AT=68
+    CHECK(M::TurnPlace("0", std::optional<bool>(true)) == 0);   // TURN_AT=0: not turned, even when proven
+}
+
 TEST_CASE("map icons: a new layout at the same screen address (a load) forgets the old panes, no call into them") {
     FakeGame g;
     SetUp(g, 2);

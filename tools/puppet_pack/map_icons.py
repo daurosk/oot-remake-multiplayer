@@ -17,6 +17,12 @@ ICON_PART = "Pa_MapIcon_00"
 ICON_PARENT = "S_MapIcon_00"
 COPY_NAME = "Pa_CoopMapIcon_%02d"   # (hookshot/src/coop_map_icons.h kCopyName: the same names)
 MAP_ICONS = 15                      # one per other player (a session holds up to 16: kMaxPlayers)
+# Copy 0's z turn word (its pane record's +0x18): 1.2345678f (hookshot/src/coop_map_icons.h kTurnMarkBits, the same
+# word). The module reads it on the loaded pane at kTurnMarkAt (+0x68): seen there, the layout's turn is stored there
+# (the arrows then turn natively) and it is put back to 0 before the copy is ever shown; not seen, the copies stay down
+# and the overlay's arrows stay (map-icons-255-5, B #175). The copy is stored hidden, so a game without the module never
+# shows it turned.
+TURN_MARK_BITS = 0x3F9E0651
 
 
 class MapIconsError(ValueError):
@@ -36,7 +42,8 @@ def add_icons(d):
             raise MapIconsError("the layout has no %s" % name)
     if COPY_NAME % 0 in names:
         raise MapIconsError("the layout has %s already" % (COPY_NAME % 0))
-    copies = [ui_pack.Copy(ICON_PART, n, parent=ICON_PARENT, hidden=True) for n in copy_names()]
+    copies = [ui_pack.Copy(ICON_PART, n, parent=ICON_PARENT, hidden=True, turn_bits=TURN_MARK_BITS if i == 0 else None)
+              for i, n in enumerate(copy_names())]
     return ui_pack.clone_parts(d, copies, out_of_order=True)
 
 

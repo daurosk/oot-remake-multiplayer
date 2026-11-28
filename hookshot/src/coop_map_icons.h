@@ -45,6 +45,17 @@ inline constexpr std::uint64_t kPaneMatrix = 0x28;   // pane+: the global matrix
 // LICHII_COOP_MAP_TURN_AT=<hex> tries one without a rebuild. With no place (0, or TURN_AT=0) the module leaves the
 // copies down and the overlay's turned arrows stay (coop_hookshot.cpp MapIcons): never an unturned arrow.
 inline constexpr std::uint64_t kPaneTurn = 0;
+// map-icons-255-5 (B #175): the candidate checked on the game itself, each boot, before any copy is turned. The pack
+// stores copy 0's pane (Pa_CoopMapIcon_00) with rotation kTurnMarkBits (map_icons.py TURN_MARK_BITS, its record's
+// +0x18; the game's own panes keep 0 there). When the game's loaded pane holds exactly that word at kTurnMarkAt, the
+// layout's rotation is stored there (proven, per boot, by the game's own load): the word is put back to 0 and the
+// copies turn their arrows at kTurnMarkAt. Any other word (an old pack, another layout) leaves the v0.12.0 path: the
+// copies stay down and the overlay keeps drawing the turned arrows.
+inline constexpr std::uint64_t kTurnMarkAt = 0x68;
+inline constexpr std::uint32_t kTurnMarkBits = 0x3F9E0651;   // 1.2345678f: an exact word, no layout turn
+// The turn place MapIcons uses: the LICHII_COOP_MAP_TURN_AT trial when set (hex, "0" = not turned), else kPaneTurn
+// when known, else kTurnMarkAt only once the mark was seen (`proven` true); 0 = the v0.12.0 path (no copies stepped).
+std::uint64_t TurnPlace(const std::string& turn_env, std::optional<bool> proven);
 
 // One other player on the map shown, in the layout's units (3840 x 2160, x right, y down from the top left).
 struct Mark {
@@ -122,6 +133,12 @@ public:
     // A scene load (or a new map screen): every pane known is dropped, with no game call (they may be freed).
     void Forget();
     void TurnAt(std::uint64_t pane_offset) { turn_at_ = pane_offset; }   // 0: not turned
+    // The pack's turn mark on copy 0 (kTurnMarkBits at kTurnMarkAt), read once per map screen with nothing shown:
+    // none while it cannot be read yet (no map screen, no pane table, no copy 0); true once the mark was seen (the word
+    // then put back to 0; it stays true for the boot), false when copy 0 holds another word (an old pack).
+    std::optional<bool> CheckTurn(CoopNativeTags::Game& game);
+    std::optional<bool> TurnProven() const { return turn_proven_; }
+    std::uint32_t TurnMarkSeen() const { return turn_seen_; }   // the word CheckTurn read (for the log)
     const std::string& why() const { return why_; }
     // The rotation-offset probe: an icon layout's (a PaMapIcon_00 the map screen holds) arrow N_PlayerRotate_00; 0
     // when not found.
@@ -152,6 +169,7 @@ private:
         std::uint64_t arrow = 0;                            // the icon's N_Player_00
         bool arrow_shown = false;
         bool ready = false, name_set = false;
+        bool mark_checked = false;   // copy 0: its pane's turn mark read (and cleared) on this screen
         std::optional<float> turned;
         std::string named;
         std::uint32_t rgb = 0;
@@ -162,12 +180,16 @@ private:
     std::uint64_t Find(CoopNativeTags::Game& game, std::uint64_t layout, const char* name);
     std::uint64_t Own(CoopNativeTags::Game& game, std::uint64_t table, const char* name);
     bool Ready(CoopNativeTags::Game& game, std::size_t i);
+    bool Screen(CoopNativeTags::Game& game);      // the map screen and its layout (a new one: Forget); false: none
+    bool TurnMark(CoopNativeTags::Game& game);    // copy 0's mark read + cleared once per screen; false: not yet
     void Show(CoopNativeTags::Game& game, std::uint64_t pane, bool shown);
 
     std::uint64_t screen_ = 0, layout_ = 0, clip_ = 0, table_ = 0;
     std::uint64_t block_ = 0;
     bool block_failed_ = false, up_ = false;
     std::uint64_t turn_at_ = kPaneTurn;
+    std::optional<bool> turn_proven_;   // (not reset by Forget: the pack is the same all boot)
+    std::uint32_t turn_seen_ = 0;
     std::string why_;
     std::vector<std::string> names_;
     std::array<Copy, kCopies> copies_{};

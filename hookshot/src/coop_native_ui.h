@@ -217,7 +217,9 @@ public:
     static constexpr std::size_t kSlotText = kSlotBytes - sizeof(Ref) - 1;
     static constexpr std::size_t kSlots = 48;
     static constexpr std::size_t kScratchBytes = 64;
-    static constexpr std::size_t kFixed = 1;   // slots after the ring written in place (the held banner line)
+    // Slots after the ring for the held banner line, used in turn (banner-steady-0121): a new text goes into the one the
+    // text box does not show, so the game never reads a text of ours while we rewrite it.
+    static constexpr std::size_t kFixed = 2;
     static constexpr std::size_t kBlockBytes = kSlotBytes * (kSlots + kFixed) + kScratchBytes;
 
     void SetBlock(std::uint64_t base) { base_ = base; }
@@ -227,8 +229,8 @@ public:
     // Writes the text (cleaned again, cut to kSlotText at a character; '\n' kept) and its Ref; the Ref's guest
     // address, or 0 when it could not be written.
     std::uint64_t Put(Game& game, std::string_view text);
-    // Fixed slot `index` (< kFixed) written in place with the text: its Ref's address, or 0. Its text pointer never
-    // changes, so a line re-set every second (the held line's clock) never walks round the ring.
+    // Fixed slot `index` (< kFixed) written with the text: its Ref's address, or 0. Fixed slots never walk round the
+    // ring (a line re-set every second, the held line's clock); the caller writes one the text box does not show.
     std::uint64_t PutFixed(Game& game, std::size_t index, std::string_view text);
     std::uint64_t Scratch() const { return base_ == 0 ? 0 : base_ + kSlotBytes * (kSlots + kFixed); }
 
@@ -373,6 +375,7 @@ private:
     std::uint64_t until_ = 0;  // the page's time
     std::string shown_;
     std::uint64_t ours_ = 0;   // the text box's pointer after our last set (the game may copy the text)
+    std::size_t held_slot_ = TextRing::kFixed - 1;   // the fixed slot of the held line set last (the next set: the other)
     TextTint tint_;
 };
 

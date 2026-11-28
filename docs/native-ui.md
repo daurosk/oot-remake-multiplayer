@@ -83,8 +83,9 @@ own layout (`W_Bg_00`, shown), no option, and the game shows its own short notic
   "T_Text_00")` and is used only when it is a text pane (kind 2) whose text box holds colours; the game's own colours
   are read first and put back for a notice, the held line, and as soon as the banner is not ours.
 - **A held line** (`CoopNativeUi::HoldBanner(text)` / `EndBanner()`, from any thread): the banner is opened when it is
-  free, its text set only when it changes (the fixed slot, written in place, so a clock that changes each second never
-  walks round the ring), and it is closed (slot 6) when let go, only while the banner is ours. Chat and the typed line
+  free, its text set only when it changes (two fixed slots after the ring, used in turn: the new text goes into the one
+  the text box does not show, so the game never reads a text we are rewriting, and a clock that changes each second
+  never walks round the ring; banner-steady-0121), and it is closed (slot 6) when let go, only while the banner is ours. Chat and the typed line
   wait meanwhile.
 - **Typing**: while the chat box is open the typed line is on the banner, set again on each change (no opening
   again); chat that comes meanwhile waits; closing the box closes the line at once.

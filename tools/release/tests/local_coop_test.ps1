@@ -326,7 +326,16 @@ try {
     Set-KitLocalEnvironment 3 27561 'pw' 30
     Check (-not $env:OOT_COOP_LOCAL_HOST -and -not $env:LICHII_COOP_PAD -and -not $env:LICHII_COOP_KEYBOARD -and -not $env:LICHII_COOP_COLOR) 'game 3: no host, its controller and colour from its coop-player.ini (not player 1''s)'
     Check ($env:HOS_WINDOW_NOACTIVATE -eq '1' -and -not $env:HOS_FPS_MAX) 'game 3: opens behind (its cap is in its own options file)'
-    foreach ($k in 'OOT_COOP_LOCAL_HOST', 'HOS_WINDOW_NOACTIVATE', 'HOS_FULLSCREEN', 'HOS_FPS_MAX', 'LICHII_COOP_PAD', 'LICHII_COOP_KEYBOARD', 'LICHII_COOP_COLOR') { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    # (row 301: each game's window shape, Hookshot patch 0047's switches; none given: none set, none left from before)
+    Check (-not $env:HOS_ASPECT -and -not $env:HOS_OUTPUT_RES -and -not $env:HOS_WINDOW_SIZE) 'game 3 with no shape: the game''s own picture'
+    Set-KitLocalEnvironment 2 27561 'pw' 0 @{ HOS_ASPECT = '1904:2048'; HOS_OUTPUT_RES = '1904x2048'; HOS_WINDOW_SIZE = '1269x1365' }
+    Check ($env:HOS_ASPECT -eq '1904:2048' -and $env:HOS_OUTPUT_RES -eq '1904x2048' -and $env:HOS_WINDOW_SIZE -eq '1269x1365' -and $env:HOS_WINDOW_NOACTIVATE -eq '1') 'game 2: starts with its window''s shape and size'
+    Set-KitLocalEnvironment 3 27561 'pw' 0
+    Check (-not $env:HOS_ASPECT -and -not $env:HOS_OUTPUT_RES -and -not $env:HOS_WINDOW_SIZE) 'the next game: the shape of the one before is not kept'
+    foreach ($k in $script:KitLocalRunKeys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    $lcText = Read-File (Join-Path $scripts 'local-coop.ps1')
+    Check (-not ($lcText -match "KitLocalKeys \+ @\('OOT_COOP_LOCAL_HOST'.*\{ \`$saved")) 'the starts put back every variable of KitLocalRunKeys (one list)'
+    foreach ($k in 'HOS_ASPECT', 'HOS_OUTPUT_RES', 'HOS_WINDOW_SIZE', 'HOS_FULLSCREEN', 'OOT_COOP_LOCAL_HOST') { Check ($script:KitLocalRunKeys -contains $k) "the starts put back $k" }
 
     # --- The session's port and password ---
     $p = Get-KitLocalPort
@@ -339,6 +348,40 @@ try {
     # --- The windows ---
     $two = Get-KitLocalRects @(0, 0, 1920, 1040) 2
     Check ($two.Count -eq 2 -and $two[0][0] -eq 0 -and $two[1][0] -eq 960 -and $two[0][2] -eq 960 -and $two[0][1] -eq $two[1][1]) "2 games side by side ($(($two | ForEach-Object { $_ -join ',' }) -join ' / '))"
+    Check ($two[0][1] -eq 0 -and $two[0][3] -eq 1040 -and $two[1][3] -eq 1040) 'row 301: 2 games each fill their half, the whole height (no 16:9 band in the middle)'
+    # (the owner's 4K screen at 150 %: the work area in physical pixels, 3840 x 2100 with a 60-pixel taskbar)
+    $k4 = Get-KitLocalRects @(0, 0, 3840, 2100) 2
+    Check ($k4[0][2] -eq 1920 -and $k4[0][3] -eq 2100 -and $k4[1][0] -eq 1920) "row 301: 4K, 2 games: two 1920 x 2100 halves ($(($k4 | ForEach-Object { $_ -join ',' }) -join ' / '))"
+    Initialize-KitLocalWin32
+    $f144 = [KitLocalWin32]::Frame(144)   # (WS_OVERLAPPEDWINDOW's frame at 144 dpi, from Windows: AdjustWindowRectExForDpi)
+    $fw = $f144[2] - $f144[0]; $fh = $f144[3] - $f144[1]
+    $c4 = Get-KitLocalClient $k4[0] $f144
+    Check ($c4[0] -eq 1920 - $fw -and $c4[1] -eq 2100 - $fh) "row 301: the half's picture area is the window less its frame ($($c4 -join 'x'), frame $($f144 -join ','))"
+    $sh = Get-KitLocalShapeEnv $c4 144
+    $ew = [int]([math]::Floor($c4[0] / 8) * 8); $eh = [int]([math]::Floor($c4[1] / 8) * 8)
+    Check ($sh.HOS_ASPECT -eq "$($c4[0]):$($c4[1])" -and $sh.HOS_OUTPUT_RES -eq "${ew}x${eh}" -and $sh.HOS_WINDOW_SIZE -eq "$([int][math]::Round($c4[0] * 96 / 144))x$([int][math]::Round($c4[1] * 96 / 144))") "row 301: game switches for that half: shape, size (8-pixel steps), the window at 96 dpi ($($sh.HOS_ASPECT) $($sh.HOS_OUTPUT_RES) $($sh.HOS_WINDOW_SIZE))"
+    Check ($c4[0] / $c4[1] -lt 1.0 -and $c4[0] / $c4[1] -gt 0.85) "row 301: a 4K half is about 8:9, narrower than 5:4 (Hookshot patch 0047 takes it: $([math]::Round($c4[0] / $c4[1], 4)))"
+    $own = Get-KitLocalShapeEnv $c4 144 1080
+    $ow, $oh = $own.HOS_OUTPUT_RES -split 'x'
+    Check ($own.HOS_ASPECT -eq $sh.HOS_ASPECT -and [int]$oh -eq 1080 -and [math]::Abs([int]$ow / 1080 - $c4[0] / $c4[1]) -lt 0.01) "row 301: a player's own lower output_res (1080) keeps its height, at the window's shape ($($own.HOS_OUTPUT_RES))"
+    $big = Get-KitLocalShapeEnv @(3824, 4200) 96
+    $bw, $bh = $big.HOS_OUTPUT_RES -split 'x'
+    Check ([int]$bw * [int]$bh -le 5120 * 2880 -and [math]::Abs([int]$bw / [int]$bh - 3824 / 4200) -lt 0.01) "row 301: a half of an 8K screen: at most 5120 x 2880's pixels, its shape kept ($($big.HOS_OUTPUT_RES))"
+    Check ((Get-KitLocalClient @(0, 0, 300, 300) $f144)[0] -eq 0 -and (Get-KitLocalShapeEnv @(0, 0) 96).Count -eq 0) 'row 301: a window too small: no switches (the game''s own picture)'
+    $qc = Get-KitLocalClient (Get-KitLocalRects @(0, 0, 3840, 2100) 4)[3] $f144
+    $q = Get-KitLocalShapeEnv $qc 144
+    Check ($qc[0] -eq 1920 - $fw -and $qc[1] -eq 1050 - $fh -and $q.HOS_ASPECT -eq "$($qc[0]):$($qc[1])") "row 301: 4K, a quarter: its own shape ($($q.HOS_ASPECT))"
+    Write-File (Join-Path $root 'opts\longshot_options.ini') "output_res=1920x1080`r`nfullscreen=0`r`n"
+    Check ((Get-KitLocalOutputHeight (Join-Path $root 'opts')) -eq 1080) 'row 301: the player''s own output_res height is read'
+    Write-File (Join-Path $root 'opts\longshot_options.ini') "output_res=2`r`n"
+    Check ((Get-KitLocalOutputHeight (Join-Path $root 'opts')) -eq 2160) 'row 301: an output_res number saved before (2: 3840 x 2160)'
+    Check ((Get-KitLocalOutputHeight (Join-Path $root 'none')) -eq 0) 'row 301: no options file: the game''s own'
+    Initialize-KitLocalWin32
+    $dpi = [KitLocalWin32]::Dpi(); $fr = [KitLocalWin32]::Frame($dpi); $wa = [KitLocalWin32]::WorkArea()
+    Check ($dpi -ge 96 -and $fr[0] -lt 0 -and $fr[1] -lt $fr[0] -and $fr[2] -gt 0) "row 301: this PC's DPI ($dpi) and the window frame there ($($fr -join ','))"
+    Check ($wa[2] -gt $wa[0] -and $wa[3] -gt $wa[1]) "row 301: the work area in physical pixels ($($wa -join ','))"
+    $f96 = [KitLocalWin32]::Frame(96); $f2 = [KitLocalWin32]::Frame(192)
+    Check (($f2[2] - $f2[0]) -gt ($f96[2] - $f96[0]) -and ($f2[3] - $f2[1]) -gt ($f96[3] - $f96[1])) "row 301: the frame grows with the DPI ($($f96 -join ',') at 96, $($f2 -join ',') at 192)"
     $four = Get-KitLocalRects @(-1920, 100, 0, 1180) 4
     Check ($four.Count -eq 4 -and $four[3][0] -eq -960 -and $four[3][1] -eq 640 -and $four[0][3] -eq 540) "4 games in quarters, on a monitor left of the primary ($(($four | ForEach-Object { $_ -join ',' }) -join ' / '))"
     $three = Get-KitLocalRects @(0, 0, 1920, 1040) 3

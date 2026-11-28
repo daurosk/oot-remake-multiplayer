@@ -1408,6 +1408,7 @@ std::uint64_t g_tap = 0, g_tap_until = 0, g_tap_next = 0;   // (a button held fo
 std::atomic<int> g_tap_downs{0};   // (the steps toward Title Screen so far)
 std::atomic<std::uint64_t> g_pages_seen_ms{0};
 std::atomic<std::uint64_t> g_pages_seen_game_ms{0};   // (the same, on the game's clock: ToTitle)
+std::atomic<std::uint64_t> g_pages_seen_present{0};   // (the same, at which present: CoopFresh::Presents, PagesUpFrom)
 std::atomic<int> g_pages_seen_state{-1}, g_pages_seen_page{-1};
 std::atomic<std::uint64_t> g_test_tab_in{0}, g_test_tab_out{0};   // (the last pad with buttons, in and out: TestState)
 int g_set_keep = -1;
@@ -4119,6 +4120,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kPages) {
             g_pages_seen_ms = NowMs(), g_pages_seen_state = f.state, g_pages_seen_page = f.page;
             g_pages_seen_game_ms = CoopGameClock::NowMs();
+            g_pages_seen_present = CoopFresh::Presents();
         }
         // (back to the title: the question "Return to the title screen?" open, its first button, Title Screen, chosen
         // as the player's A on it would)
@@ -4423,7 +4425,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // (only while the pause menu's pages update: closed, System's layout keeps its last focus, and every A
                 // in the game read as one on our button and was kept from it: nobody could roll or talk, four
                 // testers 2026-11-20)
-                if ((in & kPadA) != 0 && !g_page.Shown() && NowMs() - g_pages_seen_ms.load() < 500) {
+                if ((in & kPadA) != 0 && !g_page.Shown() &&
+                    PagesUpFrom(g_pages_seen_ms.load(), NowMs(), g_pages_seen_present.load(), CoopFresh::Presents())) {
                     on = OurSystemButtonFocused();
                 }
                 g_page.SetSystemButton(on);

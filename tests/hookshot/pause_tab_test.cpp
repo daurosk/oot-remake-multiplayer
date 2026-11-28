@@ -2668,6 +2668,18 @@ TEST_CASE("gate-ui-epona-0121: a stepped or hitching game keeps its menu-up and 
     CHECK_FALSE(FreePlayFresh(true, 2000, 1000, 10, 10));
 }
 
+TEST_CASE("chartab-0121-5: a stepped or hitching game keeps its pause pages up for A on System's Longshot button") {
+    // (the pages updated at present 10; a reader at present 11 = the first frame after the bridge held the game)
+    CHECK(PagesUpFrom(1000, 1000, 10, 10));
+    CHECK(PagesUpFrom(1000, 1000 + kPagesUpMs - 1, 10, 40));              // (fresh by the clock)
+    CHECK(PagesUpFrom(1000, 1000 + 5000, 10, 11));                       // (held 5 s, then one present)
+    CHECK(PagesUpFrom(1000, 1000 + 5000, 10, 10));                       // (held: no present at all)
+    CHECK_FALSE(PagesUpFrom(1000, 1000 + kPagesUpMs, 10, 12));            // (presents went on: pages closed)
+    CHECK_FALSE(PagesUpFrom(1000, 1000 + 60000, 10, 4000));               // (the field long after: A is the game's)
+    CHECK_FALSE(PagesUpFrom(0, 50, 0, 0));                               // (never seen)
+    CHECK_FALSE(PagesUpFrom(2000, 1000, 10, 10));                        // (a clock that went back)
+}
+
 TEST_CASE("pause tab (0.11.9, lane 062917): Character Select's Customize screen is taken as open only in a menu that is up") {
     // A real opening: his state reads open at 1000 with the strip's update of the frame before (990, open); taken once
     // the strip has updated since (1006), and kept while it stays up.

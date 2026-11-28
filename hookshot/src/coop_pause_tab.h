@@ -1039,6 +1039,13 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
 // the play-test bridge, or one in a hitch over kMenuUpMs, read its open menu as shut between two frames.
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t seen_present,
                 std::uint64_t now_present);
+// Whether the pause menu's pages still update (their last update `seen_ms`, at present `seen_present`): under
+// kPagesUpMs old by the wall clock, OR no presents went by without one (CoopFresh::Stale). A on System's Longshot
+// Settings button is read only then (pages closed, System's layout keeps its last focus: four testers 2026-11-20).
+// chartab-0121-5 (B #178): by the wall clock alone a game held still (a hitch, a play-test bridge step) read its open
+// menu's pages as gone at its first frame after, and the A on the button was not taken as one on it.
+inline constexpr std::uint64_t kPagesUpMs = 500;
+bool PagesUpFrom(std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t seen_present, std::uint64_t now_present);
 // Free play as SetFreePlay last stamped it (each present, coop_hookshot.cpp DrawScene) still counts when it is under
 // kFreePlayFreshMs old by the wall clock OR no two presents went by since (coop_fresh.h): a load or the title stamps
 // "no" at once, a stepped or hitching game keeps its last "yes". gate-ui-epona-0121 (S 309d7180c gate-ui, B's

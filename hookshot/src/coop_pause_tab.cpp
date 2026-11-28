@@ -753,6 +753,11 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms, st
            !CoopFresh::Stale(now_ms - seen_ms, kMenuUpMs, seen_present, now_present);
 }
 
+bool PagesUpFrom(std::uint64_t seen_ms, std::uint64_t now_ms, std::uint64_t seen_present, std::uint64_t now_present) {
+    return seen_ms != 0 && now_ms >= seen_ms &&
+           !CoopFresh::Stale(now_ms - seen_ms, kPagesUpMs, seen_present, now_present);
+}
+
 bool FreePlayFresh(bool free_play, std::uint64_t made_ms, std::uint64_t now_ms, std::uint64_t made_present,
                    std::uint64_t now_present) {
     return free_play && made_ms != 0 && now_ms >= made_ms &&

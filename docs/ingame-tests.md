@@ -127,6 +127,7 @@ Select, and that its folder is gone. `summary.json` `identity` keeps `nocs` and 
 | SETUP-FAIL | the lane, the boot, or the test's own set-up (`with pair.setup():`, under 30 s plus 31 s per warp in it) did not hold; not rerun |
 | NO-REF | a look check has no stored reference yet (its shot is kept under `<dir>/lane<L>/new/`), or the test called `pair.unproven(reason)` (it cannot prove its row in this run); judged by the exception type `pair.NoRef`, never by message text |
 | NOT-RUN | `--deadline-min N` passed before it started (never a pass) |
+| VOID | a FAIL / SETUP-FAIL caused by an NVIDIA driver reset of the whole GPU (`ingame/gpu_reset.py`): only when the Windows System log has an `nvlddmkm` event 14 or 153 inside the session window AND a game's own log has `VK_ERROR_DEVICE_LOST` written at or after it; anything else keeps its FAIL / SETUP-FAIL. Never a pass, not rerun inside the run (the games are gone); the job is rerun once, a second VOID stays NOT PASS |
 
 A game that crashes while the lane boots or loads (its module log has a `CRASH` line) makes every test of the
 lane FAIL with that line, not SETUP-FAIL: that window is what crash rows guard.

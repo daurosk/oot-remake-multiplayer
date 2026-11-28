@@ -11,6 +11,9 @@ Results (one summary per run, DIR/summary.json + summary.md, and pytest's --juni
   FLAKY       failed, then passed on the one rerun (never counted as a pass)
   SETUP-FAIL  the lane, the boot or the test's own set-up (Pair.setup(), < 30 s) did not hold; not rerun
   NO-REF      a look check has no stored reference yet (its shot is kept under DIR/new/); not a pass
+  VOID        a FAIL/SETUP-FAIL caused by an NVIDIA driver reset of the whole GPU (gpu_reset.py: System nvlddmkm 14/153 in
+              the session window AND the game's log has VK_ERROR_DEVICE_LOST after it); never a pass, not rerun in the
+              run (the games are gone): the job is rerun once, a second VOID stays NOT PASS
 Smoke gate: a smoke test (marker `smoke`) that FAILs or SETUP-FAILs stops the run there (the rc is broken), unless
 --no-smoke-gate.
 """
@@ -35,8 +38,9 @@ import testpack    # noqa: E402
 import testsave    # noqa: E402
 import solo        # noqa: E402
 import windowshot  # noqa: E402
+import gpu_reset   # noqa: E402
 
-RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "SKIP", "NOT-RUN")
+RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "VOID", "SKIP", "NOT-RUN")
 DEFAULT_BUDGET = 120
 
 
@@ -633,6 +637,18 @@ def games_closed(session, alive=None):
         ", ".join(gone), ", ".join(str(pids[x]) for x in gone))
 
 
+def _void_why(config, kind):
+    """gpu_reset.judge's 'VOID gpu-reset: ...' for a FAIL / SETUP-FAIL of this lane's session, else None (B #161 guards:
+    only those two results, only with the driver event AND the game's DEVICE_LOST; see gpu_reset.py)."""
+    if kind not in ("FAIL", "SETUP-FAIL"):
+        return None
+    session = getattr(config, "_bt_session", None) or getattr(config, "_bt_boot_session", None)
+    try:
+        return gpu_reset.judge(session, time.time())
+    except Exception:            # noqa: BLE001 (the check itself failing never hides the result: it stays as it was)
+        return None
+
+
 def _stop_why(config):
     return memwatch_stop() or games_closed(getattr(config, "_bt_session", None))
 
@@ -716,6 +732,7 @@ def lane_pair(request):
             _pack_in(config, lane, folders, out, romfs=os.path.join(game_a, "romfs"))
         except (testpack.PackError, testsave.SaveProfileError, OSError) as e:   # (OSError: review-c123-9 nit a)
             raise P.SetupFail("lane%d pack/save: %s" % (lane, e))
+        config._bt_boot_session = session       # (gpu_reset: a driver reset during the boot is judged on this session)
         started = _live(["start"] + boot_args(config, lane, info["server"], session), timeout=1200)
         if not started.get("ok"):
             crash = _crash_why(session)
@@ -947,8 +964,10 @@ def _stop_run(item, why):
     item.ihook.pytest_runtest_logstart(nodeid=item.nodeid, location=item.location)
     if first:
         from _pytest.reports import TestReport
-        rep = TestReport(item.nodeid, item.location, {}, "failed", why, "teardown",
-                         user_properties=[("result", "SETUP-FAIL"), ("seconds", 0), ("why", why)])
+        void = _void_why(config, "SETUP-FAIL")
+        result, row_why = ("VOID", "%s | was SETUP-FAIL: %s" % (void, why)) if void else ("SETUP-FAIL", why)
+        rep = TestReport(item.nodeid, item.location, {}, "failed", row_why, "teardown",
+                         user_properties=[("result", result), ("seconds", 0), ("why", row_why)])
         item.ihook.pytest_runtest_logreport(report=rep)
         config._bt_stopped = why
         item.session._setupstate.teardown_exact(None)
@@ -986,9 +1005,10 @@ def pytest_runtest_protocol(item, nextitem):
     t0 = time.monotonic()
     reports = runtestprotocol(item, nextitem=nextitem, log=False)
     kind, first = _kind(reports), None
+    void = _void_why(item.config, kind)      # (a GPU reset: no rerun, the lane's games are gone)
     # a FAIL reruns once, but never one from set-up (the lane's boot: a GameCrash): that would boot the lane again
     in_setup = any(r.when == "setup" and r.failed for r in reports)
-    if kind == "FAIL" and not in_setup and not item.config.getoption("no_rerun") and not _past_deadline(item.config):
+    if kind == "FAIL" and not void and not in_setup and not item.config.getoption("no_rerun") and not _past_deadline(item.config):
         first = reports
         again = runtestprotocol(item, nextitem=nextitem, log=False)
         rerun = _kind(again)
@@ -1010,13 +1030,15 @@ def pytest_runtest_protocol(item, nextitem):
             crash = getattr(r.longrepr, "reprcrash", None)
             why = " ".join((crash.message if crash else str(r.longrepr)).split())[:400]
             break
+    if void:
+        kind, why = "VOID", ("%s | was %s: %s" % (void, kind, why))[:700]
     for r in reports:
         r.user_properties.append(("result", kind))
         r.user_properties.append(("seconds", secs))
         r.user_properties.append(("why", why))
         item.ihook.pytest_runtest_logreport(report=r)
     item.ihook.pytest_runtest_logfinish(nodeid=item.nodeid, location=item.location)
-    if item.get_closest_marker("smoke") and kind in ("FAIL", "SETUP-FAIL") and not item.config.getoption("no_smoke_gate"):
+    if item.get_closest_marker("smoke") and kind in ("FAIL", "SETUP-FAIL", "VOID") and not item.config.getoption("no_smoke_gate"):
         item.session.shouldstop = "smoke %s %s: the rc stops here" % (item.name, kind)
     return True
 
@@ -1131,4 +1153,8 @@ def result_line(summary):
     bad = next(r for r in rows if r["result"] != "PASS")
     if c["SETUP-FAIL"] == len(rows):
         return "RESULT: SETUP-FAIL %s" % bad["why"]
+    if c.get("VOID") and all(r["result"] in ("PASS", "VOID", "NOT-RUN") for r in rows):
+        void = next(r for r in rows if r["result"] == "VOID")
+        return "RESULT: VOID (%s); first: %s %s; rerun the job once (a second VOID stays NOT PASS)" % (
+            counts, void["test"], void["why"][:300])
     return "RESULT: NOT PASS (%s); first: %s %s %s" % (counts, bad["test"], bad["result"], bad["why"][:300])

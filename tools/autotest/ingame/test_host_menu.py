@@ -59,6 +59,7 @@ NOT_HOSTING = r"coop: multiplayer tab: test host: .*not hosting"   # coop_pause.
                    # ("... came with the game's start and is in a game: not hosting")
 START_ENDED = r"coop: multiplayer tab: co-op that came with the game's start ended"   # coop_pause.cpp:213
 ANNOUNCED = r"coop: lan: this game is announced on the local network"             # coop_lan_net.cpp:115
+HOST_BOUND = r"coop: host: listening on port %d \("   # server/host_service.cpp:215 (say: the port the host's server BOUND)
 WELCOMED = r"coop: welcomed as player \d+ on "                                    # lichii/hook/coop_hook.cpp:2779
 NO_CRASH = r"CRASH: exception|unhandled exception|fault at"                      # test_lan251 NO_CRASH
 VCORES = re.compile(r"vcores: .*waited (\d+(?:\.\d+)?) ms for a core")          # the player's stall line (playerbug-292.md)
@@ -80,7 +81,10 @@ def prove_hosting(pair, row):
     port = int(session_runner(pair).get("port") or 0)
     if not port:
         raise SetupFail("%s: no port in the session's runner" % row)
-    for x, rx in (("A", TEST_HOST_ON % port), ("A", LISTENING), ("A", ANNOUNCED),
+    # (HOST_BOUND, review-rows-c130-12 fps-spike-182cd53b SUSPECT: an orphan coop_server held the session port, A's host
+    # bound the next one (:27521) and B joined the orphan on :27520 alone; TEST_HOST_ON and B's WELCOMED both named
+    # :27520, so the old proof passed with the games in no one session)
+    for x, rx in (("A", TEST_HOST_ON % port), ("A", LISTENING), ("A", HOST_BOUND % port), ("A", ANNOUNCED),
                   ("B", WELCOMED + re.escape("127.0.0.1:%d" % port))):
         if not any(re.search(rx, ln) for ln in pair.log[x].since(0)):
             raise SetupFail("%s: the host-in-game boot gave no %s log /%s/" % (row, x, rx))

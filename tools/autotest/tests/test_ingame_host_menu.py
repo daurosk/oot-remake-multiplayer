@@ -62,6 +62,39 @@ class Spikes(unittest.TestCase):
         self.assertTrue(re.search(self.T.LISTENING, "coop: host: test host (LICHII_COOP_TEST_HOST): listening on "
                                   "127.0.0.1 only"))
 
+    def _hosting(self, bound, welcomed):
+        """prove_hosting on a fake pair whose session port is 27520 (the lines of fps-spike-182cd53b game-out-A/B)."""
+        import json
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "session.json"), "w", encoding="utf-8") as f:
+            json.dump({"runner": {"port": 27520, "host_in_game": True}}, f)
+        logs = {"A": ["[hos x] coop: multiplayer tab: test host on port 27520 (Multiplayer > Host, as the page's Host row)",
+                      "[hos host] coop: host: test host (LICHII_COOP_TEST_HOST): listening on 127.0.0.1 only",
+                      "[hos host] coop: host: listening on port %d (only 127.0.0.1, datagrams of 1100 bytes)" % bound,
+                      "[hos x] coop: lan: this game is announced on the local network (port 27508, every 2 s)"],
+                "B": ["[hos host] coop: welcomed as player 1 on 127.0.0.1:%d" % welcomed]}
+
+        class Log:
+            def __init__(self, lines):
+                self.lines = lines
+
+            def since(self, _):
+                return self.lines
+
+        class Pair:
+            session = d
+            log = {x: Log(v) for x, v in logs.items()}
+        return self.T.prove_hosting(Pair(), "t")
+
+    def test_prove_hosting_passes_one_session(self):
+        self.assertEqual(self._hosting(27520, 27520), 27520)
+
+    def test_prove_hosting_fails_when_the_host_bound_another_port(self):
+        # fps-spike-182cd53b (review-rows-c130-12): an orphan server held :27520, A's host bound :27521, B joined the orphan
+        with self.assertRaises(P.SetupFail) as e:
+            self._hosting(27521, 27520)
+        self.assertIn("listening on port 27520", str(e.exception))
+
     def test_free_port_skips_taken(self):
         p = self.T.free_port()
         self.assertNotEqual(self.T.free_port({p}), p)

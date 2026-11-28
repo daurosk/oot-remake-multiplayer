@@ -10,6 +10,8 @@ its 'chat /dbno hold N' is answered here and every other /dbno line there).
 BT_FAKE_BANNER_BUG (selftests, tests/test_ingame_revive_banner.py):
   blink   0.12.0: B's line is gone in every other shot while A holds A (the owner's "blinks rapidly")
   replay  B's banner state counts a Type reset per text change while A holds A (1d8a1b11e not in the build)
+  setblank  (test_probe_banner_set's selftest) B's line is set only when it changes (its clock ticks once a second of
+          frames) and each set blanks B's shots of the next SETBLANK_FRAMES frames: the probe must count them
 
 state['banner'] (typing-blink-0121's CoopNativeUi::Stats): the module has ONE banner, so this file counts on
 fakes/chat_typing.py's stats (game.ct_b, the one writer of state['banner']; chat_typing loads first): a held line
@@ -23,6 +25,7 @@ import math
 import os
 
 BAND = (0.30, 0.20, 0.70, 0.27)   # (test_revive_banner.BAND)
+SETBLANK_FRAMES = 2               # (BT_FAKE_BANNER_BUG=setblank: B's shots blank after each set)
 
 
 def bug(name):
@@ -38,7 +41,10 @@ def line(game):
     if not rows_here(game):
         return None
     d, o = game.dbno, game.other
-    left = "%d:%02d" % divmod(game.dbno_rules["bleed"], 60)
+    bleed = game.dbno_rules["bleed"]
+    if bug("setblank"):                       # (the clock ticks: a new line once a second of frames)
+        bleed = max(0, bleed - game.frame // 60)
+    left = "%d:%02d" % divmod(bleed, 60)
     if d["state"] == "down":
         if d["held"] > 0:
             hold = max(1, game.dbno_rules["hold"] * 3)   # (frames: hold tenths x FPS / 10)
@@ -81,6 +87,11 @@ def command(game, m):
     seq = getattr(game, "banner_seq", 0)
     texts = []
     shown = line(game)
+    if shown is not None and bug("setblank") and game.tag == "B" and shown == getattr(game, "banner_last", None):
+        shown = None                          # (setblank: a set only when the line changes)
+    elif shown is not None and bug("setblank") and game.tag == "B":
+        game.banner_last = shown
+        game.banner_blank_to = game.frame + SETBLANK_FRAMES   # (the next shots, by frame: after() sees frame+1)
     if shown is not None:
         seq += 1
         game.banner_seq = seq
@@ -100,6 +111,8 @@ def after(game, m, r):
         return
     shown = line(game)
     if shown is None:
+        return
+    if bug("setblank") and game.tag == "B" and game.frame <= getattr(game, "banner_blank_to", -1):
         return
     if bug("blink") and game.tag == "B" and game.dbno["held"] > 0:
         game.banner_blink = not getattr(game, "banner_blink", False)

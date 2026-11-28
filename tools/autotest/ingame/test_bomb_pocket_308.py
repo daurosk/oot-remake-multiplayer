@@ -110,12 +110,16 @@ def test_bomb_pocket(pair):
         pair.step_both(2)
         n1 = {x: count(pair, x) for x in ("A", "B")}
     # A lifts B's bomb (the row: another player's bomb)
-    pair.press("A", ["A"], frames=PRESS)
+    # the cited lift (test_carry_304 LIFT_SETTLE + LIFT_FRAMES = rock.A.txt 'wait 20', 'press A 12'); probe
+    # carry-304-182cd53b-3's 8-frame press left the bomb lying (UNKNOWN (a) press too short vs (b) not liftable on A)
+    pair.step_both(C.LIFT_SETTLE)
+    _, _, st0 = bombs(pair, "A", "bomb-a-at")
+    pair.press("A", ["A"], frames=C.LIFT_FRAMES)
     pair.step_both(SETTLE)
-    a_link, a_bombs, _ = bombs(pair, "A", "bomb-a-held")
+    a_link, a_bombs, st = bombs(pair, "A", "bomb-a-held")
     _, b_bombs, _ = bombs(pair, "B", "bomb-b-sees")
-    pair.notes.append("A lift: A's Item_Bombs %s, A's Link %s; B's %s" % (
-        [b["pos"] for b in a_bombs], a_link, [b["pos"] for b in b_bombs]))
+    pair.notes.append("A lift: A's prompt at the bomb %r, after %r; A's Item_Bombs %s, A's Link %s; B's %s" % (
+        st0.get("prompt"), st.get("prompt"), [b["pos"] for b in a_bombs], a_link, [b["pos"] for b in b_bombs]))
     still = [b["pos"] for b in a_bombs if C.xz(b["pos"], o) <= REST_M]
     with_a = [b["pos"] for b in a_bombs if C.xz(b["pos"], a_link) <= C.MISS_M]
     assert with_a and not still, "A did not lift B's bomb: A's Item_Bombs %s (lying place %s, A's Link %s)" % (

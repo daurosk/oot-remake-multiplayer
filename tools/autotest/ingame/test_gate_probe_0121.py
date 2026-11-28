@@ -36,7 +36,13 @@ def look(pair, what, x="B", other="A"):
         what, x, s.get("pos"), s.get("facing"), s.get("camera"), s.get("event"), ok, why))
 
 
+# Probes are never in a default run (Suite selftests: an always-NO-REF test there broke test_two_lanes_at_once /
+# test_no_refs_then_refs, CI 46109945809): each needs its own switch, as test_probe_ocarina's BT_PROBE_OCARINA.
+PROBE = "BT_PROBE_GATE_0121=1"
+
+
 @pytest.mark.budget(150)
+@pytest.mark.needs_env(PROBE)
 @pytest.mark.row("probe gate-ui-epona-0121: B's camera after place_in_front + ZL (test_name_tags) - measures only")
 def test_probe_tags_camera(pair):
     with pair.setup():
@@ -78,7 +84,7 @@ def quest_lines(pair, x, pos):
 
 
 @pytest.mark.budget(420)
-@pytest.mark.needs_env(*ROW_ENV)
+@pytest.mark.needs_env(PROBE, *ROW_ENV)
 @pytest.mark.row("probe gate-ui-epona-0121: the field Epona from FrontOfMarket; owns after Get_Epona Complete - measures only")
 def test_probe_epona(pair):
     with pair.setup():

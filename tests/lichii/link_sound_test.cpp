@@ -604,6 +604,39 @@ TEST_CASE("link effect: a held piece's key (the sword trail) is caught as that s
     CHECK(TakeCaughtEffects().empty());
 }
 
+TEST_CASE("link effect: the piece Player stops the old piece's key before it moves to another slot (review-c123-22)") {
+    FakeGuest g = Puppet();
+    Player p = PieceEffectPlayer();
+    Budget b;
+    std::vector<std::string> said;
+    const auto say = [&said](const std::string& s) { said.push_back(s); };
+    const auto none = [] { return std::string(); };
+    p.want = 1;  // the first key, slot 0: no call, it moves at once
+    CHECK_FALSE(Leave(p, kMain, kBlock));
+    CHECK(p.piece == 1);
+    p.heard.Push("Blur_Default", 1000);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1000, none, "P2", say, false);
+    REQUIRE(c);
+    g.Put<std::uint64_t>(kBlock + block::kPieceAsset, 0xb1);
+    Finish(p, 1, g, kBlock, "P2", say, false);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1001, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kEmit);
+    Finish(p, 1, g, kBlock, "P2", say, false);
+    REQUIRE(p.started[0].name == "Blur_Default");
+    p.want = 2;  // a key for slot 1 while slot 0's still plays: its kill first, then the move
+    c = Leave(p, kMain, kBlock);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    CHECK(c->x[0] == kBlock + block::kPieceHandle);
+    CHECK(p.piece == 1);
+    CHECK_FALSE(Leave(p, kMain, kBlock));  // the kill call waits: nothing more
+    Finish(p, 0, g, kBlock, "P2", say, false);
+    CHECK(p.started[0].name.empty());
+    CHECK_FALSE(Leave(p, kMain, kBlock));
+    CHECK(p.piece == 2);
+}
+
 TEST_CASE("link effect: the piece Player plays on the piece's user in its own cells") {
     FakeGuest g = Puppet();
     Player p = PieceEffectPlayer();

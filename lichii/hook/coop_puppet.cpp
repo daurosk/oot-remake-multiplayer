@@ -380,7 +380,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                         if (s.end) {
                             CoopLinkSound::End(slot.link_piece, std::move(s.name));
                         } else {
-                            slot.link_piece.piece = s.piece;  // another slot: Next forgets the old piece's
+                            slot.link_piece.want = s.piece;  // another slot: Leave stops the old piece's first
                             slot.link_piece.heard.Push(std::move(s.name), s.at_ms);
                         }
                         continue;
@@ -1022,6 +1022,10 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 }
             }
             // Its held pieces' effects (the sword trail): on the puppet's piece in the same slot, its own ELink user.
+            if (auto c = CoopLinkSound::Leave(slot.link_piece, input_.main_base, slot.block)) {
+                pending_ = Pending::link_piece;
+                return c;
+            }
             if (slot.link_piece.piece != 0) {
                 const std::uint64_t piece = PieceIn(slot, guest, slot.link_piece.piece - 1u);
                 const std::uint64_t user = piece != 0 ? CoopPuppetSound::EffectUser(guest, piece) : 0;

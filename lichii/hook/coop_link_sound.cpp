@@ -608,6 +608,21 @@ Player EffectPlayer() {
     return p;
 }
 
+std::optional<CoopPuppet::Call> Leave(Player& player, std::uint64_t main_base, std::uint64_t block) {
+    if (player.want == player.piece || player.pending != Player::Step::none) {
+        return std::nullopt;
+    }
+    if (main_base != 0 && block != 0) {
+        for (std::size_t i = 0; i < player.started.size(); ++i) {
+            if (!player.started[i].name.empty()) {
+                return Kill(player, main_base, block, i);  // the old piece's key: stopped before the move
+            }
+        }
+    }
+    player.piece = player.want;  // Next then sees the new piece's actor and user
+    return std::nullopt;
+}
+
 Player PieceEffectPlayer() {
     Player p;
     p.cells = EffectCells();

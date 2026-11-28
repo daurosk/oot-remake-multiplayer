@@ -233,6 +233,7 @@ struct Player {
     };
     Cells cells;
     std::uint8_t piece = 0;  // the piece Player: the held slot + 1 it plays on now (0: none yet)
+    std::uint8_t want = 0;   // the slot + 1 the newest key is for; moved to by Leave once the old piece plays nothing
     // Ends received (effects): the slot still playing that name is stopped first.
     std::deque<std::string> ended;
     // A sound started on the puppet: its handle cell is block::kHandle + 8 * slot.
@@ -273,6 +274,9 @@ Player::Cells EffectCells();
 Player EffectPlayer();
 // The held pieces' effect Player (one per puppet, on the piece in `slot`: a key for another slot moves it there).
 Player PieceEffectPlayer();
+// The piece Player's move to `want` (review-c123-22): while the old piece (still on the puppet) has a key started,
+// the kill call for it (one a call, the game's handle kill); then `piece` = `want`, no call. Nothing while a call waits.
+std::optional<CoopPuppet::Call> Leave(Player& player, std::uint64_t main_base, std::uint64_t block);
 // An end for `name` (effects): stops it if it still plays, and drops it from the queue. A name already waiting
 // to end is not added twice; with kEndedMax waiting, an end for a key not started goes first (it stops nothing).
 void End(Player& player, std::string name);

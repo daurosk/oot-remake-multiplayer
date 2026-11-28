@@ -125,6 +125,9 @@ def with_body(members):
                  "Phive/RigidBodyControllerSensorParam/Tgt.phive__RigidBodyControllerSensorParam.bgyml",
                  "Phive/Ragdoll/Structure/P.phive__RagdollStructureParam.bgyml"):
         out[path] = byml.dumps({"X": 1})
+    out["Phive/CharacterMatterRigidBodyParam/P.phive__CharacterMatterRigidBodyParam.bgyml"] = byml.dumps(
+        {"LayerEntity": "Player", "Mass": 10.0, "MassForWater": 195.0, "WaterEffectiveHeight": 0.5,
+         "Shapes": [{"HeightStep": -1.0, "ShapeName": "Player_cct"}]})
     return out
 
 
@@ -602,7 +605,7 @@ class BuildPackTest(unittest.TestCase):
         members = with_body(fake_player_pack("Child"))
         pack, ap, names, _ = build.build_pack(members, "Child", body=True)
         out = sarc.read(pack)
-        phys, cs_path, cct_path = build.body_paths("CoopPuppet_Child")
+        phys, cs_path, cct_path, m_path = build.body_paths("CoopPuppet_Child")
         self.assertEqual(byml.loads(ap)["Components"]["PhysicsRef"], "?" + phys)
         self.assertEqual(byml.loads(out[phys]),
                          {"ControllerSetPath": "Work/Phive/ControllerSetParam/CoopPuppet_Child.phive__ControllerSetParam.gyml"})
@@ -616,9 +619,15 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(cct, {"GravityScale": 1.0, "UserContactCollectionName": "Contact_0_cct",
                                "UpdateComponentParam": {"Rotate": 1}, "DefaultMoveState": "Free"})
         for p in ("Phive/ShapeParam/P.phive__ShapeParam.bgyml",
-                  "Phive/CharacterMatterRigidBodyParam/P.phive__CharacterMatterRigidBodyParam.bgyml",
                   "Phive/ContactCollectionEntityParam/Block.phive__ContactCollectionEntityParam.bgyml"):
             self.assertIn(p, names)
+        # The main matter body is a character's (Npc_Default) with Link's shapes and water, not Link's own.
+        self.assertEqual(byml.loads(out[m_path]),
+                         {"$parent": build.MATTER_NPC_PARENT, "Shapes": [{"HeightStep": -1.0, "ShapeName": "Player_cct"}],
+                          "MassForWater": 195.0, "WaterEffectiveHeight": 0.5})
+        self.assertEqual(cs["MatterRigidBodyNamePathAry"],
+                         [{"FilePath": "Work/" + m_path[:-len(".bgyml")] + ".gyml", "Name": "MainMatterRigidBody"}])
+        self.assertNotIn("Phive/CharacterMatterRigidBodyParam/P.phive__CharacterMatterRigidBodyParam.bgyml", names)
         # Never the sensors, the ragdoll or the player's own physics files.
         for p in ("Phive/RigidBodyControllerSensorParam/Tgt.phive__RigidBodyControllerSensorParam.bgyml",
                   "Phive/Ragdoll/Structure/P.phive__RagdollStructureParam.bgyml",

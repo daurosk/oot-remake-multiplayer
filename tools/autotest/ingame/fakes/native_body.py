@@ -6,11 +6,14 @@ testpack.MANIFEST, lists it: put in by --pack native before the boot, taken out 
 - A logs `P2 body: CoopPuppet_Child_Green has a body; ...` at its first state.
 - A's walk stops where A's and B's child capsules touch (0.46 m, flat), as a body does; A placed over B lands on the
   copy's top (B's feet + 1.17 m).
-- B's first walk: A logs one body summary 300 frames later (moves, setter calls, drift 0.000 m).
+- B's first walk: A logs one body summary 300 frames later (moves, setter calls, drift 0.000 m); besides, from A's body
+  line on, a summary every 300 frames (coop_puppet.cpp: one per 300 copy frames, B standing or not).
 Selftest switch BT_FAKE_NATIVE_BUG (tests/test_ingame_native_body.py): nobody -> no collision and no top (A walks
 through: FAIL); noline -> no `has a body` line (SETUP-FAIL); left -> the body stays at B's old spot after B walks
 (FAIL at step 4); drift -> the summary says 0.250 m (FAIL); lowtop -> A comes to rest 0.70 m over B's feet (a
 threshold miss: NO-REF listing it while MEASURED is None).
+Probe (ingame/test_native_body_probe.py): A's world list has the gate guard (NPC, at his romfs place) and A's walk stops
+where A and the guard touch (GUARD_M); BT_FAKE_NATIVE_BUG=npcthrough: the guard does not stop A either.
 """
 import json
 import math
@@ -19,6 +22,9 @@ import os
 MANIFEST = "coop-test-pack.json"      # testpack.MANIFEST
 RADII_M = 0.46                        # two child capsules (test_native_body.py CHILD_RADIUS_M * 2)
 TOP_M = 1.17                          # test_native_body.py CHILD_HEIGHT_M
+NPC = "Npc_Hylia_Soldier_003"         # test_native_body_probe.py NPC, NPC_ROMFS
+NPC_AT = [-47.408, 109.689, -11.486]
+GUARD_M = 0.23 + 0.5                  # Link (child) + the guard's cct (Npc_Hylia_MS_cct_Standing Radius 0.5)
 HAS_BODY = "coop: puppet: P2 body: CoopPuppet_Child_Green has a body; it is moved through the game's setter"
 SUMMARY = ("coop: puppet: P2 body: 240 frames at rest, 60 moved (60 setter calls made, 0 waited a frame for one), "
            "0 gave way to our Link; the game had it up to %.3f m from our place")
@@ -51,11 +57,26 @@ def _bodies(game):
     return out
 
 
+def actors(game):
+    if game.tag != "A" or not on(game):
+        return []
+    return [{"id": 2, "name": NPC, "kind": "npc", "pos": list(NPC_AT)}]
+
+
+def _every(game):
+    """A's body summary every 300 frames (the drift bug's too), as the module logs one per 300 copy frames."""
+    def tick():
+        game.say(SUMMARY % (0.25 if _bug() == "drift" else 0.0))
+        game.later(300, tick)
+    game.later(300, tick)
+
+
 def state(game, st):
     if game.tag == "A" and on(game) and not _nb(game)["said"]:
         _nb(game)["said"] = True
         if _bug() != "noline":
             game.say(HAS_BODY)
+            _every(game)
 
 
 def move_step(game, pos):
@@ -68,7 +89,9 @@ def move_step(game, pos):
             drift = 0.25 if _bug() == "drift" else 0.0
             game.other.later(300, lambda: game.other.say(SUMMARY % drift))
         return None
-    if _bug() == "nobody":
+    if _bug() != "npcthrough" and math.hypot(pos[0] - NPC_AT[0], pos[2] - NPC_AT[2]) < GUARD_M:
+        return list(game.pos)            # (stopped against the guard)
+    if _bug() in ("nobody", "npcthrough"):
         return None
     for b in _bodies(game):
         if math.hypot(pos[0] - b[0], pos[2] - b[2]) < RADII_M:

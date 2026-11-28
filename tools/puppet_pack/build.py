@@ -978,15 +978,37 @@ def chain_paths(members, path):
     return [p for p, _ in _chain(members, path)] or [path]
 
 
+# The copy's main matter body is a character's, not the player's (native puppets N1b, 2026-11-28). Link's own
+# (Player_Child -> Player -> ProjectBase: LayerEntity Player, Mass 10, ContactMassScale 0.1) is meant to be moved by
+# his own controller; a placed NPC's (Npc_Hylia_MN_0XX -> Npc_Default, ResidentCommon: LayerEntity Character,
+# SubLayerEntity NPC, Mass 60, ContactMassScalePushedCharacter / PushedObject 1000) is a body Link bumps into and
+# cannot push. So the copy's body is Npc_Default plus Link's own shapes and water values; Npc_Default is not in
+# the actor's pack: the game finds it by the `$parent` ref, as it does for every NPC.
+MATTER_NPC_PARENT = "Work/Phive/CharacterMatterRigidBodyParam/Npc_Default.phive__CharacterMatterRigidBodyParam.gyml"
+MATTER_MAIN = "MainMatterRigidBody"
+MATTER_KEEP = ("Shapes", "MassForWater", "WaterEffectiveHeight")
+MATTER_DIR = "Phive/CharacterMatterRigidBodyParam/"
+MATTER_SUFFIX = ".phive__CharacterMatterRigidBodyParam.bgyml"
+
+
+def npc_matter_body(player_matter):
+    """The copy's main matter body from Link's merged one `player_matter`: Npc_Default's, with his shapes and water."""
+    out = {"$parent": MATTER_NPC_PARENT}
+    out.update({k: player_matter[k] for k in MATTER_KEEP if k in player_matter})
+    return out
+
+
 def _work_ref(member):
     """`Phive/X.phive__Y.bgyml` -> `Work/Phive/X.phive__Y.gyml` (how params name each other)."""
     return "Work/" + member[:-len(".bgyml")] + ".gyml"
 
 
 def body_paths(actor):
-    """The puppet's own (PhysicsParam, ControllerSetParam, CharacterControllerParam) member paths."""
+    """The puppet's own (PhysicsParam, ControllerSetParam, CharacterControllerParam, main CharacterMatterRigidBodyParam)
+    member paths."""
     return (f"{PHYSICS_DIR}{actor}{PHYSICS_SUFFIX}", f"{CONTROLLER_SET_DIR}{actor}{CONTROLLER_SET_SUFFIX}",
-            f"{CHARACTER_DIR}{actor}{CHARACTER_SUFFIX}")
+            f"{CHARACTER_DIR}{actor}{CHARACTER_SUFFIX}",
+            f"{MATTER_DIR}{actor}{MATTER_SUFFIX}")
 
 
 def body_character_controller(cct):
@@ -1038,7 +1060,7 @@ def puppet_body(members, player_components, actor, sensors=False, cloth_path=Non
     if not cct_src or cct_src not in members:
         raise BuildError(f"the player's ControllerSet {cs_src} has no character controller in the pack")
     cct = body_character_controller(_merged_chain(members, cct_src))
-    phys_path, cs_path, cct_path = body_paths(actor)
+    phys_path, cs_path, cct_path, matter_path = body_paths(actor)
     own_cs = {k: cs[k] for k in BODY_KEYS if k in cs}
     own_cs.update(cloth_keys(cs, cs_src, cloth_path) if cloth_path else {k: cs[k] for k in CLOTH_KEYS if k in cs})
     # Only the contact collection the character controller names (Contact_0_cct); not the ragdoll's.
@@ -1050,9 +1072,18 @@ def puppet_body(members, player_components, actor, sensors=False, cloth_path=Non
     own_cs["PathCharacterController"] = _work_ref(cct_path)
     if sensors:
         own_cs.update(pvp_sensors(cs, cs_src))
+    extra = {}
+    matter = []
+    for e in own_cs["MatterRigidBodyNamePathAry"]:
+        m_src = ref_to_member(e.get("FilePath")) if isinstance(e, dict) else None
+        if isinstance(e, dict) and e.get("Name") == MATTER_MAIN and m_src in members:
+            extra[matter_path] = (byml.dumps(npc_matter_body(_merged_chain(members, m_src))), m_src)
+            e = dict(e, FilePath=_work_ref(matter_path))
+        matter.append(e)
+    own_cs["MatterRigidBodyNamePathAry"] = matter
     return {phys_path: (byml.dumps({"ControllerSetPath": _work_ref(cs_path)}), src),
             cs_path: (byml.dumps(own_cs), cs_src),
-            cct_path: (byml.dumps(cct), cct_src)}
+            cct_path: (byml.dumps(cct), cct_src), **extra}
 
 
 def add_body(doc, player_components, members, actor, files, sensors=False, cloth_path=None):

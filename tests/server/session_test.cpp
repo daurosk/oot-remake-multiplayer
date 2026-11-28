@@ -9122,6 +9122,39 @@ TEST_CASE("row 232: the grab hand-over waits for the owner's attack to end, and 
   }
 }
 
+// Row 306: a Cucco another player's Link holds (grabbed_here on a non-boss) goes to that game at once, through the
+// owner's fight lock (its own carry or area claim, 12 s) and the hand-over cooldown; a chase (targeting) alone waits.
+TEST_CASE("row 306: a held non-boss goes to its holder at once, fight lock or not, not while its owner holds it") {
+  for (const int mode : {0, 1, 2}) {  // 0: player 2 holds it, 1: only a chase from player 2, 2: both hold it
+    CAPTURE(mode);
+    OwnerHarness h(near_config());
+    h.receive(1, flagged_present("Field", {placed(7)}, object_presence::targeting), kChannelOwnership);  // its carry
+    h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+    REQUIRE(h.session.object_owner(placed(7)) == owned(1, 0));
+    REQUIRE(h.session.object_in_fight(placed(7), h.now));
+    h.clear();
+    h.run(kSecond);
+    CHECK(h.asks() == 0);
+    if (mode == 2) {
+      h.receive(1, flagged_present("Field", {placed(7)}, object_presence::targeting | object_presence::grabbed_here),
+                kChannelOwnership);
+    }
+    const std::uint8_t two = mode == 1 ? object_presence::targeting
+                                       : static_cast<std::uint8_t>(object_presence::targeting |
+                                                                   object_presence::grabbed_here);
+    h.receive(2, flagged_present("Field", {placed(7)}, two), kChannelOwnership);
+    h.run(250'000);
+    REQUIRE(h.session.object_in_fight(placed(7), h.now));  // (the owner's fight lock still holds)
+    if (mode == 0) {
+      CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+      CHECK(h.session.stats().carried_to_holder == 1);
+    } else {
+      CHECK(h.asks() == 0);  // a chase waits out the fight; the owner's own carry keeps it
+      CHECK(h.session.stats().carried_to_holder == 0);
+    }
+  }
+}
+
 TEST_CASE("row 222: without the battle manager bit the same boss goes to the nearer player (as before)") {
   OwnerHarness h(near_config());
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);

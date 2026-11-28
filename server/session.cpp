@@ -2471,6 +2471,17 @@ bool Session::orders_root(const Object& o) const {
   return o.boss && !o.root && o.battle_manager;
 }
 
+std::optional<ConnectionId> Session::carry_owner(const Object& o, ConnectionId owner) const {
+  if (o.boss || o.root || o.fish || o.grabbed.empty() || o.grabbed.contains(owner)) return std::nullopt;
+  for (ConnectionId other : o.grabbed) {  // (lowest connection first: one answer while two hold it)
+    if (other == owner || !o.present.contains(other) || !has_loaded(other, o)) continue;
+    const auto it = connections_.find(other);
+    if (it == connections_.end() || busy(it->second)) continue;
+    return other;
+  }
+  return std::nullopt;
+}
+
 std::optional<ConnectionId> Session::grab_owner(const Object& o, ConnectionId owner, std::uint64_t now_us) const {
   if (!o.boss || o.root || o.grabbed.empty() || o.grabbed.contains(owner) || orders_root(o)) return std::nullopt;
   for (ConnectionId other : o.grabbed) {  // (lowest connection first: one answer while two are held)
@@ -3155,6 +3166,16 @@ void Session::run_ownership(std::uint64_t now_us) {
         ++stats_.back_to_logic;
         ask_handover(oid, o, *keeper, now_us, "back to a game whose logic made it (row 212)");
       }
+      continue;
+    }
+
+    // Row 306 (owner 0.12.0: "cuccos a player holds may still fall through that player on other screens"): the
+    // game whose own Link holds it (grabbed_here on a non-boss: the hook's carry claim) takes it at once, fight or
+    // not. Its game alone keeps it in that Link's hands; every other game shows its owner's. Its claim was a chase,
+    // heard only out of a fight and past the hand-over cooldown: up to 12 s after the owner's own carry (its fight
+    // lock), the other screens showed the owner's Cucco falling to the ground under the holder.
+    if (auto holder = carry_owner(o, owner)) {
+      if (ask_handover(oid, o, *holder, now_us, "its holder's Link carries it (row 306)")) ++stats_.carried_to_holder;
       continue;
     }
 

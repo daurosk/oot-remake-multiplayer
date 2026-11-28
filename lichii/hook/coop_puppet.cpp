@@ -847,6 +847,11 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         Say(who + ": hair put back after the head piece (the game's own take-off, " +
             Hex(addr::kHeadArmorHairBack) + ")");
         break;
+    case Pending::as_var:
+        if (const std::string line = slot.as_vars.Finish(result); !line.empty()) {
+            Say(who + ": " + line);
+        }
+        break;
     case Pending::own_state:  // taken above
     case Pending::none:
         break;
@@ -1045,7 +1050,28 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             slot.anim_name.clear();
             return std::nullopt;
         }
-        return Animate(slot, *t, guest, now_ms);
+        if (auto c = Animate(slot, *t, guest, now_ms)) {
+            return c;
+        }
+        // Row 307: a character's puppet takes no pose copy, so its AS reads the player's walk/run variables
+        // (coop_as_vars.h Writer). A Link puppet's pose copy shows the sender's blend already.
+        if (IsCharacterActor(slot.actor_name)) {
+            const auto read = [&guest](std::uint64_t a, void* out, std::size_t n) { return guest.Read(a, out, n); };
+            const auto write = [&guest](std::uint64_t a, const void* in, std::size_t n) {
+                return guest.Write(a, in, n);
+            };
+            if (auto ask = slot.as_vars.Next(read, write, slot.actor, slot.block, t->as_vars, frames_)) {
+                Call c;
+                c.function = ask->function;
+                c.x[0] = ask->x0;
+                c.x[1] = ask->x1;
+                c.x[2] = ask->x2;
+                c.s0 = ask->s0;
+                pending_ = Pending::as_var;
+                return c;
+            }
+        }
+        return std::nullopt;
     default:
         return std::nullopt;
     }
@@ -2611,6 +2637,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.why = why;
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
+        t.as_vars = r.as_vars;
         t.gear = r.gear;
         const bool own_copy = r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies;
         if (own_copy) {
@@ -3057,6 +3084,7 @@ std::unique_ptr<Planner> g_planner;  // the present thread only
 struct Received {
     Anim anim;
     std::uint32_t serial = 0;
+    std::optional<coop::protocol::AsVars> as_vars;  // row 307
 };
 std::mutex g_anim_mutex;
 // One entry per player number, 0 (unused) to kMaxPlayers (up to 16 players).
@@ -3214,7 +3242,8 @@ void OnEvent(const coop::net::Event& event) {
         const std::uint32_t serial = ++g_anim_serials[sample->player_number];
         g_anims[sample->player_number].Push(
             sample->time.server_time_us,
-            Received{{sample->animation->name, sample->animation->frame, sample->animation->rate}, serial});
+            Received{{sample->animation->name, sample->animation->frame, sample->animation->rate}, serial,
+                     sample->as_vars});
     }
 }
 
@@ -3335,6 +3364,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 if (const Received* a = g_anims[r.number].At(show_us[r.number])) {
                     r.anim = a->anim;
                     r.anim_serial = a->serial;
+                    r.as_vars = a->as_vars;
                 }
                 // An emote in hand (coop_emote.h): its AS command, at a serial of its own so it plays once.
                 const auto emote_now_ms = static_cast<std::uint64_t>(

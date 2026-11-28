@@ -847,3 +847,29 @@ TEST_CASE("host sampler: a 10 fps game read at 60 presents a second") {
     CHECK((*sent[i].velocity)[0] == doctest::Approx(6.0f).epsilon(0.01));
   }
 }
+
+TEST_CASE("host sampler: row 307's AS variables ride on the sample, and a change of them alone is sent") {
+  Sampler s;
+  auto r = at(1.0f);
+  r.as_vars = proto::AsVars{1.0f, 6.25f, 6.5f, proto::kAsVarDash};
+  auto d = decode(s.frame(r, kStart));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].as_vars == r.as_vars);
+  // Standing still with the same values: nothing new (after the first still frame).
+  std::uint64_t t = kStart;
+  for (int i = 0; i < 30; ++i) {
+    t += kFrameUs;
+    (void)s.frame(r, t);
+  }
+  t += kFrameUs;
+  CHECK(decode(s.frame(r, t)).samples.empty());
+  // A tiny wobble is not a change; the dash bit is.
+  r.as_vars->left_stick_length = 1.01f;
+  t += kFrameUs;
+  CHECK(decode(s.frame(r, t)).samples.empty());
+  r.as_vars->bits = 0;
+  t += kFrameUs;
+  d = decode(s.frame(r, t));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].as_vars->bits == 0);
+}

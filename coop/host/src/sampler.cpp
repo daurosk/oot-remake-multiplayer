@@ -35,6 +35,15 @@ bool animation_changed(const std::optional<protocol::Animation>& a,
   return a->name != b->name || a->rate != b->rate;
 }
 
+// Row 307: a change the walk/run blend shows (a bit, or a value moved by more than kAsVarsStep).
+constexpr float kAsVarsStep = 0.05f;
+bool as_vars_changed(const std::optional<protocol::AsVars>& a, const std::optional<protocol::AsVars>& b) {
+  if (a.has_value() != b.has_value()) return true;
+  if (!a) return false;
+  return a->bits != b->bits || std::fabs(a->left_stick_length - b->left_stick_length) > kAsVarsStep ||
+         std::fabs(a->linear_vel_xz - b->linear_vel_xz) > kAsVarsStep || std::fabs(a->xz_speed - b->xz_speed) > kAsVarsStep;
+}
+
 void push(std::vector<Outgoing>& out, const protocol::Message& message) {
   if (auto bytes = protocol::encode(message)) {
     out.push_back({protocol::channel_of(message), std::move(*bytes)});
@@ -136,6 +145,8 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
   // A new AS command or rate, not a new frame: receivers run the frame on
   // from the rate, and the keep-alive corrects it.
   if (animation_changed(reading.animation, last_sent_->animation)) return true;
+  // Row 307: the walk/run blend's variables (a stick eased off while standing still, a dash started).
+  if (as_vars_changed(reading.as_vars, last_sent_->as_vars)) return true;
   return false;
 }
 
@@ -191,6 +202,7 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     sample.scene = reading->scene;
     sample.age = reading->age;
     sample.animation = reading->animation;
+    sample.as_vars = reading->as_vars;
     ++sequence_;
     push(out, sample);
     last_sent_ = std::move(sample);

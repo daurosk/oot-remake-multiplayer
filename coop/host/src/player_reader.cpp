@@ -185,6 +185,22 @@ std::optional<bool> PlayerReader::read_event_running() {
   return std::nullopt;
 }
 
+std::optional<protocol::AsVars> PlayerReader::read_as_vars(AsVarsMemo& memo) {
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return std::nullopt;
+  const auto as = read_ptr(memory_, *components + addr::kComponentsAs);
+  if (!as) return std::nullopt;
+  const auto inner = read_ptr(memory_, *as + addr::kAsComponentInner);
+  if (!inner) return std::nullopt;
+  const auto controller = read_ptr(memory_, *inner + addr::kAsInnerController);
+  if (!controller) return std::nullopt;
+  const auto instance = read_ptr(memory_, *controller + as_addr::kControllerAs);
+  if (!instance) return std::nullopt;
+  return coop::host::read_as_vars(memory_, *instance, memo);
+}
+
 std::optional<protocol::Animation> PlayerReader::read_animation() {
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
@@ -568,6 +584,7 @@ std::optional<PlayerReading> PlayerReader::read() {
     }
   }
   reading.animation = read_animation();
+  if (as_vars_memo_ != nullptr) reading.as_vars = read_as_vars(*as_vars_memo_);
   reading.equipment = read_equipment();
   if (const auto life = read_life()) reading.dead = *life <= 0;
   return reading;

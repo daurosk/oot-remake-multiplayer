@@ -52,6 +52,7 @@ add_library(coop_host STATIC
   host/src/one_way_keeper.cpp
   host/src/game_memory.cpp
   host/src/player_reader.cpp
+  host/src/as_vars.cpp
   host/src/sampler.cpp
   host/src/save_transfer.cpp
   host/src/session.cpp

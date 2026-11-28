@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "coop/host/as_vars.hpp"
 #include "coop/host/event_owner.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/protocol/messages.hpp"
@@ -45,6 +46,9 @@ struct PlayerReading {
   // frame); the hook's EventOwnerTracker sets it. `ours` by default: what event_running meant before.
   EventWhose event_whose = EventWhose::ours;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
+  // Row 307: the AS variables the 'Move' blend reads (coop/host/as_vars.hpp). Read only by a reader given an
+  // AsVarsMemo (the sampler's); nothing otherwise or when a read failed.
+  std::optional<protocol::AsVars> as_vars;
   std::optional<protocol::Equipment> equipment;  // what the player wears
   // PLAYER_STATUS's away bits (docs/protocol.md), which the reader cannot see in one frame of memory: the hook sets
   // them from the game's own state (docs/puppet.md, "Away"). Nothing: not known in this build (kept as 0, never sent).
@@ -71,8 +75,8 @@ class PlayerReader {
   };
   using DrawnState = std::array<DrawnMemo, 8>;
 
-  explicit PlayerReader(GameMemory& memory, DrawnState* drawn_state = nullptr)
-      : memory_(memory), drawn_memo_(drawn_state != nullptr ? *drawn_state : own_drawn_) {}
+  explicit PlayerReader(GameMemory& memory, DrawnState* drawn_state = nullptr, AsVarsMemo* as_vars = nullptr)
+      : memory_(memory), drawn_memo_(drawn_state != nullptr ? *drawn_state : own_drawn_), as_vars_memo_(as_vars) {}
 
   // This frame's reading, or nothing when the player cannot be read.
   std::optional<PlayerReading> read();
@@ -97,6 +101,8 @@ class PlayerReader {
   // protocol::kMaxAnimationChars printable ASCII characters, or the frame or
   // rate is not finite or out of range.
   std::optional<protocol::Animation> read_animation();
+  // Row 307: the player's AS variables (coop/host/as_vars.hpp read_as_vars), with the given memo's handles.
+  std::optional<protocol::AsVars> read_as_vars(AsVarsMemo& memo);
   // What the player has equipped (PlayerStatus.Equip* flags) and which
   // equipment slots are drawn, and the item in the hand slot. Nothing when neither could be read; a field
   // is nothing when its own read failed.
@@ -133,6 +139,7 @@ class PlayerReader {
   GameMemory& memory_;
   DrawnState own_drawn_{};
   DrawnState& drawn_memo_;
+  AsVarsMemo* as_vars_memo_ = nullptr;  // nothing: as_vars is not read
   std::uint64_t actor_ = 0;  // set_actor's
 };
 

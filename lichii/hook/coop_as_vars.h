@@ -34,6 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop/protocol/messages.hpp"
+
 namespace CoopAsVars {
 
 // A float word's place: from the controller, follow the pointer at hops[0] (and then at hops[1]), then + offset.
@@ -263,6 +265,151 @@ private:
     std::size_t reads_ = 0;
     float speed_min_ = 0, speed_max_ = 0, speed_now_ = 0;
     int lines_ = 0;
+};
+
+
+// The fix (the receiver's side). For a live Character Select character's puppet: the received AsVars (PLAYER_SAMPLE
+// component 8) are written into the puppet's own AS with the game's own calls, as the player's code does for our
+// Link (the AS instance: controller + 0x40; vtable main+0x4c29818, reports/puppet-run-307-5.md):
+//   handle = AS->vt[0x2f8] (f32) / vt[0x300] (bool) (AS, &{const char* name})   once per name per AS (0x2e72e20)
+//   AS->vt[0x80] (AS, handle, s0 value) / vt[0x88] (AS, handle, w2 bit)          a value that changed (0x2e7584c,
+//                                                                                 0x2e763b0)
+// A handle below 0 (the character's AS has no such name) is skipped. One call per step: the frame's call budget
+// (Director kMaxCallsPerFrame) is shared.
+inline constexpr std::uint64_t kControllerAs = 0x40;
+inline constexpr std::uint64_t kVtF32Set = 0x80;
+inline constexpr std::uint64_t kVtBoolSet = 0x88;
+inline constexpr std::uint64_t kVtF32Handle = 0x2f8;
+inline constexpr std::uint64_t kVtBoolHandle = 0x300;
+inline constexpr std::size_t kVars = 5;  // f32 0..2, bool 3..4
+inline constexpr std::array<const char*, kVars> kNames{"LeftStickLength", "LinearVelXZ", "XZSpeed",
+                                                       "IsLeftStickInput", "IsDash"};
+inline constexpr std::array<std::uint8_t, 2> kBits{coop::protocol::kAsVarLeftStickInput, coop::protocol::kAsVarDash};
+inline constexpr bool IsBool(std::size_t i) { return i >= 3; }
+// Room in the puppet's block (CoopPuppet::block, 0x180 to 0x1a8 is free: after kNameText, before kPlayRequest).
+namespace block {
+inline constexpr std::uint64_t kNameText = 0x180;  // 0x20 bytes: the name being looked up
+inline constexpr std::uint64_t kNameTextCapacity = 0x20;
+inline constexpr std::uint64_t kNamePtr = 0x1a0;   // 8 bytes: its address (the call's x1 points here)
+}  // namespace block
+
+// One game call to make (Director turns it into a Call).
+struct Ask {
+    std::uint64_t function = 0;
+    std::uint64_t x0 = 0, x1 = 0, x2 = 0;
+    float s0 = 0.0f;
+};
+
+class Writer {
+public:
+    using Read = Probe::Read;
+    using Write = std::function<bool(std::uint64_t address, const void* in, std::size_t size)>;
+    static constexpr std::int32_t kUnknown = -2;
+    static constexpr int kPerFrame = 2;  // calls a puppet's variables may take in one game frame
+
+    // The puppet's AS (actor + 0x270 > +0x40 > +0x18 > +0x18 > +0x40, as our Link's); 0 when a step reads nothing.
+    static std::uint64_t AsOf(const Read& read, std::uint64_t actor) {
+        std::uint64_t p = actor;
+        constexpr std::array<std::uint64_t, 5> kWalk{0x270, 0x40, 0x18, 0x18, kControllerAs};
+        for (const std::uint64_t off : kWalk) {
+            std::uint64_t next = 0;
+            if (p == 0 || !read(p + off, &next, sizeof next)) return 0;
+            p = next;
+        }
+        return p;
+    }
+
+    // The next call for this puppet, or nothing. `wanted`: the newest received values (nothing: an older sender).
+    // `frame`: the game frame's number (or time); at most kPerFrame calls are given in one.
+    std::optional<Ask> Next(const Read& read, const Write& write, std::uint64_t actor, std::uint64_t block_at,
+                            const std::optional<coop::protocol::AsVars>& wanted, std::uint64_t frame) {
+        asking_ = -1;
+        setting_ = -1;
+        if (frame != frame_) {
+            frame_ = frame;
+            calls_ = 0;
+        }
+        if (calls_ >= kPerFrame || !wanted || actor == 0 || block_at == 0) return std::nullopt;
+        const std::uint64_t as = AsOf(read, actor);
+        std::uint64_t vt = 0;
+        if (as == 0 || !read(as, &vt, sizeof vt) || vt == 0) return std::nullopt;
+        if (as != as_) {  // a new AS (a new actor, a swap): its names are looked up again, every value written
+            as_ = as;
+            handle_.fill(kUnknown);
+            written_.fill(false);
+        }
+        for (std::size_t i = 0; i < kVars; ++i) {
+            if (handle_[i] != kUnknown) continue;
+            std::uint64_t fn = 0;
+            if (!read(vt + (IsBool(i) ? kVtBoolHandle : kVtF32Handle), &fn, sizeof fn) || fn == 0) return std::nullopt;
+            std::array<char, block::kNameTextCapacity> text{};
+            std::snprintf(text.data(), text.size(), "%s", kNames[i]);
+            const std::uint64_t text_at = block_at + block::kNameText;
+            if (!write(text_at, text.data(), text.size()) || !write(block_at + block::kNamePtr, &text_at, 8)) {
+                return std::nullopt;
+            }
+            asking_ = static_cast<int>(i);
+            ++calls_;
+            return Ask{fn, as, block_at + block::kNamePtr, 0, 0.0f};
+        }
+        for (std::size_t k = 0; k < kVars; ++k) {
+            const std::size_t i = (next_ + k) % kVars;
+            if (handle_[i] < 0) continue;
+            const float v = Value(*wanted, i);
+            if (written_[i] && value_[i] == v) continue;
+            std::uint64_t fn = 0;
+            if (!read(vt + (IsBool(i) ? kVtBoolSet : kVtF32Set), &fn, sizeof fn) || fn == 0) return std::nullopt;
+            next_ = (i + 1) % kVars;
+            setting_ = static_cast<int>(i);
+            setting_value_ = v;
+            ++calls_;
+            const auto h = static_cast<std::uint64_t>(static_cast<std::uint32_t>(handle_[i]));
+            if (IsBool(i)) return Ask{fn, as, h, v != 0.0f ? 1u : 0u, 0.0f};
+            return Ask{fn, as, h, 0, v};
+        }
+        return std::nullopt;
+    }
+
+    // The call Next gave has run; `result` its x0 (w0: the handle of a lookup). A line to log, or "".
+    std::string Finish(std::uint64_t result) {
+        std::string line;
+        if (asking_ >= 0) {
+            const auto h = static_cast<std::int32_t>(static_cast<std::uint32_t>(result));
+            const auto i = static_cast<std::size_t>(asking_);
+            handle_[i] = h < 0 ? -1 : h;
+            line = std::string("AS variable '") + kNames[i] + "' handle " + std::to_string(h) +
+                   (h < 0 ? " (not in this AS: skipped)" : "");
+        } else if (setting_ >= 0) {
+            written_[static_cast<std::size_t>(setting_)] = true;
+            value_[static_cast<std::size_t>(setting_)] = setting_value_;
+        }
+        asking_ = -1;
+        setting_ = -1;
+        return line;
+    }
+
+    std::int32_t Handle(std::size_t i) const { return handle_[i]; }
+
+    static float Value(const coop::protocol::AsVars& v, std::size_t i) {
+        switch (i) {
+        case 0: return v.left_stick_length;
+        case 1: return v.linear_vel_xz;
+        case 2: return v.xz_speed;
+        default: return (v.bits & kBits[i - 3]) != 0 ? 1.0f : 0.0f;
+        }
+    }
+
+private:
+    std::uint64_t as_ = 0;
+    std::array<std::int32_t, kVars> handle_{kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
+    std::array<bool, kVars> written_{};
+    std::array<float, kVars> value_{};
+    std::size_t next_ = 0;
+    int asking_ = -1;
+    int setting_ = -1;
+    float setting_value_ = 0.0f;
+    std::uint64_t frame_ = ~0ull;
+    int calls_ = 0;
 };
 
 }  // namespace CoopAsVars

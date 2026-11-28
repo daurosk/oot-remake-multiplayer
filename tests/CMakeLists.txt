@@ -34,6 +34,7 @@ add_executable(coop_tests
   voice/engine_test.cpp
   host/reader_test.cpp
   host/sampler_test.cpp
+  host/as_vars_test.cpp
   host/flags_test.cpp
   host/flag_watcher_test.cpp
   host/game_flags_test.cpp

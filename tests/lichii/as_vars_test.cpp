@@ -94,3 +94,83 @@ TEST_CASE("as-vars probe: no controller, no lines, standing still, no report") {
     }
     CHECK(reports == 0);
 }
+
+TEST_CASE("as-vars writer: a character's AS gets each name's handle once, then the changed values (row 307)") {
+    Memory m;
+    constexpr std::uint64_t actor = 0x10000, comps = 0x11000, comp = 0x12000, inner = 0x13000, ctl = 0x14000;
+    constexpr std::uint64_t as = 0x15000, vt = 0x16000, block = 0x17000;
+    m.Word(actor + 0x270, comps);
+    m.Word(comps + 0x40, comp);
+    m.Word(comp + 0x18, inner);
+    m.Word(inner + 0x18, ctl);
+    m.Word(ctl + 0x40, as);
+    m.Word(as, vt);
+    m.Word(vt + 0x80, 0xf32500);
+    m.Word(vt + 0x88, 0xb00500);
+    m.Word(vt + 0x2f8, 0xf32400);
+    m.Word(vt + 0x300, 0xb00400);
+    m.Word(block, 0);
+    const auto read = m.Reader();
+    const CoopAsVars::Writer::Write write = [&m](std::uint64_t at, const void* in, std::size_t size) {
+        m.Write(at, in, size);
+        return true;
+    };
+    CoopAsVars::Writer w;
+    CHECK(CoopAsVars::Writer::AsOf(read, actor) == as);
+    CHECK_FALSE(w.Next(read, write, actor, block, std::nullopt, 1));  // an older sender: nothing
+    const coop::protocol::AsVars v{1.0f, 6.25f, 6.5f, coop::protocol::kAsVarDash};
+    // Lookups: f32 names through vt+0x2f8, bools through vt+0x300, x1 = the cell holding the name's address.
+    const std::array<std::uint32_t, 5> handles{7, 9, 0xffffffffu, 3, 4};  // XZSpeed is not in this AS
+    std::uint64_t frame = 10;
+    for (std::size_t i = 0; i < 5; ++i) {
+        if (i % 2 == 0) ++frame;  // two calls a frame
+        const auto a = w.Next(read, write, actor, block, v, frame);
+        REQUIRE(a);
+        CHECK(a->function == (i < 3 ? 0xf32400u : 0xb00400u));
+        CHECK(a->x0 == as);
+        CHECK(a->x1 == block + CoopAsVars::block::kNamePtr);
+        std::uint64_t text_at = 0;
+        REQUIRE(read(a->x1, &text_at, 8));
+        char name[0x20] = {};
+        REQUIRE(read(text_at, name, sizeof name));
+        CHECK(std::string(name) == CoopAsVars::kNames[i]);
+        CHECK_FALSE(w.Finish(handles[i]).empty());
+        if (i % 2 == 1) CHECK_FALSE(w.Next(read, write, actor, block, v, frame));  // the frame's 2 are used
+    }
+    CHECK(w.Handle(2) == -1);
+    // Values: four (XZSpeed skipped), f32 by vt+0x80 with s0, bools by vt+0x88 with x2.
+    std::vector<CoopAsVars::Ask> asks;
+    for (int k = 0; k < 4; ++k) {
+        const auto a = w.Next(read, write, actor, block, v, ++frame);
+        REQUIRE(a);
+        asks.push_back(*a);
+        w.Finish(0);
+    }
+    CHECK_FALSE(w.Next(read, write, actor, block, v, ++frame));  // all written, none changed
+    CHECK(asks[0].function == 0xf32500u);
+    CHECK(asks[0].x1 == 7);
+    CHECK(asks[0].s0 == 1.0f);
+    CHECK(asks[1].x1 == 9);
+    CHECK(asks[1].s0 == 6.25f);
+    CHECK(asks[2].function == 0xb00500u);
+    CHECK(asks[2].x1 == 3);
+    CHECK(asks[2].x2 == 0);  // not IsLeftStickInput
+    CHECK(asks[3].x1 == 4);
+    CHECK(asks[3].x2 == 1);  // IsDash
+    // A changed value is written again, alone.
+    auto v2 = v;
+    v2.linear_vel_xz = 2.0f;
+    const auto again = w.Next(read, write, actor, block, v2, ++frame);
+    REQUIRE(again);
+    CHECK(again->x1 == 9);
+    CHECK(again->s0 == 2.0f);
+    w.Finish(0);
+    CHECK_FALSE(w.Next(read, write, actor, block, v2, ++frame));
+    // A new AS (the actor swapped): every name is looked up again.
+    m.Word(ctl + 0x40, as + 0x800);
+    m.Word(as + 0x800, vt);
+    const auto look = w.Next(read, write, actor, block, v2, ++frame);
+    REQUIRE(look);
+    CHECK(look->function == 0xf32400u);
+    CHECK(look->x0 == as + 0x800);
+}

@@ -2580,7 +2580,7 @@ private:
         }
         view.game = true;
         EmulatorMemory memory(system.ApplicationMemory(), base_);
-        coop::host::PlayerReader reader(memory, &drawn_state_);
+        coop::host::PlayerReader reader(memory, &drawn_state_, &as_vars_memo_);
         auto reading = reader.read();
         // sword-3: the sword and shield as the game's own query has them
         // (coop_puppet_own.h), not as the passing request byte was seen.
@@ -3006,6 +3006,7 @@ private:
     bool queue_sizes_logged_ = false;  // the game's flag queue sizes, logged once
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
+    coop::host::AsVarsMemo as_vars_memo_{};  // row 307: our Link's AS variable handles
     coop::host::WorldStill world_still_;  // row 164 follow-up: our world standing still with no menu named
     bool quick_switch_ = false;           // the quick-switch item menu was open at the last reading (its log line)
     bool sharing_ = false;  // a flag list is shared; set by Begin

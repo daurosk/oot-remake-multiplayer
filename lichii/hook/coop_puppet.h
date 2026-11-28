@@ -380,6 +380,9 @@ struct Target {
     const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;  // goes up with each received animation
+    // Row 307: the player's AS variables (PLAYER_SAMPLE component 8), written into a character's puppet's AS
+    // (coop_as_vars.h Writer). Unset: an older sender, nothing written.
+    std::optional<coop::protocol::AsVars> as_vars;
     // What the player wears, in kGearKinds order; unset: not known yet,
     // "" nothing (not taken off yet; the puppet keeps what it has).
     Gear gear;
@@ -699,6 +702,7 @@ private:
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
+        CoopAsVars::Writer as_vars;         // row 307: the player's AS variables on a character's AS
         // Character Select: what the colour routine was last given for this actor (Target::custom), when,
         // and what the call under way gives it.
         std::optional<std::uint64_t> dressed;
@@ -717,7 +721,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame, dress
+        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame, dress, as_var
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -859,6 +863,7 @@ struct Remote {
     bool young = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
+    std::optional<coop::protocol::AsVars> as_vars;  // as Target::as_vars
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
     std::optional<std::uint8_t> lit;                 // as Target::lit

@@ -20,7 +20,8 @@ Steps (each value's source in the comment beside it):
 2. selftest.exe on the stock exe (offline): every symbol found, every prologue hookable (FAIL otherwise).
 3. Drop out/winmm.dll beside bin/longshot.exe, start it (cwd = the game folder, as the builder's launcher does), place
    its window on the test display; 'dropin: attached' within ATTACH_S, then 'dropin: frame 600 ' within FRAME_S, the
-   guest word line "the game's pacibsp: hook on", exactly ONE 'hooked at' (the game; its --crash-watch helper loads the
+   guest word line "the game's pacibsp: hook on", exactly ONE 'hooked at', from the game's pid (log lines carry [pid N];
+   its --crash-watch helper, which Longshot starts with QUOTED arguments, loads the
    same winmm.dll and must only forward: run 20261126-064809 hooked both), the game still running.
 4. One window shot of the game (uncovered, not one colour; SETUP-FAIL otherwise). Co-op draws nothing on a stock game
    yet, so there is no reference picture: the shot is kept for the owner under <out>/dropin/.
@@ -53,6 +54,7 @@ HELPER_S = 15                     # the --crash-watch helper ends with its game;
 TELEMETRY = ("crash_reports", "perf_reports")
 LOG = "squadala-dropin.log"       # dropin.c attach(): beside the exe
 WM_CLOSE = 0x0010
+PID_LINE = re.compile(r"^\S+ \[pid (\d+)\] (dropin: .*)$", re.M)   # dropin.c dlog: "HH:MM:SS.mmm [pid N] dropin: ..."
 
 
 def pin_tag():
@@ -224,11 +226,20 @@ def test_dropin_stock_longshot(request):
         assert proc.poll() is None, "the game exited by itself (exit %s)" % proc.poll()
         assert framed, "no 'dropin: frame 600' line in %d s" % FRAME_S
         assert "the game's pacibsp: hook on" in text, "guest word check: no \"hook on\" line"
-        hooks = text.count("hooked at")
-        assert hooks == 1, "%d 'hooked at' lines (want 1: the game only, its --crash-watch helper forwards only)" % hooks
+        # judged per process: dropin.c's dlog puts "[pid N]" on every line (43b1a3d91's log had none: run
+        # v1-dropin-43b1a3d9 07:19 showed 2 'hooked at' and needed the timing to tell the helper from the game)
+        by_pid = {}
+        for pid, what in PID_LINE.findall(text):
+            by_pid.setdefault(int(pid), []).append(what)
+        hooked = {pid: sum("hooked at" in w for w in ws) for pid, ws in by_pid.items()}
+        hooked = {pid: n for pid, n in hooked.items() if n}
+        say("hook lines per pid %s; attached pids %s" % (hooked, sorted(by_pid)))
+        assert hooked == {proc.pid: 1}, \
+            "'hooked at' per pid %s, want {%d: 1} (the game only; its --crash-watch helper forwards only)" % (hooked, proc.pid)
         helpers = [pid for pid, cmd in procs.items() if "--crash-watch" in cmd]
-        if helpers:
-            assert "--crash-watch helper" in text, "the --crash-watch helper %s ran without its forward-only line" % helpers
+        for h in helpers:
+            assert any("--crash-watch helper: forwarding winmm only" in w for w in by_pid.get(h, [])), \
+                "the --crash-watch helper pid %d has no forward-only line (its lines: %s)" % (h, by_pid.get(h))
 
         # ---- 4. one window shot (uncovered, not one colour) ----
         import hs_steps as hs

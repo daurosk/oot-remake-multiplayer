@@ -76,10 +76,25 @@ def warp_in(pair, stage):
             x, s.get("scene"))
 
 
-# The most frames fight_ready waits after the old scripts' fixed intro wait: one more of the old Twinrova intro
-# allowance ('wait 1800', row-222-shots-twinrova.A.txt:27 = fr(1800) = 900 frames). A ceiling, not a timing: the wait
-# ends at the first read with the play UI up and no event, and every frame counts in the test's own budget.
-FIGHT_UI_FRAMES = 900
+# The longest boss intro measured, in game frames from its start event to its end, by each game's own log and its
+# 'vi: N frames presented' counter (run twinrova-222-a2e69946, lane 1, module 182cd53b5; offline/twinrova-222-8/
+# run-a2e69946/lane1/session): Twinrova, 'SageOfSpirit_BossStart' (taken) -> 'event false' + 'the game's play UI is up':
+# B game-out-B.txt.1:6267 (frames 4493-4584) -> :9050 (8273-8569) = 3690-4080; A game-out-A.txt.1:6505 (5099-5331) ->
+# :9593 (8873-8950) = 3540-3850. Phantom Ganon (same run): arrival :10025 (8550-8804) -> play UI up :11375 (10114-10295)
+# = 1310-1745. The old scripts' Twinrova 'wait 1800' (fr(1800) = 900 frames) was far short: that run's SETUP-FAIL.
+INTRO_MEASURED_MAX = 4080
+INTRO_MARGIN = 1.25                 # 25% over the longest measured (one run of each boss so far)
+# The most frames fight_ready waits after a test's fixed intro wait: the margined longest intro minus the shortest
+# fixed wait before it (Twinrova's fr(1800)). A ceiling, not a timing: the wait ends at the first read with the play UI
+# up and no event, and every frame counts in the test's own budget.
+FIGHT_UI_FRAMES = int(INTRO_MEASURED_MAX * INTRO_MARGIN) - fr(1800)       # = 4200
+# Budgets from the frames each test steps at the bridge's measured pace: test_phantom_ganon_shots ran ~8700 frames in
+# 562.1 s (run twinrova-222-a2e69946 summary.md) = 15.5 frames/s; +25%. Twinrova: ~11400 frames + FIGHT_UI_FRAMES.
+STEP_FPS = 15.5
+TWINROVA_FRAMES = 11400 + FIGHT_UI_FRAMES
+TWINROVA_BUDGET_S = int(TWINROVA_FRAMES / STEP_FPS * 1.25)                # = 1258 (the old row's 900 s did not fit)
+PG_FRAMES = 8700 + FIGHT_UI_FRAMES  # (its fight_ready may wait the same ceiling after its own intro wait)
+PG_BUDGET_S = int(PG_FRAMES / STEP_FPS * 1.25)                            # = 1040
 
 
 def fight_ready(pair, stage):
@@ -226,7 +241,7 @@ TWINROVA_JUDGED = ("Twinrova_Bullet_FireBullet", "Twinrova_Bullet_FireField", "T
                    "Twinrova_Bullet_IceField")
 
 
-@pytest.mark.budget(900)        # the old row's '#! timeout 900' (row-222-shots-twinrova.A.txt:13); ~11400 frames here
+@pytest.mark.budget(TWINROVA_BUDGET_S)   # (was the old row's '#! timeout 900', row-222-shots-twinrova.A.txt:13: too short)
 @pytest.mark.look
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#222 Twinrova's shots are the owner's in both games (row-222-shots-twinrova)")
@@ -278,7 +293,7 @@ PG = "Enemy_DungeonBoss_PhantomGanon"
 PG_JUDGED = ("DungeonBossPhantomGanon_Bullet_LightBall",)
 
 
-@pytest.mark.budget(900)        # the old row's '#! timeout 900' (row-286-shots-phantomganon.A.txt:9); ~8700 frames here
+@pytest.mark.budget(PG_BUDGET_S)         # (was the old row's '#! timeout 900', row-286-shots-phantomganon.A.txt:9)
 @pytest.mark.look
 @pytest.mark.needs_env(*SWITCHES)
 @pytest.mark.row("#286 Phantom Ganon's light balls are the owner's in both games (row-286-shots-phantomganon)")

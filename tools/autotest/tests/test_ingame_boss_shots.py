@@ -138,6 +138,18 @@ class FightReady(unittest.TestCase):
         with self.assertRaisesRegex(P.SetupFail, r"^%s: A: no 'the game's play UI is up' line" % SCENE):
             BS.fight_ready(pair, SCENE)
 
+    def test_ceiling_and_budgets_come_from_the_measured_intro(self):
+        # (run twinrova-222-a2e69946: the Twinrova intro measured 3540-4080 frames, the old 900-frame allowance SETUP-FAILed;
+        # one source: the constants in test_boss_shots, their marks read from the test functions)
+        self.assertEqual(BS.INTRO_MEASURED_MAX, 4080)
+        self.assertEqual(BS.FIGHT_UI_FRAMES, int(4080 * 1.25) - BS.fr(1800))
+        self.assertGreaterEqual(BS.fr(1800) + BS.FIGHT_UI_FRAMES, 4080)      # (the longest measured intro fits)
+        for fn, frames, budget in ((BS.test_twinrova_shots, BS.TWINROVA_FRAMES, BS.TWINROVA_BUDGET_S),
+                                   (BS.test_phantom_ganon_shots, BS.PG_FRAMES, BS.PG_BUDGET_S)):
+            marks = {m.name: m.args for m in fn.pytestmark}
+            self.assertEqual(marks["budget"], (budget,), fn.__name__)
+            self.assertGreaterEqual(budget, frames / BS.STEP_FPS, fn.__name__)
+
     def test_the_first_zl_comes_after_fight_ready_in_both_tests(self):
         # (source order: each test's first ZL press/hold after its fight_ready call, review-tests-153-3)
         with open(BS.__file__, encoding="utf-8") as f:

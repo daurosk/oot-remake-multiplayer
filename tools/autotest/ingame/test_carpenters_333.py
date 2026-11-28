@@ -10,8 +10,8 @@ gets the card scene asked by name (CoopCarpenters::Mender, kStuckUs 90 s).
 | A frees cell 1 (its two end flags): B's NumOfCarpenterHelped -> 1 and _02 -> 3 | coop_carpenters.h FollowRescues; coop_hook.cpp FollowCarpenters |
 | B's log says so | coop_hook.cpp FollowCarpenters: 'carpenters freed: our count -> 1 (the shared rescues; row 333)' |
 | back to 0 rescues: both counts back to 0 / 4 (a count above the rescues comes down) | FollowRescues (both ways) |
-| stuck save in the fortress: the mender's log line, then HavePlayedEvent.Meet_FourCarpenter_ClearEvent = 1 | coop_hook.cpp (Row 333 mender) LOG 'card scene never played' |
-| the card scene on A's screen (a shot) | user-facing: the scene a player sees |
+| stuck save in the fortress: the mender's log line (A or B, whichever fires first), then HavePlayedEvent.Meet_FourCarpenter_ClearEvent = 1 in both | coop_hook.cpp (Row 333 mender) LOG 'card scene never played' |
+| the card scene on that game's screen (a shot) | user-facing: the scene a player sees |
 
 The split rescue done by hand (case 2 of the report: the 4th rescuer's own +1 plays the card scene) needs four real
 cell fights; it is not in this file (report NOT proven).
@@ -105,11 +105,15 @@ def test_stuck_save_gets_card_scene(pair):
         pair.step_both(30)
         pair.warp_both(FORT, FORT_START)
     pair.until("both counts 4 / 0", lambda: all(counts(pair, x) == (4, 0) for x in ("A", "B")), FOLLOW_FRAMES)
-    pair.expect_log("A", "card scene never played", MENDER_FRAMES)
-    pair.until("A played %s" % CARD_PLAYED, lambda: is_set(pair, "A", CARD_PLAYED) or pair.state("A").get("event"),
-               CARD_FRAMES)
+    # Both games are stuck, so either mender may fire first; the other game may then join the shared scene instead
+    # of asking its own (review-tests-153-8: accept the line from A or B).
+    MEND = "card scene never played"
+    first = pair.until("a mender line in A or B (/%s/)" % MEND,
+                       lambda: next((x for x in ("A", "B") if pair.log[x].find(MEND)), None), MENDER_FRAMES)
+    pair.until("%s's card scene running or played" % first,
+               lambda: is_set(pair, first, CARD_PLAYED) or pair.state(first).get("event"), CARD_FRAMES)
     pair.step_both(60)
-    pair.check_shot("A", "carpenter-card-scene")
-    pair.until("A has %s" % CARD_PLAYED, lambda: is_set(pair, "A", CARD_PLAYED), CARD_FRAMES)
-    pair.until("B has %s (shared played flag)" % CARD_PLAYED, lambda: is_set(pair, "B", CARD_PLAYED), CARD_FRAMES)
-    pair.notes.append("mender: card scene played in A and B")
+    pair.check_shot(first, "carpenter-card-scene")
+    for x in ("A", "B"):
+        pair.until("%s has %s" % (x, CARD_PLAYED), lambda x=x: is_set(pair, x, CARD_PLAYED), CARD_FRAMES)
+    pair.notes.append("mender: first line in %s; card scene played in A and B" % first)

@@ -66,6 +66,51 @@ def last_front(pair, x):
     return hits[-1] if hits else None
 
 
+def game_pids(pair):
+    """{tag: pid} of the lane's games from the session's pids.json (as bt_plugin.py:624), so the SETUP-FAIL line
+    shows whether the foreground window belongs to a game; the error text when unreadable."""
+    try:
+        import live
+        return live.game_pids(pair.session)[0]
+    except Exception as e:   # noqa: BLE001 (say so, never hide the real failure)
+        return "game pids unreadable (%s)" % e
+
+
+def foreground_info():
+    """Who holds the foreground right now, read only (no focus change): 'pid N exe E class "C" exstyle 0xE'.
+    (The exe basename, not the window title: a title can carry the user profile path into the summaries.)
+    Row 83 SETUP-FAIL 03:59 UTC (row83-unfocus-182cd53b): neither game ever logged 'hid: game window ...', i.e. nn_hid.c
+    game_in_front() said 'in front' on every read (was_front starts 1; a line only on a change). Longshot counts a
+    WS_EX_TOOLWINDOW / WS_EX_NOACTIVATE foreground window as the game's own (nn_hid.c:309-312), so this names the window
+    that decided it; the SETUP-FAIL message carries it."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.GetForegroundWindow.restype = wintypes.HWND
+        w = u.GetForegroundWindow()
+        if not w:
+            return "no foreground window"
+        pid = wintypes.DWORD(0)
+        u.GetWindowThreadProcessId(w, ctypes.byref(pid))
+        cls = ctypes.create_unicode_buffer(64)
+        u.GetClassNameW(w, cls, 64)
+        exe = "?"
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = wintypes.HANDLE
+        h = k.OpenProcess(0x1000, False, pid.value)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if h:
+            buf, n = ctypes.create_unicode_buffer(520), wintypes.DWORD(520)
+            if k.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                exe = os.path.basename(buf.value)
+            k.CloseHandle(h)
+        u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        ex = u.GetWindowLongPtrW(w, -20)   # GWL_EXSTYLE
+        return 'pid %d exe %s class "%s" exstyle 0x%X' % (pid.value, exe, cls.value, ex & 0xFFFFFFFF)
+    except Exception as e:   # not Windows / no desktop: say so, never hide the real failure
+        return "foreground unreadable (%s)" % e
+
+
 def windows(lines):
     """[(fps, seconds, buckets)] of each full window in `lines` (a 'vi: N frames presented' line + its buckets line)."""
     out, fps = [], None
@@ -90,7 +135,8 @@ def test_back_window_fps(pair):
             cap = frame_rate_cap(pair.games[x]["folder"])
             assert cap == "0", "%s: frame_rate_cap=%s in %s (row 83 is the 60 cap: 0)" % (x, cap, pair.games[x]["folder"])
             front = last_front(pair, x)
-            assert front and front[0] == "not in front", "%s: window not behind (last hid line: %s)" % (x, front)
+            assert front and front[0] == "not in front", "%s: window not behind (last hid line: %s; foreground now: %s; game pids %s)" % (
+                x, front, foreground_info(), game_pids(pair))
         marks = {x: pair.log[x].mark() for x in ("A", "B")}
     for x in ("A", "B"):
         pair.call(x, "resume")

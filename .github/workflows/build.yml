@@ -156,6 +156,8 @@ jobs:
         run: python tools/autotest/tests/test_ocarina_notes.py -v
       - name: Live play-test kit tests (desync check, MCP server)
         run: python tools/autotest/tests/test_playtest.py -v
+      - name: Session server start checks + watchdog kill-on-close job
+        run: python tools/autotest/tests/test_server_alive.py -v
       - name: Sync digest compare tests
         run: python tools/autotest/tests/test_compare_digest.py -v
       - name: Play-test bridge client and MCP tools tests (fake bridge)

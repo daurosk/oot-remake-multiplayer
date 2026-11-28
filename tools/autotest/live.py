@@ -16,7 +16,8 @@ holds its lock (laneN.lock) for the whole session, not only the boot. Every sess
 own, `live.py watchdog`, started by `start`): it holds the lane lock under its own pid, and at the session's end (`stop`,
 the maximum duration, a tester idle too long, a game that ended, or the watchdog itself stopped by a signal) it quits
 both games, kills what did not quit and the server, and lets the lock go. A watchdog killed outright cannot clean up,
-but its lock goes stale with it (the lock names its pid). Each game's save is restored to its baseline before the
+but its lock goes stale with it (the lock names its pid), and on Windows its games and server die with it: it holds
+them in a kill-on-close job object (hs.KillOnCloseJob; an orphan coop_server once held lane 1's port for 6 h). Each game's save is restored to its baseline before the
 boot, as the lane runs do (`--no-restore` keeps whatever the copies hold).
 
     python -I tools/autotest/live.py start --session DIR [--server coop_server.exe] (--lane N [--only A|B] |
@@ -628,7 +629,7 @@ def quit_one(a, alive=None, quit=None, killer=None, wait=QUIT_WAIT, clock=time.m
     return {"player": a.player, "pid": pid, "how": how}
 
 
-def server_cmd(a, alive=None, killer=None, popen=None, sleep=time.sleep):
+def server_cmd(a, alive=None, killer=None, popen=None, sleep=time.sleep, holder=None):
     """Stops the session's server, or starts it again (same exe, port and password as the boot's). `start` adds the
     session's own server arguments (runner `server_args`, when its start kept any) and then this call's --server-arg
     ones (this start only; e.g. row 251's --same-network-open --bind <LAN IP>): a later start without them puts the
@@ -652,14 +653,29 @@ def server_cmd(a, alive=None, killer=None, popen=None, sleep=time.sleep):
     if pid and alive(pid):
         return {"error": "the server still runs (pid %d): live.py server stop first" % pid}
     n = len([f for f in os.listdir(d) if f.startswith("server-out")])
+    # (the boot's checks, hookshot.py server_port_free/server_alive: a held port or a server that exited at once is
+    # an error here, never a "started" whose games join another session's server; real starts only, or a given holder)
+    holder = holder or (None if popen else lanes.hs.udp_port_holder)
     with open(os.path.join(d, "server-out-%d.txt" % n), "w") as so:
         env = dict(os.environ, OOT_COOP_TEST_PASSWORD=r.get("password", SERVER_PASSWORD))   # (in the environment, never on the command line)
         extra = list(r.get("server_args") or []) + list(getattr(a, "server_arg", None) or [])
-        proc = (popen or lanes.hs.popen_quiet)(lanes.hs.server_bind([r["server"], "--port", str(r["port"]), "--password-env",
-                                                "OOT_COOP_TEST_PASSWORD"] + extra), stdout=so, stderr=subprocess.STDOUT, env=env)
+        sargs = lanes.hs.server_bind([r["server"], "--port", str(r["port"]), "--password-env",
+                                      "OOT_COOP_TEST_PASSWORD"] + extra)
+        if holder:
+            try:
+                hookshot.server_port_free(int(r["port"]), sargs, holder=holder)
+            except RuntimeError as e:
+                return {"error": str(e)}
+        proc = (popen or lanes.hs.popen_quiet)(sargs, stdout=so, stderr=subprocess.STDOUT, env=env)
     write_pids(d, server=proc.pid)
     plan(d, "server", None)
     sleep(1)
+    if holder and hasattr(proc, "poll"):
+        try:
+            hookshot.server_alive(proc, so.name, int(r["port"]), sargs, holder=holder)
+        except RuntimeError as e:
+            write_pids(d, server=None)
+            return {"error": str(e)}
     return {"server": "started", "pid": proc.pid, "port": r["port"], "args": extra,
             "out": os.path.basename(so.name)}
 
@@ -827,8 +843,19 @@ def close(d, s, alive=None, quit=quit_game, killer=kill, release=release_lock, w
     return out
 
 
-def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY):
-    """Waits for the session's end; returns why it ended."""
+def adopt(d, job):
+    """The session's games and server (pids.json) put in the watchdog's kill-on-close job (hs.KillOnCloseJob), each once:
+    a watchdog killed outright then takes them with it (gate-host170-182cd53b's coop_server outlived its tree-killed
+    watchdog by 6 h, 11-28). A relaunched game or restarted server is a new pid, put in at the next look."""
+    games, server = game_pids(d)
+    for p in list(games.values()) + [server]:
+        if p:
+            job.add(p)
+
+
+def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY, job=None):
+    """Waits for the session's end; returns why it ended. With `job` (the real watchdog's), each look also puts the
+    session's processes in it (adopt)."""
     alive = alive or lanes.hs.pid_alive
     s = load(d)
     while True:
@@ -836,6 +863,11 @@ def watch(d, clock=time.time, sleep=time.sleep, alive=None, every=WATCH_EVERY):
             s = load(d)
         except (OSError, ValueError):
             pass   # (being replaced this moment: the last one read)
+        if job is not None:
+            try:
+                adopt(d, job)
+            except (OSError, ValueError):
+                pass   # (pids.json being written this moment: the next look)
         now = clock()
         if os.path.exists(stop_file(d)):
             return "stop asked"
@@ -891,7 +923,8 @@ def watchdog(a):
                 signal.signal(getattr(signal, name), bye)
             except (ValueError, OSError):
                 pass
-    return {"watchdog": run_watchdog(os.path.abspath(a.session))}
+    job = lanes.hs.KillOnCloseJob()   # (held by this process only: its end, any end, kills what is in it)
+    return {"watchdog": run_watchdog(os.path.abspath(a.session), watcher=lambda d: watch(d, job=job))}
 
 
 def stop(a, wait=60.0, clock=time.monotonic, sleep=time.sleep, alive=None):

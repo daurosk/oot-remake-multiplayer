@@ -1708,6 +1708,37 @@ def fresh_log(game, since):
         return ""
 
 
+def server_bind_host(sargs):
+    """The address a coop_server's arguments bind (its --bind, else 127.0.0.1: hs.server_bind)."""
+    sargs = list(sargs)
+    return sargs[sargs.index("--bind") + 1] if "--bind" in sargs[:-1] else "127.0.0.1"
+
+
+def server_port_free(port, sargs, holder=None):
+    """SETUP-FAIL when the session's server port is already held (a server left from another session): the new server
+    could not bind and the games would join the old one (exefs-xplay-182cd53b-2, 11-28: lane 1's 27520 held 6 h by an
+    orphan coop_server). Names the holder; never kills it (it may be another live session's)."""
+    who = (holder or lanes.hs.udp_port_holder)(port, server_bind_host(sargs))
+    if who:
+        raise RuntimeError("SETUP-FAIL server: port %d is already held by %s: a server left from another session "
+                           "(not killed here; close it, then run again)" % (port, who))
+
+
+def server_alive(server, out_path, port, sargs, holder=None):
+    """SETUP-FAIL when the session's server has already exited (it could not bind, a bad argument ...): its own output
+    and, when the port is held, the holder. Before this, hookshot.py run slept 1 s and went on with a dead server."""
+    if server is None or server.poll() is None:
+        return
+    try:
+        text = read_text(out_path).strip().splitlines()
+    except OSError:
+        text = []
+    why = text[-1] if text else "no output"
+    who = (holder or lanes.hs.udp_port_holder)(port, server_bind_host(sargs))
+    raise RuntimeError("SETUP-FAIL server: coop_server exited at start (exit %s): %s%s"
+                       % (server.returncode, why, "; port %d is held by %s" % (port, who) if who else ""))
+
+
 def run(a):
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
@@ -1776,10 +1807,13 @@ def run(a):
                 delay = test_delay_args(a.test_delay_ms, a.test_jitter_ms)
                 if delay:
                     senv["OOT_COOP_TEST"] = "1"   # coop_server refuses the delay without it
-                server = lanes.hs.popen_quiet(lanes.hs.server_bind([a.server, "--port", str(a.port), "--password-env",
-                                              "OOT_COOP_TEST_PASSWORD"] + delay + header_server_args(a.script_a) + a.server_arg), stdout=so, stderr=subprocess.STDOUT, env=senv)
+                sargs = lanes.hs.server_bind([a.server, "--port", str(a.port), "--password-env",
+                                              "OOT_COOP_TEST_PASSWORD"] + delay + header_server_args(a.script_a) + a.server_arg)
+                server_port_free(a.port, sargs)
+                server = lanes.hs.popen_quiet(sargs, stdout=so, stderr=subprocess.STDOUT, env=senv)
             keep_pids()
             time.sleep(1)
+            server_alive(server, os.path.join(out, "server-out.txt"), a.port, sargs)
         for i, x in enumerate(tags):
             g = games[x]
             if not os.path.isfile(os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")):

@@ -843,6 +843,111 @@ def main_root(repo=REPO):
         return repo
 
 
+def udp_port_holder(port, host="127.0.0.1", run=subprocess.run):
+    """Who already listens on UDP host:port, as 'pid P (name: command line)'; '' when the port is free. A test server
+    that cannot bind exits at once ('coop_server: cannot listen on port N') and the games join whatever holds the port:
+    exefs-xplay-182cd53b-2 (11-28) found an orphan coop_server of gate-host170-182cd53b holding lane 1's 27520 for 6 h,
+    so every lane-1 session in between ran on it. Free = a bind of host:port works now (exclusive on Windows)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        if WINDOWS and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        s.bind((host, port))
+        return ""
+    except OSError:
+        pass
+    finally:
+        s.close()
+    pid = None
+    try:
+        out = run(["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True, timeout=20).stdout or ""
+        for line in out.splitlines():
+            f = line.split()
+            if len(f) >= 4 and f[0].upper() == "UDP" and f[1].endswith(":%d" % port) and f[-1].isdigit():
+                pid = int(f[-1])
+                break
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if pid is None:
+        return "an unknown process (netstat names no pid)"
+    what = ""
+    if WINDOWS:
+        try:
+            what = run(["powershell", "-NoProfile", "-Command",
+                        "$p = Get-CimInstance Win32_Process -Filter 'ProcessId=%d'; if ($p) { $p.Name + ': ' + $p.CommandLine }"
+                        % pid], capture_output=True, text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "pid %d (%s)" % (pid, what or "name not read")
+
+
+class KillOnCloseJob:
+    """A Windows job object that kills every process put in it when its last handle closes: when the process that made
+    it ends in ANY way, also killed outright (TerminateProcess, a tree kill), where no finally/close() runs. live.py's
+    watchdog puts its session's games and server in one: gate-host170-182cd53b's watchdog was tree-killed (B #164 owner
+    pause 01:40 11-28) and its coop_server, whose parent (the boot's hookshot.py run) had already exited, lived on.
+    Elsewhere (POSIX, or the API refused) it is a no-op whose add() returns False."""
+
+    def __init__(self):
+        self.h = None
+        self.added = set()
+        if not WINDOWS:
+            return
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        k.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        k.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        k.CloseHandle.argtypes = (wintypes.HANDLE,)
+        self.k = k
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC), ("IoInfo", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        h = k.CreateJobObjectW(None, None)
+        if not h:
+            return
+        info = EXT()
+        info.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k.SetInformationJobObject(h, 9, ctypes.byref(info), ctypes.sizeof(info)):   # Extended limit info
+            k.CloseHandle(h)
+            return
+        self.h = h
+
+    def add(self, pid):
+        """Puts pid in the job (once); True when it is in. A pid already gone, or one Windows will not let in, is False."""
+        if not self.h or not pid:
+            return False
+        if pid in self.added:
+            return True
+        p = self.k.OpenProcess(0x0100 | 0x0001, False, int(pid))   # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        if not p:
+            return False
+        try:
+            ok = bool(self.k.AssignProcessToJobObject(self.h, p))
+        finally:
+            self.k.CloseHandle(p)
+        if ok:
+            self.added.add(pid)
+        return ok
+
+
 def _win_pid_probe(pid):
     """'alive', 'gone' or 'unknown' for a pid, from the process itself (OpenProcess and a zero wait on its handle).
     Gone only when Windows says so: no such process (ERROR_INVALID_PARAMETER) or its handle is signalled (exited).

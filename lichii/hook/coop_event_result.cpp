@@ -698,6 +698,16 @@ std::span<const Result> Results() { return kResults; }
 
 std::span<const Play> Plays() { return kPlays; }
 
+const char* SwapByteNot(const CoopLogicProbe::Plug& plug, std::uint64_t main) {
+    if (!CoopLogicSet::CanSetInput(plug)) return "its Logic_Delete has no value address, or the game marks its changes";
+    const std::uint64_t at = plug.value_word & ~std::uint64_t{3};
+    if (main != 0 && at >= main && at < main + CoopLogicSet::kImageSpan) {
+        return "its Logic_Delete reads a constant in the game's static image, not a room graph node";
+    }
+    if (!plug.value) return "its Logic_Delete's value cannot be read";
+    return nullptr;
+}
+
 std::vector<const Play*> PlaysOf(std::string_view event, std::string_view scene) {
     std::vector<const Play*> out;
     for (const auto& p : kPlays) {
@@ -984,6 +994,7 @@ void Setter::Visit(const std::string& scene, const std::function<bool(const std:
         scene_ = scene;
         applied_.clear();
         ended_.clear();
+        swaps_.clear();  // the room loads again: its graph makes the end state itself
     }
     // The front may be mid-set on the calc thread: it ends there (Frame sees the scene or the played flag) so its
     // execute's after-call stays paired; only the ones behind it are dropped here.
@@ -1030,6 +1041,7 @@ void Setter::End(const std::string& why, bool applied) {
 std::optional<CoopPuppet::Call> Setter::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                              std::uint64_t main, std::uint64_t now_ms) {
     std::lock_guard lock(mutex_);
+    if (!after_call && main != 0) SwapStep(guest, main, now_ms);  // row 335: no game call, only our one write
     if (after_call) {
         const Next was = next_;
         next_ = Next::none;
@@ -1097,7 +1109,7 @@ std::optional<CoopPuppet::Call> Setter::Frame(CoopPuppet::Guest& guest, std::uin
         notes_.emplace_back(text);
     }
     // Row 165: our performers play the event's AS first (the room swaps them only at its load).
-    if (auto call = PlayStep(guest, t, main)) return call;
+    if (auto call = PlayStep(guest, t, main, now_ms)) return call;
     if (t.play < PlaysOf(t.event, t.scene).size()) return std::nullopt;  // a play shows: read it next frame
     const auto outputs = SplitOutputs(line->outputs);
     if (t.output >= outputs.size()) {
@@ -1126,10 +1138,13 @@ std::optional<CoopPuppet::Call> Setter::Frame(CoopPuppet::Guest& guest, std::uin
     return CoopLogicSet::Execute(main, block_);
 }
 
-std::optional<CoopPuppet::Call> Setter::PlayStep(CoopPuppet::Guest& guest, Try& t, std::uint64_t main) {
+std::optional<CoopPuppet::Call> Setter::PlayStep(CoopPuppet::Guest& guest, Try& t, std::uint64_t main,
+                                                 std::uint64_t now_ms) {
     const auto plays = PlaysOf(t.event, t.scene);
-    const auto next = [&](const std::string& why) {
-        notes_.push_back("result: " + t.event + ": our " + std::string(plays[t.play]->actor) + " " + why);
+    const auto next = [&](const std::string& why, std::uint64_t swap_actor = 0) {
+        const Play& p = *plays[t.play];
+        notes_.push_back("result: " + t.event + ": our " + std::string(p.actor) + " " + why);
+        if (swap_actor != 0) swaps_.push_back(Swap{t.event, p.actor, p.at, p.as, swap_actor, now_ms, 0});
         ++t.play;
         t.play_calls = 0;
         t.play_ones = 0;
@@ -1145,12 +1160,12 @@ std::optional<CoopPuppet::Call> Setter::PlayStep(CoopPuppet::Guest& guest, Try& 
         const std::uint64_t actor = here.front();
         if (SlotZeroName(guest, actor) == p.as) {
             if (++t.play_ones < kApplyFrames) return std::nullopt;  // read it again next frame
-            next("plays " + std::string(p.as) + " (the event's own AS)");
+            next("plays " + std::string(p.as) + " (the event's own AS)", actor);
             continue;
         }
         t.play_ones = 0;
         if (t.play_calls >= kMaxPlayCalls) {
-            next("did not show " + std::string(p.as) + " in its slot 0 after our plays: went on");
+            next("did not show " + std::string(p.as) + " in its slot 0 after our plays: went on", actor);
             continue;
         }
         const auto index = static_cast<std::uint64_t>(&p - kPlays);
@@ -1179,6 +1194,67 @@ std::optional<CoopPuppet::Call> Setter::PlayStep(CoopPuppet::Guest& guest, Try& 
         return c;
     }
     return std::nullopt;
+}
+
+// Row 335: each performer whose AS is done gets the room graph's own delete: 1 into the byte its Logic_Delete input
+// reads (the fixed node's output its end actor's Logic_Create reads too). The game then deletes it and makes the end
+// actor live. One write per performer; never a game call.
+void Setter::SwapStep(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms) {
+    if (swaps_.empty() || EventRunning(guest, main)) return;  // an event of ours runs: its flow owns the room now
+    const std::uint32_t key = coop::protocol::flag_hash("Logic_Delete");
+    for (auto it = swaps_.begin(); it != swaps_.end();) {
+        Swap& w = *it;
+        const auto drop = [&](const std::string& why) {
+            notes_.push_back("result: " + w.event + ": our " + std::string(w.actor_name) + " " + why);
+            it = swaps_.erase(it);
+        };
+        const std::string_view names[] = {w.actor_name};
+        const auto here = find_(guest, main, names, w.at, kPerformerAtM);
+        if (std::find(here.begin(), here.end(), w.actor) == here.end()) {
+            drop(w.written_ms != 0 ? "is gone after our swap: its room graph made its end actor"
+                                   : "is gone before our swap (its room took it)");
+            continue;
+        }
+        if (w.written_ms != 0) {
+            if (now_ms > w.written_ms + kSwapWaitMs) {
+                drop("is still there after our swap (the game did not delete it): leave the room and come back");
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        if (now_ms < w.since_ms + kSwapAfterMs && SlotZeroName(guest, w.actor) == w.as) {
+            ++it;  // its AS still plays
+            continue;
+        }
+        const auto plug = CoopLogicSet::InputPlug(guest, w.actor, key);
+        if (!plug) {
+            if (now_ms > w.since_ms + kSwapAfterMs + kSwapWaitMs) {
+                drop("has no Logic_Delete input we can read: not swapped (leave the room and come back)");
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        if (const char* why = SwapByteNot(*plug, main)) {
+            drop(std::string("not swapped: ") + why + " (leave the room and come back)");
+            continue;
+        }
+        const std::uint8_t one = 1;
+        if (*plug->value != one && !CoopLogicSet::StoreInput(guest, *plug, one)) {
+            ++it;  // try again next frame (until the wait ends)
+            continue;
+        }
+        char text[200];
+        std::snprintf(text, sizeof text,
+                      "result: %s: our %.*s: its room graph's Logic_Delete source 0x%llx set 1 (the swap its load "
+                      "makes)",
+                      w.event.c_str(), static_cast<int>(w.actor_name.size()), w.actor_name.data(),
+                      static_cast<unsigned long long>(plug->value_word & ~std::uint64_t{3}));
+        notes_.emplace_back(text);
+        w.written_ms = now_ms;
+        ++it;
+    }
 }
 
 }  // namespace CoopEventResult

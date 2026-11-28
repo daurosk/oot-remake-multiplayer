@@ -292,6 +292,145 @@ TEST_CASE("event result: row 165: our stair plays the event's AS once, then the 
     CHECK(cave.plays.size() == 1);
 }
 
+namespace {
+// Row 335: the room graph's fixed node output our stair's Logic_Delete input reads (one byte, the node's own memory).
+constexpr std::uint64_t kLatchByte = 0x300000;
+
+// Gives `actor` (a Cave performer) a live logic with one input plug, Logic_Delete, whose value address is `byte`.
+void DeleteInput(FakeGuest& g, std::uint64_t actor, std::uint64_t byte) {
+    const std::uint64_t holder = g.Get<std::uint64_t>(actor + p::kActorLogic);  // also its controller path's first hop
+    const std::uint64_t base = actor + 0x10000;
+    g.Put<std::uint64_t>(holder + p::kLogicInner, base);
+    g.Put<std::uint64_t>(base + p::kLogicState, 5);
+    g.Put<std::uint64_t>(base + p::kLogicTable, base + 0x1000);
+    g.Put<std::uint64_t>(base + 0x1000 + p::kTableRootHolder, base + 0x2000);
+    g.Put<std::uint64_t>(base + 0x2000 + p::kRoot, base + 0x3000);
+    const std::uint64_t node = base + 0x3000;
+    g.Put<std::uint32_t>(node + p::kKey, coop::protocol::flag_hash("Logic_Delete") ^ 7u);
+    g.Put<std::uint8_t>(node + p::kType, CoopLogicSet::kInputType);
+    g.Put<std::uint64_t>(node + p::kValue, byte);
+    g.Put<std::uint8_t>(byte, 0);
+}
+
+// Runs frames from `now` (16 ms apart) until `until`.
+void RunUntil(Cave& cave, CoopEventResult::Setter& s, std::uint64_t& now, std::uint64_t until) {
+    while (now < until) cave.Frame(s, now += 16);
+}
+}  // namespace
+
+TEST_CASE("event result: row 335: once its AS is done our stair gets its room graph's own delete (the swap)") {
+    Cave cave;
+    cave.Performer(kStair, kStairActor);
+    DeleteInput(cave.g, kStairActor, kLatchByte);
+    CoopEventResult::Setter s(cave.Finder());
+    s.Visit(kDodongo);
+    REQUIRE(s.Want(kStairs, kDodongo));
+    std::uint64_t now = 1000;
+    for (int f = 0; f < 20 && !s.Applied().contains(kStairs); ++f) cave.Frame(s, now += 16);
+    REQUIRE(s.Applied().contains(kStairs));
+    const std::uint64_t shown = now;
+    // Its AS holds slot 0: no swap before kSwapAfterMs (the partner sees the stair go down first).
+    RunUntil(cave, s, now, shown + CoopEventResult::kSwapAfterMs - 100);
+    CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 0);
+    RunUntil(cave, s, now, shown + CoopEventResult::kSwapAfterMs + 100);
+    CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 1);
+    CHECK(cave.plays.size() == 1);  // no replay, no other game call
+    CHECK(cave.executes == 0);
+    CHECK(Noted(s.TakeNotes(), "its room graph's Logic_Delete source 0x300000 set 1"));
+    // The game deletes it (and makes the down stair): noted once, nothing more written.
+    cave.performers.erase(kStair);
+    cave.Frame(s, now += 16);
+    CHECK(Noted(s.TakeNotes(), "is gone after our swap: its room graph made its end actor"));
+    cave.g.Put<std::uint8_t>(kLatchByte, 0);
+    RunUntil(cave, s, now, now + 1000);
+    CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 0);
+}
+
+TEST_CASE("event result: row 335: the swap comes as soon as slot 0 leaves the AS") {
+    Cave cave;
+    cave.Performer(kStair, kStairActor);
+    DeleteInput(cave.g, kStairActor, kLatchByte);
+    CoopEventResult::Setter s(cave.Finder());
+    s.Visit(kDodongo);
+    REQUIRE(s.Want(kStairs, kDodongo));
+    std::uint64_t now = 1000;
+    for (int f = 0; f < 20 && !s.Applied().contains(kStairs); ++f) cave.Frame(s, now += 16);
+    REQUIRE(s.Applied().contains(kStairs));
+    cave.Frame(s, now += 16);
+    CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 0);
+    cave.g.Put<std::uint64_t>(kStairActor + 0x7000 + CoopPuppet::addr::kSlotName, kStairActor + 0x8000);  // "Wait"
+    cave.Frame(s, now += 16);
+    CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 1);
+}
+
+TEST_CASE("event result: row 335: no swap through a constant, without a logic, or after the room loads again") {
+    {
+        Cave cave;  // its Logic_Delete reads the game's static image (a constant): never written
+        cave.Performer(kStair, kStairActor);
+        const std::uint64_t constant = kMain + 0x4000000;
+        DeleteInput(cave.g, kStairActor, constant);
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        RunUntil(cave, s, now, now + CoopEventResult::kSwapAfterMs + 500);
+        CHECK(cave.g.Get<std::uint8_t>(constant) == 0);
+        CHECK(Noted(s.TakeNotes(), "static image"));
+    }
+    {
+        Cave cave;  // a change-marked value word (bit 1): not ours to store into
+        cave.Performer(kStair, kStairActor);
+        DeleteInput(cave.g, kStairActor, kLatchByte | 2);
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        RunUntil(cave, s, now, now + CoopEventResult::kSwapAfterMs + 500);
+        CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 0);
+        CHECK(Noted(s.TakeNotes(), "not swapped"));
+    }
+    {
+        Cave cave;  // no logic read: given up after the wait, nothing written
+        cave.Performer(kStair, kStairActor);
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        RunUntil(cave, s, now, now + CoopEventResult::kSwapAfterMs + CoopEventResult::kSwapWaitMs + 500);
+        CHECK(Noted(s.TakeNotes(), "has no Logic_Delete input we can read"));
+    }
+    {
+        Cave cave;  // the room loads again before the swap: its load makes the end state, we write nothing
+        cave.Performer(kStair, kStairActor);
+        DeleteInput(cave.g, kStairActor, kLatchByte);
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        for (int f = 0; f < 20 && !s.Applied().contains(kStairs); ++f) cave.Frame(s, now += 16);
+        s.Visit("DodongoCavernBoss");
+        s.Visit(kDodongo);
+        RunUntil(cave, s, now, now + CoopEventResult::kSwapAfterMs + 500);
+        CHECK(cave.g.Get<std::uint8_t>(kLatchByte) == 0);
+    }
+}
+
+TEST_CASE("event result: row 335: SwapByteNot") {
+    CoopLogicProbe::Plug plug;
+    plug.value = 0;
+    plug.value_word = kLatchByte;
+    CHECK(CoopEventResult::SwapByteNot(plug, kMain) == nullptr);
+    plug.value_word = kLatchByte | 2;
+    CHECK(CoopEventResult::SwapByteNot(plug, kMain) != nullptr);
+    plug.value_word = 0;
+    CHECK(CoopEventResult::SwapByteNot(plug, kMain) != nullptr);
+    plug.value_word = kMain + 0x100;
+    CHECK(CoopEventResult::SwapByteNot(plug, kMain) != nullptr);
+    plug.value_word = kLatchByte;
+    plug.value.reset();
+    CHECK(CoopEventResult::SwapByteNot(plug, kMain) != nullptr);
+}
+
 TEST_CASE("event result: row 165: a performer not at its place is skipped, one that never shows is played twice") {
     {
         Cave cave;  // no stair here (our room shows its end already)

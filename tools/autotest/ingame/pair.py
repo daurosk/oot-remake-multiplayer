@@ -53,7 +53,11 @@ BOOT_EVENT_FRAMES = 6000
 # The boot proof's stepping rate (both games, CHUNK at a time, a state read each per chunk): row215-309d7180 lane 1 ran
 # its 2400 frames in ~201.6 s (game-out-A.txt digest t= 286.0 s at the bridge's connect :9353, 487.7 s at the quit).
 # A boot that waits an event past BOOT_FRAMES gets the rest of BOOT_EVENT_FRAMES at this rate on its deadline, once.
-BOOT_STEP_FPS = 11.9
+BOOT_STEP_FPS = 11.9    # (budgets only now; the event rule's deadline is EVENT_SLACK_S below, not a rate)
+# The event rule (Pair.until event_frames): while a game is IN AN EVENT the deadline is kept this far ahead, so a slow
+# lane keeps stepping the intro up to its frame cap. 30 s = 20 chunks at the slowest lane measured (6.6 fps,
+# row286-wake-182cd53b-3: 1580 frames in 240 s), and SETUP_LIMIT_S.
+EVENT_SLACK_S = 30.0
 EVENT_BEGAN = r"coop: event: our Link's event began: .*"      # coop event lines (game-out-X.txt, both runs above)
 EVENT_ENDED = r"coop: event: our Link's event ended"
 EVENT_STILL = r"coop: event: our Link is still in its event after ([0-9]+) s"
@@ -580,18 +584,65 @@ class Pair:
     def state(self, x):
         return self.call(x, "state")
 
-    def until(self, what, pred, max_frames=600):
+    def until(self, what, pred, max_frames=600, event_frames=None, games=None, cap=None):
         """Steps both games CHUNK frames at a time until pred() is true (checked before the first step too).
-        Returns its value; AssertionError naming `what` after max_frames frames."""
+        Returns its value; AssertionError naming `what` after max_frames frames.
+        event_frames (the event rule, a boss stage's intro: Pair._until_boot_play, test_boss_respawn's arrival): a
+        game of `games` IN AN EVENT (state 'event') may run the wait on past max_frames, up to event_frames in all
+        (once past it with an event, to event_frames even if the event ends then: its end's few frames to in play);
+        and WHILE such a game is in its event, at any frame count, the deadline is kept EVENT_SLACK_S ahead (never past
+        `cap`, an enclosing deadline's end). So the event's own frame cap bounds the wait, not the lane's speed:
+        row286-wake-182cd53b-3's boot hit BOOT_READY_S 240 s at ~1580 stepped frames (6.6 fps), before the old growth
+        (once, at max_frames 2400, by frames / BOOT_STEP_FPS) could come; Twinrova's stepped intro is 2700 / 2880
+        frames (probe-intro-182cd53b). The states are read for it only near the deadline or past max_frames.
+        What it did is in self.event_growth: {'games': [...] in an event, 'past': max_frames once the wait ran past it,
+        's': seconds grown, 'capped': bool} (empty: neither)."""
         ran = 0
+        self.event_growth = {}
+        event_phase = False
+        games = tuple(self.c) if games is None else tuple(games)
         while True:
             v = pred()
             if v:
                 return v
-            if ran >= max_frames:
-                raise AssertionError("%s: not after %d frames (~%d s of game)" % (what, ran, ran // FPS))
+            if event_frames is None:
+                if ran >= max_frames:
+                    raise AssertionError("%s: not after %d frames (~%d s of game)" % (what, ran, ran // FPS))
+            else:
+                over = ran >= max_frames
+                if event_phase and ran >= event_frames:
+                    raise AssertionError("%s (a game in an event at %d frames: the event ceiling): not after %d frames "
+                                         "(~%d s of game)" % (what, max_frames, ran - max_frames,
+                                                              (ran - max_frames) // FPS))
+                if (over and not event_phase) or self.deadline.left() < EVENT_SLACK_S:
+                    in_event = [x for x in games if self.state(x).get("event")]
+                    if over and not event_phase:
+                        if not in_event or event_frames <= max_frames:
+                            raise AssertionError("%s: not after %d frames (~%d s of game)" % (what, ran, ran // FPS))
+                        event_phase = True
+                        self.event_growth["past"] = max_frames
+                        self.event_growth["games"] = sorted(set(self.event_growth.get("games", [])) | set(in_event))
+                    if in_event:
+                        self._grow_for_event(in_event, cap)
             self.step_both(CHUNK)
             ran += CHUNK
+
+    def _grow_for_event(self, in_event, cap):
+        """The event rule's deadline: EVENT_SLACK_S left again, never past cap (until's event_frames)."""
+        add = EVENT_SLACK_S - self.deadline.left()
+        capped = False
+        if cap is not None and self.deadline.end + add > cap:
+            add, capped = max(0.0, cap - self.deadline.end), True
+        if add <= 0:
+            if capped:
+                self.event_growth["capped"] = True
+            return
+        self.deadline.end += add
+        self.deadline.seconds += add
+        g = self.event_growth
+        g["games"] = sorted(set(g.get("games", [])) | set(in_event))
+        g["s"] = g.get("s", 0.0) + add
+        g["capped"] = g.get("capped", False) or capped
 
     def ocarina_ready(self, x):
         """True once game x's module log has OCARINA_EQUIPPED after its last SCENE_LOADED (the boot's or a warp's)."""
@@ -713,7 +764,7 @@ class Pair:
             self.deadline = outer
         return self.in_play(st) and (not scene or (st.get("scene") or "").lower() == scene.lower())
 
-    def until_in_play(self, what, games=None, max_frames=600):
+    def until_in_play(self, what, games=None, max_frames=600, event_frames=None, cap=None):
         """Steps both games until every one of `games` is in play (a fresh Link sample, a scene, no load, no event).
         `games` defaults to the pair's OWN games (self.c): a --solo pair has game A only, and a fixed ('A', 'B')
         read state('B') -> KeyError instead of a SETUP-FAIL (review-rows-c130-3 16:38, need_boot_place).
@@ -739,8 +790,8 @@ class Pair:
                         held.setdefault(x, ran[0])
             ran[0] += CHUNK
             return ok
-        try:
-            v = self.until(what, all_ready, max_frames)
+        try:     # (event_frames / cap: until's event rule, the boot proof's _until_boot_play)
+            v = self.until(what, all_ready, max_frames, event_frames=event_frames, games=games, cap=cap)
         except AssertionError as e:
             raise type(e)("%s; %s" % (e, "; ".join(self.why_now(x) for x in games))) from None
         for x, since in sorted(held.items()):
@@ -778,37 +829,36 @@ class Pair:
         return {x: self.state(x) for x in self.c}
 
     def _until_boot_play(self, max_frames, event_frames=None):
-        """The boot proof's in-play wait: until_in_play (its rule of 'in play', stepping and messages) up to
-        max_frames; if a game is then IN AN EVENT, the wait goes on to event_frames in all (BOOT_EVENT_FRAMES: a boss
-        stage's intro, row215-309d7180), the deadline grown once by those frames at BOOT_STEP_FPS (one deadline, one
-        wait rule). A load or a stale sample at max_frames fails as before. A miss names, for each game in its event,
-        which event and for how long (event_note), so its first line says why."""
+        """The boot proof's in-play wait: until_in_play (its rule of 'in play', stepping and messages) with until's
+        event rule: up to max_frames, and past it while a game is IN AN EVENT up to event_frames in all
+        (BOOT_EVENT_FRAMES: a boss stage's intro, row215-309d7180); while a game is in its event the deadline is kept
+        EVENT_SLACK_S ahead at ANY frame count, so a slow lane is bounded by the event's frames, not by BOOT_READY_S
+        (row286-wake-182cd53b-3: 240 s at ~1580 frames, 6.6 fps). A load or a stale sample at max_frames fails as
+        before. A miss names, for each game in its event, which event and for how long (event_note)."""
         event_frames = max(max_frames, BOOT_EVENT_FRAMES if event_frames is None else event_frames)
         games = tuple(self.c)
         what = "both games in play after the boot"
-        try:
-            return self.until_in_play(what, games, max_frames)
-        except TestTimeout as e:
-            raise TestTimeout("%s%s" % (e, self._event_notes(games, max_frames))) from None
-        except AssertionError as e:
-            first = e
-        in_event = [x for x in games if self.state(x).get("event")]
-        if not in_event or event_frames <= max_frames:
-            raise AssertionError("%s%s" % (first, self._event_notes(games, max_frames))) from None
-        extra = (event_frames - max_frames) / BOOT_STEP_FPS
         cap = getattr(self, "_boot_grow_cap", None)    # (Pair.recover: the enclosing deadline's end, never passed)
-        if cap is not None:
-            extra = max(0.0, min(extra, cap - self.deadline.end))
-        self.deadline.end += extra
-        self.deadline.seconds += extra
-        self.notes.append("boot: %s in an event after %d frames: waited on up to %d (deadline +%.0f s%s)"
-                          % ("+".join(in_event), max_frames, event_frames, extra,
-                             ", capped by the enclosing deadline" if cap is not None else ""))
         try:
-            return self.until_in_play(what + " (a game in an event at %d frames: the event ceiling)" % max_frames,
-                                      games, event_frames - max_frames)
+            return self.until_in_play(what, games, max_frames, event_frames=event_frames, cap=cap)
         except AssertionError as e:            # (TestTimeout too: its own type kept)
             raise type(e)("%s%s" % (e, self._event_notes(games, event_frames))) from None
+        finally:
+            note = self.event_note_line(event_frames, "the enclosing deadline")
+            if note:
+                self.notes.append("boot: " + note)
+
+    def event_note_line(self, event_frames, cap_name):
+        """The note of until's event rule after a wait (self.event_growth), or '': which games were in an event, past
+        which frame count the wait went on up to event_frames, and the deadline it grew (EVENT_SLACK_S kept ahead)."""
+        g = getattr(self, "event_growth", None) or {}
+        if not (g.get("past") is not None or g.get("s") or g.get("capped")):
+            return ""
+        where = ("after %d frames: waited on up to %d" % (g["past"], event_frames) if g.get("past") is not None
+                 else "before the frame ceiling (up to %d)" % event_frames)
+        return "%s in an event %s (deadline +%.0f s, kept %.0f s ahead while in it%s)" % (
+            "+".join(g.get("games", [])) or "a game", where, g.get("s", 0.0), EVENT_SLACK_S,
+            ", capped by " + cap_name if g.get("capped") else "")
 
     def _event_notes(self, games, ran):
         """'; X (in its event ...)' for each game whose log shows an event that has not ended (event_note), or ''."""

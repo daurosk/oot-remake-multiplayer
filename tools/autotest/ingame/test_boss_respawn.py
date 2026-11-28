@@ -67,9 +67,10 @@ ARRIVAL_EVENT_S = 48.0  # B's boss-stage arrival event, run 20261125-114351
 IN_PLAY_FRAMES = 2400   # the old scenarios' 'wait 2400' after the load (br289-volvagia, hs-volvagia-rocks)
 BOSS_ARRIVAL_S = 2 * (2 * (WARP_S + ARRIVAL_EVENT_S) + IN_PLAY_FRAMES / P.FPS)   # = 476 s, a CEILING (2x margin)
 # A boss room's intro can outlast IN_PLAY_FRAMES stepped (pair.py BOOT_EVENT_FRAMES: Twinrova's intro, row215-309d7180):
-# a game still IN AN EVENT at IN_PLAY_FRAMES is waited on up to P.BOOT_EVENT_FRAMES, the arrival bound grown once by those
-# frames at P.BOOT_STEP_FPS (the boot proof's own rule, Pair._until_boot_play). A load or no event keeps the 2400.
-EVENT_EXTRA_S = (P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES) / P.BOOT_STEP_FPS   # = 302.5 s
+# a game still IN AN EVENT at IN_PLAY_FRAMES is waited on up to P.BOOT_EVENT_FRAMES, and while a game is in its event
+# the arrival bound is kept P.EVENT_SLACK_S ahead (the boot proof's own rule, Pair.until event_frames). A load or no event
+# keeps the 2400. EVENT_EXTRA_S below only sizes the budget (the time those frames take at P.BOOT_STEP_FPS).
+EVENT_EXTRA_S = (P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES) / P.BOOT_STEP_FPS   # = 302.5 s (the budget's share only now)
 ROOM_BUDGET_S = int(900 + EVENT_EXTRA_S)      # the old '#! timeout 900' + that one growth = 1202 s
 # B #130 (09:43, via review-rows-c130): the owner's 30 s is the SET-UP CHECK (pair.setup(): in play, no fairy, gives),
 # kept first and at the default limit. The boss-stage arrival is a step after it with its own hard limit: a scene load
@@ -141,24 +142,21 @@ def boss_arrival(pair, stage, then=None):
         what = "both games in play in %s after its arrival event" % stage
 
         def in_play():
+            # (the boot proof's own event rule, Pair.until event_frames: past IN_PLAY_FRAMES only with a game in an
+            # event, up to BOOT_EVENT_FRAMES; the deadline kept P.EVENT_SLACK_S ahead while a game is in it at any
+            # frame count, never past the test's own deadline: a slow lane no longer times out mid-intro,
+            # row286-wake-182cd53b-3 / row-215-confirm-4)
             try:
-                return pair.until(what, both_in_play, max_frames=IN_PLAY_FRAMES)
-            except P.TestTimeout:
-                raise
-            except AssertionError:
-                in_event = [x for x in ("A", "B") if pair.state(x).get("event")]
-                if not in_event:
-                    raise
-            # (once: the boot proof's growth, one deadline, one wait rule; capped by the test's own deadline as
-            # Pair._until_boot_play's _boot_grow_cap, so the arrival never runs past the test's end)
-            extra = max(0.0, min(EVENT_EXTRA_S, outer.end - pair.deadline.end))
-            pair.deadline.end += extra
-            pair.deadline.seconds += extra
-            took.append("%s in an event at %d frames: waited on up to %d (+%.0f s%s)" % (
-                "+".join(in_event), IN_PLAY_FRAMES, P.BOOT_EVENT_FRAMES, extra,
-                ", capped by the test's deadline" if extra < EVENT_EXTRA_S else ""))
-            return pair.until(what + " (a game in an event at %d frames: the event ceiling)" % IN_PLAY_FRAMES,
-                              both_in_play, max_frames=P.BOOT_EVENT_FRAMES - IN_PLAY_FRAMES)
+                return pair.until(what, both_in_play, max_frames=IN_PLAY_FRAMES, event_frames=P.BOOT_EVENT_FRAMES,
+                                  games=("A", "B"), cap=outer.end)
+            finally:
+                g = pair.event_growth
+                if g.get("past") is not None:
+                    took.append("%s in an event at %d frames: waited on up to %d (+%.0f s%s)" % (
+                        "+".join(g.get("games", [])), g["past"], P.BOOT_EVENT_FRAMES, g.get("s", 0.0),
+                        ", capped by the test's deadline" if g.get("capped") else ""))
+                elif g.get("s") or g.get("capped"):
+                    took.append(pair.event_note_line(P.BOOT_EVENT_FRAMES, "the test's deadline"))
         timed(phase, in_play)
         if then:
             phase = "arrival check"

@@ -24,7 +24,7 @@ class Epona(unittest.TestCase):
 
     def run_fake(self, name, row=True, bug=None):
         out = os.path.join(self.tmp, name)
-        env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")}
+        env = {"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs"), "BT_FAKE_ROW150": "1"}   # (fakes/epona.py scope)
         if bug:
             env["BT_FAKE_EPONA_BUG"] = bug
         # a bug run: no FLAKY rerun (the rerun of test_epona_sync on the same boot finds Epona won and SKIPs, and the
@@ -68,7 +68,7 @@ class Epona(unittest.TestCase):
         out = os.path.join(self.tmp, "rep")
         p = T.pytest_run([".", "--fake", "--out", out] + ROW + ["--repeat", "2", "--no-smoke-gate", "-q", "-p",
                                                                 "no:cacheprovider", "-k", "test_epona_sync or test_epona_seen"],
-                         env={"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs")})
+                         env={"BT_FAKE_REFS": os.path.join(self.tmp, "no-refs"), "BT_FAKE_ROW150": "1"})
         r = T.results(T.summary(out))
         self.assertEqual(r, {"test_epona_sync[r1]": "NO-REF", "test_epona_seen[r1]": "NO-REF",
                              "test_epona_sync[r2]": "SKIP", "test_epona_seen[r2]": "NO-REF"}, p.stdout[-2000:])

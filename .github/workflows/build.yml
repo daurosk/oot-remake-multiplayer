@@ -166,6 +166,10 @@ jobs:
         run: python tools/autotest/tests/test_ingame.py -v
       - name: In-game test source check ('%' format arity, SETUP-FAIL source; probe0121-c53046a6)
         run: python tools/autotest/tests/test_fmtcheck.py -v
+      - name: In-game state's null Link members (StaleState, Pair.pos; gate-epona-182cd53b)
+        run: python tools/autotest/tests/test_stale_state.py -v
+      - name: In-game tests' flag names are the game's (flag_table.json from GameDataList; probe0121e Get_Epona)
+        run: python tools/autotest/tests/test_flag_names.py -v
       - name: In-game VOID gpu-reset label selftests (fake driver events)
         run: python tools/autotest/tests/test_gpu_reset.py -v
       - name: In-game rejoin, server restart, lan251 and host-menu (rows 292/170) selftests (fake live.py)

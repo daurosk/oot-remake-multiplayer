@@ -1,0 +1,1760 @@
+{
+ "flags": {
+  "0x00c0a2f6": {
+   "hash": "0x00c0a2f6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x1002b466": {
+   "hash": "0x1002b466",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0x4011c4aa",
+    "0x4d329ec9",
+    "0x1d5e4b01",
+    "0xf05c8740",
+    "0x4968c687",
+    "0x49a9bc8c",
+    "0xe4167a6a",
+    "0xfa1d363a",
+    "0xdf107a36",
+    "0xf8649356",
+    "0x70e44053",
+    "0xfef39213",
+    "0x19e79ac0",
+    "0xc9879474",
+    "0x1dfb4ab5",
+    "0x22a0fc04",
+    "0xb83d269b",
+    "0x3ecd8c01",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "KakarikoVillageNpc",
+    "KakarikoVillageLetter",
+    "DeathMtTrailIn",
+    "DeathMtTrailNpc",
+    "GoronCityIn",
+    "GoronCityDarniaroomNpcTalk01",
+    "GoronCityDarniaroomOpen",
+    "GoronCityDarniaTalk",
+    "DarniaRoomKokiriTalk",
+    "KokiriForestNPCTalk",
+    "KokiriForestFire",
+    "KokiriForestIn",
+    "SariaMelodyGet",
+    "SariaMelodyPlay",
+    "DodongoCavernOpne",
+    "DungeonStart",
+    "BossBattle",
+    "EscapeDungeon",
+    "Complete"
+   ]
+  },
+  "0x137df1ac": {
+   "hash": "0x137df1ac",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x171de71f": {
+   "hash": "0x171de71f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x1da2c511": {
+   "hash": "0x1da2c511",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x1edd164a": {
+   "hash": "0x1edd164a",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "0x301f7bb5": {
+   "hash": "0x301f7bb5",
+   "hashes": [
+    "0xbe69de49",
+    "0xf9e54315",
+    "0x83d2e406",
+    "0xc0f40041",
+    "0xd1b7e25f",
+    "0xe59d9053",
+    "0xb369259b",
+    "0xde6256fb",
+    "0x051677d4",
+    "0xe283de79",
+    "0x98eecbdf",
+    "0x16870ea0",
+    "0xcd4fc0e3",
+    "0x33d5d675",
+    "0xc51a84d9",
+    "0x22c7238c",
+    "0xac889fd5",
+    "0xa7d94611",
+    "0xb55ee4e3",
+    "0x9607a5ad",
+    "0x88ff029a",
+    "0xa0d31259",
+    "0xf7469fce",
+    "0x04427794",
+    "0x6adf66bf",
+    "0x5a4f9388",
+    "0x27a5b0b4",
+    "0x081f0856",
+    "0x271eef30",
+    "0xffad4bb9",
+    "0x3118cf3d",
+    "0x53711589",
+    "0xbf9564da",
+    "0x6b20e6de",
+    "0xb1caeee1",
+    "0x27f82799",
+    "0xb239ae0e",
+    "0x06015ccf",
+    "0x7aa43b67",
+    "0xb386c0e6",
+    "0x275ebffe",
+    "0x544ca520",
+    "0x4c922ea3",
+    "0xfcae10b1",
+    "0x5d91cd98",
+    "0xf992f8ee",
+    "0x17ed7e4e",
+    "0x85eb6e5a",
+    "0xdeeee4ba",
+    "0x864a10fd",
+    "0x93bc91ea",
+    "0xd8cc3008",
+    "0xfca5a851",
+    "0x80c8163d",
+    "0xed604064"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "DekuStick",
+    "DekuNut",
+    "Bomb",
+    "Boomerang",
+    "SlingShot",
+    "Hookshot",
+    "Longshot",
+    "Hammer",
+    "GlassTruth",
+    "Bombchu",
+    "DinFire",
+    "FaroreWind",
+    "NayruLove",
+    "MagicBean",
+    "BottleA",
+    "BottleB",
+    "BottleC",
+    "BottleD",
+    "FishingRod",
+    "Lure",
+    "KeatonMask",
+    "SkullMask",
+    "SpookyMask",
+    "BunnyMask",
+    "TruthMask",
+    "GoronMask",
+    "ZoraMask",
+    "GerudoMask",
+    "HeavyBoot",
+    "HoverBoot",
+    "Bow",
+    "WeirdEgg",
+    "AlarmCucco",
+    "ZeldaLetter",
+    "PocketEgg",
+    "PocketCucco",
+    "CojiroCucco",
+    "OddMushroom",
+    "OddPowder",
+    "PoacherSaw",
+    "BrokenSword",
+    "Prescription",
+    "EyeballFrog",
+    "EyeDrop",
+    "ClaimCheck",
+    "SheikahWarp",
+    "FireArrow",
+    "IceArrow",
+    "LightArrow",
+    "ScrubBusinessSeed",
+    "BottleE",
+    "Amiibo",
+    "SinkLure",
+    "NormalLure"
+   ]
+  },
+  "0x3419ccb3": {
+   "hash": "0x3419ccb3",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x365e1953": {
+   "hash": "0x365e1953",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "0x42bd296f": {
+   "hash": "0x42bd296f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x54e2a3d1": {
+   "hash": "0x54e2a3d1",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "0x5882768c": {
+   "hash": "0x5882768c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x6b093b51": {
+   "hash": "0x6b093b51",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0x6bee602d": {
+   "hash": "0x6bee602d",
+   "hashes": [
+    "0xbe69de49",
+    "0xf9e54315",
+    "0x83d2e406",
+    "0xc0f40041",
+    "0xd1b7e25f",
+    "0xe59d9053",
+    "0xb369259b",
+    "0xde6256fb",
+    "0x051677d4",
+    "0xe283de79",
+    "0x98eecbdf",
+    "0x16870ea0",
+    "0xcd4fc0e3",
+    "0x33d5d675",
+    "0xc51a84d9",
+    "0x22c7238c",
+    "0xac889fd5",
+    "0xa7d94611",
+    "0xb55ee4e3",
+    "0x9607a5ad",
+    "0x88ff029a",
+    "0xa0d31259",
+    "0xf7469fce",
+    "0x04427794",
+    "0x6adf66bf",
+    "0x5a4f9388",
+    "0x27a5b0b4",
+    "0x081f0856",
+    "0x271eef30",
+    "0xffad4bb9",
+    "0x3118cf3d",
+    "0x53711589",
+    "0xbf9564da",
+    "0x6b20e6de",
+    "0xb1caeee1",
+    "0x27f82799",
+    "0xb239ae0e",
+    "0x06015ccf",
+    "0x7aa43b67",
+    "0xb386c0e6",
+    "0x275ebffe",
+    "0x544ca520",
+    "0x4c922ea3",
+    "0xfcae10b1",
+    "0x5d91cd98",
+    "0xf992f8ee",
+    "0x17ed7e4e",
+    "0x85eb6e5a",
+    "0xdeeee4ba",
+    "0x864a10fd",
+    "0x93bc91ea",
+    "0xd8cc3008",
+    "0xfca5a851",
+    "0x80c8163d",
+    "0xed604064"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "DekuStick",
+    "DekuNut",
+    "Bomb",
+    "Boomerang",
+    "SlingShot",
+    "Hookshot",
+    "Longshot",
+    "Hammer",
+    "GlassTruth",
+    "Bombchu",
+    "DinFire",
+    "FaroreWind",
+    "NayruLove",
+    "MagicBean",
+    "BottleA",
+    "BottleB",
+    "BottleC",
+    "BottleD",
+    "FishingRod",
+    "Lure",
+    "KeatonMask",
+    "SkullMask",
+    "SpookyMask",
+    "BunnyMask",
+    "TruthMask",
+    "GoronMask",
+    "ZoraMask",
+    "GerudoMask",
+    "HeavyBoot",
+    "HoverBoot",
+    "Bow",
+    "WeirdEgg",
+    "AlarmCucco",
+    "ZeldaLetter",
+    "PocketEgg",
+    "PocketCucco",
+    "CojiroCucco",
+    "OddMushroom",
+    "OddPowder",
+    "PoacherSaw",
+    "BrokenSword",
+    "Prescription",
+    "EyeballFrog",
+    "EyeDrop",
+    "ClaimCheck",
+    "SheikahWarp",
+    "FireArrow",
+    "IceArrow",
+    "LightArrow",
+    "ScrubBusinessSeed",
+    "BottleE",
+    "Amiibo",
+    "SinkLure",
+    "NormalLure"
+   ]
+  },
+  "0x76f85e6d": {
+   "hash": "0x76f85e6d",
+   "hashes": [
+    "0xbe69de49",
+    "0xf9e54315",
+    "0x83d2e406",
+    "0xc0f40041",
+    "0xd1b7e25f",
+    "0xe59d9053",
+    "0xb369259b",
+    "0xde6256fb",
+    "0x051677d4",
+    "0xe283de79",
+    "0x98eecbdf",
+    "0x16870ea0",
+    "0xcd4fc0e3",
+    "0x33d5d675",
+    "0xc51a84d9",
+    "0x22c7238c",
+    "0xac889fd5",
+    "0xa7d94611",
+    "0xb55ee4e3",
+    "0x9607a5ad",
+    "0x88ff029a",
+    "0xa0d31259",
+    "0xf7469fce",
+    "0x04427794",
+    "0x6adf66bf",
+    "0x5a4f9388",
+    "0x27a5b0b4",
+    "0x081f0856",
+    "0x271eef30",
+    "0xffad4bb9",
+    "0x3118cf3d",
+    "0x53711589",
+    "0xbf9564da",
+    "0x6b20e6de",
+    "0xb1caeee1",
+    "0x27f82799",
+    "0xb239ae0e",
+    "0x06015ccf",
+    "0x7aa43b67",
+    "0xb386c0e6",
+    "0x275ebffe",
+    "0x544ca520",
+    "0x4c922ea3",
+    "0xfcae10b1",
+    "0x5d91cd98",
+    "0xf992f8ee",
+    "0x17ed7e4e",
+    "0x85eb6e5a",
+    "0xdeeee4ba",
+    "0x864a10fd",
+    "0x93bc91ea",
+    "0xd8cc3008",
+    "0xfca5a851",
+    "0x80c8163d",
+    "0xed604064"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "DekuStick",
+    "DekuNut",
+    "Bomb",
+    "Boomerang",
+    "SlingShot",
+    "Hookshot",
+    "Longshot",
+    "Hammer",
+    "GlassTruth",
+    "Bombchu",
+    "DinFire",
+    "FaroreWind",
+    "NayruLove",
+    "MagicBean",
+    "BottleA",
+    "BottleB",
+    "BottleC",
+    "BottleD",
+    "FishingRod",
+    "Lure",
+    "KeatonMask",
+    "SkullMask",
+    "SpookyMask",
+    "BunnyMask",
+    "TruthMask",
+    "GoronMask",
+    "ZoraMask",
+    "GerudoMask",
+    "HeavyBoot",
+    "HoverBoot",
+    "Bow",
+    "WeirdEgg",
+    "AlarmCucco",
+    "ZeldaLetter",
+    "PocketEgg",
+    "PocketCucco",
+    "CojiroCucco",
+    "OddMushroom",
+    "OddPowder",
+    "PoacherSaw",
+    "BrokenSword",
+    "Prescription",
+    "EyeballFrog",
+    "EyeDrop",
+    "ClaimCheck",
+    "SheikahWarp",
+    "FireArrow",
+    "IceArrow",
+    "LightArrow",
+    "ScrubBusinessSeed",
+    "BottleE",
+    "Amiibo",
+    "SinkLure",
+    "NormalLure"
+   ]
+  },
+  "0x7d48df76": {
+   "hash": "0x7d48df76",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "0x7d776b61": {
+   "hash": "0x7d776b61",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0xd6266e42",
+    "0xebe0b5b7",
+    "0xb5df43cb",
+    "0x576277fa",
+    "0xd52b1014",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "GoInside",
+    "MeetBoss",
+    "GoToBossRoom",
+    "DefeatBoss",
+    "GoToWarpPoint",
+    "Complete"
+   ]
+  },
+  "0x92431c55": {
+   "hash": "0x92431c55",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0x43b92c8f",
+    "0xd512c4e6",
+    "0x87c38b24",
+    "0xcfbd3bf2",
+    "0x4a78580e",
+    "0x9c643d4a",
+    "0x085d18f0",
+    "0xdac3768f",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "GuideToLonLonRanch",
+    "GuideToLonLonRanchAdult",
+    "ReadyForGetEponaSong",
+    "AfterGetEponaSong",
+    "ReadyForGambleRace",
+    "AfterTalkMalon",
+    "GambleRacePlaying",
+    "AfterWonGambleRace",
+    "Complete"
+   ]
+  },
+  "0x9472302b": {
+   "hash": "0x9472302b",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0x1d5ffdb0",
+    "0x093d3446",
+    "0x481353df",
+    "0x85bd4d84",
+    "0x48b1d388",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "MeetPierre",
+    "MeetBonooru",
+    "IntoThePast",
+    "PlayScarecrowSong",
+    "IntoTheFuture",
+    "Complete"
+   ]
+  },
+  "0xaacdef1f": {
+   "hash": "0xaacdef1f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0xac6a85e3": {
+   "hash": "0xac6a85e3",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0xb72cd3fc": {
+   "hash": "0xb72cd3fc",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64"
+  },
+  "0xb7df60f1": {
+   "hash": "0xb7df60f1",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "0xb80c70a8": {
+   "hash": "0xb80c70a8",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "0xda41879d": {
+   "hash": "0xda41879d",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "0xe4c1b1fc": {
+   "hash": "0xe4c1b1fc",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "0xea010310": {
+   "hash": "0xea010310",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0x60c72303",
+    "0x08afca92",
+    "0xeb62add9",
+    "0x0e5afad8",
+    "0x129d5e69",
+    "0x99929480",
+    "0x6f917dfe",
+    "0x27f660fe",
+    "0xb2f4850c",
+    "0x0b956482",
+    "0x5cde171f",
+    "0x21d6fa38",
+    "0x57867810",
+    "0x93fac001",
+    "0xee867c27",
+    "0xa594ed54",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "UntilRentMaskOfKeaton",
+    "Step01_Hint",
+    "Step01",
+    "Step02",
+    "UntilRentMaskOfSkull",
+    "Step03_Hint",
+    "Step03",
+    "Step04",
+    "UntilRentMaskOfSpooky",
+    "Step05_Hint",
+    "Step05",
+    "Step06",
+    "UntilRentMaskOfBunny",
+    "Step07_Hint",
+    "Step07",
+    "Step08",
+    "Complete"
+   ]
+  },
+  "CharacterMenu_SelectedCharacter": {
+   "hash": "0xd6b580ea",
+   "source": "Snail's Character Select (the coop-puppet pack's GameDataList: no_cs.py:27-28, lane1-B-nocs; lichii/hook/coop_char_ages.h:4)",
+   "type": "Int"
+  },
+  "DodongoCavern_BossGroundChange": {
+   "hash": "0x8046b089",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.BottomOfTheWell.IsGetBossKey": {
+   "hash": "0x9402715c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.BottomOfTheWell.IsGetCompass": {
+   "hash": "0x9d6efaac",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.BottomOfTheWell.IsGetMap": {
+   "hash": "0x77c47ec9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.DodongoCavern.IsGetBossKey": {
+   "hash": "0xfaabc084",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.DodongoCavern.IsGetCompass": {
+   "hash": "0x8b93edf9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.DodongoCavern.IsGetMap": {
+   "hash": "0xa52c3a19",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FinalBattleField.IsGetBossKey": {
+   "hash": "0x6d0fea11",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FinalBattleField.IsGetCompass": {
+   "hash": "0x874493ce",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FinalBattleField.IsGetMap": {
+   "hash": "0xb3b65c1a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FireTemple.IsGetBossKey": {
+   "hash": "0xb72d73df",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FireTemple.IsGetCompass": {
+   "hash": "0x0aa068b6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.FireTemple.IsGetMap": {
+   "hash": "0x5b3ac0ba",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ForestTemple.IsGetBossKey": {
+   "hash": "0x427333a0",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ForestTemple.IsGetCompass": {
+   "hash": "0xf240eeb2",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ForestTemple.IsGetMap": {
+   "hash": "0xe704f9b4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ForestTemple.SmallKeyNum": {
+   "hash": "0x90237092",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "DungeonInfo.GerudoFortress.IsGetBossKey": {
+   "hash": "0x95fbcb7c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.GerudoFortress.IsGetCompass": {
+   "hash": "0x5eb80679",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.GerudoFortress.IsGetMap": {
+   "hash": "0xbcaad6ce",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.GerudoFortress.SmallKeyNum": {
+   "hash": "0x3a28b6a4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "DungeonInfo.GerudoTrainingGround.IsGetBossKey": {
+   "hash": "0x6d155841",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.GerudoTrainingGround.IsGetCompass": {
+   "hash": "0x3d9a2750",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.GerudoTrainingGround.IsGetMap": {
+   "hash": "0x4b36041e",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.IceCavern.IsGetBossKey": {
+   "hash": "0x275f4512",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.IceCavern.IsGetCompass": {
+   "hash": "0xea1846e6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.IceCavern.IsGetMap": {
+   "hash": "0x322f2a94",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideGanonCastle.IsGetBossKey": {
+   "hash": "0x2fd59293",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideGanonCastle.IsGetCompass": {
+   "hash": "0xc4d4734e",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideGanonCastle.IsGetMap": {
+   "hash": "0x9bbc0c4a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideJabuJabuBelly.IsGetBossKey": {
+   "hash": "0x656bd5ee",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideJabuJabuBelly.IsGetCompass": {
+   "hash": "0x9a2218db",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideJabuJabuBelly.IsGetMap": {
+   "hash": "0xfcadd210",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideTheDekuTree.IsGetBossKey": {
+   "hash": "0xf6995cee",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideTheDekuTree.IsGetCompass": {
+   "hash": "0x06c51ff2",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.InsideTheDekuTree.IsGetMap": {
+   "hash": "0x89787395",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ShadowTemple.IsGetBossKey": {
+   "hash": "0xc33c66cf",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ShadowTemple.IsGetCompass": {
+   "hash": "0x1e2feec5",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.ShadowTemple.IsGetMap": {
+   "hash": "0xf6177b93",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.SpiritTemple.IsGetBossKey": {
+   "hash": "0x1984c03f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.SpiritTemple.IsGetCompass": {
+   "hash": "0x9bd1181c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.SpiritTemple.IsGetMap": {
+   "hash": "0xb85002ba",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.WaterTemple.IsGetBossKey": {
+   "hash": "0x79daf80a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.WaterTemple.IsGetCompass": {
+   "hash": "0x2e82c8fe",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.WaterTemple.IsGetMap": {
+   "hash": "0x4a4402ab",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "DungeonInfo.WaterTemple.SmallKeyNum": {
+   "hash": "0x877bdcee",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "Enemy_DungeonBoss_Dodongo_BossAppear": {
+   "hash": "0xe7922fed",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_DestroyGerudoThief_Npc_Hylia_013_Adult": {
+   "hash": "0x2b24842a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_DestroyGerudoThief_Npc_Hylia_014_Adult": {
+   "hash": "0x88bb5813",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_013_Adult": {
+   "hash": "0xf1eb5977",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_IsAfterHelpCarpenter_Npc_Hylia_014_Adult": {
+   "hash": "0x06d7f245",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_Saved_Npc_Hylia_013_Adult": {
+   "hash": "0x0db0556f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_Saved_Npc_Hylia_014_Adult": {
+   "hash": "0x8f360c8c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_WarpPoint01_ClearEvent": {
+   "hash": "0x89c70062",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "GerudoFortress_WarpPoint02_ClearEvent": {
+   "hash": "0x231f663a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "Gohma_DefeatBoss": {
+   "hash": "0x6b093b51",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "Gohma_IsLightingForBattle": {
+   "hash": "0x3d5c0bad",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HaveEncountered_Token": {
+   "hash": "0x31a83410",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Deku_BossIn": {
+   "hash": "0x00c0a2f6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Deku_BossOut": {
+   "hash": "0x5882768c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_DodongoCave_0010": {
+   "hash": "0x6e021914",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_DodongoCave_BossIn": {
+   "hash": "0xa3003ce0",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_DodongoCave_BossOut": {
+   "hash": "0x764b65d6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0023": {
+   "hash": "0xdd17d3eb",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0024": {
+   "hash": "0x88e4cc5a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0025": {
+   "hash": "0xf0746d5f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0026": {
+   "hash": "0xf064742b",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0027": {
+   "hash": "0x4f4c1315",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0028": {
+   "hash": "0xce98af96",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0029": {
+   "hash": "0xa643c625",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_StaffCredit_0030": {
+   "hash": "0xe099da54",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0056": {
+   "hash": "0x75241a60",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0080": {
+   "hash": "0xbc9cec9b",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0096": {
+   "hash": "0x93ada401",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0100": {
+   "hash": "0x881fb42a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0110": {
+   "hash": "0x0f39b5f4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Dm_Title_0120": {
+   "hash": "0x573cbeb9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Get_StoneOfFire_AppearBoss": {
+   "hash": "0x7653b7e0",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.Get_StoneOfFire_DefeatBoss": {
+   "hash": "0xc1df671e",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.IceCavern_Room05_SilverToken_Unlock": {
+   "hash": "0x15010faa",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn": {
+   "hash": "0xffde6400",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_BossArea_Warp": {
+   "hash": "0x66b97a4a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_BossDie": {
+   "hash": "0x3419ccb3",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_Gimmick_CandleAndSpiderWeb": {
+   "hash": "0x429126ef",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder": {
+   "hash": "0xb3a4fe84",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp": {
+   "hash": "0x50cbaf1b",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HavePlayedEvent.WaterTemple_WaterLevelChange01": {
+   "hash": "0xf00c3fd1",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HaveTalked_Special.Npc_Goron_Medigoron_Adult_Talk_Event26": {
+   "hash": "0x0e3dad8a",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "HrlField_HasEnteredFirstTime_Adult": {
+   "hash": "0x8592aa82",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IceCavern_Room05_Unlocked": {
+   "hash": "0xafe50c4b",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "InsideTheDekuTree_BossArea_ChangeENVForBoss": {
+   "hash": "0x88b1b922",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "InsideTheDekuTree_BossArea_ShutIn": {
+   "hash": "0xe44433dc",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "InsideTheDekuTree_Level_RoomH_ClearBlock": {
+   "hash": "0xfb39c3e6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "InsideTheDekuTree_RoomC_Cleared": {
+   "hash": "0x77279a83",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Bottle_Letter": {
+   "hash": "0x170b5df2",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_DekuStick": {
+   "hash": "0xc4e21ac2",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Fire": {
+   "hash": "0x103a0dc7",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Forest": {
+   "hash": "0xfcd8d653",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Light": {
+   "hash": "0x9026c187",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Shadow": {
+   "hash": "0x12d63ac6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Spirit": {
+   "hash": "0xe269df38",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Medal_Water": {
+   "hash": "0xcf64e780",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_EponaSong": {
+   "hash": "0xb492ac33",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_FireBolero": {
+   "hash": "0x49041ab9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_ForestMinuet": {
+   "hash": "0xdc0a0b54",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_LightPrelude": {
+   "hash": "0xd6320ba4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_SariaSong": {
+   "hash": "0xd3f8bfcc",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_ScarecrowSong": {
+   "hash": "0x5e86fb4d",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_ShadowNocturne": {
+   "hash": "0xc2fb95f4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_SpiritRequiem": {
+   "hash": "0x802a36a8",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_StormSong": {
+   "hash": "0x2b39dd4f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_SunSong": {
+   "hash": "0x165dd1ad",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_TimeSong": {
+   "hash": "0x03b3450e",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_WaterSerenade": {
+   "hash": "0x3fa63986",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Melody_ZeldaLullaby": {
+   "hash": "0x01c20002",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Stone_Fire": {
+   "hash": "0x8908d6ad",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Stone_Forest": {
+   "hash": "0x110b83ec",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet.Item_Stone_Water": {
+   "hash": "0xeec383f5",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet_SmallKey_GerudoFortress.SmallKey01": {
+   "hash": "0xdc0010f6",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "IsGet_SmallKey_GerudoFortress.SmallKey02": {
+   "hash": "0x1ee8e249",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_EponaSong": {
+   "hash": "0x8d068302",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_InsectRepellent": {
+   "hash": "0x8ffec767",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_SariaSong": {
+   "hash": "0xf675a0f2",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_StormSong": {
+   "hash": "0xd578df95",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_SunSong": {
+   "hash": "0x61305ed4",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_TimeSong": {
+   "hash": "0xcc4216b9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "MiniGame_FrogTenors_ZeldaLullaby": {
+   "hash": "0x6e3948e7",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "Npc_Hylia_Soldier_003_GateOpen": {
+   "hash": "0x19898d14",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "OwnedHorseList.ActorName": {
+   "hash": "0x7bde80e9",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64Array"
+  },
+  "PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem": {
+   "hash": "0x7d48df76",
+   "hashes": [
+    "0xbe69de49",
+    "0xeaba6067",
+    "0x049d37c1",
+    "0xf383d6e5",
+    "0x1c293517",
+    "0x1e834ef8",
+    "0x0f24e808",
+    "0xcdc21471",
+    "0x02084f9e",
+    "0x74d62ecb",
+    "0x6f49e357",
+    "0x73356827",
+    "0xeef6e4b0"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "RedPotion",
+    "GreenPotion",
+    "BluePotion",
+    "BlueFire",
+    "Fish",
+    "Letter",
+    "BigPoe",
+    "Poe",
+    "Bug",
+    "Fairy",
+    "MaxMilk",
+    "HalfMilk"
+   ]
+  },
+  "PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid": {
+   "hash": "0xf39ce410",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "PlayerStatus.AssignableItem.Child": {
+   "hash": "0xa0029837",
+   "hashes": [
+    "0xbe69de49",
+    "0xf9e54315",
+    "0x83d2e406",
+    "0xc0f40041",
+    "0xd1b7e25f",
+    "0xe59d9053",
+    "0xb369259b",
+    "0xde6256fb",
+    "0x051677d4",
+    "0xe283de79",
+    "0x98eecbdf",
+    "0x16870ea0",
+    "0xcd4fc0e3",
+    "0x33d5d675",
+    "0xc51a84d9",
+    "0x22c7238c",
+    "0xac889fd5",
+    "0xa7d94611",
+    "0xb55ee4e3",
+    "0x9607a5ad",
+    "0x88ff029a",
+    "0xa0d31259",
+    "0xf7469fce",
+    "0x04427794",
+    "0x6adf66bf",
+    "0x5a4f9388",
+    "0x27a5b0b4",
+    "0x081f0856",
+    "0x271eef30",
+    "0xffad4bb9",
+    "0x3118cf3d",
+    "0x53711589",
+    "0xbf9564da",
+    "0x6b20e6de",
+    "0xb1caeee1",
+    "0x27f82799",
+    "0xb239ae0e",
+    "0x06015ccf",
+    "0x7aa43b67",
+    "0xb386c0e6",
+    "0x275ebffe",
+    "0x544ca520",
+    "0x4c922ea3",
+    "0xfcae10b1",
+    "0x5d91cd98",
+    "0xf992f8ee",
+    "0x17ed7e4e",
+    "0x85eb6e5a",
+    "0xdeeee4ba",
+    "0x864a10fd",
+    "0x93bc91ea",
+    "0xd8cc3008",
+    "0xfca5a851",
+    "0x80c8163d",
+    "0xed604064"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "Empty",
+    "DekuStick",
+    "DekuNut",
+    "Bomb",
+    "Boomerang",
+    "SlingShot",
+    "Hookshot",
+    "Longshot",
+    "Hammer",
+    "GlassTruth",
+    "Bombchu",
+    "DinFire",
+    "FaroreWind",
+    "NayruLove",
+    "MagicBean",
+    "BottleA",
+    "BottleB",
+    "BottleC",
+    "BottleD",
+    "FishingRod",
+    "Lure",
+    "KeatonMask",
+    "SkullMask",
+    "SpookyMask",
+    "BunnyMask",
+    "TruthMask",
+    "GoronMask",
+    "ZoraMask",
+    "GerudoMask",
+    "HeavyBoot",
+    "HoverBoot",
+    "Bow",
+    "WeirdEgg",
+    "AlarmCucco",
+    "ZeldaLetter",
+    "PocketEgg",
+    "PocketCucco",
+    "CojiroCucco",
+    "OddMushroom",
+    "OddPowder",
+    "PoacherSaw",
+    "BrokenSword",
+    "Prescription",
+    "EyeballFrog",
+    "EyeDrop",
+    "ClaimCheck",
+    "SheikahWarp",
+    "FireArrow",
+    "IceArrow",
+    "LightArrow",
+    "ScrubBusinessSeed",
+    "BottleE",
+    "Amiibo",
+    "SinkLure",
+    "NormalLure"
+   ]
+  },
+  "PlayerStatus.CurrentRupee": {
+   "hash": "0xa77921d7",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PlayerStatus.EquipArmor": {
+   "hash": "0x008d7f0c",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64"
+  },
+  "PlayerStatus.EquipBoot": {
+   "hash": "0xd107a85d",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64"
+  },
+  "PlayerStatus.EquipHandArmor": {
+   "hash": "0x7ce1cb81",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64"
+  },
+  "PlayerStatus.EquipOcarina": {
+   "hash": "0xb72cd3fc",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "String64"
+  },
+  "PlayerStatus.Life": {
+   "hash": "0x31ab5580",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PlayerStatus.LiftGrade": {
+   "hash": "0x59979321",
+   "hashes": [
+    "0xb6eede09",
+    "0xd9e40095",
+    "0xb6a1ccdf",
+    "0x165af889"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "None",
+    "Low",
+    "Middle",
+    "High"
+   ]
+  },
+  "PlayerStatus.MaxLife": {
+   "hash": "0xfbe01da1",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.BottleA.StockNum": {
+   "hash": "0xd53ce3a7",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.Item_Bomb.StockNum": {
+   "hash": "0xdb1bcd4f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.Item_DekuNut.StockNum": {
+   "hash": "0xf30d9f54",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.Item_DekuStick.StockNum": {
+   "hash": "0xb9494411",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.Item_ZeldaLetter.StockNum": {
+   "hash": "0x6be5c3b0",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "PouchData.Weapon_Shield_Deku.StockNum": {
+   "hash": "0x7ca64f23",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Int"
+  },
+  "Sequence_IsChildhood": {
+   "hash": "0xcea220d3",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "Step_Get_Epona": {
+   "hash": "0x92431c55",
+   "hashes": [
+    "0x57b849f0",
+    "0x17bfaa46",
+    "0x43b92c8f",
+    "0xd512c4e6",
+    "0x87c38b24",
+    "0xcfbd3bf2",
+    "0x4a78580e",
+    "0x9c643d4a",
+    "0x085d18f0",
+    "0xdac3768f",
+    "0x4c0a63f4"
+   ],
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Enum",
+   "values": [
+    "NotReady",
+    "Ready",
+    "GuideToLonLonRanch",
+    "GuideToLonLonRanchAdult",
+    "ReadyForGetEponaSong",
+    "AfterGetEponaSong",
+    "ReadyForGambleRace",
+    "AfterTalkMalon",
+    "GambleRacePlaying",
+    "AfterWonGambleRace",
+    "Complete"
+   ]
+  },
+  "UI_IsFinishChallengeMenuOpenEvent": {
+   "hash": "0x1450c74f",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "WaterTemple_WaterLevelChange01": {
+   "hash": "0xa16f6696",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "WaterTemple_WaterLevelChange03": {
+   "hash": "0xa4456820",
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool"
+  },
+  "key64:0x0b66198d17d6584e": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0x2d106890d9d01132": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0x7633db754459d19d": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0xa6b41aa8827c975c": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0xaf0a7a17099f8d19": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0xc066e1f9eb643d09": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0xf2e27d6a27026acf": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  },
+  "key64:0xffa5887336519e97": {
+   "source": "GameData/GameDataList.Product.110.byml.zs",
+   "type": "Bool64bitKey"
+  }
+ },
+ "made_by": "tools/autotest/ingame/flag_names.py --romfs <romfs> (GameData/GameDataList.Product.110.byml.zs + MOD); do not edit"
+}

@@ -20,6 +20,11 @@ HyruleField_FrontOfLostWoodBridge, S 309d7180c game-out-B 4806, and B's list had
 the rows' own entrance HyruleField_FrontOfMarket (hs-epona-sync.B.txt:24). NEAR_M models the old rows' 'place beside
 her' only; the real list's reach is measured by the probe (gate-probe-0121 test_probe_epona).
 A Get_Epona written lower than Complete comes back to Complete 30 frames on (so a --repeat round 2 finds her won).
+SCOPED (B #149 rule): the whole module acts only with BT_FAKE_ROW150=1, which only tests/test_ingame_epona.py sets
+(review-tests-153-6 06:56: its field Epona, age and song reached row 294's runs too; their age comes from the game's
+own flag, fakegame.age, and their horse lines from fakes/epona294.py).
+Since the quest is its real Enum Step_Get_Epona, fakes/epona294.py (row 294) reacts to the same flag; unscoped, both
+answered every run (CI 46110930507: test_ingame_row294 FAIL 2 != 1, Suite desync OwnedHorseList.ActorName[0]).
 """
 import math
 import os
@@ -27,6 +32,7 @@ import os
 FIELD = "HyruleField_Adult"
 FIELD_EPONA = [-100.47, 150.60, 264.55]
 COMPLETE_HASH = "0x4c0a63f4"
+QUEST = "Step_Get_Epona"   # the quest's Enum name (test_epona.GET_EPONA); "Get_Epona" is no flag: kind unknown
 MARKET = "HyruleField_FrontOfMarket"
 NEAR_M = 5.0
 SONG = ["X", "Y", "A", "X", "Y", "A"]
@@ -41,8 +47,12 @@ def _field(game):
     return game.scene == FIELD and not game.at_title
 
 
+def _row():
+    return os.environ.get("BT_FAKE_ROW150") == "1"
+
+
 def _won(game):
-    return game.flags.get("Get_Epona") in ("Complete", COMPLETE_HASH)
+    return game.flags.get(QUEST) in ("Complete", COMPLETE_HASH)
 
 
 def setup(game):
@@ -72,15 +82,20 @@ def _a_sees(a, how):
 
 
 def after(game, m, r):
+    if not _row():
+        return
     cmd = m.get("cmd")
-    if cmd == "flag" and m.get("name") == "Get_Epona" and m.get("value") in ("Complete", COMPLETE_HASH):
-        game.other.flags["Get_Epona"] = "Complete"          # shared by its end
-    elif cmd == "flag" and m.get("name") == "Get_Epona" and r.get("was") in ("Complete", COMPLETE_HASH):
+    if cmd == "flag" and m.get("name") == QUEST and m.get("value") in ("Complete", COMPLETE_HASH):
+        game.other.flags[QUEST] = "Complete"          # shared by its end
+    elif cmd == "flag" and m.get("name") == QUEST and r.get("was") in ("Complete", COMPLETE_HASH):
         # written lower: the group's Complete comes back (co-op never lowers it, docs/flags.md "Shared by its end")
-        game.later(30, lambda: game.flags.__setitem__("Get_Epona", "Complete"))
-    elif cmd == "flag_read" and m.get("name") == "Get_Epona":
-        v = game.flags.get("Get_Epona")
+        game.later(30, lambda: game.flags.__setitem__(QUEST, "Complete"))
+    elif cmd == "flag_read" and m.get("name") == QUEST:
+        v = game.flags.get(QUEST)
         r.update(kind="enum", value=COMPLETE_HASH if v in ("Complete", COMPLETE_HASH) else (v or "0x00000000"))
+    elif cmd == "flag_read" and m.get("name") == "Get_Epona":
+        # (the real game's answer to the old wrong name, probe0121e-16ac9701 05:07: no flag of that name)
+        r.update(kind="unknown", value=None)
     elif cmd == "warp" and game.tag == "B":
         game.horse = list(FIELD_EPONA) if m.get("scene") == FIELD and not _won(game) else None
         game.epona_entrance = m.get("entrance")
@@ -90,6 +105,8 @@ def after(game, m, r):
 
 
 def state(game, st):
+    if not _row():
+        return
     if _field(game):
         st["age"] = "adult"
     if not game.at_title and _won(game) != game.owns_last:     # logged on each change (coop_ride.cpp:470-474)
@@ -102,6 +119,8 @@ def state(game, st):
 
 
 def actors(game):
+    if not _row():
+        return []
     far = (game.horse == FIELD_EPONA and getattr(game, "epona_entrance", None) != MARKET
            and math.dist(game.pos[::2], FIELD_EPONA[::2]) > NEAR_M)   # (the field Epona, out of B's list's reach)
     if game.tag == "B" and _field(game) and game.horse and not far:
@@ -110,6 +129,8 @@ def actors(game):
 
 
 def press(game, buttons):
+    if not _row():
+        return False
     if game.tag != "B" or not _field(game):
         return False
     a = game.other

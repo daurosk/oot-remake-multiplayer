@@ -18,7 +18,7 @@ wait 2400
 mark after
 give PouchData.Item_DekuNut.StockNum
 wait 120
-setflag PouchData.Item_DekuNut.Count 20
+setflag PouchData.Item_DekuNut.StockNum 20
 wait 600
 mark a-gave
 wait 1200

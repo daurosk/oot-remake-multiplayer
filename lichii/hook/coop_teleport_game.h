@@ -53,6 +53,10 @@ bool ToEntrance();
 // no start point. The event is asked at the next frames for 5 s (the respawn's window); the caller waits for the
 // scene. Any thread.
 bool MapChange(std::string scene, std::string start);
+// map-icons-255-4 (the --solo probe's warp SETUP-FAIL 2026-11-28 00:08): with no co-op session, Frame is not called by
+// the session's frame; the solo frame (coop_hook.cpp LocalFrameOff) calls it, with `session` null, while this is true:
+// a MapChange waits, its event window or a trip is open, or the arrival's starter is still kept. Present thread.
+bool WantsSoloFrame();
 // How the last Beside / ToEntrance went, once known: true moved (or the
 // scene change asked), false not (refused, no answer, not moved, no start
 // point). Nothing while not known. Taken once.

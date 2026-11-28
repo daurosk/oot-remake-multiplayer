@@ -1971,3 +1971,36 @@ TEST_CASE("hookshot: chartab-0121: Character Select's Customize keys get their t
     CHECK(body.find("g_snail.SetKeysShown(g_snail_key_page != 0 && g_snail_key_mix != 0);") == std::string::npos);
     CHECK(body.find("if (!texts) g_snail_key_page = g_snail_key_mix = 0;") != std::string::npos);
 }
+
+TEST_CASE("hookshot: map-icons-255-4: the bridge's map change warps run with no session (the --solo boot)") {
+    // test_map_turn_probe SETUP-FAIL 2026-11-28 00:08: 'warp InsideTheDekuTree Entrance' in a --solo boot timed out
+    // (57 s, no 'coop: teleport: map change' line): MapChange only stores the ask, CoopTeleport::Frame carries it
+    // out, and only the session's frame called Frame. The solo frame now calls it while one is under way.
+    const std::string hook = ReadFile(kRepo / "lichii" / "hook" / "coop_hook.cpp");
+    const auto off = hook.find("void LocalFrameOff(Core::System& system, bool writes) {");
+    REQUIRE(off != std::string::npos);
+    const auto off_end = hook.find("\n}\n", off);
+    REQUIRE(off_end != std::string::npos);
+    const std::string solo = hook.substr(off, off_end - off);
+    const auto wants = solo.find("if (CoopTeleport::WantsSoloFrame()) {");
+    REQUIRE(wants != std::string::npos);
+    CHECK(solo.find("CoopTeleport::Frame(system, base, full ? full : reader.read(), nullptr);", wants) !=
+          std::string::npos);
+    CHECK(wants > solo.find("if (!writes) {"));   // (a code mod's read-only frame writes nothing: no warp)
+    CHECK(wants < solo.find("if (!step.Publish(CoopLocalGame::HasSeats())) return;"));  // (before the early return)
+    const auto solo_case = hook.find("case CoopSessionEnd::Path::solo:");
+    REQUIRE(solo_case != std::string::npos);
+    CHECK(hook.find("LocalFrameOff(system, true);", solo_case) < hook.find("case CoopSessionEnd::Path::read_only:"));
+    // Every warp the bridge sends by the map change event (an entrance, a boss stage, the other age) goes through
+    // MapChange's want_map, which WantsSoloFrame reads, with the window and the starter Frame keeps after it.
+    const std::string tp = ReadFile(kRepo / "lichii" / "hook" / "coop_teleport_game.cpp");
+    const auto at = tp.find("bool WantsSoloFrame() {");
+    REQUIRE(at != std::string::npos);
+    const std::string body = tp.substr(at, tp.find("\n}\n", at) - at);
+    for (const char* part : {"g.starter.active()", "g.trip.phase() != Trip::Phase::idle", "if (g.want_map) return true;",
+                             "g.events_open || g.underway || g.entrance_until_us != 0"}) {
+        CHECK(body.find(part) != std::string::npos);
+    }
+    const std::string bridge = ReadFile(kRepo / "hookshot" / "src" / "coop_playtest.cpp");
+    CHECK(bridge.find("if (!CoopTeleport::MapChange(r.scene, r.entrance)) {") != std::string::npos);
+}

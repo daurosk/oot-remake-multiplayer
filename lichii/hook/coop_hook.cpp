@@ -3971,6 +3971,13 @@ void LocalFrameOff(Core::System& system, bool writes) {
             mend_since_us.NewLoad();  // the title or a load: nothing to read yet
         }
     }
+    // map-icons-255-4: the play-test bridge's map change warps (an entrance, a boss stage, the other age) with no
+    // session: CoopTeleport::MapChange only stores the ask, and only CoopTeleport::Frame carries it out (and keeps the
+    // arrival's starter and the event window), which the session's frame calls. Called here while it has one under
+    // way, with no session (as a frame that is not connected); otherwise solo is unchanged.
+    if (CoopTeleport::WantsSoloFrame()) {
+        CoopTeleport::Frame(system, base, full ? full : reader.read(), nullptr);
+    }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
     if (full) full->event_whose = solo_whose;  // G1: classified once this frame, above

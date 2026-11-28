@@ -630,7 +630,8 @@ std::string Handle(const Request& r) {
         }
         return ErrorReply(r.id, gate.Frame(), gate.Held(), "timeout",
                           "not in " + wait_for + " after " + std::to_string(static_cast<int>(r.timeout_s)) +
-                              " s; held; the state: " + StateObject());
+                              " s (via " + (plan.route == WarpRoute::event ? "event" : plan.route == WarpRoute::map_event ? "map_event" : "teleport") +
+                              "); held; the state: " + StateObject());
     }
     if (r.cmd == "flag") {
         std::string error;

@@ -343,6 +343,20 @@ bool MapChange(std::string scene, std::string start) {
     return true;
 }
 
+bool WantsSoloFrame() {
+    Glue& g = TheGlue();
+    if (g.starter.active() || g.trip.phase() != Trip::Phase::idle) {
+        return true;   // (present-thread state: read where Frame writes it)
+    }
+    {
+        std::lock_guard lock(g.mutex);
+        if (g.want_map) return true;
+    }
+    std::lock_guard lock(g.event_mutex);
+    // Frame clears both on the call that ends the window: the svc cave's caller never Steps a left-open event.
+    return g.events_open || g.underway || g.entrance_until_us != 0;
+}
+
 std::optional<bool> TakeRespawnMove() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);

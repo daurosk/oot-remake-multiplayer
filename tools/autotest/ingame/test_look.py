@@ -208,7 +208,8 @@ def test_kokiri_hood_band(pair):
         for i, d in enumerate(DISTANCES):
             if i:
                 got = put_in_front(pair, "A", of="B", dist=d)
-                assert abs(got - d) < 1.0, "A stands %.1f m from B, not %.1f" % (got, d)
+                if abs(got - d) >= 1.0:   # (a refused or clamped place: set-up, never a band verdict at the wrong distance)
+                    raise P.SetupFail("A stands %.1f m from B, not %.1f (the place was refused or clamped)" % (got, d))
             a = pair.state("A")["pos"]
             pup = pair.until("B's puppet of A at %.1f m" % d, lambda: puppet_near(pair, "B", a), max_frames=120)
             sb = pair.state("B")   # (B's camera and Link for the band check; the shot runs at most 5 frames after it)

@@ -16,6 +16,12 @@ The pass line is the PORT AUTHOR'S DECISION (fps-spike-0121-4), not the player's
 about every 2nd 5 s window; here NO window after the settle may hold a present over 40 ms, and the mean fps stays
 >= 90 % of the 60 cap (test_unfocus MIN_SHARE). The json gives each spiky window's index, so the period (5 s x the
 index gaps) is read from it, on v0.12.0 and on the fixed build alike.
+
+Hosted (test_hosted_idle_no_spikes, --boot live-kakariko-host; the player: freezes once he hosts or joins): A hosts by its
+own menu and B joins (test_host_menu.prove_hosting: TEST_HOST_ON, LISTENING, ANNOUNCED on A, WELCOMED on B), both idle
+WINDOWS windows; the same judge on each game, each spiky window with `memory_line` (a 'coop: memory:' / 'coop: host:
+memory:' line ran next to it, MEMORY), in <out>/idle-spikes-hosted-A.json and -B.json. Cause (fps-spike-0121-6): v0.12.0's
+memory lines walk every heap (row 271); fix 853e67202 reads counters only.
 """
 import json
 import os
@@ -25,7 +31,7 @@ import time
 import pytest
 
 import solo
-from test_host_menu import SETTLE, VCORES
+from test_host_menu import HOST_BOOT, NO_CRASH, SETTLE, VCORES, prove_hosting
 from test_rows import need_child_in_play
 from test_unfocus import BUCKETS, CAP_FPS, MIN_SHARE, POLL_S, WINDOW, windows
 
@@ -37,6 +43,9 @@ CUT = 240             # characters kept of one line
 # controller-read gap, saves, heaps (row 315's family). Not the renderer's 5 s counter lines (vk: a frame..., mirrors).
 NEXT_TO = re.compile(r"coop: |vcores: .*(waited|held it)|slow (submit|present)|hid: the game read no|"
                      r"memory heaps|heap|save|nvn: GPU waits")
+# The row 322 cause (fps-spike-0121-6): the game's memory line every 60 s (coop_hookshot.cpp, solo too) and the host's
+# every 30 s (coop_host_menu.cpp, 'coop: host: memory: ' + ProcessMemoryText) walked every heap in v0.12.0.
+MEMORY = re.compile(r"coop: (host: )?memory: ")
 
 
 def windows_with_lines(lines):
@@ -56,20 +65,23 @@ def windows_with_lines(lines):
     return out
 
 
-def judge_idle(got):
-    """(bad, note, facts) for the settled windows `got` ([(window, lines)])."""
+def judge_idle(got, who="A solo idle"):
+    """(bad, note, facts) for the settled windows `got` ([(window, lines)]); `who` names the game in the note."""
     spiky = [i for i, ((_, _, b), _) in enumerate(got) if b[OVER] > 0]
     mean = sum(f for (f, _, _), _ in got) / max(1, len(got))
     gaps = [(b - a) * 5 for a, b in zip(spiky, spiky[1:])]
     waits = [float(m.group(1)) for _, ls in got for m in map(VCORES.search, ls) if m]
-    note = "A solo idle: %d windows, fps mean %.1f, windows with an over-40 present %s (gaps %s s), vcores waits max %s ms" % (
-        len(got), mean, spiky or "none", gaps or "-", "%.1f" % max(waits) if waits else "none")
+    note = "%s: %d windows, fps mean %.1f, windows with an over-40 present %s (gaps %s s), vcores waits max %s ms" % (
+        who, len(got), mean, spiky or "none", gaps or "-", "%.1f" % max(waits) if waits else "none")
+    mem = [i for i, (_, ls) in enumerate(got) if any(MEMORY.search(ln) for ln in ls)]
     facts = {"windows": [{"i": i, "fps": f, "s": s, "buckets": b} for i, ((f, s, b), _) in enumerate(got)],
-             "spiky": [{"i": i, "over40": got[i][0][2][OVER], "next_to": got[i][1][-KEEP:]} for i in spiky],
-             "gaps_s": gaps, "mean_fps": mean}
+             "spiky": [{"i": i, "over40": got[i][0][2][OVER], "memory_line": i in mem, "next_to": got[i][1][-KEEP:]}
+                       for i in spiky],
+             "memory_windows": mem, "spiky_on_memory": len(set(spiky) & set(mem)), "gaps_s": gaps, "mean_fps": mean}
     bad = []
     if spiky:
-        bad.append("%s: a freeze (present over 40 ms) in solo idle" % note)
+        bad.append("%s: a freeze (present over 40 ms) while idle (%d of them next to a memory line)" % (
+            note, facts["spiky_on_memory"]))
     if mean < MIN_SHARE * CAP_FPS:
         bad.append("%s: mean < %.0f fps" % (note, MIN_SHARE * CAP_FPS))
     return bad, note, facts
@@ -96,7 +108,46 @@ def test_solo_idle_no_spikes(pair):
         pair.call("A", "pause")
     bad, note, facts = judge_idle(got[:WINDOWS])
     pair.notes.append(note)
+    keep(pair, "idle-spikes-A.json", facts)
+    assert not bad, "; ".join(bad)
+
+
+def keep(pair, name, facts):
     if pair.out_dir:
-        with open(os.path.join(pair.out_dir, "idle-spikes-A.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(pair.out_dir, name), "w", encoding="utf-8") as f:
             json.dump(facts, f, indent=1)
+
+
+@pytest.mark.needs_boot(HOST_BOOT)
+@pytest.mark.budget(360)
+@pytest.mark.row("#322 hosted: no freeze every 30/60 s while hosting idle (the host's and the game's memory lines)")
+def test_hosted_idle_no_spikes(pair):
+    """A hosts by its own menu, B joins (test_host_menu's boot and set-up proof), both idle in play with no input
+    for WINDOWS full windows each; the same judge as the solo test, on each game; every spiky window says whether a
+    memory line ran next to it (the player: 'fine with co-op off, freezes once I host or join')."""
+    with pair.setup():
+        need_child_in_play(pair)
+        prove_hosting(pair, "322")
+        marks = {x: pair.log[x].mark() for x in ("A", "B")}
+    for x in ("A", "B"):
+        pair.call(x, "resume")
+    got = {}
+    try:
+        while True:
+            got = {x: windows_with_lines(pair.log[x].since(marks[x]))[SETTLE:] for x in ("A", "B")}
+            if all(len(g) >= WINDOWS for g in got.values()):
+                break
+            pair.deadline.check("%d full vi windows of A and B (have %d, %d)" % (WINDOWS, len(got["A"]), len(got["B"])))
+            time.sleep(POLL_S)
+    finally:
+        for x in ("A", "B"):
+            pair.call(x, "pause")
+    bad = []
+    for x, who in (("A", "A hosting idle"), ("B", "B joined idle")):
+        b, note, facts = judge_idle(got[x][:WINDOWS], who)
+        pair.notes.append(note)
+        keep(pair, "idle-spikes-hosted-%s.json" % x, facts)
+        bad += b
+    for x in ("A", "B"):
+        pair.never_log(x, NO_CRASH)
     assert not bad, "; ".join(bad)

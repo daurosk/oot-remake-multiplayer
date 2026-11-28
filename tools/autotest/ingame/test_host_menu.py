@@ -75,6 +75,18 @@ def session_runner(pair):
         return json.load(f).get("runner") or {}
 
 
+def prove_hosting(pair, row):
+    """Set-up proof of the host-in-game boot: A hosts by its menu on the session's port, announces, B is welcomed there."""
+    port = int(session_runner(pair).get("port") or 0)
+    if not port:
+        raise SetupFail("%s: no port in the session's runner" % row)
+    for x, rx in (("A", TEST_HOST_ON % port), ("A", LISTENING), ("A", ANNOUNCED),
+                  ("B", WELCOMED + re.escape("127.0.0.1:%d" % port))):
+        if not any(re.search(rx, ln) for ln in pair.log[x].since(0)):
+            raise SetupFail("%s: the host-in-game boot gave no %s log /%s/" % (row, x, rx))
+    return port
+
+
 def judge_spikes(win, vcore_lines=()):
     """(bad, note) for A's full windows `win` ([(fps, s, buckets)], buckets[5] = presents over 40 ms)."""
     spiky = [i for i, (_, _, b) in enumerate(win) if b[5] > 0]
@@ -96,13 +108,7 @@ def judge_spikes(win, vcore_lines=()):
 def test_host_menu_no_spikes(pair):
     with pair.setup():
         need_child_in_play(pair)
-        port = int(session_runner(pair).get("port") or 0)
-        if not port:
-            raise SetupFail("292: no port in the session's runner")
-        for x, rx in (("A", TEST_HOST_ON % port), ("A", LISTENING), ("A", ANNOUNCED),
-                      ("B", WELCOMED + re.escape("127.0.0.1:%d" % port))):
-            if not any(re.search(rx, ln) for ln in pair.log[x].since(0)):
-                raise SetupFail("292: the host-in-game boot gave no %s log /%s/" % (x, rx))
+        prove_hosting(pair, "292")
         mark = pair.log["A"].mark()
     for x in ("A", "B"):
         pair.call(x, "resume")

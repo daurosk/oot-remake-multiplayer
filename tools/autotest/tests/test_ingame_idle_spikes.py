@@ -65,6 +65,20 @@ class IdleSpikes(unittest.TestCase):
     def test_solo_only(self):
         self.assertTrue(any(m.name == "needs_solo" for m in self.T.test_solo_idle_no_spikes.pytestmark))
 
+    def test_spikes_say_whether_a_memory_line_ran_next_to_them(self):
+        mem = "[hos host] coop: host: memory: process: private 18000 MB, working set 9000 MB; 127.0.0.1:5000"
+        got = self.T.windows_with_lines(log([0, 1, 0, 1] + [0] * 32, {1: [mem], 3: [STALL]}))
+        bad, note, facts = self.T.judge_idle(got, "A hosting idle")
+        self.assertTrue(note.startswith("A hosting idle: 36 windows"))
+        self.assertEqual([(x["i"], x["memory_line"]) for x in facts["spiky"]], [(1, True), (3, False)])
+        self.assertEqual((facts["memory_windows"], facts["spiky_on_memory"]), ([1], 1))
+        self.assertIn("1 of them next to a memory line", bad[0])
+
+    def test_hosted_runs_on_the_host_boot(self):
+        marks = {m.name: m.args for m in self.T.test_hosted_idle_no_spikes.pytestmark}
+        self.assertEqual(marks["needs_boot"], ("live-kakariko-host",))
+        self.assertNotIn("needs_solo", marks)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,8 +91,11 @@ void PutAsset(FakeGuest& g, const std::string& name) {
 
 void Reset() {
     SetOurUser(0);
+    SetOurEffectUser(0);
     SetProbe(false);
     TakeCaught();
+    TrackOurEffects("", ~std::uint64_t{0});  // every watched key ends
+    TakeCaughtEffects();
     TakeProbeLines();
 }
 
@@ -432,4 +435,133 @@ TEST_CASE("link sound: a call not made is never left waiting") {
     c = Next(p, b, g, kMain, kActor, kUser, kBlock, kLongestMs + 10, none, "P2", say, false);
     REQUIRE(c);
     CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+}
+
+// --- Effects (row 310) ---------------------------------------------------------
+
+TEST_CASE("link effect: the emit wrap keeps our Link's effect keys apart from its sounds") {
+    Clean clean;
+    FakeGuest g;
+    constexpr std::uint64_t kOurEffects = 0x11000;
+    PutAsset(g, "Charge_RotationCut_Full");
+    CHECK_FALSE(OnEmit(kOurEffects, kCell, g.AsRead()));  // not known yet
+    SetOurUser(kOurUser);
+    SetOurEffectUser(kOurEffects);
+    CHECK(OnEmit(kOurEffects, kCell, g.AsRead()));
+    CHECK_FALSE(OnEmit(kOurEffects + 8, kCell, g.AsRead()));  // another actor's effects
+    CHECK(TakeCaught().empty());                               // not a sound
+    CHECK(TakeCaughtEffects() == std::vector<EffectOut>{{"Charge_RotationCut_Full", false}});
+    CHECK(OnEmit(kOurUser, kCell, g.AsRead()));                // the sound user still goes as a sound
+    CHECK(TakeCaught().size() == 1);
+    CHECK(TakeCaughtEffects().empty());
+}
+
+TEST_CASE("link effect: a sent key the user no longer plays gets one end, a held one does not") {
+    EffectEnds e;
+    e.Started("Charge_RotationCut_Loop", 1000);
+    e.Started("DinFire", 1000);
+    CHECK(e.Check("", 1200).empty());  // too soon: a start not yet in the list
+    CHECK(e.Check("Charge_RotationCut_Loop, DinFire", 1400).empty());
+    CHECK(e.Check("Charge_RotationCut_Loop", 1500) == std::vector<std::string>{"DinFire"});
+    CHECK(e.Check("Charge_RotationCut_Loop", 1600).empty());  // once
+    e.Started("Charge_RotationCut_Loop", 1600);              // started again: counted from now
+    CHECK(e.Check("", 1800).empty());
+    CHECK(e.Check("", 1900) == std::vector<std::string>{"Charge_RotationCut_Loop"});
+    CHECK(e.Size() == 0);
+    for (int i = 0; i < static_cast<int>(kTrackedMax) + 4; ++i) {
+        e.Started("Key_" + std::to_string(i), 2000 + i);
+    }
+    CHECK(e.Size() == kTrackedMax);  // the oldest go
+}
+
+TEST_CASE("link effect: the module's tracker turns a gone key into an end to send") {
+    Clean clean;
+    FakeGuest g;
+    constexpr std::uint64_t kOurEffects = 0x11000;
+    SetOurEffectUser(kOurEffects);
+    PutAsset(g, "Chm_Magic_Item_NayruLove_Sphere_00");
+    REQUIRE(OnEmit(kOurEffects, kCell, g.AsRead()));
+    TakeCaughtEffects();
+    TrackOurEffects("", ~std::uint64_t{0});
+    CHECK(TakeCaughtEffects() == std::vector<EffectOut>{{"Chm_Magic_Item_NayruLove_Sphere_00", true}});
+}
+
+TEST_CASE("link effect: a puppet plays a key in the effect cells on its effect user, and an end stops it") {
+    FakeGuest g = Puppet();
+    Player p = EffectPlayer();
+    Budget b;
+    std::vector<std::string> said;
+    const auto say = [&said](const std::string& s) { said.push_back(s); };
+    const auto none = [] { return std::string(); };
+    p.heard.Push("DinFire", 1000);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1000, none, "P2", say, true);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSearchAsset);
+    CHECK(c->x[1] == kBlock + block::kEffectAsset);
+    CHECK(c->x[2] == kBlock + block::kEffectText);
+    CHECK(g.TextAt(kBlock + block::kEffectText) == "DinFire");
+    CHECK(g.TextAt(kBlock + CoopPuppetSound::block::kText).empty());  // the sound cells untouched
+    g.Put<std::uint64_t>(kBlock + block::kEffectAsset, 0xd1f);
+    Finish(p, 1, g, kBlock, "P2", say, true);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1001, none, "P2", say, true);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kEmit);
+    CHECK(c->x[0] == kUser);
+    CHECK(c->x[1] == kBlock + block::kEffectAsset);
+    CHECK(c->x[2] == kBlock + block::kEffectHandle);
+    Finish(p, 1, g, kBlock, "P2", say, true);
+    // Still playing long past a sound's kLongestMs: an effect waits for its end.
+    CHECK_FALSE(Next(p, b, g, kMain, kActor, kUser, kBlock, 1001 + kLongestMs, none, "P2", say, true));
+    End(p, "DinFire");
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1001 + kLongestMs, none, "P2", say, true);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    CHECK(c->x[0] == kBlock + block::kEffectHandle);
+    Finish(p, 0, g, kBlock, "P2", say, true);
+    CHECK(p.started[0].name.empty());
+    CHECK(said == std::vector<std::string>{"P2 effect 'DinFire'", "P2 effect 'DinFire' ended"});
+}
+
+TEST_CASE("link effect: an end for a key still waiting drops it, and one without an end stops at kEffectLongestMs") {
+    FakeGuest g = Puppet();
+    Player p = EffectPlayer();
+    Budget b;
+    const auto say = [](const std::string&) {};
+    const auto none = [] { return std::string(); };
+    p.heard.Push("Charge_RotationCut", 1000);
+    End(p, "Charge_RotationCut");
+    CHECK(p.heard.Empty());
+    CHECK_FALSE(Next(p, b, g, kMain, kActor, kUser, kBlock, 1000, none, "P2", say, false));  // nothing to stop
+    p.assets["Blur_Default"] = 0xb1;
+    p.heard.Push("Blur_Default", 2000);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 2000, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kEmit);
+    Finish(p, 1, g, kBlock, "P2", say, false);
+    CHECK_FALSE(Next(p, b, g, kMain, kActor, kUser, kBlock, 2000 + kEffectLongestMs - 1, none, "P2", say, false));
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 2000 + kEffectLongestMs, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+}
+
+TEST_CASE("link effect: what a player casts is kept until its end or kEffectLongestMs (the PvP hand-over)") {
+    NoteEffect(5, "DinFire", false, 1000);
+    NoteEffect(5, "Charge_RotationCut_Loop", false, 1100);
+    auto now = Casting(5, 1200);
+    REQUIRE(now.size() == 2);
+    CHECK(now[0].name == "DinFire");
+    CHECK(now[0].at_ms == 1000);
+    NoteEffect(5, "DinFire", true, 1300);
+    now = Casting(5, 1300);
+    REQUIRE(now.size() == 1);
+    CHECK(now[0].name == "Charge_RotationCut_Loop");
+    CHECK(Casting(5, 1100 + kEffectLongestMs).empty());
+    CHECK(Casting(0, 1000).empty());
+    CHECK(Casting(17, 1000).empty());
+}
+
+TEST_CASE("link effect: the effect cells sit after the dress cells, inside the puppet's block") {
+    CHECK(block::kEffectAsset >= CoopPuppet::block::kDress + 0x100);
+    CHECK(block::kEffectEnd <= CoopPuppet::block::kSize);
+    CHECK(EffectCells().handle != Player{}.cells.handle);
 }

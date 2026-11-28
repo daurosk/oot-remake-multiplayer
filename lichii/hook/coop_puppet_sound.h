@@ -124,6 +124,8 @@ void Reset(State& state);
 
 // The sound user of an actor (its SLink user instance), 0 if none.
 std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor);
+// Its effect (ELink) user, XLink component +0x70 (row 310; 0: none).
+std::uint64_t EffectUser(CoopPuppet::Guest& guest, std::uint64_t actor);
 // The name of a user's resource ("Player_Child", "Ocarina"), empty if unreadable.
 std::string UserName(CoopPuppet::Guest& guest, std::uint64_t user);
 // Another user named `name`, found by walking every circular list that runs through

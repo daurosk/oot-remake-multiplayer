@@ -2134,6 +2134,30 @@ Error decode_body(Reader& r, LinkSound& m) {
   return Error::none;
 }
 
+Error check_link_effect(const LinkEffect& m) {
+  if (!valid_player_or_self(m.player_number) || (m.flags & ~kLinkEffectFlags) != 0 ||
+      !valid_link_sound_name(m.name)) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+Error encode_body(const LinkEffect& m, Writer& w) {
+  COOP_TRY(check_link_effect(m));
+  w.u8(m.player_number);
+  w.u8(m.flags);
+  w.str(m.name);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LinkEffect& m) {
+  m = LinkEffect{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.flags));
+  COOP_TRY(r.str(m.name, kMaxLinkSoundChars));
+  return check_link_effect(m);
+}
+
 Error decode_body(Reader& r, TimeOfDay& m) {
   m = TimeOfDay{};
   COOP_READ(r.u8(m.player_number));
@@ -3735,6 +3759,7 @@ MessageType type_of(const Message& message) {
       MessageType::local_sample,
       MessageType::local_message,
       MessageType::link_sound,
+      MessageType::link_effect,
       MessageType::boss_scene,  MessageType::boss_heart,
       MessageType::player_look,
       MessageType::switch_state,
@@ -3855,6 +3880,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::local_message:
     case MessageType::player_look:
     case MessageType::link_sound:
+    case MessageType::link_effect:
     case MessageType::emote:
     case MessageType::boss_scene:
     case MessageType::boss_heart:
@@ -4000,6 +4026,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::dbno_threat:
     case MessageType::player_look:
     case MessageType::link_sound:
+    case MessageType::link_effect:
     case MessageType::boss_scene:
     case MessageType::boss_heart:
     case MessageType::boss_alive:
@@ -4052,7 +4079,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, VoiceFrame> ||
                       std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
                       std::is_same_v<T, ModData> ||
-                      std::is_same_v<T, LinkSound> ||
+                      std::is_same_v<T, LinkSound> || std::is_same_v<T, LinkEffect> ||
                       std::is_same_v<T, BossScene> || std::is_same_v<T, BossHeart> ||
                       std::is_same_v<T, BossAlive> || std::is_same_v<T, Emote> || std::is_same_v<T, PlayerLook> || std::is_same_v<T, LiftAsk> ||
                       std::is_same_v<T, LiftAnswer> || std::is_same_v<T, LiftPlace> ||
@@ -4158,6 +4185,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
     case MessageType::link_sound: return decode_as<LinkSound>(body, out);
+    case MessageType::link_effect: return decode_as<LinkEffect>(body, out);
     case MessageType::player_look: return decode_as<PlayerLook>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);

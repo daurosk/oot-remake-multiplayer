@@ -1109,3 +1109,21 @@ Owner, 2026-11-27: "link puppets have no cloth physics so things like his cap ar
   floats change while the copy moves and settle while it stands.
 - **Not run in a game yet.** Nothing here is proven in a game: the cap swinging on the puppets (child, adult, every
   character), on Epona, in water and wind, and after a warp.
+
+## Link effects (row 310, branch `anim-sync-310`)
+
+The owner (0.12.1, row 310): every animation and its effects frame-true on the other games (the charged and upgraded spin, Din's Fire, Nayru's Love, Farore's Wind, the sword trail). The pose copy already moves every bone of the other Link (Pose, above); what the puppet lacks is every effect: the pack drops `ELinkRef` and the ActorInfo `ELinkUserName`, and the pose copy plays no AS, so no `EmitEffect` event fires on it. The game's own keys include `Charge_RotationCut`, `Charge_RotationCut_Full`, `Charge_RotationCut_Loop`, `Blur_Default`, `DinFire`, `DinTrigger_00` to `_02`, `Chm_Magic_Item_NayruLove_Sphere_00`, `Chm_Magic_Item_FaroreWind_Marker_00` (ELink2 file, `elink2.Product.110.belnk`).
+
+The same path as Link sounds, one mechanism for every effect (`lichii/hook/coop_link_sound.h`):
+
+| Step | Where | What |
+|---|---|---|
+| Catch | `CoopLinkSound::OnEmit` | Wrap 24 (patch 0014, searchAndEmit main+0x440630) also hands emits on our Link's ELink user (`[[[link + 0x270] + 0x68] + 0x70]`, `SetOurEffectUser`, set each objects walk) to the effect list (`TakeCaughtEffects`), at most 32 a frame |
+| End | `TrackOurEffects`, `EffectEnds` | Every 100 ms the objects walk reads what that user plays (`CoopPuppetSound::Playing`); a key caught at least 300 ms ago that has left the list (a held spin charge let go, Nayru's Love over) gets one end. At most 32 keys watched (the oldest go: its end then never comes, the receiver's 30 s stops it) |
+| Send | `CoopLinkSound::Frame` | `LINK_EFFECT` (501) per key, its own `Limiter` (80 ms repeat, 20 a second); an end always goes |
+| Hear | `Planner::Plan` | Starts only while the puppet is shown and within 30 m (as sounds); an end always |
+| Play | `slot.link_effect` (`EffectPlayer`) | The sound `Player` with the effect cells: 0x43db00 then 0x440630 on the puppet's own ELink user (`CoopPuppetSound::EffectUser`), asset at block +0x880, key at +0x888, eight handles at +0x8c0 (the block is 0x900). An end kills its handle with 0x7cc120; one without an end is stopped after 30 s. Its own `Budget` (24 starts a second, all puppets) |
+| Pack | `tools/puppet_pack/build.py` `EFFECT_COMPONENTS` | The puppet keeps the player's `ELinkRef` and the ActorInfo `ELinkUserName` (manifest `"effects": true`); `--no-effects` builds the pack before row 310 |
+| PvP | `CoopLinkSound::NoteEffect` / `Casting` | What each player casts now (key, received ms) from the starts and ends received; puppet-pvp's fallback area test reads it. Hits come from the caster's game (puppet-pvp-4) |
+
+With `LICHII_COOP_DEBUG_SOUND=1` the probe line names each user's resource (`of 'Player'`, `of 'Weapon_Sword_...'`), so one run shows whether a key (the spin charge, the trail) is on the Link's ELink user or a held piece's; a piece's user is not caught yet. The effects bind to the puppet's bones, so they follow the pose copy.

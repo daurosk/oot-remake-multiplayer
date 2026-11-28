@@ -538,15 +538,15 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(sorted(fs), ["$parent", "IsEnableGrass", "IsUseRayCast", "ProcType"])
         # The player's XLink param, for the property tables Link's SLink user reads (puppet-looks).
         self.assertEqual(comps["XLinkRef"], "?Component/XLink/Player.engine__component__XLinkParam.bgyml")
-        self.assertNotIn("ELinkRef", comps)
+        # Row 310: the player's ELink param, the puppet's own effect user.
+        self.assertEqual(comps["ELinkRef"], "?Component/ELink/Player.engine__component__ELinkParam.bgyml")
         for p in ("Component/SLink/Player_Child.engine__component__SLinkParam.bgyml",
                   "Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml",
                   "Component/SoundFootStepParam/Player.game__component__SoundFootStepParam.bgyml",
                   "Component/XLink/Player.engine__component__XLinkParam.bgyml"):
             self.assertIn(p, out)
-        for p in ("Component/SLink/Player.engine__component__SLinkParam.bgyml",
-                  "Component/ELink/Player.engine__component__ELinkParam.bgyml"):
-            self.assertNotIn(p, out)
+        self.assertNotIn("Component/SLink/Player.engine__component__SLinkParam.bgyml", out)
+        self.assertIn("Component/ELink/Player.engine__component__ELinkParam.bgyml", out)  # row 310
 
     def test_pack_basic_xlink_and_no_sound(self):
         members = fake_player_pack("Child")
@@ -1022,10 +1022,15 @@ class BuildPackTest(unittest.TestCase):
 
     def test_pack_without_sound(self):
         members = fake_player_pack("Child")
-        pack, _, names, _ = build.build_pack(members, "Child", sound=False)
+        pack, _, names, _ = build.build_pack(members, "Child", sound=False, effects=False)
         comps = byml.loads(sarc.read(pack)["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
         for k in ("SLinkRef", "SoundFootStepRef", "ELinkRef"):
             self.assertNotIn(k, comps)
+        # Without sound the effects stay (row 310), and --no-effects leaves them out on their own.
+        pack, _, _, _ = build.build_pack(members, "Child", sound=False)
+        comps = byml.loads(sarc.read(pack)["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertIn("ELinkRef", comps)
+        self.assertNotIn("SLinkRef", comps)
         self.assertFalse([n for n in names if "SLink" in n or "SoundFootStep" in n])
 
     def test_no_equipment_fails(self):
@@ -1078,7 +1083,8 @@ class BuildPackTest(unittest.TestCase):
         new = build.info_row(player, "C")
         self.assertEqual(new["FmdbName"], "Player_Child")
         self.assertNotIn("ActorName", new)
-        self.assertNotIn("ELinkUserName", new)
+        self.assertEqual(new["ELinkUserName"], "Player")  # the effect user (row 310)
+        self.assertNotIn("ELinkUserName", build.info_row(player, "C", effects=False))
         self.assertEqual(new["SLinkUserName"], "Player_Child")  # the sound user (issue 131)
         self.assertNotIn("SLinkUserName", build.info_row(player, "C", sound=False))
         self.assertEqual(new["CalcRadius"], 100000.0)

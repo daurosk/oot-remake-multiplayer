@@ -4762,6 +4762,18 @@ private:
                     const u64 xlink = parts ? r.Get<u64>(parts + CoopPuppetSound::addr::kPartsXLink).value_or(0) : 0;
                     CoopLinkSound::SetOurUser(
                         xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkSoundUser).value_or(0) : 0);
+                    // And its effect user (row 310): its effects go to the others as LINK_EFFECT; a sent key it no
+                    // longer plays (a held spin charge let go) goes again as an end, read every kTrackEveryMs.
+                    const u64 effects =
+                        xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkEffectUser).value_or(0) : 0;
+                    CoopLinkSound::SetOurEffectUser(effects);
+                    static u64 tracked_ms = 0;  // the walk's thread only
+                    const u64 now = SteadyNowMs();
+                    if (effects != 0 && now >= tracked_ms + CoopLinkSound::kTrackEveryMs) {
+                        tracked_ms = now;
+                        ReaderGuest guest(r);
+                        CoopLinkSound::TrackOurEffects(CoopPuppetSound::Playing(guest, effects), now);
+                    }
                 }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {

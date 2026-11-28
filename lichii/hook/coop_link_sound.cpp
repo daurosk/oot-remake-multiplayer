@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <set>
 #include <utility>
@@ -17,10 +18,18 @@ static_assert(kNameMax == coop::protocol::kMaxLinkSoundChars);
 static_assert(CoopPuppetSound::block::kText + CoopPuppetSound::block::kTextCapacity == block::kHandle);
 static_assert(kNameMax + 1 == CoopPuppetSound::block::kTextCapacity);
 static_assert(block::kHandle + 8 * block::kHandleSlots <= CoopPuppet::block::kSize);
+static_assert(block::kSoundAsset == CoopPuppetSound::block::kAsset);
+static_assert(block::kSoundText == CoopPuppetSound::block::kText);
+static_assert(block::kEffectAsset >= CoopPuppet::block::kDress + 0x100);  // after CoopCharColours::kCellBytes
+static_assert(block::kEffectText == block::kEffectAsset + 8);
+static_assert(block::kEffectText + kNameMax + 1 <= block::kEffectHandle);
+static_assert(block::kEffectHandle + 8 * block::kHandleSlots == block::kEffectEnd);
+static_assert(block::kEffectEnd <= CoopPuppet::block::kSize);
 
 namespace {
 
 std::atomic<std::uint64_t> g_our_user{0};
+std::atomic<std::uint64_t> g_our_effect_user{0};
 std::atomic<bool> g_probe{false};
 
 std::mutex& CaughtMutex() {
@@ -39,7 +48,48 @@ std::vector<std::string>& ProbeLines() {  // under CaughtMutex
     static std::vector<std::string> v;
     return v;
 }
+std::vector<EffectOut>& CaughtEffects() {  // under CaughtMutex
+    static std::vector<EffectOut> v;
+    return v;
+}
+EffectEnds& OurEnds() {  // under CaughtMutex
+    static EffectEnds e;
+    return e;
+}
 inline constexpr std::size_t kProbePairsMax = 512;
+
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+// The user's resource name ([[user + 0x58] + 0x10]: Player, Weapon_Sword_*, Item_*), for the probe; "" unknown.
+std::string OwnerOf(std::uint64_t user, const Read& read) {
+    std::uint64_t resource = 0;
+    std::uint64_t text = 0;
+    if (!read(user + addr::kUserResource, &resource, sizeof resource) || resource == 0 ||
+        !read(resource + 0x10, &text, sizeof text) || text == 0) {
+        return {};
+    }
+    std::string out;
+    std::uint64_t at = text;
+    while (out.size() < 48) {
+        std::array<char, 8> step{};
+        const std::size_t count = 8 - static_cast<std::size_t>(at % 8);  // never past a page end the text does not reach
+        if (!read(at, step.data(), count)) {
+            return out;
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            if (step[i] == '\0') {
+                return out;
+            }
+            out += (step[i] >= 0x20 && step[i] < 0x7f) ? step[i] : '?';
+        }
+        at += count;
+    }
+    return out;
+}
 
 std::uint64_t Pointer(CoopPuppet::Guest& guest, std::uint64_t address) {
     std::uint64_t v = 0;
@@ -63,8 +113,8 @@ void Drop(std::deque<std::uint64_t>& times, std::uint64_t now_ms) {
 }
 
 // The emit call for player.name with its asset.
-std::uint64_t HandleCell(std::uint64_t block, std::size_t slot) {
-    return block + block::kHandle + 8 * slot;
+std::uint64_t HandleCell(const Player& player, std::uint64_t block, std::size_t slot) {
+    return block + player.cells.handle + 8 * slot;
 }
 
 // The game's own handle kill on one started sound; its slot is free once it ran (Finish).
@@ -72,7 +122,7 @@ CoopPuppet::Call Kill(Player& player, std::uint64_t main_base, std::uint64_t blo
     player.killing = slot;
     CoopPuppet::Call c;
     c.function = main_base + CoopPuppetSound::addr::kKill;
-    c.x[0] = HandleCell(block, slot);
+    c.x[0] = HandleCell(player, block, slot);
     player.pending = Player::Step::kill;
     return c;
 }
@@ -81,7 +131,7 @@ CoopPuppet::Call Kill(Player& player, std::uint64_t main_base, std::uint64_t blo
 std::optional<std::size_t> Expired(const Player& player, std::uint64_t now_ms) {
     for (std::size_t i = 0; i < player.started.size(); ++i) {
         const auto& s = player.started[i];
-        if (!s.name.empty() && now_ms >= s.at_ms && now_ms - s.at_ms >= kLongestMs) {
+        if (!s.name.empty() && now_ms >= s.at_ms && now_ms - s.at_ms >= player.cells.longest_ms) {
             return i;
         }
     }
@@ -115,20 +165,20 @@ std::optional<CoopPuppet::Call> Emit(Player& player, CoopPuppet::Guest& guest, s
                                      const std::string& who, const Say& say, bool debug) {
     // The handle as the game's own node starts one: u8 0xff, u16 0xffff, u32 0.
     const std::array<std::uint8_t, 8> handle{0xff, 0, 0xff, 0xff, 0, 0, 0, 0};
-    if (asset == 0 || !guest.Write(block + CoopPuppetSound::block::kAsset, &asset, sizeof asset) ||
-        !guest.Write(HandleCell(block, slot), handle.data(), handle.size())) {
+    if (asset == 0 || !guest.Write(block + player.cells.asset, &asset, sizeof asset) ||
+        !guest.Write(HandleCell(player, block, slot), handle.data(), handle.size())) {
         return std::nullopt;
     }
     player.started[slot] = {player.name, now_ms};
     CoopPuppet::Call c;
     c.function = main_base + addr::kEmit;
     c.x[0] = user;
-    c.x[1] = block + CoopPuppetSound::block::kAsset;
-    c.x[2] = HandleCell(block, slot);
+    c.x[1] = block + player.cells.asset;
+    c.x[2] = HandleCell(player, block, slot);
     c.x[3] = 0;
     player.pending = Player::Step::emit;
     if (debug) {
-        say(who + " sound '" + player.name + "'");
+        say(who + " " + player.cells.what + " '" + player.name + "'");
     }
     return c;
 }
@@ -141,6 +191,58 @@ void SetOurUser(std::uint64_t user) {
 
 std::uint64_t OurUser() {
     return g_our_user.load(std::memory_order_relaxed);
+}
+
+void SetOurEffectUser(std::uint64_t user) {
+    g_our_effect_user.store(user, std::memory_order_relaxed);
+}
+
+std::uint64_t OurEffectUser() {
+    return g_our_effect_user.load(std::memory_order_relaxed);
+}
+
+void EffectEnds::Started(std::string_view name, std::uint64_t now_ms) {
+    if (const auto it = started_.find(name); it != started_.end()) {
+        it->second = now_ms;  // started again: its end is counted from now
+        return;
+    }
+    if (started_.size() >= kTrackedMax) {
+        auto oldest = started_.begin();
+        for (auto i = started_.begin(); i != started_.end(); ++i) {
+            if (i->second < oldest->second) {
+                oldest = i;
+            }
+        }
+        started_.erase(oldest);  // its end is not sent: the receiver's kEffectLongestMs stops it
+    }
+    started_.emplace(std::string(name), now_ms);
+}
+
+std::vector<std::string> EffectEnds::Check(std::string_view playing, std::uint64_t now_ms) {
+    std::vector<std::string> out;
+    for (auto i = started_.begin(); i != started_.end();) {
+        if (now_ms >= i->second && now_ms - i->second >= kEndAfterMs && !AlreadyPlaying(playing, i->first)) {
+            out.push_back(i->first);
+            i = started_.erase(i);
+        } else {
+            ++i;
+        }
+    }
+    return out;
+}
+
+std::vector<EffectOut> TakeCaughtEffects() {
+    std::lock_guard lock(CaughtMutex());
+    return std::exchange(CaughtEffects(), {});
+}
+
+void TrackOurEffects(std::string_view playing, std::uint64_t now_ms) {
+    std::lock_guard lock(CaughtMutex());
+    for (auto& name : OurEnds().Check(playing, now_ms)) {
+        if (CaughtEffects().size() < kCaughtMax) {
+            CaughtEffects().push_back(EffectOut{std::move(name), true});
+        }
+    }
 }
 
 bool OwnOnly(std::string_view name) {
@@ -181,8 +283,9 @@ std::string NameAt(std::uint64_t asset_cell, const Read& read) {
 
 bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read) {
     const std::uint64_t ours = OurUser();
+    const std::uint64_t our_effects = OurEffectUser();
     const bool probe = g_probe.load(std::memory_order_relaxed);
-    if (user == 0 || (!probe && user != ours)) {
+    if (user == 0 || (!probe && user != ours && user != our_effects)) {
         return false;  // nearly every call: not our Link
     }
     std::string name = NameAt(asset_cell, read);
@@ -190,9 +293,21 @@ bool OnEmit(std::uint64_t user, std::uint64_t asset_cell, const Read& read) {
     if (probe) {
         auto& seen = ProbeSeen();
         if (seen.size() < kProbePairsMax && seen.emplace(user, name).second) {
-            ProbeLines().push_back("coop: sound probe: user " + Hex(user) + (user == ours ? " (our Link)" : "") +
-                                   " emits '" + (name.empty() ? std::string("?") : name) + "'");
+            const std::string owner = OwnerOf(user, read);
+            ProbeLines().push_back("coop: sound probe: user " + Hex(user) +
+                                   (user == ours ? " (our Link)" : user == our_effects ? " (our Link's effects)" : "") +
+                                   (owner.empty() ? std::string() : " of '" + owner + "'") + " emits '" +
+                                   (name.empty() ? std::string("?") : name) + "'");
         }
+    }
+    if (user == our_effects && user != ours) {
+        // Our Link's effect (row 310): sent as LINK_EFFECT, and watched for its end.
+        if (name.empty() || CaughtEffects().size() >= kCaughtMax) {
+            return false;
+        }
+        OurEnds().Started(name, SteadyMs());
+        CaughtEffects().push_back(EffectOut{std::move(name), false});
+        return true;
     }
     if (user != ours || name.empty() || OwnOnly(name)) {
         return false;  // OwnOnly: only this player hears it (row 163)
@@ -252,7 +367,7 @@ void Heard::Push(std::string name, std::uint64_t now_ms) {
     if (queue_.size() >= kHeardMax) {
         queue_.pop_front();
     }
-    queue_.push_back(Sound{std::move(name), now_ms});
+    queue_.push_back(Sound{std::move(name), now_ms, false, false});
 }
 
 void Heard::PushFront(Sound sound) {
@@ -260,6 +375,10 @@ void Heard::PushFront(Sound sound) {
         queue_.pop_back();
     }
     queue_.push_front(std::move(sound));
+}
+
+void Heard::Remove(std::string_view name) {
+    std::erase_if(queue_, [name](const Sound& s) { return s.name == name; });
 }
 
 std::optional<Sound> Heard::Pop(std::uint64_t now_ms) {
@@ -319,6 +438,18 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
     if (main_base == 0 || actor == 0 || block == 0) {
         return std::nullopt;
     }
+    while (!player.ended.empty()) {
+        const std::string name = std::move(player.ended.front());
+        player.ended.pop_front();
+        for (std::size_t i = 0; i < player.started.size(); ++i) {
+            if (player.started[i].name == name) {
+                if (debug) {
+                    say(who + " " + player.cells.what + " '" + name + "' ended");
+                }
+                return Kill(player, main_base, block, i);  // the sender's game no longer plays it
+            }
+        }
+    }
     if (const auto old = Expired(player, now_ms)) {
         return Kill(player, main_base, block, *old);  // not counted in the budget: it starts nothing
     }
@@ -329,7 +460,8 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
         player.heard.Clear();
         if (!player.missing_said) {
             player.missing_said = true;
-            say(who + " has no sound user: the player's sounds are not played");
+            say(who + " has no " + player.cells.what + " user: the player's " + player.cells.what +
+                "s are not played");
         }
         return std::nullopt;
     }
@@ -373,14 +505,14 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
             text[i] = player.name[i];
         }
         const std::uint64_t zero = 0;
-        if (accessor == 0 || !guest.Write(block + CoopPuppetSound::block::kText, text.data(), text.size()) ||
-            !guest.Write(block + CoopPuppetSound::block::kAsset, &zero, sizeof zero)) {
+        if (accessor == 0 || !guest.Write(block + player.cells.text, text.data(), text.size()) ||
+            !guest.Write(block + player.cells.asset, &zero, sizeof zero)) {
             return std::nullopt;
         }
         c.function = main_base + addr::kSearchAsset;
         c.x[0] = accessor;
-        c.x[1] = block + CoopPuppetSound::block::kAsset;
-        c.x[2] = block + CoopPuppetSound::block::kText;
+        c.x[1] = block + player.cells.asset;
+        c.x[2] = block + player.cells.text;
         player.pending = Player::Step::search;
         return c;
     }
@@ -391,6 +523,70 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
         return Kill(player, main_base, block, slot);
     }
     return Emit(player, guest, main_base, user, block, known->second, slot, now_ms, who, say, debug);
+}
+
+namespace {
+inline constexpr std::size_t kCastPlayers = 17;  // player numbers 1 to 16
+std::mutex& CastMutex() {
+    static std::mutex m;
+    return m;
+}
+std::array<std::vector<Cast>, kCastPlayers>& Casts() {  // under CastMutex
+    static std::array<std::vector<Cast>, kCastPlayers> a;
+    return a;
+}
+void DropOldCasts(std::vector<Cast>& casts, std::uint64_t now_ms) {
+    std::erase_if(casts, [now_ms](const Cast& c) { return now_ms >= c.at_ms && now_ms - c.at_ms >= kEffectLongestMs; });
+}
+}  // namespace
+
+void NoteEffect(std::uint8_t player, std::string_view name, bool end, std::uint64_t now_ms) {
+    if (player == 0 || player >= kCastPlayers) {
+        return;
+    }
+    std::lock_guard lock(CastMutex());
+    auto& casts = Casts()[player];
+    DropOldCasts(casts, now_ms);
+    std::erase_if(casts, [name](const Cast& c) { return c.name == name; });
+    if (!end && casts.size() < kTrackedMax) {
+        casts.push_back(Cast{std::string(name), now_ms});
+    }
+}
+
+std::vector<Cast> Casting(std::uint8_t player, std::uint64_t now_ms) {
+    if (player == 0 || player >= kCastPlayers) {
+        return {};
+    }
+    std::lock_guard lock(CastMutex());
+    DropOldCasts(Casts()[player], now_ms);
+    return Casts()[player];
+}
+
+Player::Cells EffectCells() {
+    Player::Cells c;
+    c.asset = block::kEffectAsset;
+    c.text = block::kEffectText;
+    c.handle = block::kEffectHandle;
+    c.longest_ms = kEffectLongestMs;
+    c.what = "effect";
+    return c;
+}
+
+Player EffectPlayer() {
+    Player p;
+    p.cells = EffectCells();
+    return p;
+}
+
+void End(Player& player, std::string name) {
+    if (player.found && player.name == name) {
+        player.found = false;  // found but not started yet: it is not started
+    }
+    player.heard.Remove(name);  // still waiting: it is not started
+    if (player.ended.size() >= kEndedMax) {
+        player.ended.pop_front();
+    }
+    player.ended.push_back(std::move(name));
 }
 
 void Dropped(Player& player) {
@@ -411,11 +607,12 @@ void Finish(Player& player, std::uint64_t result, CoopPuppet::Guest& guest, std:
         return;
     }
     std::uint64_t asset = 0;
-    if ((result & 1) == 0 || !guest.Read(block + CoopPuppetSound::block::kAsset, &asset, sizeof asset) ||
+    if ((result & 1) == 0 || !guest.Read(block + player.cells.asset, &asset, sizeof asset) ||
         asset == 0) {
         player.assets[player.name] = 0;
         if (debug) {
-            say(who + ": the sound '" + player.name + "' is not in its sound user");
+            say(who + ": the " + std::string(player.cells.what) + " '" + player.name + "' is not in its " +
+                player.cells.what + " user");
         }
         return;
     }
@@ -441,10 +638,25 @@ void Frame(coop::host::Session* session, std::uint64_t now_ms) {
         LOG_INFO(Core, "{}", line);
     }
     std::vector<std::string> names = TakeCaught();
-    if (names.empty() || session == nullptr) {
+    std::vector<EffectOut> effects = TakeCaughtEffects();
+    if ((names.empty() && effects.empty()) || session == nullptr) {
         return;
     }
+    static Limiter effect_limiter;  // the frame's thread only; an end always goes (one per start)
+    static std::uint64_t effects_sent = 0;
     session->with_client([&](coop::net::Client& c) {
+        for (auto& e : effects) {
+            if (!e.end && !effect_limiter.Allow(e.name, now_ms)) {
+                continue;
+            }
+            // The first ones, then every 200th: enough to see it work, no spam (the probe: every one, for the tests).
+            if (++effects_sent <= 20 || effects_sent % 200 == 0 || g_probe.load(std::memory_order_relaxed)) {
+                LOG_INFO(Core, "coop: link effect '{}'{} sent ({} sent)", e.name, e.end ? " end" : "", effects_sent);
+            }
+            c.send(coop::protocol::LinkEffect{coop::protocol::kPlayerSelf,
+                                              e.end ? coop::protocol::kLinkEffectEnd : std::uint8_t{0},
+                                              std::move(e.name)});
+        }
         for (auto& name : names) {
             if (!limiter.Allow(name, now_ms)) {
                 ++dropped;

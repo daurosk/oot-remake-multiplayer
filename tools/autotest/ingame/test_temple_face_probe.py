@@ -1,4 +1,4 @@
-"""Row 53 facing probe (owner row-53-ocarina-7): test_row53.py failed at p-warp-face on 182cd53b5 (run row53-tot-182cd53b):
+"""Temple of Time facing probe (row 53) (owner row-53-ocarina-7): test_row53.py failed at p-warp-face on 182cd53b5 (run row53-tot-182cd53b):
 after `face 118.38 -34.00` the state's facing read -180.0, not 90. This test finds out where the turn is lost.
 At the same p-warp spot it reads facing before the face line, 1, 2, 30 and 120 frames after it (notes), and needs the
 module's own log line 'coop: test face X Z: Link at ... turned to yaw' (coop_boss_game.cpp, Mover::Step) in game A's
@@ -24,7 +24,7 @@ WAIT_WARP, WAIT_PLACE = 600, 240  # test_row53's frames
 
 @pytest.mark.budget(120)
 @pytest.mark.row("#53 facing probe (face X Z at p-warp, test_row53.py p-warp-face)")
-def test_row53_face_probe(pair):
+def test_temple_face_probe(pair):
     with pair.setup():
         need_child_in_play(pair)
         pair.warp_both(SCENE)

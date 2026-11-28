@@ -375,7 +375,8 @@ public:
     // A game thread (patch 0049's wrap of the game's AS play request main+0x2022a0, hos_coop_pose_play.h; 0.12.1
     // downed-move root fix): the game asks to play `command` on `slot` of `actor`. True here = skip it as played
     // (the request's own "already playing" answer): `actor` is our Link held in a lying pose (an adult's kLyingPose,
-    // a child's kChildLyingPose: held_actor_), the slot is 0 and the command is not the pose itself nor a horse's.
+    // a child's kChildLyingPose: held_actor_), the slot is 0 and the command is not the held pose itself
+    // (DamageLStand for an adult, Crouch for a child) nor a horse's.
     // The game's ground verbs (kWalk 1 / kWait 40, let through by Skip so they read the stick) then move him without
     // playing their Wait / Walk / Run over the pose: before, StepPose played the pose again every frame the game had
     // played its own (3385x in run-182cd53b), and the game's Wait won on screen (he stood, flickering).

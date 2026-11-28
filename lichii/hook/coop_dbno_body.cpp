@@ -383,12 +383,15 @@ bool Crawl::SkipPlay(std::uint64_t actor, std::int32_t slot, std::string_view co
     if (actor == 0 || actor != held_actor_.load(std::memory_order_acquire) || slot != 0) {
         return false;
     }
-    if (command == kLyingPose || command == kChildLyingPose || Riding(command)) {
-        return false;  // the pose itself (ours, or the game's own Crouch), or a horse's (StepPose reads riding_ from it)
+    if (Riding(command)) {
+        return false;  // a horse's (StepPose reads riding_ from it)
     }
     std::lock_guard lock(mutex_);
     if (actor != held_actor_.load(std::memory_order_relaxed)) {
         return false;
+    }
+    if (command == (want_.adult ? kLyingPose : kChildLyingPose)) {
+        return false;  // the held pose itself (our own play; for a child also the game's own Crouch, the same clip)
     }
     ++counts_.plays_skipped;
     if (!std::exchange(play_noted_, true)) {  // (once a hold) the probe line of the root fix

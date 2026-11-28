@@ -54,6 +54,7 @@ import test_boss_respawn as BR                      # noqa: E402  (give_hearts)
 from test_enemies import actors, alive, face, place, walk_to   # noqa: E402
 from test_boss_away import (BOOT, CORRIDOR, DEATH, DEFEAT, DOOR, ENV, GOHMA, KILLS, QUEST,   # noqa: E402
                             ALIVE_STEP)
+import boss_lines as BL                             # noqa: E402  (the native boss table's lines: one table)
 from test_intro_seen import (A_MOVED, B_MOVED, CORRIDOR_WAIT, INTRO, LOOK_UP, SYNC, TRIGGER, UNDER)  # noqa: E402
 
 SLING_GIVE = "PouchData.Weapon_Range_SlingShot.StockNum"   # deku-ladder.A.txt:43
@@ -75,7 +76,9 @@ FIND_FRAMES = TRIGGER                # a find that drops her later than the solo
 DEATH_WAIT = 120 + 2400              # test_boss_away (B 'wait 120; mark b-kill; wait 2400')
 WARP_WAIT = 600                      # test_boss_away ROOM_WAIT
 
-BOSS_LINE = "coop: boss: %s" % GOHMA
+# Her lines: the native boss table's notes of her (boss_lines.py: 'coop: bosses: <boss>: ...'; 'coop: boss: <boss>' matched
+# none, so the stuck lines below were never seen) and the row 323 probe's (coop_brain_state.cpp 'probe 323: Gohma ...').
+BOSS_LINES = (BL.PREFIX + GOHMA + ": ", BL.PREFIX + "probe 323: Gohma ")
 STUCK_LINES = [r"%s: ours held '.*' stuck" % GOHMA, r"%s: fell \d+ m below its fight start" % GOHMA,
                r"%s: its AI did not run its body as a copy" % GOHMA]
 OWNER_LINE = r"%s: now (ours|a copy)" % GOHMA
@@ -258,7 +261,7 @@ def stun_round(pair, watch, x):
 
 
 def boss_lines(pair, x, start):
-    return [ln for ln in pair.log[x].since(start[x]) if BOSS_LINE in ln]
+    return [ln for ln in pair.log[x].since(start[x]) if any(k in ln for k in BOSS_LINES)]
 
 
 @pytest.mark.budget(BUDGET_S)
